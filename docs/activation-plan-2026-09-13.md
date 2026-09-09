@@ -1,8 +1,9 @@
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]] -->
-# LangGraph-primary + n8n activation plan (v3)
+# LangGraph-primary + n8n activation plan (v4 — ASAP)
 
-**Delivery deadline:** Sunday 2026-09-13 07:00 PDT (14:00 UTC)
-**Issued:** 2026-09-08 19:00 PDT · **Revised:** 2026-09-08 19:55 PDT
+**Objective:** earliest completion. **Outer bound:** Sunday 2026-09-13 07:00 PDT — a *no later than*, not a due date.
+**Target:** Wednesday 2026-09-09 evening PDT; conservative Thursday midday.
+**Issued:** 2026-09-08 19:00 PDT · **Revised:** 2026-09-09 02:10 PDT
 **Issued by:** Claude, acting Director-Orchestrator
 **Owner:** Ed Jones (`edwardjones3976`)
 
@@ -156,7 +157,14 @@ branch was touched.
 prefixed `STATUS —`, are emitted only on a readiness change, and never carry
 secret, DSN, or allowlist values. The simulation profile does not post to Slack at all.
 
-## 3. Three profiles
+## 3. Profiles — reduced to one
+
+**Under the ASAP objective, profile L is not built.** It existed only for the
+evidence rung and `Activate`, both of which have left the delivery path. Profile
+**S** is the only new deployment, and the existing Default Director deployment
+stays quarantined exactly as before. The three-profile table below is retained
+because the follow-on will need L, and because the hard rule about a single
+intake surface still governs.
 
 | | **S — simulation** | **L — candidate live** | **D — existing deployment** |
 | --- | --- | --- | --- |
@@ -193,17 +201,17 @@ uncorrected script.
 1. **Accepted candidate.** One exact SHA on `main` with trusted CI green, a
    Codex Security ACCEPT and an independent different-provider ACCEPT, both as
    canonical `director-activation-review/v1` artifacts naming that head; the
-   lifecycle recorded on L.
+   lifecycle recorded on **S**, the only profile now built.
 2. **Simulated phase passed.** Stage A on S: nine readiness fields true,
    `paid_off_primary_intake_active` true, `new_intake_owner = langgraph`,
    fencing generation incremented, `ambiguous_effect_count` 0,
    `offline_simulation_requested` true, `paid_runs_enabled` false; n8n intake
    exercised against S with doubles; evidence bundle captured.
-3. **Live phase executed.** `StageRuntime` then `ValidateProviders` on L
-   producing at least thirty current `LIVE_OK`-chain rows under the USD 10
-   campaign ceiling; the nine gates reviewed; `Activate`; one bounded canary
-   task under USD 14 with real provider dispatch; zero duplicate provider,
-   Slack or GitHub effects; keep-live or rollback decision recorded.
+3. ~~**Live phase executed.**~~ **Moved to the follow-on.** Gate 8 is false and
+   the earliest-completion objective makes the live path strictly slower. The
+   report records the gate as unmet with its evidence and the dependency chain
+   that keeps it unmet, and states plainly that no live provider execution
+   occurred.
 4. **n8n delivered.** Intake hardened and the status workflow deployed and
    documented. Usage-summary and evidence-export only if the Friday scope cut
    passes.
@@ -216,32 +224,84 @@ ship, and the report names the exact gate, the evidence, and the next action.
 The report will never present a leadership handoff, green CI, a staged adapter,
 a simulation, or merged code as proof of live provider execution.
 
-## 5. Timeline (PDT)
+## 5. Schedule — earliest completion (PDT)
+
+The owner reduced the objective from "fits before Sunday" to **as soon as
+possible**, with Sunday 07:00 as an outer bound rather than a target. Combined
+with Gate 8 reading `F`, that resolves **D-12 to option A by arithmetic**:
+option B requires `Activate`, which requires the evidence rung, which adds about
+three attended hours and starts a twenty-four-hour `LIVE_OK` clock. Under an
+earliest-completion objective option B is strictly slower as well as not
+permitted. The floor deliverable is now the plan of record; the live phase
+becomes a follow-on with its own schedule.
+
+### What the compression rests on
+
+`docs/langgraph-primary-stage-a-runbook.md` states it directly. For Stage A,
+provider activation evidence is **not required** and no acceptance gate is
+bypassed; the nine activation gates and `combined_live_ready` belong to live
+activation. "Distance from Stage A to live" then lists what Stage A leaves
+outstanding: provider activation evidence, `ALLOW_PAID_RUNS`, and eight of the
+nine acceptance gates. Stage A needs the **acceptance lifecycle**, not the
+activation gates.
+
+**Gate 8 being false therefore does not block the floor deliverable at all.**
+
+### What leaves the critical path
+
+| Dropped | Why | Attended saved |
+| --- | --- | ---: |
+| Profile **L** entirely | It exists only for the evidence rung and `Activate`, both dropped. Profile **S** becomes the only new deployment | −4.00 h |
+| WO-10 prep, `StageRuntime`, `ValidateProviders` | Provider activation evidence is not required by Stage A | −3.00 h |
+| WO-11 `Activate`, canary, keep/rollback | Gate 8 false; not permitted | −2.50 h |
+| WO-05 fix PRs | The five blockers sit in the `LIVE_OK` and live-dispatch path, which is no longer traversed. They move to the follow-on | off critical path |
+| WO-12 n8n stretch | Already cuttable | optional |
+
+### The remaining critical path
+
+| Hours | Lane | Step |
+| ---: | --- | --- |
+| 0.10 | owner | Push the branch; freeze `c81e388` as the candidate |
+| 1.50 | Codex | **Narrowed WO-02**: does any of the five blockers touch `Accept`, `Migrate`, or the Stage A path? Not the full live-path audit |
+| 2.50 | Cursor + CI | CI green on `c81e388`, Codex Security ACCEPT, independent ACCEPT artifact — canonical `director-activation-review/v1` JSON on the exact head |
+| 0.75 | owner | Snapshot at the candidate, build with the candidate commit and tree args, `BootstrapDatabaseIdentity`, `SelectGeneration` |
+| 1.25 | owner | `PrepareAcceptance` → `Accept` → `Migrate` → `Backup` → `RestoreDrill` → `Health` |
+| 1.00 | owner | Stage A switch set, recreate, verify the nine fields, `paid_off_primary_intake_active`, ownership proof |
+| 0.50 | owner | n8n intake and status exercised against S with provider doubles |
+| 2.00 | Director | Close-out report, user guide, PDFs |
+| 1.00 | Cursor | Review of the documents |
+
+**Serial path 10.60 h, of which owner-attended is 3.60 h** — all of it fits
+inside a single Wednesday window with over four hours to spare. WO-06's n8n
+build and the document drafts run in parallel with the review cycle and are not
+additive.
+
+**The binding constraint is no longer owner minutes.** It is review latency: the
+two ACCEPT artifacts on the exact head, which gate `Accept`. Everything else has
+slack.
+
+### Wednesday, as early as the owner is available
 
 | When | What | Lane |
 | --- | --- | --- |
-| Wed 09-09, 10 min | **WO-01** the one remaining runtime question on D | Owner |
-| **Wed 11:00** | **WO-15 — cheap-gate sweep (R1).** Determine every gate whose determination is cheap, Gate 8 first: does the Long Table canary evidence bundle exist, and is it complete? Record `T`/`F`/`U` per gate | Director + Owner |
-| Wed 14:00 | **WO-02** blocker audit · **WO-03** PR triage returned | Codex · Cursor |
-| **Wed 16:00** | **WO-14 — feasibility check (R4, R5).** Temporal-network consistency and the operator-minutes budget, before any window is committed | Director |
-| Wed 17:00 | **Candidate freeze** — `c81e388` or `main` plus fix PRs | Director → Owner |
-| Wed 21:00 | **WO-05** fix PRs open with tests and tags | Codex |
-| Thu 12:00 | WO-05 reviewed, CI and security green, owner merges, SHA frozen | Cursor · Owner |
-| Thu 18:00 | **WO-06** n8n intake hardening and status workflow PR open | Codex |
-| Thu 19:00–21:30 | **WO-08** create both snapshots at the frozen candidate; build; bootstrap; select generation; `PrepareAcceptance` → `Accept` → `Migrate` → `Backup` → `RestoreDrill` on L, then on S | Owner + Director |
-| Fri 10:00 | **WO-10 prep** on L: activation bindings, cost ranks, generation manifest, host-bridge `Preflight`, campaign reservation | Owner + Director |
-| Fri 18:00–20:00 | **WO-09** Stage A on S; n8n exercised with doubles; evidence bundle. **Scope cut** on WO-12 | Owner + Director |
-| Sat 09:00 | **WO-10** `StageRuntime` → `ValidateProviders` on L | Owner + Director |
-| Sat 12:00 | **GO / NO-GO** against the nine gates — under R1 this confirms a mostly-known answer rather than discovering one | Owner + Director |
-| Sat 13:00 | **WO-11** stop D's Slack and n8n, repoint n8n to L, `Activate`, canary | Owner + Director |
-| Sat 16:00 | Keep-live or rollback decision | Owner |
-| Sat 18:00 → Sun 05:00 | **WO-13** report and guide, review, corrections, PDFs | Director · Cursor |
-| Sun 05:30 | Merge or leave open with reviews; deliver PDFs | Owner + Director |
-| **Sun 07:00** | **Deadline** | |
+| first thing | Push branch; freeze `c81e388`; launch narrowed WO-02 and WO-03; request Codex Security and independent review on that exact head; WO-01 health read (10 min) | Owner |
+| +3 h | Reviews and CI land; ACCEPT artifacts in hand | Cursor, CI |
+| then, 0.75 h | Snapshot, build, bootstrap, select generation on **S** | Owner + Director |
+| then, 1.25 h | Acceptance lifecycle through `RestoreDrill` and `Health` | Owner + Director |
+| then, 1.00 h | Stage A pass and verification | Owner + Director |
+| then, 0.50 h | n8n exercised against S | Owner + Director |
+| evening | Report and guide drafted, reviewed, PDFs delivered | Director, Cursor |
 
-`LIVE_OK` expires after 86,400 seconds with no renewal path, so
-`ValidateProviders` runs Saturday morning for a Saturday afternoon `Activate`.
-Buffer: roughly five hours Saturday night, plus the Friday scope cut.
+**Target completion: Wednesday evening. Conservative: Thursday midday.**
+Roughly three and a half to four days earlier than the previous plan.
+
+### The follow-on, scheduled separately
+
+The live phase is not cancelled, only decoupled: the five evidence blockers
+(WO-05), the provider activation evidence campaign, Grok's CLI contact,
+Antigravity team mode, Firecrawl's repository credential, and the Long Table
+canary that Gate 8 actually requires. None of it is on the delivery path now,
+and each can proceed at its own pace with the gate honestly recorded as unmet.
 
 ## 6. Work orders
 
