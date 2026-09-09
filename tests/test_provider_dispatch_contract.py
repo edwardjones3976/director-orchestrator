@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
@@ -110,22 +111,60 @@ class EnforcementTests(unittest.TestCase):
 
         An earlier version of this test patched material_authors and asserted
         the gate refused, which stayed true after the real function was stubbed
-        to return nothing. This runs it against this branch's own commit.
+        to return nothing. A later version ran it over HEAD~1..HEAD of the
+        checkout, which errored in CI: the test job checks out at the default
+        depth of 1, so HEAD has no parent and git log exits 128. This builds a
+        two-commit repository and runs the real function over it, so it depends
+        on git rather than on how the checkout was fetched.
         """
 
+        import contextlib
         import subprocess
+        import tempfile
 
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT,
-        )
-        if head.returncode != 0:
-            self.skipTest("git is unavailable in this environment")
-        authors = dispatch.material_authors("HEAD~1", "HEAD")
-        self.assertTrue(authors, "no authorship recovered from a real commit range")
-        self.assertTrue(
-            any("Claude" in a for a in authors),
-            f"expected a Claude tag in this branch's own commit, got {authors}",
-        )
+        with tempfile.TemporaryDirectory() as raw:
+            repository = pathlib.Path(raw)
+
+            def git(*arguments):
+                return subprocess.run(
+                    ["git", *arguments], cwd=repository, capture_output=True, text=True,
+                )
+
+            if git("init", "-q", "-b", "main").returncode != 0:
+                self.skipTest("git is unavailable in this environment")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Test")
+            (repository / "a.txt").write_text("base", encoding="utf-8")
+            git("add", "-A")
+            # The base commit carries a different author's tag. Without it the
+            # range is unfalsifiable: "git log HEAD" and "git log HEAD~1..HEAD"
+            # return the same authorship when only the head commit is tagged,
+            # so dropping the range entirely still passed.
+            base_message = "\n".join((
+                "[[OpenAI Codex | GPT-6 | 2026-09-08 | 00:00 UTC | BEGIN]]",
+                "",
+                "base commit",
+                "",
+                "[[OpenAI Codex | GPT-6 | 2026-09-08 | 00:00 UTC | END]]",
+            ))
+            git("commit", "--no-gpg-sign", "-q", "-m", base_message)
+            (repository / "a.txt").write_text("changed", encoding="utf-8")
+            git("add", "-A")
+            message = "\n".join((
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | BEGIN]]",
+                "",
+                "subject",
+                "",
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | END]]",
+            ))
+            git("commit", "--no-gpg-sign", "-q", "-m", message)
+            with contextlib.chdir(repository):
+                authors = dispatch.material_authors("HEAD~1", "HEAD")
+
+        # Exactly, not "contains": the base commit is tagged by a different
+        # author and is outside the range, so reading the whole history instead
+        # of the range fails here rather than passing.
+        self.assertEqual(authors, {"Claude Code"})
 
     def test_unknown_authorship_refuses_a_merge_dispatch(self):
         eligible, reason = dispatch.is_eligible("grok", set())
@@ -206,3 +245,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | END]]
