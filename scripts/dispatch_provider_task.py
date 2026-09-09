@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
@@ -35,6 +36,11 @@ This is acceptable only for the owner's bounded, full-capability review workflow
 with independent review and owner action gates retained; it provides no technical
 guarantee that a reviewer cannot write. Credential isolation or a brokered write
 path is needed for that guarantee.
+
+For Codex, review and merge commands are byte-identical for the same inputs.
+The sole policy separation is the pre-dispatch eligibility gate; there is no
+task-specific capability separation in Codex argv. Eligibility bars material
+authors for both tasks and is not evidence of owner authorization to merge.
 
 **The deny list is not a security boundary, and must not be described as one.**
 An earlier version of this file claimed it was. An independent review disproved
@@ -143,7 +149,7 @@ PROVIDERS: dict[str, dict[str, object]] = {
 
 # The identity each provider signs contribution tags with.
 TAG_IDENTITIES: dict[str, tuple[str, ...]] = {
-    "grok": ("Grok", "Cursor Grok"),
+    "grok": ("Grok", "Cursor Grok", "Cursor Grok 4.6"),
     "codex": ("OpenAI Codex", "Codex"),
     "claude": ("Claude Code", "Claude"),
     "cursor": ("Cursor",),
@@ -201,11 +207,10 @@ def is_eligible(provider: str, authors: set[str]) -> tuple[bool, str]:
         return False, "no contribution tags found in the range; cannot establish authorship"
 
     identities = TAG_IDENTITIES.get(provider, (provider,))
-    # Tags carry variants such as "Cursor Grok 4.6", so exact equality let a
-    # material author through. Match on the identity appearing in the recorded
-    # name, case-insensitively.
-    lowered = [i.lower() for i in identities]
-    clash = sorted(a for a in authors if any(i in a.lower() for i in lowered))
+    # Whole known identities only. Register observed variants explicitly:
+    # provider-name substrings also occur in unrelated people's and bots' names.
+    normalized = {i.casefold() for i in identities}
+    clash = sorted(a for a in authors if a.strip().casefold() in normalized)
     if clash:
         return False, f"{provider} materially authored this change as {', '.join(clash)}"
     return True, ""
@@ -235,11 +240,16 @@ _MERGE_INSTRUCTION = re.compile(
 def task_prompt_mismatch(task: str, prompt: str) -> str:
     """An accident guardrail over natural language, not an authorization boundary.
 
-    Recognize common requests, including "you should merge" and "I want you to
-    merge", while masking quoted evidence and retaining negation. Natural
-    language has unbounded paraphrases: this gate never becomes an authorization
-    boundary, regardless of how many examples it recognizes. Return a refusal
-    reason or an empty string; an empty string grants no authority.
+    A pattern over natural language is never complete. This gate will always
+    have misses; it is an accident guardrail, not an authorization boundary.
+    It recognizes some direct merge requests while masking quoted evidence and
+    retaining negation. It misses ordinary indirect, passive, embedded and
+    synonymous requests, including requests to land or ship a pull request.
+    Extending a phrase list cannot close that class or reliably resolve negation
+    and quotation scope. A real boundary must withhold write credentials from
+    reviewers and broker merge actions through a separately authorized path.
+    Return a refusal reason or an empty string; an empty string grants no
+    authority. Do not use this function to authorize a merge.
     """
 
     if task != "review":
@@ -425,3 +435,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]

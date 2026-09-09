@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
@@ -250,6 +251,21 @@ class EnforcementTests(unittest.TestCase):
 
 
 class EligibilityTests(unittest.TestCase):
+    def test_only_known_whole_provider_identities_bar_reviewers(self):
+        for provider, author, expected in (
+            ("grok", "Cursor Grok 4.6", False),
+            ("grok", " cursor grok 4.6 ", False),
+            ("grok", "Grok", False),
+            ("claude", "CLAUDE CODE", False),
+            ("claude", "Claude", False),
+            ("grok", "GrokBot", True),
+            ("claude", "Claude Smith", True),
+            ("grok", "Former Cursor Grok 4.6 contributor", True),
+        ):
+            with self.subTest(provider=provider, author=author):
+                eligible, reason = dispatch.is_eligible(provider, {author})
+                self.assertEqual(eligible, expected, reason)
+
     def test_a_material_author_may_never_merge_its_own_work(self):
         eligible, reason = dispatch.is_eligible("codex", {"OpenAI Codex", "Claude Code"})
         self.assertFalse(eligible)
@@ -642,6 +658,17 @@ class DispatchGateTests(unittest.TestCase):
         self.assertNotIn('--deny', command)
         self.assertEqual(command[-1], '-')
 
+    def test_codex_review_and_merge_have_identical_argv(self):
+        # This is a limitation contract, not a containment claim. Comparing both
+        # actual builds catches a future capability change to either task.
+        with unittest.mock.patch.object(dispatch.shutil, "which", return_value="codex"):
+            review = dispatch.build_command("codex", "review", "p.txt", 80)
+            merge = dispatch.build_command("codex", "merge", "p.txt", 15)
+        self.assertEqual(review, merge)
+        self.assertEqual(review, [
+            "codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "-",
+        ])
+
 
 class AuthorshipTrailerTests(unittest.TestCase):
     def test_pull_request_range_uses_explicit_github_repository_outside_checkout(self):
@@ -769,3 +796,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
