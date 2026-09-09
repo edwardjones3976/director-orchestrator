@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
@@ -225,6 +227,7 @@ function ConvertTo-ComposeValue {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw)
 
     $value = $Raw.Trim()
+    $quoted = $false
     if ($value.Length -ge 2) {
         foreach ($quote in @('"', "'")) {
             if ($value.StartsWith($quote)) {
@@ -233,16 +236,25 @@ function ConvertTo-ComposeValue {
                 # and matching only start-and-end let exactly that spelling
                 # through the ownership check.
                 $close = $value.IndexOf($quote, 1)
-                if ($close -gt 0) { return $value.Substring(1, $close - 1) }
+                if ($close -gt 0) {
+                    $value = $value.Substring(1, $close - 1)
+                    # Compose keeps single-quoted values literal, but resolves
+                    # interpolation inside double quotes after stripping them.
+                    if ($quote -eq "'") { return $value }
+                    $quoted = $true
+                    break
+                }
             }
         }
     }
     # Unquoted: an inline comment needs whitespace before the '#', which is
     # what distinguishes it from a '#' inside a value.
-    $comment = $value.IndexOf(" #")
-    if ($comment -ge 0) { $value = $value.Substring(0, $comment).Trim() }
-    $tab = $value.IndexOf("`t#")
-    if ($tab -ge 0) { $value = $value.Substring(0, $tab).Trim() }
+    if (-not $quoted) {
+        $comment = $value.IndexOf(" #")
+        if ($comment -ge 0) { $value = $value.Substring(0, $comment).Trim() }
+        $tab = $value.IndexOf("`t#")
+        if ($tab -ge 0) { $value = $value.Substring(0, $tab).Trim() }
+    }
     # ${VAR:-default} and ${VAR-default} resolve to the default when VAR is
     # unset, which is how a sibling can name a project without writing it
     # literally. The undefined-variable case is the one that matters here.
@@ -1506,3 +1518,5 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:14 UTC | END]]

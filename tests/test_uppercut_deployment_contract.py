@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
@@ -1095,7 +1097,7 @@ foreach ($url in @(
         )
         self.assertNotIn("}", self.script[guard:call].split("{", 1)[1])
 
-    def test_every_compose_spelling_of_a_sibling_name_collides(self):
+    def test_seven_compose_spellings_resolve_to_the_sibling_name(self):
         """Compare what Compose resolves, not what the operator typed.
 
         Stripping only a matching start-and-end quote pair was not enough. A
@@ -1147,8 +1149,8 @@ $values['QUOTED']
     def test_the_collision_check_rejects_through_the_real_comparison(self):
         """Replacing the equality with $false left all 66 tests green.
 
-        The quoted-sibling test exercised the resolver and never the branch
-        that throws, so disabling the comparison altogether went unnoticed.
+        Exercise the throwing guard for each spelling, including interpolation
+        after double-quote stripping, with and without a trailing comment.
         """
 
         probe = SOURCE_HELPER + """
@@ -1156,19 +1158,37 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $root | Out-Null
 Push-Location $root
 try {
-    Set-Content -LiteralPath '.env.uppercut' -Encoding ascii -Value @(
-        'DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director" # sibling'
-    )
     $profilePath = '.env.long-table'
     Set-Content -LiteralPath $profilePath -Encoding ascii -Value @('X=1')
     $target = @{ DIRECTOR_COMPOSE_PROJECT_NAME = 'project-uppercut-director' }
-    try {
-        Assert-NoProfileCollisions -TargetValues $target -Names @('DIRECTOR_COMPOSE_PROJECT_NAME')
-        'ACCEPTED'
-    } catch { 'REJECTED' }
+    foreach ($raw in @(
+        'project-uppercut-director',
+        '"project-uppercut-director"',
+        "'project-uppercut-director'",
+        '"project-uppercut-director" # sibling',
+        'project-uppercut-director # sibling',
+        '${MISSING:-project-uppercut-director}',
+        '${MISSING-project-uppercut-director}',
+        '"${MISSING:-project-uppercut-director}"',
+        '"${MISSING:-project-uppercut-director}" # sibling'
+    )) {
+        Set-Content -LiteralPath '.env.uppercut' -Encoding ascii -Value (
+            'DIRECTOR_COMPOSE_PROJECT_NAME=' + $raw
+        )
+        try {
+            Assert-NoProfileCollisions -TargetValues $target -Names @('DIRECTOR_COMPOSE_PROJECT_NAME')
+            'ACCEPTED'
+        } catch { $_.Exception.Message }
+    }
 } finally { Pop-Location; Remove-Item -LiteralPath $root -Recurse -Force }
 """
-        self.assertEqual(_run_powershell(probe).strip(), "REJECTED")
+        self.assertEqual(
+            _run_powershell(probe).splitlines(),
+            [
+                ".env.long-table collides with .env.uppercut on "
+                "DIRECTOR_COMPOSE_PROJECT_NAME. No service was started."
+            ] * 9,
+        )
 
     def test_the_route_must_address_the_n8n_service_not_merely_the_right_path(self):
         """The right path on the wrong destination is still unreachable.
@@ -1228,19 +1248,19 @@ try {
         '  decoy:',
         '    environment:',
         '      N8N_PORT: 5679',
-        '      N8N_PROTOCOL: https',
+        '      N8N_PROTOCOL: http',
         '  n8n:',
         '    environment:',
         '      N8N_PORT: 7001',
-        '      N8N_PROTOCOL: http'
+        '      N8N_PROTOCOL: https'
     )
     $endpoint = Get-N8nServiceEndpoint -RepositoryRoot $root
     "$($endpoint.Scheme)://$($endpoint.Host):$($endpoint.Port)"
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
 """
-        # 7001 is n8n's own port; 5679 belongs to the service declared before
-        # it, which a whole-document search returned instead.
-        self.assertEqual(_run_powershell(probe).strip(), "http://n8n:7001")
+        # Both values differ from the real service's http:5678 and the decoy's
+        # http:5679, so constants and whole-document searches cannot pass.
+        self.assertEqual(_run_powershell(probe).strip(), "https://n8n:7001")
 
     def test_the_expected_route_is_read_from_the_workflow_not_written_twice(self):
         """A second hardcoded copy of the path would drift from the first."""
@@ -2055,3 +2075,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:14 UTC | END]]
