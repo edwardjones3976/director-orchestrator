@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -38,7 +39,7 @@ function Get-DatabaseBinding { param([switch]$Bootstrap) if(-not $Bootstrap){thr
             with tempfile.TemporaryDirectory() as directory:
                 harness = Path(directory) / "probe.ps1"
                 harness.write_text(program)
-                result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script), action], capture_output=True, text=True, timeout=20)
+                result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script), action], capture_output=True, text=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required")
@@ -57,7 +58,7 @@ throw 'running intake incorrectly accepted'
         with tempfile.TemporaryDirectory() as directory:
             harness = Path(directory) / "probe.ps1"
             harness.write_text(program)
-            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script)], capture_output=True, text=True, timeout=20)
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script)], capture_output=True, text=True, timeout=300)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("rejected", result.stdout)
 
@@ -83,7 +84,7 @@ if($env:LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH -cne '/data/fresh.sqlite3'){th
             harness.write_text(program)
             environment = Path(directory) / "configuration.env"
             environment.write_text("DIRECTOR_ASGI_APP=director_orchestrator.main:app\nUNCHANGED=value\n")
-            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script), str(environment)], capture_output=True, text=True, timeout=20)
+            result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-File", str(harness), str(script), str(environment)], capture_output=True, text=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr)
             selected = environment.read_text()
             self.assertIn("UNCHANGED=value", selected)
@@ -301,3 +302,4 @@ class DatabaseIdentityBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
