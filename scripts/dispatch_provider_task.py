@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
@@ -138,16 +139,29 @@ TAG_IDENTITIES: dict[str, tuple[str, ...]] = {
 }
 
 _TAG = re.compile(r"\[\[\s*([^|\]]+?)\s*\|")
+# `Co-Authored-By: OpenAI Codex <noreply@example>` -- the name only, without the
+# address, so it compares against TAG_IDENTITIES the same way a tag name does.
+_TRAILER = re.compile(r"(?mi)^\s*Co-Authored-By:\s*([^<\n]+?)\s*(?:<[^>]*>)?\s*$")
 
 
 def material_authors(base: str, head: str) -> set[str]:
-    """Return the contributor names recorded in the commits under review."""
+    """Return the contributor names recorded in the commits under review.
+
+    Both the contribution tags and the Co-Authored-By trailers count. Reading
+    only the tags missed a coauthor stated in the standard git field: an
+    independent review of #143 built a commit carrying a Codex trailer and no
+    Codex tag, and `is_eligible("codex", ...)` returned True on it. The
+    repository's own attribution policy says tags never replace git provenance,
+    so a trailer is provenance the tags do not supersede.
+    """
 
     out = subprocess.run(
         ["git", "log", "--format=%B", f"{base}..{head}"],
         capture_output=True, text=True, check=True,
     ).stdout
-    return {name.strip() for name in _TAG.findall(out)}
+    names = {name.strip() for name in _TAG.findall(out)}
+    names.update(name.strip() for name in _TRAILER.findall(out))
+    return {name for name in names if name}
 
 
 def pull_request_range(pr: str) -> tuple[str, str]:
@@ -184,6 +198,38 @@ def is_eligible(provider: str, authors: set[str]) -> tuple[bool, str]:
     if clash:
         return False, f"{provider} materially authored this change as {', '.join(clash)}"
     return True, ""
+
+
+# Instructions a review prompt must not carry. Eligibility is computed for the
+# --task flag, and the prompt is then free text: a review dispatch whose prompt
+# said "please merge this PR now" cleared the review gate and asked for a merge.
+# An independent review of #143 built exactly that command.
+MERGE_SHAPED = (
+    "gh pr merge",
+    "merge this pull request",
+    "merge this pr",
+    "merge the pull request",
+    "merge it if",
+    "squash and merge",
+    "--squash --delete-branch",
+)
+
+
+def task_prompt_mismatch(task: str, prompt: str) -> str:
+    """Return why this prompt does not match its task, or an empty string."""
+
+    if task != "review":
+        return ""
+    lowered = prompt.lower()
+    for phrase in MERGE_SHAPED:
+        if phrase in lowered:
+            # Reported without quoting surrounding prompt text, which can carry
+            # a pull-request body.
+            return (
+                f"a review prompt asks for a merge ({phrase!r}); "
+                "dispatch --task merge and be re-checked for eligibility"
+            )
+    return ""
 
 
 def build_command(provider: str, task: str, prompt_file: str, turns: int) -> list[str]:
@@ -247,6 +293,10 @@ def main(argv: list[str] | None = None) -> int:
     # Unset means "whatever this task needs" (TASK_TURNS), not a single number
     # that has to suit both a merge and a mutation review.
     parser.add_argument("--turns", type=int, default=None)
+    # Wall-clock bound on the child. Observed reviews here run 5 to 20 minutes;
+    # 3600s is generous for the deepest mutation review and still finite, which
+    # is the property that was missing.
+    parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--print-command", action="store_true")
     args = parser.parse_args(argv)
 
@@ -255,11 +305,23 @@ def main(argv: list[str] | None = None) -> int:
     # skipped the check for reviews entirely.
     base, head = pull_request_range(args.pr)
     eligible, reason = is_eligible(args.provider, material_authors(base, head))
-    if args.task == "merge" and not eligible:
+    if not eligible:
+        # Both tasks refuse. The review path used to print a NOTE and dispatch
+        # anyway, which was written when a review was read-only; it now runs at
+        # full capability, so "read-only review" was describing a grant that no
+        # longer exists. A material author reviewing its own work is not a
+        # weaker version of the bar, it is the bar not applying.
         print(f"REFUSED: {reason}", file=sys.stderr)
         return 2
-    if args.task == "review" and not eligible:
-        print(f"NOTE: {reason}; dispatching read-only review anyway", file=sys.stderr)
+
+    prompt = pathlib.Path(args.prompt_file).read_text(encoding="utf-8", errors="replace")
+    mismatch = task_prompt_mismatch(args.task, prompt)
+    if mismatch:
+        # Eligibility was computed for --task and the provider is then handed a
+        # prompt that can say anything. A review dispatch carrying "merge this
+        # pull request" passed the review gate and asked for the merge.
+        print(f"REFUSED: {mismatch}", file=sys.stderr)
+        return 3
 
     turns = args.turns if args.turns is not None else TASK_TURNS[args.task]
     command = build_command(args.provider, args.task, args.prompt_file, turns)
@@ -275,11 +337,26 @@ def main(argv: list[str] | None = None) -> int:
     # in a prompt and the echo ran, outside the provider's permission controls
     # entirely. Prompts routinely quote pull-request bodies and review
     # comments, so the text is not trusted input.
-    completed = subprocess.run(
-        command,
-        input=pathlib.Path(args.prompt_file).read_bytes(),
-        capture_output=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            input=prompt.encode("utf-8"),
+            capture_output=True,
+            # A turn cap bounds how many steps a provider takes; it does not
+            # bound how long one step runs, and codex receives no cap at all.
+            # Without this a stalled provider blocks the caller indefinitely,
+            # which is how a dispatch becomes indistinguishable from a hang for
+            # a second reason.
+            timeout=args.timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"WALL-CLOCK TIMEOUT: {args.provider} produced no result in "
+            f"{args.timeout}s and was killed. Partial output, if any, is lost. "
+            f"Re-run with a larger --timeout if the task genuinely needs it.",
+            file=sys.stderr,
+        )
+        return 5
     # Pass the provider's own output through unaltered, bytes for bytes. It is
     # the verdict, and callers redirect it to a file.
     sys.stdout.buffer.write(completed.stdout)
@@ -311,3 +388,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]

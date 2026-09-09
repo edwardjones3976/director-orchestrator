@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
@@ -326,17 +327,6 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("cursor", dispatch.PROVIDERS)
 
 
-if __name__ == "__main__":
-    unittest.main()
-# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
-
-
 class TurnBudgetTests(unittest.TestCase):
     """Exhaustion must be detected, not just made less likely.
 
@@ -415,3 +405,253 @@ class TurnBudgetTests(unittest.TestCase):
         self.assertGreaterEqual(dispatch.TASK_TURNS["merge"], 10)
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]
+
+
+class DispatchGateTests(unittest.TestCase):
+    """main() itself, which nothing tested.
+
+    Every earlier test here exercised build_command or a helper. A delta review
+    of #143 disconnected main() from the exhaustion detector, hardcoded turns=25
+    inside it, and removed the stdin pipe -- all three left the suite green,
+    because main() was never called.
+    """
+
+    def _run(self, task, prompt_text, authors, extra=()):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = pathlib.Path(raw) / "p.txt"
+            path.write_text(prompt_text, encoding="utf-8")
+            argv = [
+                "--pr", "143", "--task", task, "--provider", "grok",
+                "--prompt-file", str(path), "--print-command", *extra,
+            ]
+            with unittest.mock.patch.object(
+                dispatch, "pull_request_range", lambda pr: ("base", "head")
+            ), unittest.mock.patch.object(
+                dispatch, "material_authors", lambda base, head: set(authors)
+            ):
+                import contextlib
+                import io
+
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = dispatch.main(argv)
+                return code, out.getvalue(), err.getvalue()
+
+    def test_an_ineligible_reviewer_is_refused_not_merely_noted(self):
+        """It printed a NOTE and dispatched anyway, at full capability.
+
+        That text was written when a review was read-only. It no longer is, so
+        "dispatching read-only review anyway" described a grant that had ceased
+        to exist. Reproduced by the review: exit 0 with the command built.
+        """
+
+        code, _, err = self._run("review", "review this", {"Cursor Grok 4.6"})
+        self.assertEqual(code, 2)
+        self.assertIn("REFUSED", err)
+        self.assertNotIn("anyway", err)
+
+    def test_an_ineligible_merge_is_refused(self):
+        code, _, err = self._run("merge", "merge it", {"Cursor Grok 4.6"})
+        self.assertEqual(code, 2)
+        self.assertIn("REFUSED", err)
+
+    def test_a_review_prompt_asking_for_a_merge_is_refused(self):
+        """Eligibility is computed for --task; the prompt is free text.
+
+        A review dispatch whose prompt said "please merge this PR now" cleared
+        the review gate and then asked for the merge.
+        """
+
+        for asking in (
+            "please merge this pull request now",
+            "run gh pr merge when done",
+            "review it, then squash and merge",
+        ):
+            code, _, err = self._run("review", asking, {"Claude Code"})
+            self.assertEqual(code, 3, asking)
+            self.assertIn("asks for a merge", err, asking)
+
+    def test_a_merge_prompt_may_of_course_ask_for_a_merge(self):
+        code, out, _ = self._run("merge", "merge this pull request", {"Claude Code"})
+        self.assertEqual(code, 0)
+        self.assertIn("--always-approve", out)
+
+    def test_main_uses_the_per_task_budget_it_was_not_given(self):
+        """Hardcoding turns inside main() left every earlier test green."""
+
+        _, review, _ = self._run("review", "review this", {"Claude Code"})
+        self.assertIn(str(dispatch.TASK_TURNS["review"]), review.split())
+        _, merge, _ = self._run("merge", "merge this pr", {"Claude Code"})
+        self.assertIn(str(dispatch.TASK_TURNS["merge"]), merge.split())
+        # And an explicit --turns still wins.
+        _, pinned, _ = self._run(
+            "review", "review this", {"Claude Code"}, extra=("--turns", "7")
+        )
+        self.assertIn("7", pinned.split())
+
+    def _dispatch(self, stdout: bytes, returncode: int = 0):
+        """Run main() to completion against a stubbed child process.
+
+        Asserting on source text cannot show that main() calls anything. A
+        delta review of #143 disconnected main() from the exhaustion detector
+        and every test stayed green, so this drives the real function and reads
+        its exit code.
+        """
+
+        import subprocess
+        import tempfile
+
+        class Completed:
+            def __init__(self):
+                self.stdout = stdout
+                self.stderr = b""
+                self.returncode = returncode
+
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            return Completed()
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = pathlib.Path(raw) / "p.txt"
+            path.write_text("review this", encoding="utf-8")
+            argv = [
+                "--pr", "143", "--task", "review", "--provider", "grok",
+                "--prompt-file", str(path),
+            ]
+            with unittest.mock.patch.object(
+                dispatch, "pull_request_range", lambda pr: ("base", "head")
+            ), unittest.mock.patch.object(
+                dispatch, "material_authors", lambda base, head: {"Claude Code"}
+            ), unittest.mock.patch.object(
+                dispatch.shutil, "which", lambda name: name
+            ), unittest.mock.patch.object(
+                dispatch.subprocess, "run", fake_run
+            ):
+                import contextlib
+                import io
+
+                # main() writes the provider's output as bytes through
+                # sys.stderr.buffer, so a plain StringIO is not a stand-in.
+                class Text(io.StringIO):
+                    def __init__(self):
+                        super().__init__()
+                        self.buffer = io.BytesIO()
+
+                out, err = Text(), Text()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = dispatch.main(argv)
+                return code, err.getvalue() + err.buffer.getvalue().decode(
+                    "utf-8", errors="replace"
+                ), captured
+
+    def test_main_reports_exhaustion_rather_than_passing_the_exit_code_through(self):
+        """Disconnecting the detector from main() left every test green."""
+
+        import json
+
+        exhausted = json.dumps(
+            {"stopReason": "cancelled", "num_turns": dispatch.TASK_TURNS["review"]}
+        ).encode()
+        code, err, _ = self._dispatch(exhausted)
+        self.assertEqual(code, 4)
+        self.assertIn("TURN BUDGET EXHAUSTED", err)
+        self.assertIn("not a hang", err)
+
+    def test_main_passes_a_completed_run_straight_through(self):
+        import json
+
+        finished = json.dumps({"stopReason": "end_turn", "num_turns": 12}).encode()
+        code, err, _ = self._dispatch(finished, returncode=0)
+        self.assertEqual(code, 0)
+        self.assertNotIn("EXHAUSTED", err)
+
+    def test_main_pipes_the_prompt_and_bounds_the_child(self):
+        """The stdin pipe and the timeout must reach the actual call."""
+
+        import json
+
+        _, _, captured = self._dispatch(
+            json.dumps({"stopReason": "end_turn", "num_turns": 3}).encode()
+        )
+        self.assertEqual(captured["kwargs"]["input"], b"review this")
+        self.assertEqual(captured["kwargs"]["timeout"], 3600)
+        # And the prompt text is nowhere in argv.
+        self.assertNotIn("review this", captured["command"])
+
+    def test_a_wall_clock_timeout_is_always_passed_to_the_child(self):
+        """A turn cap bounds steps, not time, and codex gets no cap at all."""
+
+        import inspect
+
+        source = inspect.getsource(dispatch.main)
+        self.assertIn("timeout=args.timeout", source)
+        self.assertIn("TimeoutExpired", source)
+        self.assertIn('"--timeout", type=int, default=3600', inspect.getsource(dispatch.main))
+
+
+class AuthorshipTrailerTests(unittest.TestCase):
+    def test_a_co_authored_by_trailer_counts_as_authorship(self):
+        """Reading only the contribution tags missed a stated coauthor.
+
+        A review of #143 built a commit carrying a Codex trailer and no Codex
+        tag; is_eligible("codex", ...) returned True on it. The repository's own
+        policy says tags never replace git provenance.
+        """
+
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            repository = pathlib.Path(raw)
+
+            def git(*arguments):
+                return subprocess.run(
+                    ["git", *arguments], cwd=repository, capture_output=True, text=True
+                )
+
+            if git("init", "-q", "-b", "main").returncode != 0:
+                self.skipTest("git is unavailable in this environment")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Test")
+            (repository / "a.txt").write_text("base", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "--no-gpg-sign", "-q", "-m", "base")
+            (repository / "a.txt").write_text("changed", encoding="utf-8")
+            git("add", "-A")
+            # A tag naming Claude, and a trailer naming Codex. The trailer is
+            # the only record of the coauthor.
+            message = "\n".join((
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | BEGIN]]",
+                "",
+                "subject",
+                "",
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | END]]",
+                "",
+                "Co-Authored-By: OpenAI Codex <noreply@example.invalid>",
+            ))
+            git("commit", "--no-gpg-sign", "-q", "-m", message)
+
+            import os
+
+            cwd = os.getcwd()
+            os.chdir(repository)
+            try:
+                authors = dispatch.material_authors("HEAD~1", "HEAD")
+            finally:
+                os.chdir(cwd)
+
+        self.assertIn("Claude Code", authors)
+        self.assertIn("OpenAI Codex", authors)
+        eligible, reason = dispatch.is_eligible("codex", authors)
+        self.assertFalse(eligible)
+        self.assertIn("materially authored", reason)
+
+
+if __name__ == "__main__":
+    unittest.main()
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
