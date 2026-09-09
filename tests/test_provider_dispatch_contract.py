@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
@@ -21,50 +22,57 @@ assert _spec.loader is not None
 _spec.loader.exec_module(dispatch)
 
 
-class AllowRuleTests(unittest.TestCase):
-    def test_review_is_read_only(self):
-        """A review that can merge is not a review."""
+class DenyRuleTests(unittest.TestCase):
+    def test_a_review_cannot_change_what_it_is_reviewing(self):
+        """A review that can merge is not a review, whatever else it can do.
 
-        rules = dispatch.TASK_ALLOW_RULES["review"]
-        # Named write operations, not substrings: git merge-base is read-only
-        # and a review genuinely needs it, so matching on "merge" alone would
-        # reject a correct rule and teach nothing.
-        writes = (
-            "gh pr merge", "gh pr close", "gh pr edit", "gh pr review",
-            "git push", "git commit", "git merge ", "git rebase", "git reset",
-            "rm ", "del ",
-        )
-        for rule in rules:
-            for forbidden in writes:
-                self.assertNotIn(forbidden, rule.lower(), rule)
-
-    def test_merge_is_the_only_task_granted_merge(self):
-        granted = {
-            task for task, rules in dispatch.TASK_ALLOW_RULES.items()
-            if any("gh pr merge" in rule for rule in rules)
-        }
-        self.assertEqual(granted, {"merge"})
-
-    def test_gh_is_granted_explicitly_because_the_shared_settings_omit_it(self):
-        """The whole failure mode was gh being absent from the shared allowlist.
-
-        A denied command surfaces as a cancelled session, which reads like a
-        broken provider, so every task that talks to GitHub must carry its own
-        rule rather than relying on inherited settings.
+        Providers now run with full capability, so this is the only thing
+        standing between a reviewer and the pull request it is judging. Each
+        verb below either merges it, alters its state, or moves the branch out
+        from under the SHA the verdict is bound to.
         """
 
-        for task, rules in dispatch.TASK_ALLOW_RULES.items():
-            self.assertTrue(
-                any(rule.startswith("Bash(gh ") for rule in rules),
-                f"{task} cannot reach GitHub",
-            )
+        denied = " ".join(dispatch.TASK_DENY_RULES["review"])
+        for verb in ("gh pr merge", "gh api", "gh pr edit", "gh pr close", "git push"):
+            self.assertIn(verb, denied, verb)
+
+    def test_the_merge_task_is_the_only_one_that_may_merge(self):
+        may_merge = {
+            task for task, rules in dispatch.TASK_DENY_RULES.items()
+            if not any("gh pr merge" in rule for rule in rules)
+        }
+        self.assertEqual(may_merge, {"merge"})
+
+    def test_gh_api_is_denied_because_it_reaches_the_merge_endpoint(self):
+        """gh api takes -X PUT, so holding it is holding a merge.
+
+        Denying the literal "gh pr merge" alone would not have prevented a
+        review from merging through the REST pull-request endpoint.
+        """
+
+        self.assertIn("Bash(gh api:*)", dispatch.TASK_DENY_RULES["review"])
 
     def test_rules_are_scoped_never_blanket(self):
-        for task, rules in dispatch.TASK_ALLOW_RULES.items():
+        for task, rules in dispatch.TASK_DENY_RULES.items():
             for rule in rules:
                 self.assertNotIn("Bash(gh:*)", rule)
                 self.assertNotIn("Bash(*", rule)
                 self.assertTrue(rule.endswith(":*)"), f"{task}: {rule}")
+
+    def test_a_provider_that_cannot_enforce_a_deny_list_is_refused(self):
+        """Dropping the gate silently is worse than refusing the dispatch.
+
+        codex carries no deny flag, so it is admitted only on the separate,
+        measured ground that its sandbox withholds the GitHub credential. A
+        provider with neither must not be dispatched to review at all.
+        """
+
+        spec = dict(dispatch.PROVIDERS["codex"])
+        spec["github_unreachable"] = False
+        with unittest.mock.patch.dict(dispatch.PROVIDERS, {"codex": spec}):
+            with self.assertRaises(SystemExit) as caught:
+                dispatch.build_command("codex", "review", "p.txt", 25)
+        self.assertIn("cannot enforce", str(caught.exception))
 
 
 class EnforcementTests(unittest.TestCase):
@@ -75,23 +83,27 @@ class EnforcementTests(unittest.TestCase):
     gate, and emptying material_authors all left 10 of 10 passing.
     """
 
-    def test_every_rule_is_introduced_by_allow_not_deny(self):
-        for task in dispatch.TASK_ALLOW_RULES:
+    def test_every_denied_rule_reaches_the_built_command_as_a_deny(self):
+        for task in dispatch.TASK_DENY_RULES:
             command = dispatch.build_command("grok", task, "p.txt", 25)
-            self.assertNotIn("--deny", command, task)
-            for rule in dispatch.TASK_ALLOW_RULES[task]:
+            self.assertNotIn("--allow", command, task)
+            for rule in dispatch.TASK_DENY_RULES[task]:
                 position = command.index(rule)
-                self.assertEqual(command[position - 1], "--allow", f"{task}: {rule}")
+                self.assertEqual(command[position - 1], "--deny", f"{task}: {rule}")
 
-    def test_no_task_may_reach_a_github_write_verb(self):
-        """gh api accepts -X PUT, so holding it is holding a merge."""
+    def test_the_review_command_carries_full_capability_and_the_gate(self):
+        """Full capability is the point; the gate is what makes it safe.
 
-        for task, rules in dispatch.TASK_ALLOW_RULES.items():
-            joined = " ".join(rules)
-            self.assertNotIn("gh api", joined, task)
-            if task != "merge":
-                for verb in ("gh pr merge", "gh pr close", "gh pr edit", "git push"):
-                    self.assertNotIn(verb, joined, f"{task} grants {verb}")
+        The owner asked for full capabilities after a read-only grant cancelled
+        a review mid-run. Both halves must be in the command that is actually
+        dispatched, not merely in the table it was built from.
+        """
+
+        command = dispatch.build_command("grok", "review", "p.txt", 25)
+        self.assertIn("--always-approve", command)
+        self.assertNotIn("--permission-mode", command)
+        merge = command.index("Bash(gh pr merge:*)")
+        self.assertEqual(command[merge - 1], "--deny")
 
     def test_unknown_authorship_is_refused_rather_than_cleared(self):
         """An empty range proves nothing, so it must not read as eligible."""
@@ -227,12 +239,18 @@ class EligibilityTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    def test_grok_receives_each_allow_rule(self):
+    def test_the_merge_command_subtracts_nothing(self):
+        """The acting agent needs every verb the merge preconditions require.
+
+        A merge dispatch verifies the head SHA, the state and the six required
+        checks for itself before merging, so subtracting a GitHub verb here
+        would break the verification rather than protect anything.
+        """
+
         command = dispatch.build_command("grok", "merge", "p.txt", 25)
-        for rule in dispatch.TASK_ALLOW_RULES["merge"]:
-            self.assertIn(rule, command)
-        self.assertIn("--permission-mode", command)
-        self.assertIn("dontAsk", command)
+        self.assertEqual(dispatch.TASK_DENY_RULES["merge"], ())
+        self.assertNotIn("--deny", command)
+        self.assertIn("--always-approve", command)
 
     def test_cursor_is_absent_because_it_demands_a_disabled_sandbox(self):
         """Never dispatch to a CLI that requires switching a sandbox off."""
@@ -246,3 +264,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]

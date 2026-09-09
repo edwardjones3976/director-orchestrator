@@ -1,7 +1,8 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
-"""Dispatch a bounded task to a provider CLI with least-privilege permissions.
+"""Dispatch a bounded task to a provider CLI.
 
 Provider CLIs read their permission rules from the shared Claude settings file,
 which has no `gh` rule. A CLI that is denied a command reports the session as
@@ -10,9 +11,24 @@ Grok dispatches were abandoned on that misreading before the cause was measured:
 `git rev-parse` returned `end_turn`, `gh pr view` returned `cancelled`, and the
 same prompt with `--allow 'Bash(gh pr view:*)'` returned the answer.
 
-So permissions are granted per invocation, from the smallest set the task needs,
-and never by widening the shared settings file. A review may read; only a merge
-may merge.
+A per-task allow list was the first answer and it was the wrong one. A reviewer
+that may only read cannot run the suite, exercise the code path it is judging,
+or build a reproduction, so it reports on what the source appears to say rather
+than on what it does. A Grok review of #146 was cancelled mid-run for exactly
+that: the prompt asked it to construct a malformed input and observe the result,
+which its grant did not permit. Owner instruction, 2026-09-09: give it full
+capabilities.
+
+So each CLI is now dispatched with its own full-approval flag, and permission is
+subtracted rather than added. What is subtracted is only what would let a
+reviewer alter the thing it is judging: the merge, the branch, and the pull
+request's state. Everything a review actually needs is available.
+
+That subtraction is not a preference. AGENTS.md rule 3 requires the producer,
+the reviewer, and the acting agent to be three distinct identities, and rule 4
+forbids model output from removing an approval requirement. A review grant that
+could merge would collapse the reviewer and the acting agent into one identity,
+so the deny list is what keeps a review a review.
 
 Eligibility is computed, not asserted. A provider named in the contribution tags
 of the pull request's own commits materially authored it and cannot merge it, so
@@ -32,29 +48,20 @@ import subprocess
 import sys
 
 
-# Least privilege per task. A review never receives a rule that can write.
-TASK_ALLOW_RULES: dict[str, tuple[str, ...]] = {
+# Full capability, minus the verbs that would let a reviewer change its own
+# subject. A review may run anything; it may not merge the pull request, move
+# the branch under the SHA it is reviewing, or alter that pull request's state.
+# `gh api` is subtracted outright because it takes -X PUT and so reaches the
+# merge endpoint, which is how an earlier "read-only" grant could have merged.
+TASK_DENY_RULES: dict[str, tuple[str, ...]] = {
     "review": (
-        "Bash(git diff:*)",
-        "Bash(git log:*)",
-        "Bash(git show:*)",
-        "Bash(git rev-parse:*)",
-        "Bash(git merge-base:*)",
-        "Bash(gh pr view:*)",
-        "Bash(gh pr checks:*)",
-        "Bash(gh pr diff:*)",
-        # gh api is deliberately absent. It accepts -X PUT, so a review holding
-        # it could merge through the REST pull-request endpoint; excluding the
-        # literal "gh pr merge" would not have prevented that.
-    ),
-    "merge": (
-        "Bash(git diff:*)",
-        "Bash(git log:*)",
-        "Bash(git rev-parse:*)",
-        "Bash(gh pr view:*)",
-        "Bash(gh pr checks:*)",
         "Bash(gh pr merge:*)",
+        "Bash(gh api:*)",
+        "Bash(gh pr edit:*)",
+        "Bash(gh pr close:*)",
+        "Bash(git push:*)",
     ),
+    "merge": (),
 }
 
 # How each CLI takes a prompt, an allow rule, and a turn bound. Cursor is absent
@@ -63,9 +70,15 @@ TASK_ALLOW_RULES: dict[str, tuple[str, ...]] = {
 PROVIDERS: dict[str, dict[str, object]] = {
     "grok": {
         "executable": "grok",
-        "base": ["--output-format", "json", "--permission-mode", "dontAsk"],
+        # --always-approve auto-approves every tool execution. Measured
+        # 2026-09-09: under it Grok ran `python -c "print(6*7)"` and answered
+        # 42, and a --deny rule still refused a matching command with "Denied
+        # by permission policy". Full capability and a binding deny list
+        # coexist, so the gate below is real rather than decorative.
+        "base": ["--output-format", "json", "--always-approve"],
         "prompt": ["--prompt-file", "{prompt_file}"],
-        "allow": "--allow",
+        "deny": "--deny",
+        "github_unreachable": False,
         "turns": ["--max-turns", "{turns}"],
     },
     "codex": {
@@ -73,9 +86,17 @@ PROVIDERS: dict[str, dict[str, object]] = {
         # read-only refuses gh authentication, so reviews run in the default
         # sandbox; the prompt is passed as an argument because codex exec takes
         # it positionally rather than on stdin.
+        # codex exec exposes no per-rule flag, so it cannot carry the deny list.
+        # Its sandbox supplies the same gate by construction: measured, a codex
+        # session running `gh` gets "Unable to determine: HTTP 401
+        # (authentication required)" because the sandbox withholds the GitHub
+        # credential. It therefore cannot merge, edit, close, or push whatever
+        # it is reviewing. If that ever changes, this flag must change with it
+        # and the review dispatch must start refusing.
         "base": ["exec", "--skip-git-repo-check"],
         "prompt": ["{prompt_text}"],
-        "allow": None,
+        "deny": None,
+        "github_unreachable": True,
         "turns": [],
     },
 }
@@ -146,9 +167,14 @@ def build_command(provider: str, task: str, prompt_file: str, turns: int) -> lis
     spec = PROVIDERS[provider]
     command = [shutil.which(str(spec["executable"])) or str(spec["executable"]),
                *list(spec["base"])]
-    for rule in TASK_ALLOW_RULES[task]:
-        if spec["allow"]:
-            command += [str(spec["allow"]), rule]
+    if TASK_DENY_RULES[task] and not (spec["deny"] or spec["github_unreachable"]):
+        # Never dispatch a task whose gate this CLI can neither express nor
+        # already satisfy. Silently dropping the deny list hands a reviewer the
+        # merge, which is the one thing a review grant must not carry.
+        raise SystemExit(f"{provider} cannot enforce the {task} deny list")
+    if spec["deny"]:
+        for rule in TASK_DENY_RULES[task]:
+            command += [str(spec["deny"]), rule]
     for part in list(spec["turns"]):
         command.append(part.replace("{turns}", str(turns)))
     for part in list(spec["prompt"]):
@@ -162,7 +188,7 @@ def build_command(provider: str, task: str, prompt_file: str, turns: int) -> lis
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr", required=True)
-    parser.add_argument("--task", required=True, choices=sorted(TASK_ALLOW_RULES))
+    parser.add_argument("--task", required=True, choices=sorted(TASK_DENY_RULES))
     parser.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
     parser.add_argument("--prompt-file", required=True)
     parser.add_argument("--turns", type=int, default=25)
@@ -194,3 +220,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
