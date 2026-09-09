@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
 """Evaluate whether a proposed action may run without returning to the owner.
 
@@ -43,6 +44,14 @@ TERMS: tuple[str, ...] = (
     "independence",
     "safe_stopping",
 )
+
+# A term the document routes to the owner rather than to a recovery. The rule is
+# the document's own: "only a blocker needing authority outside the standing
+# grant reaches the owner." An unmet `authorization` *is* that blocker -- it says
+# no standing grant covers this action -- so no other term's recovery may carry
+# the decision past it. Without this, evidence with authorization unmet and any
+# recoverable second term returned RECOVER instead of HOLD.
+NON_RECOVERABLE_TERMS: frozenset[str] = frozenset({"authorization"})
 
 
 class Outcome(StrEnum):
@@ -109,6 +118,18 @@ def decide(
     if missing:
         raise ValueError(f"every term must be evaluated; missing: {', '.join(missing)}")
 
+    # A caller that supplies a seventh term believes it is being evaluated. It
+    # was not: the loops below walk TERMS, so an unmet `audit` was dropped on
+    # the floor and EXECUTE still returned. Refuse rather than silently ignore
+    # -- an unrecognised term is more likely a gate this predicate does not yet
+    # implement than a typo, and dropping it is exactly how bar items leave.
+    unknown = sorted(term for term in evidence if term not in TERMS)
+    if unknown:
+        raise ValueError(
+            "H(a) evaluates exactly these terms and cannot silently drop another; "
+            f"unrecognised: {', '.join(unknown)}"
+        )
+
     tier = classify(action)
     if tier == 0:
         # Ahead of the conjunction on purpose: a tier-0 act is not delegable
@@ -131,6 +152,19 @@ def decide(
     # A recoverable blocker routes to its recovery rather than to the owner.
     # Only the first is offered: recoveries are re-evaluated from scratch, so
     # chaining them here would skip a fresh reading of every term.
+    #
+    # A non-recoverable term unmet anywhere in the set stops that: it needs
+    # authority outside the standing grant, and no sibling term's recovery
+    # supplies that authority.
+    if any(term in NON_RECOVERABLE_TERMS for term in unmet):
+        return Decision(
+            outcome=Outcome.HOLD,
+            action=action,
+            tier=1,
+            blockers=tuple(f"{t}: {evidence[t].reason}" for t in unmet),
+            evaluated_at=now,
+            terms=states,
+        )
     for term in unmet:
         recovery = evidence[term].recovery
         if recovery:
@@ -178,3 +212,4 @@ class CompletionRate:
             return None
         return 100.0 * self.completed_without_intervention / self.eligible_past_deadline
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]

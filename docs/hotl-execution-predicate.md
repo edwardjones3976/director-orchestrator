@@ -1,11 +1,19 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
 # Standing-authorization execution predicate
 
 This describes the executable form of the delegation rules. It adds nothing to
 them. [`human-out-of-the-loop-operation.md`](human-out-of-the-loop-operation.md)
-remains the governing document, is unchanged by this change, and a test pins
-that. Where the two could ever disagree, the governing document wins and this
-one is wrong.
+remains authoritative. Where the two could ever disagree, the
+governing document wins and this one is wrong.
+
+That document **is** edited by this change, by 65 added lines and 3 removed. An
+earlier draft of this page claimed it was unchanged, which was false; an
+independent review of #146 caught the contradiction against the diff. What a
+test pins is narrower and is the property that matters: no gate is removed from
+it. The owner may extend the document, and the additions here are the evaluated
+form of the predicate and the note that provider activation evidence keeps
+expiring after `LIVE_OK` — both requirements, neither a relaxation.
 
 ## The predicate
 
@@ -105,3 +113,4 @@ So advances belong immediately before activation, and the expiry chosen at
 advance time must cover the intended operating life of the lane, not just the
 gap to `Activate`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]] -->

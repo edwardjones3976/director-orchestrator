@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
 """The predicate must fail closed, and a hold must name its blocker."""
 
@@ -42,12 +43,38 @@ def _all(satisfied: bool = True, **overrides: TermEvidence) -> dict[str, TermEvi
 
 class TierTests(unittest.TestCase):
     def test_tier_one_matches_the_document_exactly(self):
-        """The closed list is the document's, not a superset invented here."""
+        """The closed list is the document's, not a superset invented here.
+
+        This compared len(bullets) against len(TIER_ONE_CLASSES) and nothing
+        else, so any three identifiers passed -- including three the document
+        never names. Found by an independent review of #146. It now binds each
+        identifier to the bullet it claims to encode, in both directions.
+        """
 
         section = DOC.read_text(encoding="utf-8").split("### Tier 1", 1)[1]
         section = section.split("### Tier 0", 1)[0]
-        bullets = [line for line in section.splitlines() if line.startswith("- ")]
-        self.assertEqual(len(bullets), len(TIER_ONE_CLASSES))
+        bullets = [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
+
+        # The words each identifier asserts are present in its own bullet. A
+        # renamed identifier stops matching; a reworded bullet stops matching;
+        # an added or removed bullet breaks the bijection below.
+        encodes = {
+            "eligible_merge_non_protected_branch": ("eligible merge", "non-protected branch"),
+            "mark_pull_request_ready_for_review": ("marking a pull request ready for review",),
+            "post_to_own_designated_slack_channel": ("designated slack channel",),
+        }
+        self.assertEqual(set(encodes), set(TIER_ONE_CLASSES))
+
+        matched = {}
+        for identifier, phrases in encodes.items():
+            hits = [b for b in bullets if all(p in b.lower() for p in phrases)]
+            self.assertEqual(len(hits), 1, f"{identifier} matched {len(hits)} bullets")
+            matched[identifier] = hits[0]
+
+        # Bijection: every bullet is claimed exactly once, so a fourth class
+        # added to the document fails here instead of being silently omitted
+        # from the code.
+        self.assertEqual(sorted(matched.values()), sorted(bullets))
 
     def test_an_unlisted_class_is_tier_zero(self):
         for unlisted in ("deploy_to_production", "rotate_credential", "routine_merge", ""):
@@ -190,6 +217,44 @@ class RecoveryTests(unittest.TestCase):
         evidence["authorization"] = TermEvidence(False, "no standing grant for this class")
         self.assertIs(decide(MERGE, evidence).outcome, Outcome.HOLD)
 
+    def test_a_sibling_recovery_cannot_carry_a_missing_authorization(self):
+        """An unmet authorization needs authority no recovery supplies.
+
+        The document routes to the owner exactly when a blocker needs authority
+        outside the standing grant, and "no standing grant covers this" is that
+        blocker. Recovery was offered on the first unmet term that carried one,
+        so authorization unmet plus any recoverable second term returned RECOVER
+        and the owner was never reached. Constructed by an independent review of
+        #146.
+        """
+
+        evidence = _all(True)
+        evidence["authorization"] = TermEvidence(False, "no standing grant for this class")
+        evidence["verification"] = TermEvidence(
+            False, "evidence stale", recovery="re-run exact-SHA verification"
+        )
+        decision = decide(MERGE, evidence)
+        self.assertIs(decision.outcome, Outcome.HOLD)
+        self.assertIsNone(decision.recovery)
+        # The recoverable term is still reported, so the hold names every
+        # obstacle rather than only the one that stopped it.
+        self.assertEqual(len(decision.blockers), 2)
+
+    def test_an_unrecognised_term_is_refused_rather_than_dropped(self):
+        """A term this predicate does not evaluate must not pass silently.
+
+        decide() walks TERMS, so a caller supplying an unmet seventh term had
+        it ignored and still received EXECUTE. That is the mechanism by which a
+        bar item leaves the predicate without anyone noticing. Constructed by an
+        independent review of #146.
+        """
+
+        evidence = _all(True)
+        evidence["audit"] = TermEvidence(False, "no audit record written")
+        with self.assertRaises(ValueError) as caught:
+            decide(MERGE, evidence)
+        self.assertIn("audit", str(caught.exception))
+
     def test_a_satisfied_term_cannot_carry_a_recovery(self):
         with self.assertRaises(ValueError):
             TermEvidence(True, recovery="pointless")
@@ -213,3 +278,4 @@ class CompletionRateTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
