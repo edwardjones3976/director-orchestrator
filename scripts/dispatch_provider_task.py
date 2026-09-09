@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
@@ -54,6 +55,7 @@ this refuses to build that command at all.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import shutil
@@ -76,6 +78,20 @@ TASK_DENY_RULES: dict[str, tuple[str, ...]] = {
     ),
     "merge": (),
 }
+
+# Turn budget per task. A merge verifies a head SHA, a state and six checks,
+# then merges: single figures, and a cap it never approaches. A review that runs
+# the suite, mutates production for each new test and re-runs it needs an order
+# of magnitude more.
+#
+# The number matters less than noticing when it binds. Measured across nine Grok
+# dispatches at the old default of 25: every session reporting `cancelled` ended
+# at exactly 25 turns, and every session reporting `end_turn` finished between
+# 12 and 23. Exhaustion is indistinguishable from a hang, a denial or a broken
+# provider unless something looks, so `turn_budget_exhausted` below looks and
+# `main` says so. Two reviews were abandoned as failures and a third re-dispatched
+# with a rewritten prompt before the budget was suspected even once.
+TASK_TURNS: dict[str, int] = {"review": 80, "merge": 15}
 
 # How each CLI takes a prompt, a deny rule, and a turn bound. Cursor is absent
 # on purpose: its CLI refuses to run on Windows without disabling its sandbox,
@@ -189,21 +205,48 @@ def build_command(provider: str, task: str, prompt_file: str, turns: int) -> lis
     return command
 
 
+def turn_budget_exhausted(stdout: bytes, turns: int) -> int | None:
+    """Return the turn count when the session died on its budget, else None.
+
+    Grok emits one JSON object per session on stdout. A session that ran out of
+    turns reports `stopReason: "cancelled"` with `num_turns` at the cap -- the
+    same `cancelled` a permission denial produces, which is why this has to
+    compare against the budget rather than trust the reason.
+
+    Output can hold several concatenated objects, and a truncated tail is
+    normal when a provider is killed, so this decodes what it can and ignores
+    the rest.
+    """
+
+    decoder = json.JSONDecoder()
+    text = stdout.decode("utf-8", errors="replace")
+    index = 0
+    while index < len(text):
+        while index < len(text) and text[index] in " \r\n\t":
+            index += 1
+        if index >= len(text):
+            break
+        try:
+            session, index = decoder.raw_decode(text, index)
+        except ValueError:
+            break
+        if not isinstance(session, dict):
+            continue
+        used = session.get("num_turns")
+        if session.get("stopReason") == "cancelled" and isinstance(used, int) and used >= turns:
+            return used
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pr", required=True)
     parser.add_argument("--task", required=True, choices=sorted(TASK_DENY_RULES))
     parser.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
     parser.add_argument("--prompt-file", required=True)
-    # A review that runs the suite, mutates production and re-runs it needs
-    # far more than 25 turns. At 25 the CLI stops mid-work and reports the
-    # session as `cancelled`, which reads like a hang or a denial: measured
-    # across nine dispatches, every cancelled one ended at exactly 25 turns and
-    # every completed one came in under it. Two reviews were abandoned and one
-    # re-dispatched on that misreading before the budget was the suspect. A
-    # merge is a handful of checks and does not need the headroom, but sharing
-    # one default costs nothing.
-    parser.add_argument("--turns", type=int, default=80)
+    # Unset means "whatever this task needs" (TASK_TURNS), not a single number
+    # that has to suit both a merge and a mutation review.
+    parser.add_argument("--turns", type=int, default=None)
     parser.add_argument("--print-command", action="store_true")
     args = parser.parse_args(argv)
 
@@ -218,7 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.task == "review" and not eligible:
         print(f"NOTE: {reason}; dispatching read-only review anyway", file=sys.stderr)
 
-    command = build_command(args.provider, args.task, args.prompt_file, args.turns)
+    turns = args.turns if args.turns is not None else TASK_TURNS[args.task]
+    command = build_command(args.provider, args.task, args.prompt_file, turns)
     if args.print_command:
         print(" ".join(command))
         return 0
@@ -231,10 +275,30 @@ def main(argv: list[str] | None = None) -> int:
     # in a prompt and the echo ran, outside the provider's permission controls
     # entirely. Prompts routinely quote pull-request bodies and review
     # comments, so the text is not trusted input.
-    return subprocess.run(
+    completed = subprocess.run(
         command,
         input=pathlib.Path(args.prompt_file).read_bytes(),
-    ).returncode
+        capture_output=True,
+    )
+    # Pass the provider's own output through unaltered, bytes for bytes. It is
+    # the verdict, and callers redirect it to a file.
+    sys.stdout.buffer.write(completed.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(completed.stderr)
+    sys.stderr.buffer.flush()
+
+    used = turn_budget_exhausted(completed.stdout, turns)
+    if used is not None:
+        # Distinct from any provider exit code, because the run did not fail:
+        # it was stopped, and the work up to that point is real but partial.
+        print(
+            f"TURN BUDGET EXHAUSTED: {args.provider} stopped at {used} of {turns} "
+            f"turns with no verdict. This is not a hang, a denial, or a broken "
+            f"provider. Re-run with a larger --turns; do not rewrite the prompt.",
+            file=sys.stderr,
+        )
+        return 4
+    return completed.returncode
 
 
 if __name__ == "__main__":
@@ -246,3 +310,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]

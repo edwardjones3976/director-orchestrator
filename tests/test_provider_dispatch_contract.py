@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
@@ -337,27 +338,80 @@ if __name__ == "__main__":
 
 
 class TurnBudgetTests(unittest.TestCase):
-    def test_the_default_turn_budget_survives_a_mutation_review(self):
-        """25 turns ends a real review mid-work and reports it as cancelled.
+    """Exhaustion must be detected, not just made less likely.
 
-        Measured across nine Grok dispatches: every session that reported
-        `cancelled` ended at exactly 25 turns, and every session that reported
-        `end_turn` finished in 12 to 23. A review that runs the suite, mutates
-        production and re-runs it does not fit in 25, and the failure looks
-        like a hang or a permission denial rather than a budget.
+    Raising the cap only moves the cliff. What cost the time was that hitting
+    it is indistinguishable from a hang, a denial or a broken provider, so the
+    detector is the fix and the number is a knob.
+    """
+
+    def _session(self, stop, turns):
+        import json
+
+        return json.dumps({"stopReason": stop, "num_turns": turns}).encode()
+
+    def test_a_session_that_died_on_the_cap_is_recognised(self):
+        for turns in (25, 80):
+            self.assertEqual(
+                dispatch.turn_budget_exhausted(self._session("cancelled", turns), turns),
+                turns,
+            )
+
+    def test_a_denial_below_the_cap_is_not_reported_as_exhaustion(self):
+        """Both report `cancelled`; only the turn count separates them.
+
+        A permission denial ends the session early -- one measured at turn 3 --
+        and calling that a budget problem would send the next person to raise a
+        number that was never the cause.
         """
 
-        import argparse
-        import contextlib
-        import io
+        self.assertIsNone(dispatch.turn_budget_exhausted(self._session("cancelled", 3), 80))
 
-        parser = None
-        with contextlib.suppress(SystemExit), contextlib.redirect_stdout(io.StringIO()):
-            # main() builds the parser and then reaches the network, so the
-            # default is read from a parse of --help-free arguments instead.
-            parser = argparse.ArgumentParser()
-        default = dispatch.main.__defaults__
-        source = __import__("inspect").getsource(dispatch.main)
-        self.assertIn('"--turns", type=int, default=80', source)
-        self.assertNotIn("default=25", source)
+    def test_a_completed_session_is_never_reported_as_exhausted(self):
+        for turns in (12, 23, 79):
+            self.assertIsNone(
+                dispatch.turn_budget_exhausted(self._session("end_turn", turns), 80)
+            )
+
+    def test_the_real_recorded_sessions_are_classified_correctly(self):
+        """The nine dispatches this was diagnosed from, replayed.
+
+        Cancelled at exactly the cap of 25 in two of them; the rest completed
+        between 12 and 23 turns.
+        """
+
+        measured = [
+            ("cancelled", 25, True), ("end_turn", 12, False), ("end_turn", 15, False),
+            ("end_turn", 12, False), ("end_turn", 16, False), ("end_turn", 23, False),
+            ("end_turn", 14, False), ("end_turn", 20, False), ("cancelled", 25, True),
+        ]
+        for stop, used, exhausted in measured:
+            found = dispatch.turn_budget_exhausted(self._session(stop, used), 25)
+            self.assertEqual(found is not None, exhausted, (stop, used))
+
+    def test_concatenated_and_truncated_output_does_not_crash_the_detector(self):
+        """Providers emit several objects, and a killed one leaves a partial tail."""
+
+        good = self._session("end_turn", 12)
+        bad = self._session("cancelled", 80)
+        self.assertEqual(dispatch.turn_budget_exhausted(good + b"\n" + bad, 80), 80)
+        self.assertIsNone(dispatch.turn_budget_exhausted(good + b'\n{"stopRea', 80))
+        self.assertIsNone(dispatch.turn_budget_exhausted(b"", 80))
+        # Codex emits prose, not JSON, and ignores --turns entirely.
+        self.assertIsNone(dispatch.turn_budget_exhausted(b"CHANGES_REQUIRED\n", 80))
+
+    def test_a_merge_is_not_given_a_review_sized_budget(self):
+        """A merge checks a SHA, a state and six checks. It never nears 80."""
+
+        self.assertEqual(dispatch.TASK_TURNS["merge"], 15)
+        self.assertEqual(dispatch.TASK_TURNS["review"], 80)
+        self.assertEqual(set(dispatch.TASK_TURNS), set(dispatch.TASK_DENY_RULES))
+        # Whatever the numbers become: a review must never get less headroom
+        # than a merge, and never fall back to the 25 that caused this. The
+        # merge budget is deliberately small -- the delegated merge of #154
+        # completed in 4 turns -- but must stay clear of that measured cost.
+        self.assertGreater(dispatch.TASK_TURNS["review"], dispatch.TASK_TURNS["merge"])
+        self.assertGreater(dispatch.TASK_TURNS["review"], 25)
+        self.assertGreaterEqual(dispatch.TASK_TURNS["merge"], 10)
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]
