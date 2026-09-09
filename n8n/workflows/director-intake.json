@@ -13,9 +13,9 @@
       "name": "Slack Gateway Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-320, 0],
+      "position": [-560, 0],
       "webhookId": "director-intake",
-      "notes": "Deliberately unauthenticated, and deliberately holding no credential. The caller's own Authorization header is forwarded downstream, so the orchestrator remains the single authenticator and n8n never stores the shared secret. n8n is published on 127.0.0.1 only. Ignore Bots stays OFF: the caller is python-httpx, and user-agent bot filters can classify HTTP-library agents as bots and drop the request."
+      "notes": "Deliberately unauthenticated and holding no credential. The caller's own Authorization header is forwarded downstream, so the orchestrator stays the single authenticator and n8n never stores the shared secret. Published on loopback only. Ignore Bots stays OFF: the caller is python-httpx and user-agent bot filters can classify HTTP-library agents as bots."
     },
     {
       "parameters": {
@@ -38,46 +38,112 @@
         "rawContentType": "application/json",
         "body": "={{ JSON.stringify($json.body ?? $json) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 15000,
+          "redirect": { "redirect": { "followRedirects": false } },
+          "response": { "response": { "neverError": false, "fullResponse": true } }
         }
       },
       "id": "b1f2a5c0-0002-4a00-9000-000000000002",
       "name": "Create Director Task",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-80, 0],
+      "position": [-320, 0],
       "onError": "continueErrorOutput",
-      "notes": "Pass-through relay, not a normalizer. slack_bot._forward already builds the canonical SlackIntake (source_event_id, channel_id, thread_ts, user_id, text, allocation_profile, primary_required_capabilities, permalink, received_at), HMAC-signs it, and posts it here. The body is forwarded unchanged: SlackIntake sets extra='forbid', and approvals._slack_intake_attestation_payload signs intake.model_dump(mode='json'), so adding, dropping or regenerating any field breaks validation, the signature, or both. allocation_profile and primary_required_capabilities are owner-set deployment configuration and must never be injected here. The three X-Director-Intake-* headers are unused while ALLOW_PAID_RUNS is false, when the handler falls back to BEARER_DRY_RUN, and required the moment it is true. source_event_id is the idempotency key: re-delivery creates no second task."
+      "notes": "Pass-through relay, not a normalizer. slack_bot._forward already builds the canonical SlackIntake, HMAC-signs it, and posts it here; the body is forwarded unchanged because SlackIntake sets extra='forbid' and the attestation covers intake.model_dump(mode='json'). Redirects are refused: following one would resend the caller's Authorization header to another host. The timeout is 15s, below the gateway's own 20s httpx timeout, so the relay classifies the outcome before the caller gives up — a relay that times out after its caller has already stopped waiting manufactures ambiguity instead of resolving it."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "c0000000-0000-4000-9000-000000000001",
+              "leftValue": "={{ $json.statusCode === 202 }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1f2a5c0-0005-4a00-9000-000000000005",
+      "name": "Exactly 202",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-80, -140],
+      "notes": "slack_bot._forward requires HTTP 202 exactly, not any 2xx. Relaying a 200 or 201 as 202 would report an acceptance the orchestrator never gave."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "c0000000-0000-4000-9000-000000000002",
+              "leftValue": "={{ typeof $json.error?.statusCode === 'number' && $json.error.statusCode >= 400 && $json.error.statusCode <= 599 }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1f2a5c0-0006-4a00-9000-000000000006",
+      "name": "Definite Upstream Refusal",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-80, 160],
+      "notes": "The distinction this whole workflow turns on. An upstream status code means the orchestrator answered and no task was created, so the caller can be told plainly. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {
-          "responseCode": 202
-        }
+        "responseBody": "={{ JSON.stringify($json.body) }}",
+        "options": { "responseCode": 202 }
       },
       "id": "b1f2a5c0-0003-4a00-9000-000000000003",
       "name": "Accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [180, -100],
-      "notes": "The orchestrator's TaskRecord is returned verbatim. slack_bot._intake_receipt_task_id requires one task_id matching DIR-(?:LG-)?[A-F0-9]+ at the top level or under data, and _forward additionally requires HTTP 202 exactly. A summarised or renamed body makes the bot post 'DIRECTOR - BLOCKED' on an intake that actually succeeded."
+      "position": [180, -220],
+      "notes": "The orchestrator's TaskRecord body, verbatim. Only the body: fullResponse also carries the upstream response headers, which the caller has no need of. slack_bot._intake_receipt_task_id requires one task_id matching DIR-(?:LG-)?[A-F0-9]+."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'intake_failed', upstream_status: $json.statusCode ?? null }) }}",
+        "options": { "responseCode": 502 }
+      },
+      "id": "b1f2a5c0-0007-4a00-9000-000000000007",
+      "name": "Unexpected Upstream Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [180, -60],
+      "notes": "A 2xx that is not 202. The orchestrator's intake contract is 202; anything else in that range is a contract violation, not an acceptance."
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ status: 'intake_failed', upstream_status: $json.error?.statusCode ?? null }) }}",
-        "options": {
-          "responseCode": 502
-        }
+        "options": { "responseCode": 502 }
       },
       "id": "b1f2a5c0-0004-4a00-9000-000000000004",
       "name": "Intake Failed",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [180, 100],
-      "notes": "Without this branch a downstream failure leaves the execution with no Respond node, and the webhook answers 200 with an empty body. The Slack bot passes raise_for_status on a 200, then fails the 202 check and reports BLOCKED with no diagnosis. Only the upstream status code is echoed; no response body, provider output or secret-shaped value is relayed."
+      "position": [180, 80],
+      "notes": "A definite upstream refusal — 401, 422, 503. Only the status code is echoed; no response body, provider output or secret-shaped value is relayed."
+    },
+    {
+      "parameters": {},
+      "id": "b1f2a5c0-0008-4a00-9000-000000000008",
+      "name": "Ambiguous Delivery - Stop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [180, 240],
+      "notes": "Deliberately reaches no Respond node, so the webhook answers 200 with an empty body and the gateway reports 'Acceptance could not be confirmed. The request state must be reconciled before retrying.' That is the correct outcome for an unknown delivery: the task may exist. This preserves the stop-on-ambiguous-delivery invariant that test_deployment_contracts.py protects. Silence here is a refusal to claim, not a missing branch."
     }
   ],
   "connections": {
@@ -86,8 +152,20 @@
     },
     "Create Director Task": {
       "main": [
+        [{ "node": "Exactly 202", "type": "main", "index": 0 }],
+        [{ "node": "Definite Upstream Refusal", "type": "main", "index": 0 }]
+      ]
+    },
+    "Exactly 202": {
+      "main": [
         [{ "node": "Accepted", "type": "main", "index": 0 }],
-        [{ "node": "Intake Failed", "type": "main", "index": 0 }]
+        [{ "node": "Unexpected Upstream Success", "type": "main", "index": 0 }]
+      ]
+    },
+    "Definite Upstream Refusal": {
+      "main": [
+        [{ "node": "Intake Failed", "type": "main", "index": 0 }],
+        [{ "node": "Ambiguous Delivery - Stop", "type": "main", "index": 0 }]
       ]
     }
   },
@@ -95,13 +173,13 @@
   "pinData": {},
   "settings": {
     "executionOrder": "v1",
-    "saveDataErrorExecution": "all",
+    "saveDataErrorExecution": "none",
     "saveDataSuccessExecution": "none",
     "saveManualExecutions": false,
     "saveExecutionProgress": false
   },
   "tags": [],
   "meta": {},
-  "id": "director-intake",
-  "versionId": "4"
+  "id": "directorIntake",
+  "versionId": "5"
 }

@@ -1,5 +1,35 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | BEGIN]] -->
 # Director Intake ↔ n8n — integration validation, 2026-09-09
+
+> ## Correction, 21:55 UTC — the measurements below were taken against the wrong instance
+>
+> Every probe row in "What was measured" that names port **45678** measured
+> `edge-engine-director-n8n-1` on the `edge-engine-director_default` network,
+> whose backend is the **Edge Engine** Director at host port 18082. Confirmed
+> independently: `http://127.0.0.1:18082/health` reports `"environment":
+> "edge-engine"` with every provider false, where the Director-Orchestrator
+> stack on 8080 reports `"environment": "local"` with all seven true.
+>
+> **The Director's own n8n is port 5678**, on `director-orchestrator_default`,
+> resolving the orchestrator at 8080. That is the instance the gateway uses and
+> the editor to open.
+>
+> This was established by Codex under V-01 — the host measurement this document
+> flagged as the one fact it could not establish. The process worked: the gap was
+> named as unproven, assigned, and closed.
+>
+> **The defect itself reproduces on the correct instance.** Codex's V-02, run at
+> 5678 with a valid bearer, recorded 422 `extra_forbidden` direct from the
+> orchestrator and **200 with zero bytes** through the relay, with that same
+> upstream 422 present in the n8n container logs. So the diagnosis holds and the
+> backend is reachable; what does not hold is that this document's numbers were
+> evidence for it. They were evidence about a different project's relay.
+>
+> Retained rather than deleted, because the mistake is the instructive part: an
+> owner-supplied URL was treated as identifying the right service, and the port
+> not matching any documented namespace was recorded as a curiosity instead of
+> being resolved before measuring.
 
 Status: **the relay does not satisfy the Slack bot's contract.** The cause is
 identified and the repository candidate is corrected. One decisive fact is still
@@ -126,3 +156,4 @@ that any work occurred.
 Producer of the corrected candidate is Claude, which is therefore ineligible to
 review or accept it. The probes above are testing, not review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->

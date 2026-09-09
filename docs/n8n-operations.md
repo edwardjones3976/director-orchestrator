@@ -85,8 +85,10 @@ own caller.
 ## Director Intake
 
 ```
-Slack Gateway Webhook  →  Create Director Task  →  Accepted        (202)
-                                               └─→  Intake Failed   (502)
+Slack Gateway Webhook → Create Director Task ─┬─ success → Exactly 202? ─┬─ yes → Accepted                    (202)
+                                              │                          └─ no  → Unexpected Upstream Success (502)
+                                              └─ error   → Definite refusal? ─┬─ yes → Intake Failed          (502)
+                                                                              └─ no  → Ambiguous - Stop  (no response)
 ```
 
 **Inbound.** The Webhook node carries no authentication and no credential; the
@@ -112,15 +114,45 @@ non-2xx takes the second output into `Intake Failed`, which responds **502**.
 Only the upstream status code is echoed; no response body, provider output or
 secret-shaped value is relayed back through the webhook.
 
-**The error branch is not optional.** Without it, a downstream failure leaves the
-execution with no `Respond to Webhook` node on its path, and n8n answers the
-webhook **200 with an empty body** — documented behaviour: a workflow that
-finishes without executing a Respond to Webhook node returns a standard message
-with a 200 status. The Slack bot's `raise_for_status()` passes
-on a 200, the `!= 202` check then fails, and every message gets
-`DIRECTOR — BLOCKED` with nothing in the response to say why. `Director Intake`
-therefore sets `saveDataErrorExecution: all`: a relay whose failures are not
-recorded cannot be diagnosed from either end.
+**Definite refusal and ambiguous delivery are not the same thing, and the whole
+design turns on the difference.**
+
+An upstream **status code** means the orchestrator answered. A 401, 422 or 503 is
+proof that no task was created, so the gateway can be told plainly: the error
+branch responds **502**.
+
+**No** status code — a timeout, a dropped socket, a response lost after the task
+was written — means the outcome is genuinely unknown. The task may exist.
+Answering 502 there would assert a failure that may not have happened, and 202
+would assert a success that may not have happened. So that branch deliberately
+reaches **no Respond node at all**, n8n answers 200 with an empty body, and the
+gateway posts *"Acceptance could not be confirmed. The request state must be
+reconciled before retrying."* — which is exactly right for an unknown delivery.
+
+That 200-empty is documented n8n behaviour: a workflow finishing without
+executing a Respond to Webhook node returns a standard message with a 200 status.
+**The citation explains the mechanism, not the cause.** A 200-empty tells you the
+execution ended without responding; it does not tell you why. For that, read the
+n8n container logs, which carry the upstream status.
+
+**Execution retention stays `none`, and that is a security setting, not a
+diagnostic one.** The webhook item includes `$json.headers`, which carries the
+caller's `Authorization: Bearer <shared secret>`. Retaining error executions
+would persist that into n8n's database, undoing the point of a relay that holds
+no credential. Diagnose from the container logs instead. Even `none` controls
+completion cleanup rather than proving zero transient storage.
+
+**Strict 202.** The gateway requires 202 exactly, so the success output passes
+through an `Exactly 202` gate; any other 2xx is a contract violation and answers
+502 rather than being relayed as an acceptance.
+
+**Redirects are refused.** Following one would resend the caller's
+`Authorization` header to another host.
+
+**The relay timeout is below the gateway's.** `slack_bot._forward` posts with
+`httpx` `timeout=20`. A relay that waits longer than its caller cannot classify
+anything for anyone — the gateway has already given up. 15 s leaves the decision
+with the relay.
 
 ## Director Status
 
@@ -203,10 +235,15 @@ below can pass.
 `{"detail":"Unauthorized"}`. This creates nothing, so it is the safe first probe.
 
 **3. The relay surfaces that rejection rather than swallowing it.** Post the same
-unauthenticated request to `/webhook/director-intake`. Expect **502**. A **200
-with an empty body** is the signature of a relay with no error branch: the
-execution ended without reaching a `Respond to Webhook` node. It is the one
-result that looks like success from the outside and fails at the Slack bot.
+unauthenticated request to `/webhook/director-intake`. Expect **502** — a
+definite upstream status. A **200 with an empty body** here means the execution
+ended without reaching a `Respond to Webhook` node, which is correct only for an
+ambiguous delivery and wrong for a status the orchestrator actually returned.
+
+**Confirm you are on the Director instance first.** More than one n8n runs on
+this host. Check `environment` in the orchestrator's `/health` before trusting
+any relay measurement: the Director stack reports `local`, and a different
+`environment` value means you are measuring another project's relay.
 
 **4. A valid intake returns 202.** Post a body shaped exactly like `SlackIntake`
 — a `source_event_id` you have not used before, the configured channel and owner
@@ -221,8 +258,10 @@ gateway will double-book every Slack retry.
 relay to return **502**, driven by a 422 from `/v1/intake`. This is the check
 that catches a workflow that has drifted back into rebuilding the body.
 
-**7. Downstream failure surfaces as 502, never 202.** Stop the orchestrator, post
-a valid body, and confirm 502. Restart it before continuing.
+**7. Downstream failure surfaces as 502, never 202.** Point the relay at a
+closed port or an outage fixture and confirm 502 for a definite refusal. **Do not
+stop the real orchestrator to produce this** — it is a shared service and the
+outage is indistinguishable from the ambiguous case you are not testing here.
 
 **8. End to end through Slack, last.** Post `DIRECTOR …` in the configured
 channel as the owner and confirm the bot replies `<task id> — ACCEPTED`. A
@@ -239,3 +278,4 @@ approve an assignment, widen access, spend, merge, deploy, or override a stop.
 A status post is coordination evidence, not a gate result, and a 202 from intake
 means the request was accepted for planning — not that any work was done.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
