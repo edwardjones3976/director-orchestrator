@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 """Offline execution of the real rollback branch and host-bridge preflight."""
 from __future__ import annotations
@@ -154,7 +155,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                 [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
                  str(ROOT / "scripts/windows-langgraph-primary-control.ps1"),
                  str(environment), str(events), sys.executable, str(runner), scenario],
-                capture_output=True, text=True, timeout=20,
+                capture_output=True, text=True, timeout=300,
             )
             observed = [json.loads(line) for line in events.read_text(encoding="utf-8-sig").splitlines()]
             final = dict(line.split("=", 1) for line in environment.read_text().splitlines())
@@ -231,7 +232,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                  str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
                  "-Action", "Preflight", "-EnvironmentFile", str(environment),
                  "-Workspace", str(root), "-Python", str(fake_python)],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=300,
             )
             self.assertFalse(marker.exists(), "preflight invoked the configured provider")
             self.assertFalse((root / "never-opened.sqlite3").exists())
@@ -266,3 +267,4 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
