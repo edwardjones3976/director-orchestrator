@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | BEGIN]] -->
 # Provider transport configuration
 
@@ -50,7 +51,7 @@ alone do not establish login or packet conformance. The Postgres writer fence is
 checked before dispatch, not by health/challenge.
 
 See `host_provider_bridge.py`, `host_provider_bridge_server.py` and the launcher.
-Firecrawl and Microsoft365Copilot are not host-bridge lanes.
+Firecrawl is not a host-bridge lane.
 
 ## Owner-only ChatGPT Slack alias
 
@@ -112,23 +113,5 @@ qualification, bounded execution and accepted provider bindings. Merely adding
 `github-copilot` to the command map does not supply those proofs. See
 `primary_default.py`, `primary_transports.py` and the Copilot provider profile.
 
-## Microsoft365Copilot
-
-This is a separate Work IQ REST integration, not GitHub Copilot or a Windows CLI.
-Its actual configuration is `MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE`,
-`MICROSOFT_365_COPILOT_TENANT_ID`,
-`MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` and
-`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. An organization administrator must
-enable the required service and delegated access.
-
-The token must be in the protected, bounded, non-symlink file accepted by the
-runtime. Validation binds signature, issuer, tenant, audience, validity, subject,
-object ID and delegated `api://workiq.svc.cloud.microsoft/WorkIQAgent.Ask` scope.
-An arbitrary bearer token or client secret does not substitute for this contract.
-File existence/ACL checks are read-only diagnostics; do not dump or decode tokens
-into reports. A Work IQ capability challenge creates remote evidence and must
-be treated separately from local inspection. Current discovery holds the lane
-unauthenticated until the required capability evidence is accepted; configuring
-the four fields alone does not activate it. See `primary_transports.py` and
-`primary_default.py`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
