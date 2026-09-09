@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
@@ -336,11 +337,11 @@ function Copy-ProviderCredentialValues {
         [Parameter(Mandatory = $true)][string]$ProfileText
     )
 
-    # Only these named credential values are ever copied. Enable flags such as
-    # GROK_ENABLED and PERPLEXITY_ENABLED are neither copied from the source
-    # nor synthesized because a key exists: a seeded key stays inert until the
-    # target profile explicitly opts in and lists the provider in
-    # USAGE_CHECK_PROVIDERS.
+    # Only these named credential values are copied. GROK_ENABLED and
+    # PERPLEXITY_ENABLED are neither copied nor synthesized because a key exists;
+    # those providers require their own enable flags. Gemini has no enable flag.
+    # Usage checks require explicit USAGE_CHECK_PROVIDERS membership and the
+    # runtime readiness and global usage/paid gates described below.
     $text = $ProfileText
     foreach ($name in @(
         "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
@@ -1321,9 +1322,11 @@ if (-not $EnablePaidRuns) {
 # Provider partition preflight. The paid gate, usage checks, and the manual
 # usage-check endpoint stay closed until the profile's explicit
 # USAGE_CHECK_PROVIDERS is valid: no duplicates or unknown names, every
-# mandatory primary provider present, and every listed optional provider
-# explicitly enabled with a configured credential. The endpoint response must
-# later partition exactly this validated set.
+# mandatory primary provider present, and every listed optional provider has a
+# configured credential. Grok and Perplexity also require their enable flags;
+# Gemini has no enable flag. Runtime readiness and global usage/paid gates still
+# apply as described in Get-ValidatedUsageCheckProviders. The endpoint response
+# must later partition exactly this validated set.
 $expectedUsageProviders = @(Get-ValidatedUsageCheckProviders -Values $values -ProfileLabel $profilePath)
 Write-Host "Validated usage-check providers before paid dispatch: $($expectedUsageProviders -join ', ')."
 
@@ -1580,3 +1583,4 @@ finally {
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | END]]
