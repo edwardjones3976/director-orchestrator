@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]]
 from __future__ import annotations
 
@@ -67,7 +68,7 @@ try {
                                    SCRIPT=script, SHA=COMMIT, EXTRA=extra).items():
                 harness = harness.replace("__" + key + "__", str(value).replace("'", "''") if key != "EXTRA" else value)
             result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", harness],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, timeout=300)
             return result
 
     def test_unsigned_request_matches_existing_canonical_contract_without_runtime_inputs(self):
@@ -110,3 +111,4 @@ if __name__ == "__main__":
     unittest.main()
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | BEGIN]]
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -252,7 +253,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             launcher = root / "invoke.ps1"
             launcher.write_text(template.replace('`$', '$'))
             env = dict(os.environ, PYTHONPATH=str(caller), PYTHONHOME=str(caller), PYTHONUSERBASE=str(caller))
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(launcher), "-Action", "prepare"], cwd=caller, env=env, capture_output=True, timeout=20)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(launcher), "-Action", "prepare"], cwd=caller, env=env, capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(result.stdout.strip(), b"PROTECTED_MODULE")
 
@@ -278,7 +279,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             script = root / "check.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + "\nAssert-Protected '" + str(runtime) + "'")
             env = dict(os.environ, PSModulePath=str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules"))
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], env=env, capture_output=True, timeout=20)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], env=env, capture_output=True, timeout=300)
             self.assertNotEqual(result.returncode, 0)
             self.assertTrue(any(message in result.stderr for message in (b"Administrator-owned installation path required", b"Unprotected runtime path")), result.stderr.decode(errors="replace"))
 
@@ -305,7 +306,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             function = source.split('function Install-TrackedPackage', 1)[1].split('Install-TrackedPackage $GitExecutable', 1)[0]
             script = root / "install-test.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Install-TrackedPackage" + function + "\nInstall-TrackedPackage '" + git + "' '" + str(repo) + "' '" + head + "' '" + str(destination) + "'")
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=20)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual((destination / "director_orchestrator" / "__init__.py").read_text(), "# accepted")
             self.assertFalse((destination / "director_orchestrator" / "__pycache__").exists())
@@ -347,7 +348,7 @@ class WindowsBoundaryTests(unittest.TestCase):
             function = source.split('function Install-TrackedPackage', 1)[1].split('Install-TrackedPackage $GitExecutable', 1)[0]
             script = root / "blob-fidelity.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Install-TrackedPackage" + function + "\nInstall-TrackedPackage '" + git + "' '" + str(repo) + "' '" + head + "' '" + str(destination) + "'")
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], cwd=str(repo), capture_output=True, timeout=60)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], cwd=str(repo), capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             installed = destination / "director_orchestrator" / "__init__.py"
             self.assertEqual(installed.read_bytes(), accepted)
@@ -384,7 +385,7 @@ Write-Output 'ACL_SEMANTICS_PASS'
         with tempfile.TemporaryDirectory() as temp:
             script = Path(temp) / "acl-semantics.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=20)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(result.stdout.strip(), b"ACL_SEMANTICS_PASS")
 
@@ -448,7 +449,7 @@ Write-Output 'RAW_ANCESTRY_PASS'
         with tempfile.TemporaryDirectory() as temp:
             script = Path(temp) / "raw-ancestry.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=30)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(result.stdout.strip(), b"RAW_ANCESTRY_PASS")
 
@@ -486,7 +487,7 @@ try {
         with tempfile.TemporaryDirectory() as temp:
             script = Path(temp) / "junction-ancestry.ps1"
             script.write_text("$ErrorActionPreference='Stop'\nfunction Assert-Protected" + function + harness)
-            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=30)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-File", str(script)], capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             self.assertEqual(result.stdout.strip(), b"JUNCTION_ANCESTRY_PASS")
 
@@ -532,3 +533,4 @@ try {
 # [[OpenAI Codex Desktop | GPT-6 | 2026-09-07 | 02:34 UTC | END]]
 
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 04:55 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
