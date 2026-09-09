@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
@@ -148,8 +149,6 @@ from .workload_policy import FailureKind
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
-    provider_lane_external_blockers,
-    read_protected_delegated_token_file,
 )
 
 
@@ -301,7 +300,6 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "perplexity": ProviderName.PERPLEXITY,
     "firecrawl": ProviderName.FIRECRAWL,
     "github-copilot": ProviderName.GITHUB_COPILOT,
-    "microsoft-365-copilot": ProviderName.MICROSOFT_365_COPILOT,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
     {"perplexity", "firecrawl"}
@@ -823,8 +821,7 @@ def build_automatic_primary_live_dependencies(
 
     Authentication comes from configured secret presence or a documented,
     non-secret local status/receipt probe. Native keychain state without such a
-    contract is never inferred. Microsoft 365 Copilot remains unavailable behind
-    an exact typed blocker until production Work IQ evidence is complete.
+    contract is never inferred.
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
@@ -851,7 +848,6 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
-        "microsoft-365-copilot": False,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -882,16 +878,7 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-        microsoft_365_copilot_access_token=read_protected_delegated_token_file(
-            settings.microsoft_365_copilot_delegated_token_file
-        ),
-        microsoft_365_copilot_tenant_id=settings.microsoft_365_copilot_tenant_id,
-        microsoft_365_copilot_expected_subject=(
-            settings.microsoft_365_copilot_expected_subject
-        ),
-        microsoft_365_copilot_expected_object_id=(
-            settings.microsoft_365_copilot_expected_object_id
-        ),
+
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -905,20 +892,9 @@ def build_automatic_primary_live_dependencies(
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
     from .primary_roster import core_inventory_ready
     if not core_inventory_ready(tuple(adapters)):
-        blockers = provider_lane_external_blockers(capabilities)
-        blocked_missing = [
-            f"{provider_id}:{blockers[provider_id]}"
-            for provider_id in missing
-            if provider_id in blockers
-        ]
         raise ValueError(
             "automatic graph-native live dependencies are unavailable: missing="
             + ",".join(missing)
-            + (
-                "; external_blockers=" + ",".join(blocked_missing)
-                if blocked_missing
-                else ""
-            )
         )
 
     def candidate_sha(
@@ -2935,3 +2911,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -259,7 +260,6 @@ _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider.PERPLEXITY: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.FIRECRAWL: frozenset({WorkloadKind.RESEARCH}),
     WorkloadProvider.GITHUB_COPILOT: frozenset({WorkloadKind.IMPLEMENTATION}),
-    WorkloadProvider.MICROSOFT_365_COPILOT: frozenset({WorkloadKind.RESEARCH}),
 }
 _TRUSTED_PRIMARY_REVIEWERS = frozenset(
     {WorkloadProvider.OPENAI, WorkloadProvider.CLAUDE, WorkloadProvider.CURSOR, WorkloadProvider.GROK}
@@ -487,7 +487,7 @@ class OrchestrationEngine:
             # Debate identities are part of the independently validated committee
             # contract, not production routes selected from cost ranks.
             return frozenset({WorkloadProvider(assignment.agent.value)})
-        if assignment.agent in {ProviderName.FIRECRAWL, ProviderName.GITHUB_COPILOT, ProviderName.MICROSOFT_365_COPILOT}:
+        if assignment.agent in {ProviderName.FIRECRAWL, ProviderName.GITHUB_COPILOT}:
             # Preserve explicitly planned least-privilege specialist scope.
             return frozenset({WorkloadProvider(assignment.agent.value)})
         if kind is WorkloadKind.REVIEW:
@@ -6994,3 +6994,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

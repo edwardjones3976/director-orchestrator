@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
@@ -802,6 +803,62 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             module = importlib.import_module(module_name)
         return module_name, module
 
+    def test_alias_requires_opening_address_and_ignores_connector_content(self):
+        module_name, slack_bot = self._module()
+        try:
+            event = {"channel": "C123", "user": "UOWNER123", "ts": "1787450100.123456"}
+            alias = "<@U0B9KFJPST1>"
+            client = _SlackClient()
+            for text in (f"Report complete.\nSent using {alias}", f"> {alias} quoted",
+                         f"```{alias} code```", f"`{alias}`", f"Please ask {alias} later",
+                         f"<@UOTHER123> report\nSent using {alias}"):
+                with self.subTest(text=text), patch.object(slack_bot.httpx, "post") as post:
+                    current = {**event, "text": text}
+                    self.assertFalse(slack_bot._is_chatgpt_alias_message(current))
+                    slack_bot.message_handler(current, client)
+                    slack_bot._forward_chatgpt_alias(current, client)
+                    post.assert_not_called()
+            self.assertEqual(client.messages, [])
+            for text in (f"{alias} summarize", f"  {alias} summarize",
+                         f"<@UOTHER123> {alias} summarize",
+                         f"{alias} APPROVE CBR-{'A'*24} exact prompt",
+                         f"{alias} RECOVER CBR-{'A'*24} exact prompt"):
+                self.assertTrue(slack_bot._is_chatgpt_alias_message({**event, "text": text}))
+            with patch.object(slack_bot.httpx, "post") as post:
+                slack_bot._forward_chatgpt_alias({**event, "text": f"{alias} hello", "bot_id": "BOT"}, client)
+                post.assert_not_called()
+        finally:
+            sys.modules.pop(module_name, None)
+
+    def test_only_exact_paid_disabled_refusal_gets_static_paused_notice(self):
+        cases = [
+            (403, {"detail": "paid provider execution is disabled"}, True),
+            (403, {"detail": "owner mismatch"}, False),
+            (401, {"detail": "paid provider execution is disabled"}, False),
+            (403, {"detail": "paid provider execution is disabled", "extra": "untrusted"}, False),
+            (403, "not JSON", False),
+            (403, {"detail": "x" * 300}, False),
+        ]
+        for status, body, paused in cases:
+            with self.subTest(status=status, body=body):
+                module_name, slack_bot = self._module()
+                try:
+                    request = httpx.Request("POST", "http://fixture/v1/chatgpt-bridge")
+                    response = (httpx.Response(status, text=body, request=request) if isinstance(body, str)
+                                else httpx.Response(status, json=body, request=request))
+                    client = _SlackClient()
+                    event = {"channel": "C123", "user": "UOWNER123", "ts": "1787450100.123456",
+                             "text": "<@U0B9KFJPST1> summarize"}
+                    with patch.object(slack_bot.httpx, "post", return_value=response) as post:
+                        slack_bot.message_handler(event, client)
+                    self.assertEqual(post.call_count, 1)
+                    self.assertEqual(len(client.messages), 1)
+                    self.assertIn("PAUSED" if paused else "FAILED", client.messages[0]["text"])
+                    self.assertNotIn("untrusted", client.messages[0]["text"])
+                    self.assertNotIn("owner mismatch", client.messages[0]["text"])
+                finally:
+                    sys.modules.pop(module_name, None)
+
     def test_dual_handlers_canonicalize_identity_and_preserve_other_mentions(self):
         module_name, slack_bot = self._module()
         try:
@@ -1280,3 +1337,5 @@ if __name__ == "__main__":
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]]

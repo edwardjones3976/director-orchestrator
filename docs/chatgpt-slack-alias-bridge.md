@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | BEGIN]]**
@@ -67,6 +68,12 @@ bounded message from the configured owner in an allowlisted channel:
 @ChatGPT Reply with exactly: BRIDGE_OK
 ```
 
+Address the alias at the start of the message, optionally after other Slack user
+mentions in the opening address list. Mentions inside prose, quotes, code, or
+connector attribution footers do not invoke this bridge. This applies to request,
+APPROVE, and RECOVER commands. When paid execution is disabled, an intentional
+request receives a static PAUSED notice and does not dispatch a provider.
+
 The first bridge response must be a deterministic approval instruction and must
 not call OpenAI. Reply in that thread using the exact form it supplies:
 
@@ -117,3 +124,5 @@ backend request and one Slack response without suppressing unrelated messages.
 **[[Codex | GPT-5.6 | 2026-08-23 | 08:12 UTC | END]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]**
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->

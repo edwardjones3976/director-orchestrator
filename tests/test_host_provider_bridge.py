@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -189,7 +190,7 @@ class HostProviderBridgeTests(unittest.TestCase):
             changed.validate(SECRET, now=1_000)
         unsupported = request(nonce="nonce-4")
         object.__setattr__(unsupported, "provider", "microsoft-365-copilot")
-        with self.assertRaisesRegex(HostProviderBridgeError, "unsupported"):
+        with self.assertRaisesRegex(HostProviderBridgeError, "unallowlisted"):
             unsupported.validate(SECRET, now=1_000)
 
     def test_executor_uses_one_shell_false_attempt(self) -> None:
@@ -626,7 +627,7 @@ class HostProviderBridgeTests(unittest.TestCase):
     def test_executor_refuses_direct_provider_lanes(self) -> None:
         for provider in ("microsoft-365-copilot",):
             with self.subTest(provider=provider), self.assertRaisesRegex(
-                ValueError, "unsupported"
+                ValueError, "unallowlisted"
             ):
                 WindowsHostProviderExecutor(
                     {provider: ("provider.exe",)}, cwd=self.temporary.name
@@ -644,3 +645,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

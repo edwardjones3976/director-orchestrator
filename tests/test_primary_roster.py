@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
@@ -195,18 +196,6 @@ class SelectableLaneCostRankTests(unittest.TestCase):
         self.assertEqual((), settings.unranked_selectable_primary_lanes())
         settings.validate_workload_policy_configuration()
 
-    def test_unranked_lanes_that_cannot_be_selected_still_start(self):
-        # microsoft-365-copilot is a known lane, but it is neither an
-        # implementer nor a research lane, so no roster can ever name it.
-        self.assertNotIn("microsoft-365-copilot", IMPLEMENTERS)
-        self.assertNotIn("microsoft-365-copilot", RESEARCH_LANES)
-        settings = self.settings(
-            bound=("openai", "claude", "cursor", "microsoft-365-copilot"),
-            ranks={"openai": 4, "claude": 1, "cursor": 2},
-        )
-
-        self.assertEqual((), settings.unranked_selectable_primary_lanes())
-        settings.validate_workload_policy_configuration()
 
     def test_an_unbound_lane_needs_no_rank(self):
         # provider_ready is False without a binding, and the roster's available
@@ -302,3 +291,4 @@ class SelectableLaneCostRankTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

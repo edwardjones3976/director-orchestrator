@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -81,7 +82,6 @@ class Provider(str, Enum):
     PERPLEXITY = "perplexity"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
-    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
 
 
 class DirectProductionProvider(str, Enum):
@@ -99,7 +99,6 @@ class DirectProductionProvider(str, Enum):
     PERPLEXITY = "perplexity"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
-    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
     EXTERNAL_OPENAI = "external_openai"
 
 
@@ -524,7 +523,7 @@ def is_accepted_productive_kind(provider: Provider, kind: WorkKind) -> bool:
             "accepted productive-work classification requires typed provider and kind"
         )
     return is_direct_production_kind(kind) or (
-        provider in {Provider.PERPLEXITY, Provider.FIRECRAWL, Provider.MICROSOFT_365_COPILOT} and kind is WorkKind.RESEARCH
+        provider in {Provider.PERPLEXITY, Provider.FIRECRAWL} and kind is WorkKind.RESEARCH
     )
 
 
@@ -1430,3 +1429,4 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
