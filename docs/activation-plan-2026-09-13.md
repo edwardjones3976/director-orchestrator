@@ -1,19 +1,52 @@
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]] -->
-# LangGraph-primary + n8n activation plan (v2)
+# LangGraph-primary + n8n activation plan (v3)
 
 **Delivery deadline:** Sunday 2026-09-13 07:00 PDT (14:00 UTC)
-**Issued:** 2026-09-08 19:00 PDT · **Revised:** 2026-09-08 19:30 PDT
+**Issued:** 2026-09-08 19:00 PDT · **Revised:** 2026-09-08 19:55 PDT
 **Issued by:** Claude, acting Director-Orchestrator
 **Owner:** Ed Jones (`edwardjones3976`)
 
-v2 supersedes v1. It records five owner decisions the owner delegated to the
-Director on 2026-09-08, and revises the deployment topology after reading the
-actual state of the Default Director deployment.
+v3 supersedes v2. It adopts the seven Director decision rules in
+[`docs/director-decision-rules.md`](director-decision-rules.md) as governing for
+this delivery, and applies them: the schedule, the gate ledger and the work
+orders below are the output of those rules, not merely compatible with them.
+It retains v2's five owner decisions and the deployment topology revision.
 
 Everything here is a plan. Nothing in it is activation evidence, and no
 control action in it has been run.
 
 ---
+
+## 0. Operating rules (governing)
+
+Adopted by owner direction on 2026-09-08 and recorded in full in
+[`docs/director-decision-rules.md`](director-decision-rules.md). Every lane
+applies them without asking. They remove no deterministic gate, relax no
+approval and create no authority; where a rule and `AGENTS.md` or
+`src/director_orchestrator/policy.py` disagree, the gate wins.
+
+| Rule | In one line | What it already changed in this plan |
+| --- | --- | --- |
+| **R1** Sequence by `p_fail / cost_to_determine` | Check the most-likely-to-fail, cheapest-to-check condition first | **Gate 8 is determined Wednesday, not at the Saturday go/no-go.** Every cheaply-determined gate is resolved before any expensively-satisfied one |
+| **R2** Three-valued ledger | Gates are `T`/`F`/`U`; completion is computed, never asserted | §7 is now a `T`/`F`/`U` ledger with a derived completion line and a separate no-go disjunction |
+| **R3** Name the decision it flips | An optional action with no flippable decision has zero value and is not taken | Added to the stop rules; every work order states the decision its investigation serves |
+| **R4** Temporal network, not critical path | Min lags *and* max lags; feasible iff no negative cycle | New **WO-14** runs the check before Thursday. `ValidateProviders` is deliberately scheduled late, not early |
+| **R5** Operator-minutes is the binding resource | `Σ attended durations ≤ Σ window minutes`, capacity one | WO-14 sums the attended estimates against ~14.5 h of windows. Over budget means scope moves, never "add an agent" |
+| **R6** Evidence carries a binding key | Reuse on key match; exact-candidate verdicts stay commit-keyed | WO-02, WO-03 and WO-05 record the files and digests each finding depends on, so a candidate change re-runs only what moved |
+| **R7** Integer allocation quotas | Largest-remainder apportionment over the rolling window | Routing uses integer quotas and integer band bounds; admission and concurrency rules unchanged |
+
+**The two-cost distinction that drives R1.** The cost of *determining* whether a
+gate is satisfied is usually far below the cost of *satisfying* it. Gate 8 is
+the clearest case: the Long Table canary bundle either exists or it does not,
+and looking takes minutes, while producing it takes days. Determining it on
+Wednesday converts the largest known risk from a Saturday-noon surprise with
+eighteen hours left into a Wednesday decision with ninety.
+
+**What these rules do not do.** They do not reduce the thirty evidence rows, the
+nine gates, or the attended minutes those require. They change the order in
+which unknowns are resolved, the amount of work repeated unnecessarily, and
+whether an unknown can be mistaken for a pass. No percentage reduction is
+claimed.
 
 ## 1. What changed in v2, and why
 
@@ -188,7 +221,9 @@ a simulation, or merged code as proof of live provider execution.
 | When | What | Lane |
 | --- | --- | --- |
 | Wed 09-09, 10 min | **WO-01** the one remaining runtime question on D | Owner |
+| **Wed 11:00** | **WO-15 — cheap-gate sweep (R1).** Determine every gate whose determination is cheap, Gate 8 first: does the Long Table canary evidence bundle exist, and is it complete? Record `T`/`F`/`U` per gate | Director + Owner |
 | Wed 14:00 | **WO-02** blocker audit · **WO-03** PR triage returned | Codex · Cursor |
+| **Wed 16:00** | **WO-14 — feasibility check (R4, R5).** Temporal-network consistency and the operator-minutes budget, before any window is committed | Director |
 | Wed 17:00 | **Candidate freeze** — `c81e388` or `main` plus fix PRs | Director → Owner |
 | Wed 21:00 | **WO-05** fix PRs open with tests and tags | Codex |
 | Thu 12:00 | WO-05 reviewed, CI and security green, owner merges, SHA frozen | Cursor · Owner |
@@ -197,7 +232,7 @@ a simulation, or merged code as proof of live provider execution.
 | Fri 10:00 | **WO-10 prep** on L: activation bindings, cost ranks, generation manifest, host-bridge `Preflight`, campaign reservation | Owner + Director |
 | Fri 18:00–20:00 | **WO-09** Stage A on S; n8n exercised with doubles; evidence bundle. **Scope cut** on WO-12 | Owner + Director |
 | Sat 09:00 | **WO-10** `StageRuntime` → `ValidateProviders` on L | Owner + Director |
-| Sat 12:00 | **GO / NO-GO** against the nine gates | Owner + Director |
+| Sat 12:00 | **GO / NO-GO** against the nine gates — under R1 this confirms a mostly-known answer rather than discovering one | Owner + Director |
 | Sat 13:00 | **WO-11** stop D's Slack and n8n, repoint n8n to L, `Activate`, canary | Owner + Director |
 | Sat 16:00 | Keep-live or rollback decision | Owner |
 | Sat 18:00 → Sun 05:00 | **WO-13** report and guide, review, corrections, PDFs | Director · Cursor |
@@ -236,12 +271,39 @@ file and line: does `Activate` tolerate `OFFLINE_SIMULATION_ENABLED=true` at
 start, or must the operator clear it first; does `Activate` tolerate a
 pre-existing `intake_owner = langgraph`; is `Rollback` available from the Stage
 A state, both in the deployed `2026-09-06 20:37 UTC` script and after PR #115.
-No code changes. Unknowns are labelled unknown.
+No code changes. Unknowns are labelled unknown. Under R6, record for each
+finding the files and digests it depends on, so a candidate change re-runs only
+the findings whose inputs moved; under R3, any further investigation this audit
+proposes must name the decision it would flip.
 
 **WO-03 — open pull request triage (Cursor, Wed 14:00).** Every open PR:
 number, head SHA, author lane, touches activation-path files, CI state,
 reviews, and a recommendation of merge-before-freeze, hold, or close. Flag any
-PR whose merge would move `main` after the freeze. Recommendations only.
+PR whose merge would move `main` after the freeze. Recommendations only. Under
+R6, record the head SHA each recommendation was computed against so it can be
+re-validated rather than redone.
+
+**WO-14 — schedule feasibility (Director, Wed 16:00).** Two checks, both before
+any window is committed. First (R4): build the constraint graph — precedence
+edges as minimum lags, `t(Activate) − t(finish ValidateProviders) ≤ 24 h` as a
+maximum lag, owner windows as release times, attended tasks non-overlapping at
+capacity one — and test for a negative cycle. Report either that the plan is
+consistent, or the exact constraint pair that cannot both hold, plus the latest
+feasible start for `ValidateProviders`. Second (R5): sum the attended duration
+estimates for WO-08 through WO-11 against the available window minutes. If the
+sum exceeds the budget, propose what leaves the critical set, in the order R1
+gives. Deliverable: one page appended to the staging worksheet, and a plan
+revision if either check fails.
+
+**WO-15 — cheap-gate sweep (Director + Owner, Wed 11:00).** Apply R1 to the nine
+activation gates. For each, record the cost of *determining* it separately from
+the cost of *satisfying* it, then determine every cheap one now and record
+`T`/`F`/`U` with its evidence reference. Gate 8 is first: locate the Native Long
+Table canary evidence bundle, establish whether it is complete against the
+accepted source baseline `4d26680f` / tree `1e0db56f`, and record the result.
+Gates 3 and 5 are also cheaply determined from the worksheet and task inventory.
+The output is the initial state of the §7 ledger and, if Gate 8 reads `F` or
+`U`, a Wednesday recommendation on the live scope rather than a Saturday one.
 
 **WO-04 — worksheet, manifest, gate ledger (Director, Wed).** Non-secret
 portions of the staging worksheet for S and L, the generation manifest fields,
@@ -347,17 +409,29 @@ evidence lives. Both exported to PDF.
 
 ## 7. Activation gate ledger
 
-| # | Gate | Evidence slot | Accepted |
-| --- | --- | --- | --- |
-| 1 | Independent review, trusted CI and security on the exact candidate SHA | PR number, head, artifact digests | ☐ |
-| 2 | Postgres checkpointer live; backup and restore drill recorded | `Backup` / `RestoreDrill` output | ☐ |
-| 3 | Distinct deployment, graph, checkpoint and effect-ledger namespaces | worksheet | ☐ |
-| 4 | Legacy intake disabled before the writer lease is acquired | `legacy_new_intake_disabled` | ☐ |
-| 5 | Pre-cutover tasks bound or explicitly migrated | task inventory | ☐ |
-| 6 | `/health` shows checkpoint, writer and reconciliation readiness | health JSON | ☐ |
-| 7 | Kill switch blocks new graph tasks and reconciles in-flight effects | drill note | ☐ |
-| 8 | Long Table canary evidence bundle complete | bundle reference, or recorded as not satisfied | ☐ |
-| 9 | Owner acceptance with exact commits, profile IDs, store digests, run IDs, costs, rollback drill | acceptance record | ☐ |
+Values are `T`, `F` or `U` under R2. `U` is a real value and is never rounded
+to `T`. "Determine" and "satisfy" are separate columns under R1: the ledger is
+ordered by determination cost so the cheap answers arrive first.
+
+| # | Gate | Evidence slot | Cost to determine | Determined | Value |
+| --- | --- | --- | --- | --- | --- |
+| 8 | Long Table canary evidence bundle complete | bundle reference against baseline `4d26680f` / tree `1e0db56f`, or recorded not satisfied | minutes | **Wed (WO-15)** | `U` |
+| 3 | Distinct deployment, graph, checkpoint and effect-ledger namespaces | worksheet | minutes | **Wed (WO-15)** | `U` |
+| 5 | Pre-cutover tasks bound or explicitly migrated | task inventory | minutes | **Wed (WO-15)** | `U` |
+| 4 | Legacy intake disabled before the writer lease is acquired | `legacy_new_intake_disabled` | one health read | Wed (WO-01) for D; WO-08 for L | `U` |
+| 7 | Kill switch blocks new graph tasks and reconciles in-flight effects | drill note | one drill | Thu (WO-08) | `U` |
+| 2 | Postgres checkpointer live; backup and restore drill recorded | `Backup` / `RestoreDrill` output | one lifecycle pass | Thu (WO-08) | `U` |
+| 1 | Independent review, trusted CI and security on the exact candidate SHA | PR number, head, artifact digests | a review cycle | Thu (WO-05, WO-07) | `U` |
+| 6 | `/health` shows checkpoint, writer and reconciliation readiness | health JSON | after WO-08 | Thu–Fri | `U` |
+| 9 | Owner acceptance with exact commits, profile IDs, store digests, run IDs, costs, rollback drill | acceptance record | after 1–8 | Sat (WO-11) | `U` |
+
+```
+Done      = AND over gates 1..9            currently U  (nine unknown, none false)
+Permitted = Done AND NOT (OR over no-go)   currently U  — not a pass
+```
+
+No status message, report or handoff states that this delivery is complete. Each
+states the computed value and names the gates still `U`.
 
 Gate 8 remains the most likely no-go: the Native Long Table canary is a separate
 lane with its own worktree and branch. If it cannot be completed by Saturday
@@ -367,6 +441,13 @@ recorded verbatim.
 
 ## 8. Stop rules
 
+- **R2.** A gate that is `U` is not a pass. Completion is computed from the
+  ledger and never asserted; a triggered no-go is never overridden by a
+  satisfied conjunction.
+- **R3.** Before any optional investigation, status check, review pass or
+  provider call, name the decision it could flip. If no outcome changes any
+  action, do not take it. Required security, CI, approval and exact-candidate
+  checks are mandatory and outside this rule.
 - Deployment, publishing, merge, deletion, purchases, credential or access
   changes stop in `OWNER_DECISION_REQUIRED`.
 - No lane accepts or merges its own material work; the Director does not accept
