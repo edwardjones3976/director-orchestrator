@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 """Phase 2 of human-out-of-the-loop operation: the audit record format.
@@ -363,6 +364,11 @@ class DelegationAuditRecord:
     the grant was absent, malformed, expired, or silent on the class. ``None``
     means exactly that and must never be read as a grant that applied.
 
+    ``candidate_sha`` is explicitly ``None`` (JSON ``null``) when a ``REFUSED``
+    or ``WOULD_STOP`` outcome could not resolve a candidate. The field remains
+    required; no commit is invented. ``DELEGATED`` and ``WOULD_DELEGATE`` always
+    require a full exact commit SHA.
+
     ``grant_snapshot`` holds the canonical, validated grant document whenever
     a grant is named. Its contents are covered by the record digest and external
     ledger anchor; changing or removing configuration cannot change old evidence.
@@ -378,7 +384,7 @@ class DelegationAuditRecord:
     outcome: RecordedOutcome
     grant_id: str | None
     decision_class: Tier1Class | str
-    candidate_sha: str
+    candidate_sha: str | None
     acting_agent: str
     verdicts: tuple[VerdictEntry, ...]
     gate_results: tuple[GateResult, ...]
@@ -403,7 +409,10 @@ class DelegationAuditRecord:
             # A bounded exact attempted class, including tier 0 or unknown, is
             # evidence of a refusal. It adds nothing to the delegable enum.
             _require_identifier(self.decision_class, "refused decision_class")
-        if not isinstance(self.candidate_sha, str) or not _CANDIDATE_SHA.fullmatch(
+        if self.candidate_sha is None:
+            if claims_delegation:
+                raise DelegationAuditError("delegation outcomes require a resolved candidate_sha")
+        elif not isinstance(self.candidate_sha, str) or not _CANDIDATE_SHA.fullmatch(
             self.candidate_sha
         ):
             raise DelegationAuditError("candidate_sha is not a full 40-hex commit")
@@ -552,8 +561,8 @@ class DelegationAuditRecord:
             raise DelegationAuditError("gate_results must be a list")
 
         candidate_sha = fields["candidate_sha"]
-        if not isinstance(candidate_sha, str):
-            raise DelegationAuditError("candidate_sha must be a string")
+        if candidate_sha is not None and not isinstance(candidate_sha, str):
+            raise DelegationAuditError("candidate_sha must be a string or null")
 
         return cls(
             schema_version=AUDIT_SCHEMA_VERSION,
@@ -588,3 +597,4 @@ def parse_record(document: str) -> DelegationAuditRecord:
     return DelegationAuditRecord.from_payload(payload)
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]

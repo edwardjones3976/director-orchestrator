@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -3931,7 +3932,11 @@ class TaskStore:
             record.error = error
         return self.save(record)
 
-    def _verified_audit_head(self, connection: sqlite3.Connection) -> tuple[int, str]:
+    def _verified_audit_snapshot(
+        self, connection: sqlite3.Connection
+    ) -> tuple[tuple[int, str], list[sqlite3.Row]]:
+        """Materialize once and verify exactly those rows against the anchor."""
+
         if self._audit_anchor is None:
             raise DelegationAuditAnchorUnavailable("external audit anchor is required")
         try:
@@ -3946,12 +3951,13 @@ class TaskStore:
         ):
             raise DelegationAuditAnchorUnavailable("external audit anchor is malformed")
         count, chain = 0, "0" * 64
-        # Stream the entire chain, including rows outside the requested page.
+        # Materialize the entire chain, including rows outside the requested page.
         # Verifying only returned rows would miss deletions and forged tails.
-        for row in connection.execute(
+        rows = connection.execute(
             "SELECT ledger_id, record_digest, record_json, recorded_at "
             "FROM delegated_decision_audit ORDER BY ledger_id"
-        ):
+        ).fetchall()
+        for row in rows:
             count += 1
             if row["ledger_id"] != count:
                 raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
@@ -3960,7 +3966,7 @@ class TaskStore:
             )
         if count != expected[0] or not hmac.compare_digest(chain, expected[1]):
             raise DelegationAuditLedgerCorrupt("audit chain differs from external anchor")
-        return count, chain
+        return (count, chain), rows
 
     def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
         """Append one immutable delegation audit record and return its digest.
@@ -3980,7 +3986,7 @@ class TaskStore:
         try:
             with self._lock, self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                previous = self._verified_audit_head(connection)
+                previous, _ = self._verified_audit_snapshot(connection)
                 cursor = connection.execute(
                     """INSERT INTO delegated_decision_audit(
                         record_digest, record_json, recorded_at
@@ -4008,10 +4014,11 @@ class TaskStore:
     def delegation_audit_records(
         self, *, limit: int = 100, after_digest: str | None = None
     ) -> list[DelegationAuditRecord]:
-        """Read the ledger back in append order, verifying each row.
+        """Read the ledger from a single materialization verified against the anchor.
 
         Use the last returned record's digest as ``after_digest`` for the next
         page. An unknown cursor is refused, never treated as the first page.
+        Cursor lookup, pagination and parsing use only that verified snapshot.
         Every returned row is re-parsed and its digest recomputed rather than trusted.
         A record is meant to be independently checkable by a reader who was not
         present when it was written, and that property is worth nothing if the
@@ -4030,23 +4037,18 @@ class TaskStore:
         with self._lock, self._connect() as connection:
             # Serialize checkpoint verification with appenders in other stores.
             connection.execute("BEGIN IMMEDIATE")
-            self._verified_audit_head(connection)
-            after_id = 0
-            if after_digest is not None:
-                cursor = connection.execute(
-                    "SELECT ledger_id FROM delegated_decision_audit WHERE record_digest = ?",
-                    (after_digest,),
-                ).fetchone()
-                if cursor is None:
-                    raise ValueError("after_digest is not in this ledger")
-                after_id = cursor["ledger_id"]
-            rows = connection.execute(
-                """SELECT record_digest, record_json
-                FROM delegated_decision_audit WHERE ledger_id > ? ORDER BY ledger_id LIMIT ?""",
-                (after_id, limit),
-            ).fetchall()
+            _, rows = self._verified_audit_snapshot(connection)
+        after_index = 0
+        if after_digest is not None:
+            after_index = next(
+                (index for index, row in enumerate(rows, start=1)
+                 if row["record_digest"] == after_digest),
+                None,
+            )
+            if after_index is None:
+                raise ValueError("after_digest is not in this ledger")
         records: list[DelegationAuditRecord] = []
-        for row in rows:
+        for row in rows[after_index:after_index + limit]:
             try:
                 record = parse_record(row["record_json"])
             except DelegationAuditError as exc:
@@ -4146,3 +4148,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 """Phase 2 of human-out-of-the-loop operation: record format and audit ledger.
@@ -17,11 +18,12 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from director_orchestrator import delegation_ledger
 from director_orchestrator.delegation import GRANT_SCHEMA_VERSION, Tier1Class
@@ -142,6 +144,40 @@ class MemoryAnchor:
 
 
 class ExternalAnchorRegressionTests(unittest.TestCase):
+    def test_reader_returns_only_the_single_anchored_materialization(self):
+        originals = [record(), record(recorded_at=NOW + timedelta(seconds=1))]
+        forged = replace(originals[1], outcome=RecordedOutcome.DELEGATED)
+        for after_digest, expected in ((None, originals), (originals[0].digest, originals[1:])):
+            with self.subTest(after_digest=after_digest), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+                for original in originals:
+                    store.append_delegation_audit_record(original)
+                connect = store._connect
+                audit_reads = []
+
+                @contextmanager
+                def divergent_connect():
+                    with connect() as connection:
+                        def execute(sql, parameters=()):
+                            if sql.lstrip().upper().startswith("SELECT") and "delegated_decision_audit" in sql:
+                                audit_reads.append(sql)
+                                if len(audit_reads) > 1:
+                                    # The first result is anchored. Every later
+                                    # query substitutes self-consistent forgery,
+                                    # including its freshly recomputed digest.
+                                    return connection.execute(
+                                        "SELECT ? AS ledger_id, ? AS record_digest, "
+                                        "? AS record_json, ? AS recorded_at",
+                                        (2, forged.digest, forged.canonical_json(), forged.recorded_at.isoformat()),
+                                    )
+                            return connection.execute(sql, parameters)
+
+                        yield Mock(wraps=connection, execute=Mock(side_effect=execute))
+
+                with patch.object(store, "_connect", divergent_connect):
+                    self.assertEqual(store.delegation_audit_records(after_digest=after_digest), expected)
+                self.assertEqual(len(audit_reads), 1)
+
     def test_binary_corrupt_rows_use_the_ledger_corruption_signal(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
@@ -440,6 +476,26 @@ class RecordFormatTests(unittest.TestCase):
         self.assertIsNone(empty.grant_id)
         self.assertEqual(DelegationAuditRecord.from_payload(empty.to_payload()), empty)
 
+    def test_unresolved_candidate_refusals_round_trip_through_the_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "audit.sqlite3")
+            anchor = MemoryAnchor()
+            store = TaskStore(path, delegation_audit_anchor=anchor)
+            originals = []
+            for outcome in (RecordedOutcome.REFUSED, RecordedOutcome.WOULD_STOP):
+                with self.subTest(outcome=outcome):
+                    unresolved = record(
+                        outcome=outcome, candidate_sha=None, grant_id=None, verdicts=(),
+                        gate_results=(gate("candidate_resolution", GateStatus.UNAVAILABLE),),
+                    )
+                    self.assertIsNone(json.loads(unresolved.canonical_json())["candidate_sha"])
+                    self.assertEqual(parse_record(unresolved.canonical_json()), unresolved)
+                    self.assertNotEqual(unresolved.digest, replace(unresolved, candidate_sha=SHA).digest)
+                    self.assertEqual(store.append_delegation_audit_record(unresolved), unresolved.digest)
+                    originals.append(unresolved)
+            reopened = TaskStore(path, delegation_audit_anchor=anchor)
+            self.assertEqual(reopened.delegation_audit_records(), originals)
+
     def test_shadow_outcomes_exist_but_nothing_here_produces_them(self):
         # Phase 3 vocabulary, recorded as format only.
         for outcome in (RecordedOutcome.WOULD_DELEGATE, RecordedOutcome.WOULD_STOP):
@@ -466,7 +522,7 @@ class MalformedRecordTests(unittest.TestCase):
             "outcome": 1,
             "grant_id": 7,
             "decision_class": ["merge"],
-            "candidate_sha": None,
+            "candidate_sha": 7,
             "acting_agent": {"name": "claude"},
             "verdicts": {"openai": "ACCEPT"},
             "gate_results": "all green",
@@ -530,6 +586,24 @@ class MalformedRecordTests(unittest.TestCase):
         for value in ("", "a" * 39, "a" * 41, "A" * 40, "z" * 40, SHA + "\n"):
             with self.subTest(value=value), self.assertRaises(DelegationAuditError):
                 record(candidate_sha=value)
+
+    def test_delegation_claims_require_resolved_candidates(self):
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            with self.subTest(outcome=outcome):
+                with self.assertRaises(DelegationAuditError):
+                    record(outcome=outcome, candidate_sha=None)
+                payload = record(outcome=outcome).to_payload()
+                payload["candidate_sha"] = None
+                with self.assertRaises(DelegationAuditError):
+                    parse_record(json.dumps(payload))
+
+    def test_unresolved_candidate_requires_an_explicit_null(self):
+        for outcome in (RecordedOutcome.REFUSED, RecordedOutcome.WOULD_STOP):
+            with self.subTest(outcome=outcome):
+                payload = record(outcome=outcome).to_payload()
+                del payload["candidate_sha"]
+                with self.assertRaises(DelegationAuditError):
+                    parse_record(json.dumps(payload))
 
     def test_identifiers_are_bounded(self):
         with self.assertRaises(DelegationAuditError):
@@ -866,3 +940,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
