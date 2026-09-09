@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
@@ -831,12 +832,19 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
 
     @staticmethod
     def unconditional_claims(text):
+        """Find selected English claim forms, not every semantic paraphrase.
+
+        Matching is clause-local and some spans are length-bounded. It does not
+        resolve cross-sentence pronouns or infer obligations from arbitrary
+        synonyms (for example, an implicit requirement to submit a "ballot").
+        New wording still needs human review; [] is not proof of absence.
+        """
         # Inspect separate bullets, YAML fields, table cells, and sentences so
         # an abstention elsewhere cannot excuse an unconditional local claim.
         blocks = re.split(r"\n\s*\n|\n(?=\s*(?:[-*] |[\w-]+:|\|))", text)
         problems = []
         for block in blocks:
-            normalized = " ".join(block.split())
+            normalized = " ".join(block.split()).replace("\u2019", "'")
             for clause in re.split(r"[.!?](?=\s|$)|[;|]", normalized):
                 universal_or_mandatory = re.search(
                     r"\b(?:votes|voting|cast(?:s|ing)? [^.!?;|]{0,160})\s+"
@@ -844,9 +852,24 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
                     r"|\b(?:must|shall|always|has to|is required to) "
                     r"(?:casts?\b[^.!?;|]{0,80}\bvote|votes?)\b"
                     r"|\b(?:voting|(?:claude|participant|director)(?:'s)? (?:advisory )?vote) "
-                    r"(?:is )?(?:mandatory|required|compulsory|unconditional)\b"
-                    r"|\bvotes? unconditionally\b"
-                    r"|\b(?:claude|participant|director) (?:must not|cannot|may not|shall not) abstain\b",
+                    r"(?:is )?(?:mandatory|required|compulsory|unconditional|automatic|guaranteed|invariable)\b"
+                    r"|\bvotes? (?:unconditionally|automatically|without exception|in all cases)\b"
+                    r"|\b(?:claude|participant|director)(?: seat)? "
+                    r"(?:must not|cannot|may not|shall not|does not|(?:can )?(?:never|no longer)) abstains?\b"
+                    r"|\b(?:claude|participant|director)(?: seat)? "
+                    r"(?:votes?|casts? (?:its |an? )?(?:advisory )?vote) without abstaining\b"
+                    r"|\babstention (?:is )?(?:(?:not|no longer) (?:permitted|allowed)|prohibited|forbidden) "
+                    r"for (?:the )?(?:claude|participant|director)\b"
+                    r"|\b(?:claude|participant|director)(?: seat)? "
+                    r"(?:is not|is no longer) (?:permitted|allowed) to abstain\b"
+                    r"|\bno abstention (?:is (?:permitted|allowed) )?"
+                    r"for (?:the )?(?:claude|participant|director)\b"
+                    r"|\b(?:every|each|all) debates?"
+                    r"(?: (?:that |which )?(?:claude|participant|director) (?:joins|moderates|participates in))? "
+                    r"(?:includes?|carries|carry|records?) "
+                    r"(?:the )?(?:claude|participant|director)(?:'s)? (?:advisory )?vote\b"
+                    r"|\b(?:claude|participant|director)(?: seat)? always "
+                    r"(?:carries|holds|includes) (?:its |an? |the )?(?:advisory )?vote\b",
                     clause, re.I,
                 )
                 cast_claim = re.search(
@@ -864,7 +887,14 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
                     problems.append(clause.strip())
         return problems
 
-    def test_all_documentation_surfaces_allow_explicit_abstention(self):
+    def test_all_documentation_surfaces_reject_known_unconditional_claims(self):
+        """Scan known lexical forms; a pass cannot establish semantic absence.
+
+        Cross-sentence references ("Claude participates in every debate. It
+        never abstains.") and implicit obligations using unlisted synonyms
+        ("Claude leaves no debate without a ballot on record.") remain outside
+        this guard and require human review.
+        """
         # Discover new documentation, including templates and both profile
         # sources and rendered sheets; do not freeze this to the known defects.
         paths = set(self.ROOT.glob("*.md"))
@@ -889,6 +919,32 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
             "Claude must vote.", "Participant shall cast its vote.",
             "Claude always votes.", "Voting is mandatory.",
             "Claude votes unconditionally.", "Claude cannot abstain.",
+            "Claude never abstains.",
+            "Abstention is not permitted for Claude.",
+            "Claude votes without exception.",
+            "Every debate includes Claude's advisory vote.",
+            "Claude's vote is automatic.",
+            "The Participant seat always carries a vote.",
+            "Claude does not abstain.",
+            "Claude no longer abstains.",
+            "Claude votes without abstaining.",
+            "No abstention is allowed for Claude.",
+            "Claude is not permitted to abstain.",
+            "Abstention is no longer allowed for Claude.",
+            "Claude can never abstain.",
+            "Claude can no longer abstain.",
+            "Abstention is forbidden for the Director.",
+            "Each debate records Claude's advisory vote.",
+            "Every debate Claude joins includes Claude's advisory vote.",
+            "Each debate that Claude moderates records Claude's advisory vote.",
+            "All debates carry the Participant vote.",
+            "The Director's advisory vote is guaranteed.",
+            "Claude's vote is invariable.",
+            "Claude\u2019s vote is guaranteed.",
+            "Claude's advisory vote is unconditional.",
+            "Claude votes in all cases.",
+            "The Participant seat always holds its advisory vote.",
+            "The Director always includes a vote.",
         ):
             with self.subTest(claim=claim):
                 # A separate general permission must not mask the bad claim.
@@ -903,6 +959,14 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
             "Participant may cast its single advisory vote or abstain.",
             "A cast vote is recorded under Participant.",
             "Advisory weight is cast only for an invited turn.",
+            "Claude's vote is not automatic.",
+            "Claude's right to vote is unconditional.",
+            "Each debate includes Claude's right to vote.",
+            "Every debate Claude moderates includes Claude's right to vote.",
+            "The Participant seat always carries a right to vote.",
+            "Abstention is permitted for Claude.",
+            "Claude is not required to vote.",
+            "Abstention is not prohibited for Claude.",
         ):
             with self.subTest(claim=claim):
                 self.assertEqual(self.unconditional_claims(claim), [])
@@ -1510,3 +1574,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | END]]
