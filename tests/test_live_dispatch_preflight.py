@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
@@ -292,13 +293,20 @@ class ReadOnlyTests(unittest.TestCase):
                     self.assertNotIsInstance(target, ast.Attribute)
 
 
-if __name__ == "__main__":
-    unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
 
 
-class SecretDisclosureTests(unittest.TestCase):
-    """Three ways a value reached the output, all found by a review of #140."""
+class ConstructionAndVariableDisclosureTests(unittest.TestCase):
+    """Three ways a value reached the output, all found by a review of #140.
+
+    This class was also called `SecretDisclosureTests`, which silently replaced
+    the earlier class of that name at import: `-m unittest` collected 20 and
+    dropped `test_no_configured_value_ever_appears_in_the_output`,
+    `test_a_validator_that_leaked_a_value_would_be_redacted` and
+    `test_the_report_prints_switch_names_with_booleans_only`, while a direct run
+    collected 16 and dropped this class instead. Neither invocation ran every
+    test, and the reported "20 pass" was the larger of two incomplete sets.
+    """
 
     def test_a_construction_failure_never_quotes_the_value_that_caused_it(self):
         """Settings interpolates values into its own errors.
@@ -432,3 +440,57 @@ class RemainingDisclosurePathsTests(unittest.TestCase):
         self.assertNotIn("PROJECT_ALLOWLIST", variables_line[0])
         self.assertIn("CLAUDE_CALLBACK_SECRET", variables_line[0])
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]
+
+
+
+
+class CollectionIntegrityTests(unittest.TestCase):
+    """Both invocations must collect the same tests, and all of them.
+
+    This file has shipped two distinct collection defects. `unittest.main()`
+    sat above two classes, so a direct run skipped them; and two classes shared
+    the name `SecretDisclosureTests`, so the second replaced the first at import
+    and discovery silently dropped three tests. `-m unittest` reported 20,
+    a direct run reported 16, and neither was the whole file. A reported pass
+    count is worthless when the two paths disagree.
+    """
+
+    def test_no_test_case_is_defined_below_the_runner(self):
+        source = (ROOT / "tests" / "test_live_dispatch_preflight.py").read_text(
+            encoding="utf-8"
+        )
+        runner = source.index('if __name__ == "__main__":')
+        self.assertNotIn("\nclass ", source[runner:])
+
+    def test_no_two_test_classes_share_a_name(self):
+        import ast as _ast
+
+        tree = _ast.parse(
+            (ROOT / "tests" / "test_live_dispatch_preflight.py").read_text(
+                encoding="utf-8"
+            )
+        )
+        names = [
+            node.name for node in tree.body
+            if isinstance(node, _ast.ClassDef)
+            and any(
+                isinstance(base, _ast.Attribute) and base.attr == "TestCase"
+                for base in node.bases
+            )
+        ]
+        duplicates = {name for name in names if names.count(name) > 1}
+        self.assertEqual(duplicates, set(), f"shadowed classes: {duplicates}")
+
+        # No count is asserted and discovery is not re-invoked here. A
+        # `loadTestsFromName` cross-check looked stronger and was not: under a
+        # direct run the module is already `__main__`, so loading it again by
+        # dotted name produces a second module object and the comparison
+        # reports classes missing that are present. Together with the previous
+        # test -- nothing defined below the runner -- these two AST facts are
+        # what make the two invocations agree, and both hold whichever way the
+        # file is run.
+
+
+if __name__ == "__main__":
+    unittest.main()
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | END]]
