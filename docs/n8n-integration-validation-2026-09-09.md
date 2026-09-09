@@ -41,9 +41,13 @@ Slack Gateway Webhook  →  Create Director Task  →  Accepted (202)
 ```
 
 `Create Director Task` uses the default `onError`, so when `/v1/intake` answers
-non-2xx the execution ends before reaching any `Respond to Webhook` node, and
-n8n answers the open webhook 200 with an empty body. `Accepted` is only reached
-on success.
+non-2xx the execution ends before reaching any `Respond to Webhook` node.
+`Accepted` is only reached on success.
+
+This is documented n8n behaviour, not an inference from the observation. The
+Respond to Webhook node reference states that when "the workflow finishes without
+executing the Respond to Webhook node", it "returns a standard message with a 200
+status". The observed 200-empty is precisely that path.
 
 Compounding it, the deployed workflow sets `saveDataErrorExecution: "none"`, so
 the failing executions are not recorded. Neither end of the integration can say

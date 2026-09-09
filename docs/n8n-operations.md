@@ -114,7 +114,9 @@ secret-shaped value is relayed back through the webhook.
 
 **The error branch is not optional.** Without it, a downstream failure leaves the
 execution with no `Respond to Webhook` node on its path, and n8n answers the
-webhook **200 with an empty body**. The Slack bot's `raise_for_status()` passes
+webhook **200 with an empty body** — documented behaviour: a workflow that
+finishes without executing a Respond to Webhook node returns a standard message
+with a 200 status. The Slack bot's `raise_for_status()` passes
 on a 200, the `!= 202` check then fails, and every message gets
 `DIRECTOR — BLOCKED` with nothing in the response to say why. `Director Intake`
 therefore sets `saveDataErrorExecution: all`: a relay whose failures are not
