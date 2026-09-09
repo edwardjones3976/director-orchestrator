@@ -1,10 +1,19 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
 """Evaluate whether a proposed action may run without returning to the owner.
 
-The predicate is H(a) = A and G and B and V and I and S: authorization, gates,
-bounds, verification, independence, safe stopping. Every term must hold; there
-is no weighting and no majority.
+The predicate is H(a) = A and G and B and V and I and S and P and D:
+authorization, gates, bounds, verification, independence, safe stopping, path
+scope, durable audit. Every term must hold; there is no weighting and no
+majority.
+
+The six-letter form came from the owner's approved analysis and was implemented
+literally. It was short by two: the governing document's evidence bar has ten
+items, and items 6 (owned and prohibited paths) and 10 (audit written before
+execution) mapped to no term at all, so the predicate could return EXECUTE
+without either ever being read. `TERMS` below records which bar item each term
+carries, because an unmapped item is the failure this had.
 
 Two properties matter more than the conjunction itself.
 
@@ -36,6 +45,25 @@ TIER_ONE_CLASSES: frozenset[str] = frozenset(
     }
 )
 
+# Every item of the document's ten-item evidence bar reaches exactly one term.
+# The mapping is stated here because it is the thing that can silently rot: a
+# bar item with no term is not a relaxed requirement, it is an unevaluated one,
+# and the predicate returns EXECUTE without ever having looked at it.
+#
+#   authorization  item 9   grant live, unexpired, unrevoked, correctly scoped
+#   gates          items 1, 2, 7   CI green, security evidence, no tier-0 implied
+#   bounds         item 8   budget, attempt and hop ledgers within bounds
+#   verification   evidence current and bound to the exact candidate
+#   independence   items 3, 4, 5   two concurring ACCEPTs from different
+#                  non-author providers, and three distinct identities
+#   safe_stopping  failure handling, cancellation and recovery defined
+#   scope          item 6   only owned_paths touched, no prohibited_paths
+#   audit          item 10  the audit record durably written before execution
+#
+# `scope` and `audit` were absent, so a caller could satisfy H(a) with a change
+# reaching prohibited paths and no audit record. Found by an independent review
+# of #146. Adding them adds approval requirements, which AGENTS.md rule 4
+# permits; it is removing one that is forbidden.
 TERMS: tuple[str, ...] = (
     "authorization",
     "gates",
@@ -43,6 +71,8 @@ TERMS: tuple[str, ...] = (
     "verification",
     "independence",
     "safe_stopping",
+    "scope",
+    "audit",
 )
 
 # A term the document routes to the owner rather than to a recovery. The rule is
@@ -213,3 +243,4 @@ class CompletionRate:
         return 100.0 * self.completed_without_intervention / self.eligible_past_deadline
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]

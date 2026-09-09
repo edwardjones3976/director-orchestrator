@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
 # Standing-authorization execution predicate
@@ -21,20 +22,41 @@ A proposed action runs without returning to the owner only when every term
 holds:
 
 ```
-H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a)
+H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
 ```
 
-| Term | Required condition |
-| --- | --- |
-| `A` authorization | A live standing grant covers this action class, repository, environment and scope. |
-| `G` gates | Every applicable deterministic policy, security and CI gate passes. |
-| `B` bounds | The action fits the remaining spend, time, call and retry limits. |
-| `V` verification | Evidence is current and bound to the exact candidate; any earlier ambiguous attempt is reconciled. |
-| `I` independence | The acting identity did not produce or materially author the work. |
-| `S` safe stopping | Failure handling, cancellation and any required recovery are defined and authorized. |
+The right-hand column names the numbered item of the governing document's
+evidence bar that each term carries. That mapping is the load-bearing part: a
+bar item reaching no term is not a relaxed requirement, it is an unevaluated
+one, and the predicate returns `execute` without ever reading it.
+
+| Term | Required condition | Bar |
+| --- | --- | --- |
+| `A` authorization | A grant is live, unexpired, unrevoked, and scoped to this repository, branch, decision class and assignment. | 9 |
+| `G` gates | Every required CI check is green at the exact candidate head, independent security evidence exists at that same head, and no tier-0 class is implicated directly or as a consequence. | 1, 2, 7 |
+| `B` bounds | Budget, attempt and hop ledgers are all within their configured bounds. | 8 |
+| `V` verification | Evidence is current and bound to the exact candidate; any earlier ambiguous attempt is reconciled. | — |
+| `I` independence | Two concurring exact-SHA `ACCEPT` verdicts from **different** providers, neither the producer nor a material author; and producer, reviewer and executing agent are three distinct identities. | 3, 4, 5 |
+| `S` safe stopping | Failure handling, cancellation and any required recovery are defined and authorized. | — |
+| `P` path scope | The change touches only paths inside the assignment's `owned_paths` and none of its `prohibited_paths`. | 6 |
+| `D` durable audit | The audit record for the decision is durably written **before** the decision executes. | 10 |
+
+`P` and `D` are recent. The predicate was first implemented as the six-letter
+form from the owner's approved analysis, taken literally, and that form is short
+by two: items 6 and 10 mapped to nothing, so a change reaching prohibited paths
+with no audit record satisfied `H(a)`. An independent review of #146 found it.
+Adding the two terms adds approval requirements, which AGENTS.md rule 4 permits;
+removing one is what it forbids.
+
+`I` was also stated here as "the acting identity did not produce or materially
+author the work", which is weaker than items 3 to 5 together — it admits a
+single verdict, and it says nothing about the reviewer being a third identity.
+The row above now states the bar.
 
 It is a conjunction, not a score. One unmet term is decisive, and
-`test_any_single_unmet_term_blocks` exercises that for each of the six.
+`test_any_single_unmet_term_blocks` exercises that for each of the eight. A term
+this predicate does not recognise is refused rather than ignored, because
+silently dropping one is exactly how items 6 and 10 went missing.
 
 ## The tier check runs first
 
@@ -114,3 +136,4 @@ advance time must cover the intended operating life of the lane, not just the
 gap to `Activate`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]] -->

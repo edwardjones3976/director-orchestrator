@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
 """The predicate must fail closed, and a hold must name its blocker."""
@@ -250,10 +251,44 @@ class RecoveryTests(unittest.TestCase):
         """
 
         evidence = _all(True)
-        evidence["audit"] = TermEvidence(False, "no audit record written")
+        evidence["provenance"] = TermEvidence(False, "artifact provenance unproved")
         with self.assertRaises(ValueError) as caught:
             decide(MERGE, evidence)
-        self.assertIn("audit", str(caught.exception))
+        self.assertIn("provenance", str(caught.exception))
+
+    def test_every_bar_item_reaches_a_term(self):
+        """A bar item with no term is unevaluated, not relaxed.
+
+        This is the defect the refusal above only mitigates: `audit` and
+        `scope` were genuinely absent, so a change touching prohibited paths
+        with no audit record satisfied H(a). The document numbers its items, so
+        the count is checkable directly.
+        """
+
+        section = DOC.read_text(encoding="utf-8").split("## The evidence bar", 1)[1]
+        section = section.split("Any element that is missing", 1)[0]
+        items = [line for line in section.splitlines() if re.match(r"^\d+\. ", line)]
+        self.assertEqual(len(items), 10)
+
+        # Items 3, 4 and 5 are all independence, and 1, 2 and 7 are all gates,
+        # so the terms are fewer than the items by exactly those foldings.
+        self.assertEqual(len(TERMS), 8)
+        for required in ("scope", "audit"):
+            self.assertIn(required, TERMS)
+
+        # The mapping is recorded beside TERMS; every item number must appear
+        # there, so adding an eleventh item to the document without mapping it
+        # fails here rather than passing unevaluated.
+        import inspect
+
+        from director_orchestrator import hotl_execution
+
+        source = inspect.getsource(hotl_execution)
+        mapping = source.split("ten-item evidence bar", 1)[1].split("TERMS: tuple", 1)[0]
+        cited = set()
+        for run in re.findall(r"items? (\d+(?:\s*,\s*\d+)*)", mapping):
+            cited.update(int(number) for number in run.replace(" ", "").split(","))
+        self.assertEqual(cited, set(range(1, 11)))
 
     def test_a_satisfied_term_cannot_carry_a_recovery(self):
         with self.assertRaises(ValueError):
@@ -279,3 +314,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]
