@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | BEGIN]]
 """Readiness must be derived from inputs, never defaulted to a hoped-for value."""
@@ -94,22 +95,79 @@ class DoneConjunctionTests(unittest.TestCase):
         )
         self.assertTrue(term.holds)
 
-    def test_a_json_false_string_never_satisfies_a_term(self):
-        """bool("false") is True, and a health document is JSON off the wire.
+    # Every field the module reads with `is True`, and the term or touchpoint
+    # it decides. Testing one of them proved nothing about the rest: a delta
+    # review of #150 reverted the touchpoint probes and the wave switches to
+    # bool() and all 20 tests stayed green, reopening the same "false" gate on
+    # four touchpoints and on the wave.
+    BOOLEAN_FIELDS = (
+        ("effect_ledger_ready", "durable_result_store_ready"),
+        ("provider_activation_bindings_configured", "provider_binding_map_configured"),
+        ("primary_runtime_active", "real_execution_of_a_wave"),
+        ("live_provider_dispatch_requested", "real_execution_of_a_wave"),
+    )
+    NOT_TRUE = ("false", "true", "0", "1", 0, 1, {}, {"satisfied": False}, [], None, "yes")
 
-        Constructed by a review: effect_ledger_ready="false" produced a holding
-        term whose evidence read effect_ledger_ready=True.
+    def test_no_non_boolean_value_ever_satisfies_a_term(self):
+        """bool("false") is True, and a health document is JSON off the wire."""
+
+        for field, term_name in self.BOOLEAN_FIELDS:
+            for bogus in self.NOT_TRUE:
+                primary = dict(TODAY["langgraph_primary"])
+                # Satisfy the wave's siblings so only `field` can decide it.
+                primary["primary_runtime_active"] = True
+                primary["live_provider_dispatch_requested"] = True
+                primary["graph_task_count"] = 3
+                primary[field] = bogus
+                term = next(
+                    t for t in done_terms({"langgraph_primary": primary})
+                    if t.name == term_name
+                )
+                self.assertFalse(term.holds, f"{field}={bogus!r}")
+                # The evidence must not report THIS field as True. A blanket
+                # "=True" check is wrong here: the wave term names three
+                # fields, and the two left satisfied read True legitimately.
+                self.assertNotIn(f"{field}=True", term.evidence, f"{field}={bogus!r}")
+
+    def test_no_non_boolean_value_ever_satisfies_a_touchpoint(self):
+        """The probes were reverted to bool() and every test stayed green.
+
+        A review measured "false" on all four probed touchpoints satisfying
+        them, dropping remaining_k from 21 to 19.
         """
 
-        for bogus in ("false", "0", 0, 1, {}, {"satisfied": False}, [], None):
-            primary = dict(TODAY["langgraph_primary"])
-            primary["effect_ledger_ready"] = bogus
+        probed = [name for name, probe in OWNER_TOUCHPOINTS if probe is not None]
+        self.assertEqual(len(probed), 4)
+        for bogus in self.NOT_TRUE:
+            primary = {probe: bogus for _, probe in OWNER_TOUCHPOINTS if probe}
+            satisfied = [
+                t.name for t in owner_touchpoints({"langgraph_primary": primary})
+                if t.satisfied
+            ]
+            self.assertEqual(satisfied, [], repr(bogus))
+            self.assertEqual(
+                remaining_k({"langgraph_primary": primary}),
+                len(OWNER_TOUCHPOINTS),
+                repr(bogus),
+            )
+
+    def test_a_boolean_task_count_is_not_a_wave(self):
+        """True is an int, so dropping the bool guard would count it as one.
+
+        The guard `not isinstance(tasks, bool)` had no test: removing it left
+        every test passing while graph_task_count=True satisfied the wave.
+        """
+
+        primary = dict(TODAY["langgraph_primary"])
+        primary["primary_runtime_active"] = True
+        primary["live_provider_dispatch_requested"] = True
+        for bogus in (True, False, "3", 3.0, None):
+            primary["graph_task_count"] = bogus
             term = next(
                 t for t in done_terms({"langgraph_primary": primary})
-                if t.name == "durable_result_store_ready"
+                if t.name == "real_execution_of_a_wave"
             )
             self.assertFalse(term.holds, repr(bogus))
-            self.assertNotIn("=True", term.evidence, repr(bogus))
 
     def test_every_condition_of_a_wave_is_separately_necessary(self):
         """Drop any one of the three and the term must stop holding.
@@ -161,9 +219,25 @@ class DoneConjunctionTests(unittest.TestCase):
         self.assertTrue(supplied.holds)
 
     def test_an_empty_health_document_holds_nothing(self):
-        """A missing field is not a satisfied term."""
+        """A missing field is not a satisfied term.
 
-        self.assertEqual([t for t in done_terms({}) if t.holds], [])
+        The assertion was an empty holding-list, which `done_terms` returning
+        `()` also satisfies -- a review made that mutation and this passed. The
+        five terms must be present and every one unmet.
+        """
+
+        terms = done_terms({})
+        self.assertEqual(
+            [t.name for t in terms],
+            [
+                "intake_reaches_the_primary_plane",
+                "real_execution_of_a_wave",
+                "durable_result_store_ready",
+                "provider_binding_map_configured",
+                "recovery_proof",
+            ],
+        )
+        self.assertEqual([t.holds for t in terms], [False] * 5)
 
     def test_every_term_carries_its_evidence(self):
         """An empty tuple satisfies "every term" vacuously.
@@ -325,3 +399,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | END]]
