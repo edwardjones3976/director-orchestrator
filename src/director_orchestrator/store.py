@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -34,7 +35,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Protocol
 
 from .delegation_ledger import (
     DelegationAuditError,
@@ -126,12 +127,52 @@ class DelegationAuditConflict(RuntimeError):
 
 
 class DelegationAuditLedgerCorrupt(RuntimeError):
-    """A stored delegation audit row no longer matches its own digest.
+    """Stored delegation evidence disagrees with its digest or external anchor.
 
     Raised on read, not repaired. A ledger that cannot be verified is not
     evidence, and ``docs/human-out-of-the-loop-operation.md`` treats an
     unwritable audit ledger as a trip condition for exactly this reason.
     """
+
+
+class DelegationAuditAnchorUnavailable(RuntimeError):
+    """No trustworthy external checkpoint can be read or durably advanced."""
+
+
+class DelegationAuditAnchor(Protocol):
+    """A separately protected, durable checkpoint for ONE ledger.
+
+    Implementations must authenticate reads and atomically compare-and-set the
+    (row count, chain digest) pair, surviving process restarts and rejecting
+    rollback. Database writers must not be able to rewrite this authority.
+    Provision the initial (0, 64 zeroes) checkpoint independently for a new
+    empty ledger; NEVER bootstrap it from existing database contents. Sharing
+    a checkpoint between databases, a sidecar writable by the database
+    operator, and an in-memory production implementation violate this contract.
+
+    Phase 2 supplies no production backend or credentials. Without an explicitly
+    supplied anchor the ledger fails closed. Checkpoint advancement occurs before
+    SQLite commit: an ambiguous failure or crash can leave a mismatch, which
+    requires external recovery and must never be silently rebased or retried.
+    """
+
+    def read_head(self) -> tuple[int, str]: ...
+
+    def compare_and_set(
+        self, expected: tuple[int, str], updated: tuple[int, str]
+    ) -> None: ...
+
+
+def _audit_chain_digest(
+    previous: str, ledger_id: int, digest: str, document: str, recorded_at: str
+) -> str:
+    try:
+        return canonical_content_digest(json.dumps(
+            ["delegation-audit-chain/v1", previous, ledger_id, digest, document, recorded_at],
+            ensure_ascii=True, separators=(",", ":"),
+        ))
+    except (TypeError, ValueError, RecursionError, MemoryError) as exc:
+        raise DelegationAuditLedgerCorrupt("audit row cannot be hashed") from exc
 
 
 class WorkloadAttemptOutcome(str, Enum):
@@ -173,8 +214,11 @@ class PrivacyCleanupResume:
 
 
 class TaskStore:
-    def __init__(self, path: str):
+    def __init__(
+        self, path: str, *, delegation_audit_anchor: DelegationAuditAnchor | None = None
+    ):
         self.path = path
+        self._audit_anchor = delegation_audit_anchor
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._initialize()
@@ -3887,6 +3931,37 @@ class TaskStore:
             record.error = error
         return self.save(record)
 
+    def _verified_audit_head(self, connection: sqlite3.Connection) -> tuple[int, str]:
+        if self._audit_anchor is None:
+            raise DelegationAuditAnchorUnavailable("external audit anchor is required")
+        try:
+            expected = self._audit_anchor.read_head()
+        except Exception as exc:
+            raise DelegationAuditAnchorUnavailable("external audit anchor is unreadable") from exc
+        if (
+            not isinstance(expected, tuple) or len(expected) != 2
+            or type(expected[0]) is not int or expected[0] < 0
+            or not isinstance(expected[1], str) or len(expected[1]) != 64
+            or any(c not in "0123456789abcdef" for c in expected[1])
+        ):
+            raise DelegationAuditAnchorUnavailable("external audit anchor is malformed")
+        count, chain = 0, "0" * 64
+        # Stream the entire chain, including rows outside the requested page.
+        # Verifying only returned rows would miss deletions and forged tails.
+        for row in connection.execute(
+            "SELECT ledger_id, record_digest, record_json, recorded_at "
+            "FROM delegated_decision_audit ORDER BY ledger_id"
+        ):
+            count += 1
+            if row["ledger_id"] != count:
+                raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
+            chain = _audit_chain_digest(
+                chain, count, row["record_digest"], row["record_json"], row["recorded_at"]
+            )
+        if count != expected[0] or not hmac.compare_digest(chain, expected[1]):
+            raise DelegationAuditLedgerCorrupt("audit chain differs from external anchor")
+        return count, chain
+
     def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
         """Append one immutable delegation audit record and return its digest.
 
@@ -3904,12 +3979,26 @@ class TaskStore:
         digest = record.digest
         try:
             with self._lock, self._connect() as connection:
-                connection.execute(
+                connection.execute("BEGIN IMMEDIATE")
+                previous = self._verified_audit_head(connection)
+                cursor = connection.execute(
                     """INSERT INTO delegated_decision_audit(
                         record_digest, record_json, recorded_at
                     ) VALUES (?, ?, ?)""",
                     (digest, record.canonical_json(), record.recorded_at.isoformat()),
                 )
+                if cursor.lastrowid != previous[0] + 1:
+                    raise DelegationAuditLedgerCorrupt("audit sequence differs from anchor")
+                updated = (cursor.lastrowid, _audit_chain_digest(
+                    previous[1], cursor.lastrowid, digest, record.canonical_json(),
+                    record.recorded_at.isoformat(),
+                ))
+                try:
+                    self._audit_anchor.compare_and_set(previous, updated)
+                    if self._audit_anchor.read_head() != updated:
+                        raise RuntimeError("checkpoint was not durably acknowledged")
+                except Exception as exc:
+                    raise DelegationAuditAnchorUnavailable("audit anchor advance failed") from exc
         except sqlite3.IntegrityError as exc:
             # Both the UNIQUE constraint and the no-replace trigger surface
             # here.  Neither is worked around: an identical record is refused.
@@ -3917,11 +4006,13 @@ class TaskStore:
         return digest
 
     def delegation_audit_records(
-        self, *, limit: int = 100
+        self, *, limit: int = 100, after_digest: str | None = None
     ) -> list[DelegationAuditRecord]:
         """Read the ledger back in append order, verifying each row.
 
-        Every row is re-parsed and its digest recomputed rather than trusted.
+        Use the last returned record's digest as ``after_digest`` for the next
+        page. An unknown cursor is refused, never treated as the first page.
+        Every returned row is re-parsed and its digest recomputed rather than trusted.
         A record is meant to be independently checkable by a reader who was not
         present when it was written, and that property is worth nothing if the
         reader that ships with the writer skips the check.
@@ -3931,11 +4022,28 @@ class TaskStore:
             raise TypeError("limit must be an integer")
         if not 1 <= limit <= 1_000:
             raise ValueError("limit is out of bounds")
+        if after_digest is not None and (
+            not isinstance(after_digest, str) or len(after_digest) != 64
+            or any(c not in "0123456789abcdef" for c in after_digest)
+        ):
+            raise ValueError("after_digest must be a full record digest")
         with self._lock, self._connect() as connection:
+            # Serialize checkpoint verification with appenders in other stores.
+            connection.execute("BEGIN IMMEDIATE")
+            self._verified_audit_head(connection)
+            after_id = 0
+            if after_digest is not None:
+                cursor = connection.execute(
+                    "SELECT ledger_id FROM delegated_decision_audit WHERE record_digest = ?",
+                    (after_digest,),
+                ).fetchone()
+                if cursor is None:
+                    raise ValueError("after_digest is not in this ledger")
+                after_id = cursor["ledger_id"]
             rows = connection.execute(
                 """SELECT record_digest, record_json
-                FROM delegated_decision_audit ORDER BY ledger_id LIMIT ?""",
-                (limit,),
+                FROM delegated_decision_audit WHERE ledger_id > ? ORDER BY ledger_id LIMIT ?""",
+                (after_id, limit),
             ).fetchall()
         records: list[DelegationAuditRecord] = []
         for row in rows:
@@ -4037,3 +4145,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]

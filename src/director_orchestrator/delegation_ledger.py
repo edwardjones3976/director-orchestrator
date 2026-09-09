@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 """Phase 2 of human-out-of-the-loop operation: the audit record format.
 
@@ -7,11 +8,11 @@ format, and nothing beyond it.
 
 **Phase 2 executes no decision.** Nothing here resolves an
 ``OWNER_DECISION_REQUIRED``, merges anything, posts anything, marks a pull
-request ready, or consults the evidence bar. There is deliberately no function
-that counts concurring verdicts or decides whether a gate set is sufficient:
-that is the evidence bar, it belongs to phase 4, and writing it here would
-defeat the sequencing the document relies on for safety. What exists is a
-record format and a place to append it. Phases 3 to 5 write into it.
+request ready, or evaluates live gates. Structural validation refuses records
+that claim delegation without a grant snapshot, two distinct ACCEPT entries,
+and nonempty passing gate evidence. These are necessary format invariants,
+never a finding that the live evidence bar or grant scope is satisfied. Actual
+authorization and gate evaluation belong to later phases.
 
 The document's "Audit record" section fixes the field set::
 
@@ -42,11 +43,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Mapping
 
-from .delegation import Tier1Class
+from .delegation import DelegationConfigurationError, Tier1Class, parse_grant
 from .interactions import canonical_content_digest
 
 
@@ -60,13 +61,27 @@ _MAX_GATE_RESULTS = 64
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9._:@+-]{1,128}$")
 _CANDIDATE_SHA = re.compile(r"^[0-9a-f]{40}$")
 
+# Ledger identity, not routing or authorization. Case is insignificant. The
+# owner's 2026-09-09 ruling makes OpenAI, ChatGPT and Codex ONE provider even
+# when a connector or historical Director label supplied the verdict.
+_PROVIDER_ALIASES = {
+    "openai": "openai", "openai_director": "openai", "openai-director": "openai",
+    "chatgpt": "openai", "codex": "openai", "openai-codex": "openai",
+    "openai_codex": "openai", "chatgpt-codex": "openai", "chatgpt_codex": "openai",
+    "chatgpt-codex-connector": "openai", "chatgpt_codex_connector": "openai",
+    "anthropic": "claude", "claude-code": "claude", "claude_code": "claude",
+    "cursor-agent": "cursor", "cursor_agent": "cursor",
+    "google": "gemini", "google-gemini": "gemini", "antigravity": "gemini",
+    "pplx": "perplexity", "xai": "grok", "x.ai": "grok",
+}
+
 
 class DelegationAuditError(ValueError):
     """A record is malformed and is refused rather than repaired.
 
-    Every rejection is total. There is no partially valid record, and no input
-    is coerced into shape: a record that cannot be trusted in one field cannot
-    be trusted as evidence at all.
+    Every rejection is total. Malformed types and outcomes are never coerced
+    into shape. Supported provider aliases and valid timezone offsets are
+    canonicalized explicitly; an untrustworthy field invalidates the record.
     """
 
 
@@ -177,7 +192,14 @@ def _require_aware(value: object, field: str) -> datetime:
 
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise DelegationAuditError(f"{field} must be a timezone-aware datetime")
-    return value
+    try:
+        if value.utcoffset() is None:
+            raise ValueError("timezone has no UTC offset")
+        # Freeze the instant, including for custom tzinfo and DST folds. Future
+        # comparisons must not rely on mutable or broken timezone behavior.
+        return value.astimezone(timezone.utc)
+    except Exception as exc:
+        raise DelegationAuditError(f"{field} has an invalid UTC offset") from exc
 
 
 def _parse_aware(value: object, field: str) -> datetime:
@@ -222,13 +244,17 @@ class VerdictEntry:
 
     def __post_init__(self) -> None:
         _require_identifier(self.provider, "verdict provider")
+        provider = self.provider.casefold()
+        object.__setattr__(self, "provider", _PROVIDER_ALIASES.get(provider, provider))
         if not isinstance(self.outcome, VerdictOutcome):
             raise DelegationAuditError("verdict outcome is not a known outcome")
         if self.run_id is not None:
             _require_identifier(self.run_id, "verdict run_id")
         elif self.outcome.is_verdict:
             raise DelegationAuditError("a verdict must carry its run identifier")
-        _require_aware(self.observed_at, "verdict observed_at")
+        object.__setattr__(
+            self, "observed_at", _require_aware(self.observed_at, "verdict observed_at")
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -281,7 +307,9 @@ class GateResult:
         _require_identifier(self.gate, "gate name")
         if not isinstance(self.status, GateStatus):
             raise DelegationAuditError("gate status is not a known status")
-        _require_aware(self.evaluated_at, "gate evaluated_at")
+        object.__setattr__(
+            self, "evaluated_at", _require_aware(self.evaluated_at, "gate evaluated_at")
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -335,7 +363,12 @@ class DelegationAuditRecord:
     the grant was absent, malformed, expired, or silent on the class. ``None``
     means exactly that and must never be read as a grant that applied.
 
-    ``verdicts`` and ``gate_results`` may both be empty. That is not an
+    ``grant_snapshot`` holds the canonical, validated grant document whenever
+    a grant is named. Its contents are covered by the record digest and external
+    ledger anchor; changing or removing configuration cannot change old evidence.
+    An identifier alone is never accepted as a grant binding.
+
+    ``verdicts`` and ``gate_results`` may both be empty in refusals. That is not an
     oversight: a refusal where no provider answered and no gate was reachable is
     the case the document warns hardest about, and the record has to be able to
     state it plainly rather than omit it.
@@ -344,12 +377,13 @@ class DelegationAuditRecord:
     schema_version: str
     outcome: RecordedOutcome
     grant_id: str | None
-    decision_class: Tier1Class
+    decision_class: Tier1Class | str
     candidate_sha: str
     acting_agent: str
     verdicts: tuple[VerdictEntry, ...]
     gate_results: tuple[GateResult, ...]
     recorded_at: datetime
+    grant_snapshot: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != AUDIT_SCHEMA_VERSION:
@@ -358,8 +392,17 @@ class DelegationAuditRecord:
             raise DelegationAuditError("outcome is not a known recorded outcome")
         if self.grant_id is not None:
             _require_identifier(self.grant_id, "grant_id")
+        claims_delegation = self.outcome in (
+            RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE
+        )
+        if claims_delegation and self.grant_id is None:
+            raise DelegationAuditError("delegation outcomes must name a grant")
         if not isinstance(self.decision_class, Tier1Class):
-            raise DelegationAuditError("decision_class is not a tier-1 class")
+            if claims_delegation:
+                raise DelegationAuditError("delegation decision_class is not a tier-1 class")
+            # A bounded exact attempted class, including tier 0 or unknown, is
+            # evidence of a refusal. It adds nothing to the delegable enum.
+            _require_identifier(self.decision_class, "refused decision_class")
         if not isinstance(self.candidate_sha, str) or not _CANDIDATE_SHA.fullmatch(
             self.candidate_sha
         ):
@@ -386,11 +429,46 @@ class DelegationAuditRecord:
             raise DelegationAuditError("gate_results must be a tuple of gate results")
         if len(self.gate_results) > _MAX_GATE_RESULTS:
             raise DelegationAuditError("gate results exceed their bound")
-        gates = [item.gate for item in self.gate_results]
-        if len(set(gates)) != len(gates):
-            raise DelegationAuditError("a gate may appear once per record")
+        # Preserve every evaluation, including a repeated name whose status
+        # changed after a verdict. Collapsing this history conceals trip evidence.
 
-        _require_aware(self.recorded_at, "recorded_at")
+        object.__setattr__(
+            self, "recorded_at", _require_aware(self.recorded_at, "recorded_at")
+        )
+        if any(item.observed_at > self.recorded_at for item in self.verdicts):
+            raise DelegationAuditError("verdict evidence is later than recorded_at")
+        if any(item.evaluated_at > self.recorded_at for item in self.gate_results):
+            raise DelegationAuditError("gate evidence is later than recorded_at")
+        if claims_delegation:
+            if len(self.verdicts) < 2 or any(
+                not item.outcome.is_approval for item in self.verdicts
+            ):
+                raise DelegationAuditError(
+                    "delegation requires two distinct concurring ACCEPT entries"
+                )
+            if not self.gate_results or any(
+                not item.status.is_pass for item in self.gate_results
+            ):
+                raise DelegationAuditError("delegation requires nonempty passing gate evidence")
+
+        if self.grant_id is None:
+            if self.grant_snapshot is not None:
+                raise DelegationAuditError("a grant snapshot must name its grant")
+        else:
+            if not isinstance(self.grant_snapshot, str):
+                raise DelegationAuditError("a named grant requires its snapshot")
+            try:
+                grant = parse_grant(self.grant_snapshot)
+            except (DelegationConfigurationError, RecursionError, MemoryError, UnicodeError) as exc:
+                raise DelegationAuditError("grant snapshot is malformed") from exc
+            if grant is None or grant.grant_id != self.grant_id:
+                raise DelegationAuditError("grant snapshot does not match grant_id")
+            # Validate and freeze contents, without deciding whether the grant
+            # is live, in scope, unexhausted, or authorizes any actual action.
+            object.__setattr__(self, "grant_snapshot", json.dumps(
+                json.loads(self.grant_snapshot), ensure_ascii=True,
+                sort_keys=True, separators=(",", ":"),
+            ))
 
     def to_payload(self) -> dict[str, Any]:
         """The record as plain JSON-safe data, in the order the document names."""
@@ -399,7 +477,8 @@ class DelegationAuditRecord:
             "schema_version": self.schema_version,
             "outcome": self.outcome.value,
             "grant_id": self.grant_id,
-            "decision_class": self.decision_class.value,
+            "grant_snapshot": self.grant_snapshot,
+            "decision_class": str(self.decision_class),
             "candidate_sha": self.candidate_sha,
             "acting_agent": self.acting_agent,
             "verdicts": [item.to_payload() for item in self.verdicts],
@@ -421,11 +500,9 @@ class DelegationAuditRecord:
     def digest(self) -> str:
         """The record's identity, derived from its content.
 
-        Using the content digest rather than an assigned id is what makes a
-        record independently checkable: a reader recomputes it from the stored
-        row and learns whether the row still says what it said when it was
-        written. It is also the ledger's uniqueness key, so an identical record
-        cannot be appended twice.
+        This is a content identity and uniqueness key, not an integrity anchor
+        by itself. The store verifies the full chain against separately protected
+        external authority before returning evidence.
         """
 
         return canonical_content_digest(self.canonical_json())
@@ -439,7 +516,7 @@ class DelegationAuditRecord:
             {
                 "schema_version", "outcome", "grant_id", "decision_class",
                 "candidate_sha", "acting_agent", "verdicts", "gate_results",
-                "recorded_at",
+                "recorded_at", "grant_snapshot",
             },
             "audit record",
         )
@@ -459,12 +536,9 @@ class DelegationAuditRecord:
             raise DelegationAuditError("decision_class must be a string")
         try:
             decision_class = Tier1Class(raw_class)
-        except ValueError as exc:
-            # Tier 1 is exhaustive and fails closed.  A record naming a class
-            # that is not on that list is a record about something tier 0, and
-            # accepting it would let the ledger imply an authority that does
-            # not exist.
-            raise DelegationAuditError("decision_class is not a tier-1 class") from exc
+        except ValueError:
+            # Construction permits exact unknown class names only in refusals.
+            decision_class = raw_class
 
         grant_id = fields["grant_id"]
         if grant_id is not None and not isinstance(grant_id, str):
@@ -491,6 +565,7 @@ class DelegationAuditRecord:
             verdicts=tuple(VerdictEntry.from_payload(item) for item in raw_verdicts),
             gate_results=tuple(GateResult.from_payload(item) for item in raw_gates),
             recorded_at=_parse_aware(fields["recorded_at"], "recorded_at"),
+            grant_snapshot=fields["grant_snapshot"],
         )
 
 
@@ -504,11 +579,12 @@ def parse_record(document: str) -> DelegationAuditRecord:
 
     if not isinstance(document, str):
         raise DelegationAuditError("audit record must be a JSON string")
-    if len(document.encode("utf-8")) > _MAX_RECORD_BYTES:
-        raise DelegationAuditError("audit record exceeds its size bound")
     try:
+        if len(document.encode("utf-8")) > _MAX_RECORD_BYTES:
+            raise DelegationAuditError("audit record exceeds its size bound")
         payload = json.loads(document)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, RecursionError, MemoryError, UnicodeError) as exc:
         raise DelegationAuditError("audit record is not valid JSON") from exc
     return DelegationAuditRecord.from_payload(payload)
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]

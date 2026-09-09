@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 """Phase 2 of human-out-of-the-loop operation: record format and audit ledger.
 
@@ -13,14 +14,17 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+from unittest.mock import Mock
 
 from director_orchestrator import delegation_ledger
-from director_orchestrator.delegation import Tier1Class
+from director_orchestrator.delegation import GRANT_SCHEMA_VERSION, Tier1Class
 from director_orchestrator.delegation_ledger import (
     AUDIT_SCHEMA_VERSION,
     DelegationAuditError,
@@ -34,12 +38,20 @@ from director_orchestrator.delegation_ledger import (
 )
 from director_orchestrator.store import (
     DelegationAuditConflict,
+    DelegationAuditAnchorUnavailable,
     DelegationAuditLedgerCorrupt,
     TaskStore,
 )
 
 NOW = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
 SHA = "a" * 40
+GRANT = json.dumps({
+    "schema_version": GRANT_SCHEMA_VERSION, "grant_id": "grant-001",
+    "repository": "example/project", "branch_pattern": "feature/*",
+    "classes": [Tier1Class.MARK_PULL_REQUEST_READY.value],
+    "providers": ["openai", "cursor"], "expires_at": (NOW + timedelta(days=1)).isoformat(),
+    "max_exercises": 10, "revoked": False,
+})
 
 
 def verdict(
@@ -64,6 +76,7 @@ def record(**overrides) -> DelegationAuditRecord:
         "schema_version": AUDIT_SCHEMA_VERSION,
         "outcome": RecordedOutcome.REFUSED,
         "grant_id": "grant-001",
+        "grant_snapshot": GRANT,
         "decision_class": Tier1Class.MARK_PULL_REQUEST_READY,
         "candidate_sha": SHA,
         "acting_agent": "claude-code",
@@ -72,7 +85,323 @@ def record(**overrides) -> DelegationAuditRecord:
         "recorded_at": NOW,
     }
     payload.update(overrides)
+    if payload["grant_id"] is None and "grant_snapshot" not in overrides:
+        payload["grant_snapshot"] = None
     return DelegationAuditRecord(**payload)
+
+
+class ProviderIdentityRegressionTests(unittest.TestCase):
+    def test_wire_payload_aliases_cannot_bypass_uniqueness(self):
+        payload = record().to_payload()
+        payload["verdicts"][0]["provider"] = "ChatGPT"
+        payload["verdicts"][1]["provider"] = "chatgpt-codex-connector"
+        with self.assertRaises(DelegationAuditError):
+            parse_record(json.dumps(payload))
+
+    def test_openai_chatgpt_codex_aliases_are_one_stored_provider(self):
+        aliases = (
+            "openai", "OpenAI", "openai_director", "openai-director", "ChatGPT",
+            "chatgpt-codex-connector", "Codex", "openai-codex", "openai_codex",
+            "chatgpt_codex_connector", "chatgpt-codex", "chatgpt_codex",
+        )
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                entry = verdict(alias)
+                self.assertEqual(entry.provider, "openai")
+                self.assertEqual(VerdictEntry.from_payload(entry.to_payload()).provider, "openai")
+
+    def test_aliases_cannot_supply_two_independent_verdicts(self):
+        for left, right in (
+            ("openai", "OpenAI"), ("OpenAI", "Codex"),
+            ("ChatGPT", "chatgpt-codex-connector"), ("codex", "openai_director"),
+            ("Claude", "claude-code"), ("Cursor", "cursor-agent"),
+            ("Gemini", "google"), ("Perplexity", "pplx"),
+        ):
+            with self.subTest(left=left, right=right), self.assertRaises(DelegationAuditError):
+                record(verdicts=(verdict(left), verdict(right, run_id="run-2")))
+
+    def test_canonical_independent_providers_still_round_trip(self):
+        original = record(verdicts=(verdict("Codex"), verdict("Claude-Code")))
+        self.assertEqual([v.provider for v in original.verdicts], ["openai", "claude"])
+        self.assertEqual(parse_record(original.canonical_json()), original)
+
+
+class MemoryAnchor:
+    """Test double only: production must supply durable, separately protected storage."""
+
+    def __init__(self):
+        self.head = (0, "0" * 64)
+
+    def read_head(self):
+        return self.head
+
+    def compare_and_set(self, expected, updated):
+        if self.head != expected:
+            raise RuntimeError("anchor changed")
+        self.head = updated
+
+
+class ExternalAnchorRegressionTests(unittest.TestCase):
+    def test_binary_corrupt_rows_use_the_ledger_corruption_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            store.append_delegation_audit_record(record())
+            with store._connect() as connection:
+                connection.execute("DROP TRIGGER delegated_decision_audit_no_update")
+                connection.execute("UPDATE delegated_decision_audit SET record_json = ?", (b"corrupt",))
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                store.delegation_audit_records()
+
+    def test_anchor_errors_are_fail_closed_without_rows(self):
+        for anchor in (
+            Mock(read_head=Mock(side_effect=OSError("unavailable"))),
+            Mock(read_head=Mock(return_value=(True, "0" * 64))),
+            Mock(read_head=Mock(return_value=(0, "invalid"))),
+            Mock(read_head=Mock(return_value=None)),
+            Mock(read_head=Mock(return_value=(0, "0" * 64)),
+                 compare_and_set=Mock(side_effect=OSError("failed"))),
+            Mock(read_head=Mock(return_value=(0, "0" * 64))),
+        ):
+            with self.subTest(anchor=anchor), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=anchor)
+                with self.assertRaises(DelegationAuditAnchorUnavailable):
+                    store.append_delegation_audit_record(record())
+                with store._connect() as connection:
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM delegated_decision_audit").fetchone()[0], 0)
+
+    def test_ambiguous_anchor_advance_is_not_retried_or_rebased(self):
+        anchor = MemoryAnchor()
+        calls = []
+
+        def advance_then_fail(expected, updated):
+            calls.append(updated)
+            anchor.head = updated
+            raise OSError("acknowledgment lost")
+
+        anchor.compare_and_set = advance_then_fail
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "audit.sqlite3")
+            store = TaskStore(path, delegation_audit_anchor=anchor)
+            with self.assertRaises(DelegationAuditAnchorUnavailable):
+                store.append_delegation_audit_record(record())
+            reopened = TaskStore(path, delegation_audit_anchor=anchor)
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                reopened.delegation_audit_records()
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                reopened.append_delegation_audit_record(record())
+            self.assertEqual(len(calls), 1)
+
+    def test_two_store_instances_serialize_checkpoint_advancement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "audit.sqlite3")
+            anchor = MemoryAnchor()
+            stores = [TaskStore(path, delegation_audit_anchor=anchor) for _ in range(2)]
+            originals = [record(recorded_at=NOW + timedelta(seconds=i)) for i in range(6)]
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(stores[i % 2].append_delegation_audit_record, item)
+                           for i, item in enumerate(originals)]
+                self.assertEqual({future.result() for future in futures}, {item.digest for item in originals})
+            self.assertEqual({item.digest for item in stores[0].delegation_audit_records()},
+                             {item.digest for item in originals})
+            self.assertEqual(anchor.head[0], 6)
+
+    def test_rewriting_both_record_and_digest_cannot_forge_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            store.append_delegation_audit_record(record())
+            forged = record(acting_agent="forged-agent")
+            with store._connect() as connection:
+                connection.execute("DROP TRIGGER delegated_decision_audit_no_update")
+                connection.execute(
+                    "UPDATE delegated_decision_audit SET record_json = ?, record_digest = ?",
+                    (forged.canonical_json(), forged.digest),
+                )
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                store.delegation_audit_records()
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                store.append_delegation_audit_record(record(recorded_at=NOW + timedelta(seconds=1)))
+
+    def test_deleting_any_or_all_records_is_detected_after_reopening(self):
+        for predicate in ("ledger_id = 1", "ledger_id = 2", "1 = 1"):
+            with self.subTest(predicate=predicate), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "audit.sqlite3")
+                anchor = MemoryAnchor()
+                store = TaskStore(path, delegation_audit_anchor=anchor)
+                store.append_delegation_audit_record(record())
+                store.append_delegation_audit_record(record(recorded_at=NOW + timedelta(seconds=1)))
+                with store._connect() as connection:
+                    connection.execute("DROP TRIGGER delegated_decision_audit_no_delete")
+                    connection.execute("DELETE FROM delegated_decision_audit WHERE " + predicate)
+                reopened = TaskStore(path, delegation_audit_anchor=anchor)
+                with self.assertRaises(DelegationAuditLedgerCorrupt):
+                    reopened.delegation_audit_records()
+
+    def test_an_unanchored_ledger_cannot_claim_verifiable_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"))
+            with self.assertRaises(DelegationAuditAnchorUnavailable):
+                store.append_delegation_audit_record(record())
+            with self.assertRaises(DelegationAuditAnchorUnavailable):
+                store.delegation_audit_records()
+
+
+class GateHistoryRegressionTests(unittest.TestCase):
+    def test_repeated_gate_evaluations_survive_a_refusal_round_trip(self):
+        before = gate()
+        after = replace(before, status=GateStatus.FAIL, evaluated_at=NOW)
+        original = record(gate_results=(before, after))
+        self.assertEqual(parse_record(original.canonical_json()).gate_results, (before, after))
+
+
+class RemainingFindingsRegressionTests(unittest.TestCase):
+    def test_named_grants_require_matching_valid_snapshots(self):
+        for snapshot in (None, "", "{}", GRANT.replace("grant-001", "grant-002")):
+            with self.subTest(snapshot=snapshot), self.assertRaises(DelegationAuditError):
+                record(grant_snapshot=snapshot)
+        with self.assertRaises(DelegationAuditError):
+            record(grant_id=None, grant_snapshot=GRANT)
+
+    def test_changed_grant_contents_change_the_record_digest_and_remain_auditable(self):
+        changed = json.loads(GRANT)
+        changed["max_exercises"] = 2
+        original = record()
+        revised = record(grant_snapshot=json.dumps(changed))
+        self.assertNotEqual(original.digest, revised.digest)
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            store.append_delegation_audit_record(original)
+            store.append_delegation_audit_record(revised)
+            self.assertEqual([json.loads(r.grant_snapshot)["max_exercises"]
+                              for r in store.delegation_audit_records()], [10, 2])
+
+    def test_refusal_class_names_never_become_delegable(self):
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            for attempted in ("deployment", "merge_into_protected_branch", "unrecognized_act"):
+                with self.subTest(outcome=outcome, attempted=attempted), self.assertRaises(DelegationAuditError):
+                    record(outcome=outcome, decision_class=attempted)
+        for attempted in ("", "x" * 129, "unbounded class text"):
+            with self.subTest(attempted=attempted), self.assertRaises(DelegationAuditError):
+                record(decision_class=attempted)
+
+    def test_gate_history_cannot_hide_a_failure_behind_a_later_pass(self):
+        history = (gate(status=GateStatus.FAIL), replace(gate(), evaluated_at=NOW))
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            with self.subTest(outcome=outcome), self.assertRaises(DelegationAuditError):
+                record(outcome=outcome, gate_results=history)
+        self.assertEqual(record(gate_results=history).gate_results, history)
+
+    def test_evidence_at_record_time_and_equivalent_offsets_is_valid(self):
+        offset_time = NOW.astimezone(timezone(timedelta(hours=-7)))
+        original = record(verdicts=(replace(verdict(), observed_at=offset_time),),
+                          gate_results=(replace(gate(), evaluated_at=NOW),))
+        self.assertEqual(parse_record(original.canonical_json()), original)
+        self.assertEqual(original.verdicts[0].observed_at.tzinfo, timezone.utc)
+
+    def test_nested_corrupt_row_uses_the_store_corruption_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            store.append_delegation_audit_record(record())
+            with store._connect() as connection:
+                connection.execute("DROP TRIGGER delegated_decision_audit_no_update")
+                connection.execute("UPDATE delegated_decision_audit SET record_json = ?",
+                                   ("[" * 2000 + "0" + "]" * 2000,))
+            with self.assertRaises(DelegationAuditLedgerCorrupt):
+                store.delegation_audit_records()
+
+    def test_pagination_rejects_unknown_cursors_and_allows_later_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            first = record()
+            store.append_delegation_audit_record(first)
+            for cursor in (True, 3, "short", "g" * 64, "f" * 64):
+                with self.subTest(cursor=cursor), self.assertRaises(ValueError):
+                    store.delegation_audit_records(after_digest=cursor)
+            second = record(recorded_at=NOW + timedelta(seconds=1))
+            store.append_delegation_audit_record(second)
+            self.assertEqual(store.delegation_audit_records(after_digest=first.digest), [second])
+
+    def test_delegated_and_would_delegate_require_a_grant(self):
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            with self.subTest(outcome=outcome), self.assertRaises(DelegationAuditError):
+                record(outcome=outcome, grant_id=None)
+
+    def test_delegation_claims_require_concurring_verdicts_and_passing_gates(self):
+        cases = [
+            {"verdicts": ()}, {"verdicts": (verdict(),)}, {"gate_results": ()},
+            *({"verdicts": (verdict(), verdict("cursor", outcome))}
+              for outcome in VerdictOutcome if outcome != VerdictOutcome.ACCEPT),
+            *({"gate_results": (gate(status=status),)}
+              for status in GateStatus if status != GateStatus.PASS),
+        ]
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            for case in cases:
+                with self.subTest(outcome=outcome, case=case), self.assertRaises(DelegationAuditError):
+                    record(outcome=outcome, **case)
+
+    def test_a_tzinfo_without_an_offset_or_with_invalid_behavior_is_refused(self):
+        class NoOffset(tzinfo):
+            def utcoffset(self, dt):
+                return None
+
+        class BrokenOffset(tzinfo):
+            def utcoffset(self, dt):
+                raise ValueError("broken timezone")
+
+        for zone in (NoOffset(), BrokenOffset()):
+            stamp = NOW.replace(tzinfo=zone)
+            for build in (
+                lambda: record(recorded_at=stamp),
+                lambda: replace(verdict(), observed_at=stamp),
+                lambda: replace(gate(), evaluated_at=stamp),
+            ):
+                with self.subTest(zone=zone, build=build), self.assertRaises(DelegationAuditError):
+                    build()
+
+    def test_refusals_preserve_the_exact_tier_zero_or_unknown_class(self):
+        for outcome in (RecordedOutcome.REFUSED, RecordedOutcome.WOULD_STOP):
+            for attempted in ("merge_into_protected_branch", "deployment", "unrecognized_act"):
+                with self.subTest(outcome=outcome, attempted=attempted):
+                    payload = record(outcome=outcome).to_payload()
+                    payload["decision_class"] = attempted
+                    stored = DelegationAuditRecord.from_payload(payload)
+                    self.assertEqual(parse_record(stored.canonical_json()).decision_class, attempted)
+
+    def test_excessively_nested_json_is_an_audit_error(self):
+        previous_limit = sys.getrecursionlimit()
+        try:
+            # Other imported libraries can raise the process-wide limit. Fix
+            # it for this probe so real decoding exceeds it within 65,536 bytes.
+            sys.setrecursionlimit(1000)
+            with self.assertRaises(DelegationAuditError):
+                parse_record("[" * 4096 + "0" + "]" * 4096)
+        finally:
+            sys.setrecursionlimit(previous_limit)
+
+    def test_future_evidence_cannot_be_recorded(self):
+        future = NOW + timedelta(microseconds=1)
+        for case in (
+            {"verdicts": (replace(verdict(), observed_at=future),)},
+            {"gate_results": (replace(gate(), evaluated_at=future),)},
+        ):
+            with self.subTest(case=case), self.assertRaises(DelegationAuditError):
+                record(**case)
+
+    def test_a_grant_identifier_alone_is_not_a_durable_grant_binding(self):
+        payload = record().to_payload()
+        payload.pop("grant_snapshot", None)
+        with self.assertRaises(DelegationAuditError):
+            DelegationAuditRecord.from_payload(payload)
+
+    def test_read_api_can_traverse_past_one_thousand_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+            originals = [record(recorded_at=NOW + timedelta(seconds=i)) for i in range(1001)]
+            for item in originals:
+                store.append_delegation_audit_record(item)
+            first = store.delegation_audit_records(limit=1000)
+            second = store.delegation_audit_records(limit=1000, after_digest=first[-1].digest)
+            self.assertEqual(first + second, originals)
+            self.assertEqual(store.delegation_audit_records(after_digest=second[-1].digest), [])
 
 
 class RecordFormatTests(unittest.TestCase):
@@ -91,7 +420,7 @@ class RecordFormatTests(unittest.TestCase):
             {
                 "schema_version", "outcome", "grant_id", "decision_class",
                 "candidate_sha", "acting_agent", "verdicts", "gate_results",
-                "recorded_at",
+                "recorded_at", "grant_snapshot",
             },
         )
 
@@ -168,7 +497,7 @@ class MalformedRecordTests(unittest.TestCase):
             DelegationAuditRecord.from_payload(payload)
 
     def test_unknown_decision_class_is_refused_not_mapped(self):
-        payload = record().to_payload()
+        payload = record(outcome=RecordedOutcome.DELEGATED).to_payload()
         payload["decision_class"] = "deploy_to_production"
         with self.assertRaises(DelegationAuditError):
             DelegationAuditRecord.from_payload(payload)
@@ -233,12 +562,10 @@ class MalformedRecordTests(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 self.assertIsNone(verdict(outcome=outcome, run_id=None).run_id)
 
-    def test_a_provider_or_gate_may_appear_only_once(self):
+    def test_a_provider_may_appear_only_once(self):
         # Two runs of one provider are not two verdicts.
         with self.assertRaises(DelegationAuditError):
             record(verdicts=(verdict(run_id="run-1"), verdict(run_id="run-2")))
-        with self.assertRaises(DelegationAuditError):
-            record(gate_results=(gate(), gate(status=GateStatus.FAIL)))
 
     def test_collections_are_bounded(self):
         with self.assertRaises(DelegationAuditError):
@@ -337,7 +664,7 @@ class AppendOnlyLedgerTests(unittest.TestCase):
     """The ledger is evidence, so it has no update path and no delete path."""
 
     def _store(self, directory: str) -> TaskStore:
-        return TaskStore(str(Path(directory) / "director.sqlite3"))
+        return TaskStore(str(Path(directory) / "director.sqlite3"), delegation_audit_anchor=MemoryAnchor())
 
     def test_append_and_read_round_trip_in_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -510,11 +837,9 @@ class ExecutesNoDecisionTests(unittest.TestCase):
         ]
         self.assertEqual(offenders, [])
 
-    def test_nothing_counts_verdicts_toward_the_evidence_bar(self):
-        # The evidence bar is phase 4.  is_approval classifies one outcome and
-        # deliberately aggregates nothing, so no code here can conclude that a
-        # candidate is eligible for anything.  Pinning the public surface is
-        # what makes that hold: adding an aggregator fails this test.
+    def test_no_public_function_grants_eligibility(self):
+        # Structural record invariants do not evaluate live evidence or grant
+        # eligibility. The public surface still exposes only record operations.
         module = delegation_ledger
         defined_here = sorted(
             name
@@ -540,3 +865,4 @@ class ExecutesNoDecisionTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
