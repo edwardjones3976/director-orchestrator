@@ -1,0 +1,79 @@
+{
+  "name": "Director Status",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] }
+      },
+      "id": "c2a3b6d1-0001-4a00-9000-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-460, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.DIRECTOR_HEALTH_URL || 'http://orchestrator:8080/health' }}",
+        "options": { "timeout": 10000, "response": { "response": { "neverError": true, "fullResponse": true } } }
+      },
+      "id": "c2a3b6d1-0002-4a00-9000-000000000002",
+      "name": "Read Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-240, 0],
+      "onError": "continueRegularOutput",
+      "notes": "neverError plus fullResponse so an unreachable orchestrator becomes a reportable state rather than a silent workflow failure."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Diff readiness booleans against the previous run. Post only on change,\n// and always on an alarm condition. Never emit secret, DSN or allowlist values.\nconst store = $getWorkflowStaticData('global');\nconst item = items[0].json;\nconst reachable = item.statusCode !== undefined && item.statusCode >= 200 && item.statusCode < 300;\nconst body = reachable ? (item.body || {}) : {};\nconst primary = body.langgraph_primary || {};\n\n// Whitelist of booleans and counters we are allowed to report.\nconst watched = {\n  reachable,\n  paid_runs_enabled: body.paid_runs_enabled ?? null,\n  configuration_valid: primary.configuration_valid ?? null,\n  new_intake_owner: primary.new_intake_owner ?? null,\n  intake_fencing_generation: primary.intake_fencing_generation ?? null,\n  ambiguous_effect_count: primary.ambiguous_effect_count ?? null,\n  paid_off_primary_intake_active: primary.paid_off_primary_intake_active ?? null,\n  primary_runtime_active: primary.primary_runtime_active ?? null,\n  legacy_new_intake_disabled: primary.legacy_new_intake_disabled ?? null,\n  parallel_kill_switch: primary.parallel_kill_switch ?? null\n};\n\nconst alarm =\n  !reachable ||\n  (typeof watched.ambiguous_effect_count === 'number' && watched.ambiguous_effect_count > 0) ||\n  watched.parallel_kill_switch === true;\n\nconst previous = store.lastWatched ? JSON.parse(store.lastWatched) : null;\nconst changedKeys = previous\n  ? Object.keys(watched).filter(k => JSON.stringify(watched[k]) !== JSON.stringify(previous[k]))\n  : Object.keys(watched);\n\nstore.lastWatched = JSON.stringify(watched);\n\nif (!alarm && changedKeys.length === 0) {\n  return [];\n}\n\nconst lines = changedKeys.map(k => {\n  const before = previous ? JSON.stringify(previous[k]) : 'unset';\n  return `• \\`${k}\\`: ${before} → ${JSON.stringify(watched[k])}`;\n});\n\nconst header = alarm ? '*STATUS — attention*' : '*STATUS — readiness changed*';\nconst reasons = [];\nif (!reachable) reasons.push('health endpoint unreachable');\nif (typeof watched.ambiguous_effect_count === 'number' && watched.ambiguous_effect_count > 0) reasons.push('ambiguous effects present — rollback is blocked while this is non-zero');\nif (watched.parallel_kill_switch === true) reasons.push('parallel kill switch engaged');\n\nconst text = [header, ...(reasons.length ? ['', ...reasons.map(r => `*${r}*`)] : []), '', ...lines].join('\\n');\nreturn [{ json: { text, alarm, changed: changedKeys } }];"
+      },
+      "id": "c2a3b6d1-0003-4a00-9000-000000000003",
+      "name": "Diff Readiness",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 0],
+      "notes": "Returning an empty array when nothing changed is what makes this quiet by default. Silence means no change, which is the normal state."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_DIRECTOR_CHANNEL_ID }}",
+          "mode": "id"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": { "mrkdwn": true }
+      },
+      "id": "c2a3b6d1-0004-4a00-9000-000000000004",
+      "name": "Post Status",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [200, 0],
+      "credentials": {
+        "slackApi": { "id": "REPLACE_WITH_CREDENTIAL_ID", "name": "Director Slack bot" }
+      },
+      "notes": "Channel comes from the configured environment variable, never a literal ID in the workflow."
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": { "main": [[{ "node": "Read Health", "type": "main", "index": 0 }]] },
+    "Read Health": { "main": [[{ "node": "Diff Readiness", "type": "main", "index": 0 }]] },
+    "Diff Readiness": { "main": [[{ "node": "Post Status", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  },
+  "tags": [],
+  "meta": {},
+  "id": "director-status",
+  "versionId": "1"
+}

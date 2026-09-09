@@ -1,105 +1,106 @@
 {
-  "id": "directorIntake",
   "name": "Director Intake",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "director-intake",
+        "authentication": "headerAuth",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "ignoreBots": true
+        }
       },
-      "id": "0fca19c7-95f7-47fb-9e82-d5cc4b34ce60",
+      "id": "b1f2a5c0-0001-4a00-9000-000000000001",
       "name": "Slack Gateway Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 0],
-      "webhookId": "director-intake"
+      "position": [-320, 0],
+      "webhookId": "director-intake",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Director gateway header auth"
+        }
+      },
+      "notes": "Inbound authentication is a credential, never an inline secret. Bind the Header Auth credential in the n8n UI before activating."
     },
     {
       "parameters": {
         "method": "POST",
         "url": "http://orchestrator:8080/v1/intake",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{ $json.headers.authorization }}"
-            },
-            {
-              "name": "X-Director-Intake-Issued-At",
-              "value": "={{ $json.headers['x-director-intake-issued-at'] }}"
-            },
-            {
-              "name": "X-Director-Intake-Nonce",
-              "value": "={{ $json.headers['x-director-intake-nonce'] }}"
-            },
-            {
-              "name": "X-Director-Intake-Signature",
-              "value": "={{ $json.headers['x-director-intake-signature'] }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify($json.body ?? $json) }}",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source_event_id: $json.body.event_id, channel_id: $json.body.event.channel, thread_ts: $json.body.event.thread_ts || $json.body.event.ts, user_id: $json.body.event.user, text: $json.body.event.text, allocation_profile: 'engineering', permalink: $json.body.event.permalink || null, received_at: new Date().toISOString() }) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": false,
+              "fullResponse": true
+            }
+          }
         }
       },
-      "id": "ea748cff-0cee-4dd0-8ac8-d39d53d02fe5",
+      "id": "b1f2a5c0-0002-4a00-9000-000000000002",
       "name": "Create Director Task",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [260, 0]
+      "position": [-80, 0],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Orchestrator shared secret"
+        }
+      },
+      "notes": "httpBearerAuth, not httpHeaderAuth. The bearer credential holds a single token and produces Authorization: Bearer <token>. httpHeaderAuth is for custom headers such as X-API-Key. source_event_id is the stable Slack event ID and is the idempotency key: re-delivery creates no second task."
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify($json) }}",
+        "responseBody": "={{ JSON.stringify({ status: 'accepted', task: $json.body.task_id || null }) }}",
         "options": {
           "responseCode": 202
         }
       },
-      "id": "76b4ea4d-a9ef-41fb-ad73-20f3555abcf4",
+      "id": "b1f2a5c0-0003-4a00-9000-000000000003",
       "name": "Accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [520, 0]
+      "position": [180, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'intake_failed', upstream_status: $json.error?.statusCode ?? null }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "b1f2a5c0-0004-4a00-9000-000000000004",
+      "name": "Intake Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [180, 100],
+      "notes": "A non-2xx from /v1/intake must not return 200. Only the upstream status code is echoed; no response body, provider output or secret-shaped value is relayed."
     }
   ],
-  "pinData": {},
   "connections": {
     "Slack Gateway Webhook": {
-      "main": [
-        [
-          {
-            "node": "Create Director Task",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Create Director Task", "type": "main", "index": 0 }]]
     },
     "Create Director Task": {
       "main": [
-        [
-          {
-            "node": "Accepted",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Accepted", "type": "main", "index": 0 }],
+        [{ "node": "Intake Failed", "type": "main", "index": 0 }]
       ]
     }
   },
   "active": false,
+  "pinData": {},
   "settings": {
     "executionOrder": "v1",
     "saveDataErrorExecution": "none",
@@ -107,10 +108,8 @@
     "saveManualExecutions": false,
     "saveExecutionProgress": false
   },
-  "versionId": "1eef317d-721e-4543-a499-7955f3a276ba",
-  "meta": {
-    "templateCredsSetupCompleted": false
-  },
-  "tags": []
+  "tags": [],
+  "meta": {},
+  "id": "director-intake",
+  "versionId": "2"
 }
-
