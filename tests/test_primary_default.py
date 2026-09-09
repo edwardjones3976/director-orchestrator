@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -2676,6 +2677,38 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 reservation_digest=digest("reservation:malformed"),
             )
 
+    def test_malformed_double_digest_is_rejected_in_the_provider_subgraph(self):
+        """The sibling path kept the prefix-only check "sha256:x" slips through.
+
+        The ledger path was hardened alone, so the graph's own provider edge
+        still folded a malformed digest into its aggregate result digest.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: (lambda _context: "sha256:x")
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid digest"):
+            services.provider_subgraph(
+                SimpleNamespace(
+                    task_id="DIR-LG-MALFORMED-SUBGRAPH",
+                    provider_attempt_digest=digest("attempt:malformed"),
+                    scheduled_producer_id="producer-malformed",
+                    work_packet_digest=digest("packet:malformed"),
+                    idempotency_key_digest=digest("idempotency:malformed"),
+                    authority_snapshot_digest=digest("authority:malformed"),
+                    starting_sha="0" * 40,
+                )
+            )
+
     def test_simulated_outcomes_carry_the_charter_simulation_label(self):
         """Charter: a projection that contacted no provider must be labelled.
 
@@ -2920,3 +2953,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]

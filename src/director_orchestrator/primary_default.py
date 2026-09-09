@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -1467,9 +1468,14 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
             with self._provider_call_lock:
                 self._provider_calls[provider] += 1
             result_digest = self._provider_doubles[provider](context)
-            if not isinstance(result_digest, str) or not result_digest.startswith(
-                "sha256:"
-            ):
+            # Validate the whole digest here too. This path settles no ledger
+            # row, but a malformed value such as "sha256:x" is malformed on
+            # every path that reads one: a prefix-only check folded it into the
+            # subgraph result digest, so the graph carried a double's contract
+            # violation forward as a COMPLETED disposition.
+            if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+                result_digest
+            ) is None:
                 raise RuntimeError("offline provider double returned an invalid digest")
             return provider, result_digest
 
@@ -2863,3 +2869,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
