@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -468,6 +469,7 @@ def health() -> dict:
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
+        "delegation": settings.delegation_readiness(),
         "workload_policy": settings.workload_policy_readiness(
             effective_mode=effective_workload_mode.value
         ),
@@ -1587,3 +1589,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]

@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -75,6 +77,7 @@ from .langgraph_primary import (
     ProviderDisposition,
     ProviderSubgraphResult,
     ScheduleResult,
+    _context as _handler_context_from_state,
 )
 from .models import (
     AntigravityDirective,
@@ -1351,6 +1354,14 @@ class DefaultDryRunServices:
         )
 
 
+# The charter requires this exact label, verbatim, for any test, projection or
+# replay that contacted no provider (docs/team-operating-charter.md).  The
+# offline dispatcher persists outcomes into the human-visible TaskRecord
+# projection, so the label has to travel with them.
+_SIMULATION_LABEL = "SIMULATION — NO PROVIDER INTERACTION"
+_OFFLINE_RESULT_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 class DefaultOfflineSimulationServices(DefaultDryRunServices):
     """Full graph services backed only by deterministic, paid-off doubles."""
 
@@ -1390,6 +1401,60 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
         with self._provider_call_lock:
             return dict(self._provider_calls)
 
+    def has_ledger_double(self, provider: str) -> bool:
+        """Report whether a lane has a configured offline double.
+
+        The dispatcher checks this before invoking, so an unconfigured lane
+        settles as a known FAILED rather than raising. A raise here would reach
+        the ledger as AMBIGUOUS, which retains the concurrency slot and blocks
+        terminal lifecycle processing for a failure that is already known
+        before any execution begins.
+        """
+
+        return provider in self._provider_doubles
+
+    def dispatch_ledger_double(
+        self,
+        *,
+        provider: str,
+        context: HandlerContext,
+        reservation_digest: str,
+    ) -> str:
+        """Invoke exactly one lane's offline double for a ledger reservation.
+
+        The Default lifecycle dispatches through the Postgres parallel ledger
+        rather than the graph's single-item provider edge, so the doubles must
+        be reachable from a reservation. Without this seam an offline task
+        proves intake, planning and approval but never executes a provider
+        wave, because the ledger has no dispatcher to call.
+
+        Contacts no provider and produces no external effect. The returned
+        digest binds the reservation, so two lanes and two reservations of the
+        same lane stay distinguishable in the ledger.
+        """
+
+        if provider not in self._provider_doubles:
+            raise RuntimeError("offline ledger dispatch has no double for this lane")
+        with self._provider_call_lock:
+            self._provider_calls[provider] += 1
+        result_digest = self._provider_doubles[provider](context)
+        # Validate the whole digest, not just its prefix. A malformed value such
+        # as "sha256:x" would otherwise be wrapped into a newly valid digest and
+        # settle the ledger assignment as SUCCEEDED, letting the graph report
+        # DONE while the double had violated its declared result contract.
+        if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+            result_digest
+        ) is None:
+            raise RuntimeError("offline provider double returned an invalid digest")
+        return _digest(
+            {
+                "reservation_digest": reservation_digest,
+                "provider": provider,
+                "provider_result_digest": result_digest,
+                "mode": "offline-ledger-double",
+            }
+        )
+
     @property
     def provider_calls(self) -> int:
         return sum(self.provider_call_counts.values())
@@ -1403,9 +1468,14 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
             with self._provider_call_lock:
                 self._provider_calls[provider] += 1
             result_digest = self._provider_doubles[provider](context)
-            if not isinstance(result_digest, str) or not result_digest.startswith(
-                "sha256:"
-            ):
+            # Validate the whole digest here too. This path settles no ledger
+            # row, but a malformed value such as "sha256:x" is malformed on
+            # every path that reads one: a prefix-only check folded it into the
+            # subgraph result digest, so the graph carried a double's contract
+            # violation forward as a COMPLETED disposition.
+            if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+                result_digest
+            ) is None:
                 raise RuntimeError("offline provider double returned an invalid digest")
             return provider, result_digest
 
@@ -1496,6 +1566,98 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
             ci_security_completion=self.ci_security_completion,
             effect_execution_readback=handlers.effect_execution_readback,
         )
+
+
+def build_offline_parallel_dispatcher(
+    services: DefaultOfflineSimulationServices,
+    coordinator: Callable[[], Any],
+) -> Callable[[ParallelReservation], ParallelDispatchOutcome]:
+    """Build the ledger dispatcher an offline-simulation deployment needs.
+
+    The Default lifecycle sets ``auto_execute_provider=False`` and dispatches
+    exclusively through the Postgres parallel ledger. Without a dispatcher the
+    ledger settles nothing, so an offline task proved intake, planning and
+    approval while its provider wave never ran.
+
+    ``coordinator`` is a late-bound accessor because the activation builds its
+    coordinator after choosing a dispatcher.
+    """
+
+    def dispatch_offline_assignment(
+        reservation: ParallelReservation,
+    ) -> ParallelDispatchOutcome:
+        """Settle one reserved offline lane through the ledger.
+
+        Mirrors the live dispatcher's reservation-identity checks so an offline
+        proof exercises the same binding rules, then substitutes the lane's
+        deterministic double for the adapter, attempt roster and budget path.
+        No provider is contacted and no result-packet artifact is persisted, so
+        a simulated wave can never be mistaken for authenticated provider
+        evidence.
+        """
+
+        if not services.has_ledger_double(reservation.provider_id):
+            # Settled, not raised. This failure is known before any execution
+            # begins, and an exception would reach the ledger as AMBIGUOUS,
+            # retaining the concurrency slot and stopping the lifecycle from
+            # ever reaching a terminal state. Identity violations below still
+            # raise: those are unexpected and must not be downgraded.
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED,
+                None,
+                "offline_provider_double_missing",
+            )
+        record = services._record(reservation.task_id)
+        if record.plan is None:
+            raise RuntimeError("parallel dispatch has no durable plan")
+        assignment = next(
+            (
+                item
+                for item in record.plan.assignments
+                if item.sequence == reservation.sequence
+            ),
+            None,
+        )
+        if assignment is None:
+            raise RuntimeError("parallel reservation identity is unknown")
+        assignment_id = services._packet_router._assignment_id(record, assignment)
+        provider = _assignment_provider_lane(assignment)
+        if (
+            assignment_id != reservation.assignment_id
+            or provider != reservation.provider_id
+        ):
+            raise RuntimeError("parallel reservation binding changed")
+        result_digest = services.dispatch_ledger_double(
+            provider=provider,
+            context=_handler_context_from_state(
+                coordinator()._runtime.compact_state(reservation.task_id)
+            ),
+            reservation_digest=reservation.reservation_digest,
+        )
+        with services._lock:
+            if not any(
+                item.assignment_sequence == assignment.sequence
+                for item in record.assignment_outcomes
+            ):
+                record.assignment_outcomes.append(
+                    AssignmentOutcome(
+                        assignment_sequence=assignment.sequence,
+                        provider=assignment.agent,
+                        run_id=f"offline-double:{reservation.reservation_digest}",
+                        result=_SIMULATION_LABEL,
+                        review_summary=(
+                            f"{_SIMULATION_LABEL} - offline provider double"
+                        ),
+                        provider_result_digest=result_digest.removeprefix("sha256:"),
+                    )
+                )
+        return ParallelDispatchOutcome(
+            ParallelAssignmentStatus.SUCCEEDED,
+            result_digest,
+            "offline_provider_double_completed",
+        )
+
+    return dispatch_offline_assignment
 
 
 class DefaultPrimaryApplication:
@@ -2498,7 +2660,13 @@ class DefaultPrimaryActivation:
                     else DefaultDryRunServices(settings)
                 )
                 handlers = services.handlers()
-                parallel_dispatcher = None
+                parallel_dispatcher = (
+                    build_offline_parallel_dispatcher(
+                        services, lambda: self.coordinator
+                    )
+                    if settings.langgraph_primary_offline_simulation_enabled
+                    else None
+                )
             coordinator = PrimaryTaskCoordinator(
                 handle,
                 handlers,
@@ -2700,3 +2868,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
