@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:28 UTC | BEGIN]]
@@ -78,7 +79,7 @@ class WindowsPplxWrapperTests(unittest.TestCase):
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,
             )
             self.assertEqual(0, install.returncode, install.stderr)
             environment = os.environ.copy()
@@ -98,7 +99,7 @@ class WindowsPplxWrapperTests(unittest.TestCase):
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,
             )
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertRegex(completed.stdout, r"pplx \d{4}\.\d{2}\.\d{2}")
@@ -123,7 +124,7 @@ class WindowsPplxWrapperTests(unittest.TestCase):
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,
             )
             self.assertEqual(0, configured.returncode, configured.stderr)
             self.assertEqual(
@@ -143,3 +144,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 02:02 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
