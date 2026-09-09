@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
 """Contracts for the read-only live-dispatch preflight reporter."""
 
@@ -240,8 +241,34 @@ class ReadOnlyTests(unittest.TestCase):
                 imported.add(node.module or "")
         self.assertEqual(
             imported,
-            {"__future__", "dataclasses", "re", "sys", "director_orchestrator.config"},
+            {
+                "__future__", "dataclasses", "pathlib", "re", "sys",
+                "director_orchestrator.config",
+            },
         )
+
+    def test_pathlib_is_used_to_read_and_never_to_write(self):
+        """pathlib earns its place by reading config.py, and nothing more.
+
+        It arrived so the declared-variable set could be derived from the
+        source instead of restated by hand. pathlib can also write, so
+        admitting it to the import list above is only safe while every use is
+        a read: this asserts that directly rather than trusting the intent.
+        """
+
+        attributes = {
+            node.attr for node in ast.walk(self.tree) if isinstance(node, ast.Attribute)
+        }
+        # `replace` is deliberately absent from this list: str.replace and
+        # dataclasses.replace are both used here, and an attribute name alone
+        # cannot tell them from Path.replace. The names below have no such
+        # collision, so their absence is meaningful.
+        for mutating in (
+            "write_text", "write_bytes", "mkdir", "unlink", "rmdir", "rename",
+            "touch", "chmod", "symlink_to", "hardlink_to", "open",
+        ):
+            self.assertNotIn(mutating, attributes, mutating)
+        self.assertIn("read_text", attributes)
 
     def test_it_calls_nothing_that_opens_a_file_or_a_process(self):
         called = {
@@ -267,3 +294,75 @@ class ReadOnlyTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
+
+
+class SecretDisclosureTests(unittest.TestCase):
+    """Three ways a value reached the output, all found by a review of #140."""
+
+    def test_a_construction_failure_never_quotes_the_value_that_caused_it(self):
+        """Settings interpolates values into its own errors.
+
+        A secret placed in an integer-typed variable came back verbatim in the
+        conversion error, and redaction is unavailable on this path because it
+        needs the Settings instance that just failed to build. The message is
+        withheld entirely.
+        """
+
+        import subprocess
+        import sys
+
+        secret = "SYNTHETIC_SECRET_VALUE_1234567890"
+        environment = {
+            **os.environ,
+            "LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES": secret,
+            "ORCHESTRATOR_SHARED_SECRET": secret,
+            "PYTHONPATH": str(ROOT / "src"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        completed = subprocess.run(
+            [sys.executable, "-B", str(ROOT / "scripts" / "live-dispatch-preflight.py")],
+            capture_output=True, text=True, env=environment, cwd=str(ROOT), timeout=120,
+        )
+        self.assertNotIn(secret, completed.stdout)
+        self.assertNotIn(secret, completed.stderr)
+        self.assertIn("withheld", completed.stdout)
+        self.assertNotEqual(completed.returncode, 0)
+
+    def test_a_secret_shaped_like_a_variable_name_is_not_echoed_as_one(self):
+        """Redaction cleaned the prose and the name list reprinted the token.
+
+        `variables()` matched on shape, so an uppercase underscore-delimited
+        secret survived as a reported "variable" after being redacted out of
+        the message beside it.
+        """
+
+        found = PREFLIGHT.variables(
+            "LANGGRAPH_PRIMARY_OWNER_TOKEN rejected SYNTHETIC_SECRET_VALUE_1234567890"
+        )
+        self.assertEqual(found, ("LANGGRAPH_PRIMARY_OWNER_TOKEN",))
+
+    def test_narrowing_the_declared_set_would_drop_real_variables(self):
+        """The first fix for the above silently stopped reporting real names.
+
+        config.py reads through helpers as well as os.getenv, so matching only
+        os.getenv dropped PROJECT_ALLOWLIST and its siblings from every report.
+        """
+
+        for name in (
+            "PROJECT_ALLOWLIST",
+            "REPOSITORY_ALLOWLIST",
+            "ALLOWED_STARTING_REFS",
+            "CLAUDE_CALLBACK_SECRET",
+        ):
+            self.assertIn(name, PREFLIGHT.DECLARED_VARIABLES, name)
+            self.assertEqual(PREFLIGHT.variables(f"{name} must be configured"), (name,))
+
+    def test_a_short_secret_is_redacted(self):
+        """The floor was six characters, so a five-character secret printed."""
+
+        settings = _complete(claude_callback_secret="s3crt")
+        self.assertEqual(
+            PREFLIGHT.redact("CLAUDE_CALLBACK_SECRET rejected s3crt", settings),
+            "CLAUDE_CALLBACK_SECRET rejected <redacted>",
+        )
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]

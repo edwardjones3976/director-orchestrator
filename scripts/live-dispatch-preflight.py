@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
 """Report every unmet live-dispatch prerequisite at once, and change nothing.
 
@@ -23,6 +24,7 @@ Exit status is 0 when nothing is outstanding and 1 when anything is.
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 import re
 import sys
 from dataclasses import replace
@@ -131,6 +133,36 @@ EXECUTION_PROFILE: tuple[tuple[str, str], ...] = (
 
 VARIABLE_NAME = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 
+
+def _declared_environment_variables() -> frozenset[str]:
+    """Every name config.py actually reads from the environment.
+
+    The shape of an environment variable is not evidence that a token IS one.
+    An independent review of #140 set a secret to an uppercase,
+    underscore-delimited value; `redact` removed it from the prose and this
+    module then reprinted it under "variables", because the regex matched its
+    shape. Names are now intersected with what the configuration declares, so
+    a token that merely looks like a variable is dropped rather than echoed.
+
+    Read from the source rather than restated here: a list maintained by hand
+    drifts, and drifting open is exactly the failure being closed.
+
+    Matching only `os.getenv("X")` was too narrow and silently dropped real
+    names: config.py also reads through helpers such as
+    `_csv("PROJECT_ALLOWLIST", "")`, and that variable stopped being reported
+    at all. Every uppercase string literal in the module is taken instead. That
+    is a superset of the environment names, which is the safe direction to be
+    wrong in -- it can name a constant that is not a variable, but it cannot
+    admit a value that never appears in the source, and a secret does not.
+    """
+
+    source = pathlib.Path(__file__).resolve().parents[1] / "src" / "director_orchestrator" / "config.py"
+    text = source.read_text(encoding="utf-8")
+    return frozenset(re.findall(r'"([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"', text))
+
+
+DECLARED_VARIABLES = _declared_environment_variables()
+
 # Field names whose value must never reach the output under any drift: no
 # secret, token, endpoint, path, allowlist entry, or owner identifier.
 SENSITIVE_FIELD = re.compile(
@@ -153,7 +185,13 @@ def redact(text: str, settings: Settings) -> str:
         value = getattr(settings, spec.name)
         items = value if isinstance(value, tuple) else (value,)
         for item in items:
-            if isinstance(item, str) and len(item) >= 6 and item in text:
+            # The floor was 6, which let a short secret through: a review of
+            # #140 passed a five-character callback secret and it printed. 3 is
+            # low enough to catch a realistically short credential while still
+            # refusing to rewrite every occurrence of a one- or two-character
+            # value, which would mangle unrelated prose without protecting
+            # anything a real secret would be.
+            if isinstance(item, str) and len(item) >= 3 and item in text:
                 text = text.replace(item, "<redacted>")
     return text
 
@@ -161,7 +199,10 @@ def redact(text: str, settings: Settings) -> str:
 def variables(problem: str) -> tuple[str, ...]:
     """The exact environment variable names a problem is about."""
 
-    named = tuple(dict.fromkeys(VARIABLE_NAME.findall(problem)))
+    named = tuple(
+        name for name in dict.fromkeys(VARIABLE_NAME.findall(problem))
+        if name in DECLARED_VARIABLES
+    )
     if named:
         return named
     for fragment, names in IMPLIED_VARIABLES:
@@ -270,8 +311,17 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
 def main() -> int:
     try:
         settings = Settings()
-    except ValueError as exc:
-        print(f"Settings could not be constructed: {exc}")
+    except Exception as exc:
+        # The exception text is never printed. Settings interpolates values
+        # into construction errors -- an independent review of #140 put a
+        # secret in LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES and the integer
+        # conversion echoed it verbatim -- and redaction is not available here
+        # because it needs the Settings instance that just failed to build.
+        # The type and the field are enough to act on; the value is the
+        # operator's to look at.
+        print(f"Settings could not be constructed: {type(exc).__name__}.")
+        print("The message is withheld because it can quote a configured value.")
+        print("Re-run the failing construction directly to see it.")
         return 1
     problems = unmet(settings)
     print("\n".join(report(settings, problems)))
@@ -281,3 +331,4 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]
