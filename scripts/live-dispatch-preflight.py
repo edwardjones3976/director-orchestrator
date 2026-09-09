@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
 """Report every unmet live-dispatch prerequisite at once, and change nothing.
@@ -29,7 +30,16 @@ import re
 import sys
 from dataclasses import replace
 
-from director_orchestrator.config import Settings
+try:
+    from director_orchestrator.config import Settings
+except Exception:  # pragma: no cover - exercised by subprocess, not import
+    # config.py evaluates its dataclass field defaults at class-definition
+    # time, so a value that fails to convert raises during THIS import, before
+    # main() can guard it, and the unhandled traceback prints that value on
+    # stderr. A review of #140 set MAX_AGENT_HOPS to a secret and read it back
+    # out of the traceback. Wrapping the import is what moves that failure
+    # inside the guard; main() reports it without the message.
+    Settings = None
 
 
 # The switches that must be on together for live provider dispatch. The
@@ -185,14 +195,20 @@ def redact(text: str, settings: Settings) -> str:
         value = getattr(settings, spec.name)
         items = value if isinstance(value, tuple) else (value,)
         for item in items:
-            # The floor was 6, which let a short secret through: a review of
-            # #140 passed a five-character callback secret and it printed. 3 is
-            # low enough to catch a realistically short credential while still
-            # refusing to rewrite every occurrence of a one- or two-character
-            # value, which would mangle unrelated prose without protecting
-            # anything a real secret would be.
-            if isinstance(item, str) and len(item) >= 3 and item in text:
-                text = text.replace(item, "<redacted>")
+            if not isinstance(item, str) or not item or item not in text:
+                continue
+            if len(item) < 3:
+                # A one- or two-character value cannot be redacted by
+                # substitution: replacing every "Z" would shred the message and
+                # still leak the length. A review of #140 read back secrets of
+                # "Z" and "Z9" that the length floor skipped entirely. Withhold
+                # the whole line instead -- it is pathological configuration,
+                # and a lost diagnostic beats a printed credential.
+                return (
+                    "message withheld: a configured value of one or two "
+                    "characters appears in it and cannot be redacted in place"
+                )
+            text = text.replace(item, "<redacted>")
     return text
 
 
@@ -301,14 +317,28 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
         return lines
     lines.append(f"Unmet prerequisites ({len(problems)}), in startup order:")
     for index, (stage, problem) in enumerate(problems, start=1):
-        lines.append(f"  {index:>2}. [{stage}] {redact(problem, settings)}")
-        named = variables(problem)
+        safe = redact(problem, settings)
+        lines.append(f"  {index:>2}. [{stage}] {safe}")
+        # Extract from the REDACTED text. Extracting from the raw problem meant
+        # a configured value that happens to equal a declared variable name --
+        # a secret literally set to "PROJECT_ALLOWLIST" -- was scrubbed from the
+        # prose and then reprinted intact under "variables". Found by a review
+        # of #140. A real name in a real message survives redaction, so nothing
+        # legitimate is lost.
+        named = variables(safe)
         if named:
             lines.append(f"      variables: {', '.join(named)}")
     return lines
 
 
 def main() -> int:
+    if Settings is None:
+        # The import above already failed, for the same reason and with the
+        # same disclosure risk as a failed construction.
+        print("Settings could not be imported: configuration is unreadable.")
+        print("The message is withheld because it can quote a configured value.")
+        print("Re-run the import directly to see it.")
+        return 1
     try:
         settings = Settings()
     except Exception as exc:
@@ -332,3 +362,4 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]

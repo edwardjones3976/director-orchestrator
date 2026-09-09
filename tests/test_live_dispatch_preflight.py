@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
 """Contracts for the read-only live-dispatch preflight reporter."""
@@ -366,3 +367,68 @@ class SecretDisclosureTests(unittest.TestCase):
             "CLAUDE_CALLBACK_SECRET rejected <redacted>",
         )
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]
+
+
+class RemainingDisclosurePathsTests(unittest.TestCase):
+    """Three more ways a value escaped, found by the delta review of #140."""
+
+    def test_an_import_time_failure_never_quotes_the_value(self):
+        """config.py evaluates field defaults at class-definition time.
+
+        A value that fails to convert therefore raises during the *import* of
+        Settings, before main() can guard it, and the unhandled traceback
+        printed that value on stderr. MAX_AGENT_HOPS was the reproduction.
+        """
+
+        import subprocess
+        import sys
+
+        secret = "SYNTHETIC_SECRET_VALUE_1234567890"
+        completed = subprocess.run(
+            [sys.executable, "-B", str(ROOT / "scripts" / "live-dispatch-preflight.py")],
+            capture_output=True, text=True, timeout=120, cwd=str(ROOT),
+            env={
+                **os.environ,
+                "MAX_AGENT_HOPS": secret,
+                "ORCHESTRATOR_SHARED_SECRET": secret,
+                "PYTHONPATH": str(ROOT / "src"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+        self.assertNotIn(secret, completed.stdout)
+        self.assertNotIn(secret, completed.stderr)
+        self.assertNotEqual(completed.returncode, 0)
+
+    def test_a_one_or_two_character_secret_withholds_the_whole_message(self):
+        """Substitution cannot redact "Z"; replacing every Z shreds the text.
+
+        The length floor skipped them entirely, so they printed. The line is
+        withheld instead -- pathological configuration, and a lost diagnostic
+        beats a printed credential.
+        """
+
+        for tiny in ("Z", "Z9"):
+            settings = _complete(claude_callback_secret=tiny)
+            result = PREFLIGHT.redact(f"CLAUDE_CALLBACK_SECRET rejected {tiny}", settings)
+            self.assertIn("withheld", result, tiny)
+            self.assertNotIn(f"rejected {tiny}", result, tiny)
+
+    def test_a_secret_equal_to_a_declared_variable_name_is_not_reprinted(self):
+        """Variables were extracted from the raw problem, not the redacted one.
+
+        A secret set literally to "PROJECT_ALLOWLIST" was scrubbed from the
+        prose and then reprinted intact under "variables", because the name is
+        genuinely declared. Extraction now runs on the redacted text.
+        """
+
+        settings = _complete(claude_callback_secret="PROJECT_ALLOWLIST")
+        lines = PREFLIGHT.report(
+            settings, [("test", "CLAUDE_CALLBACK_SECRET rejected PROJECT_ALLOWLIST")]
+        )
+        body = "\n".join(lines)
+        self.assertIn("<redacted>", body)
+        variables_line = [line for line in lines if "variables:" in line]
+        self.assertEqual(len(variables_line), 1)
+        self.assertNotIn("PROJECT_ALLOWLIST", variables_line[0])
+        self.assertIn("CLAUDE_CALLBACK_SECRET", variables_line[0])
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]
