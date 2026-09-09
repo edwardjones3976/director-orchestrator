@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
@@ -74,9 +75,25 @@ asserts the negative directly.
 
 ```
 Decision(a) = execute        if H(a)
-              recover        if an unmet term authorizes a recovery
+              recover        if EVERY unmet term authorizes its own recovery,
+                             and none of them is owner-routed
               hold(blocker)  otherwise
 ```
+
+That quantifier is the whole rule. "If **an** unmet term authorizes a recovery"
+is existential, and it lets one term's remedy carry every other unmet term:
+a red `gates` paired with a recoverable `verification` recovers, advancing a
+decision whose CI is failing on the strength of a re-verification that has
+nothing to do with it. The code was corrected first and this page was left
+behind, still specifying the rejected form — the same mistake, in the same
+shape, as the governing document keeping the six-term `H(a)`. This page is the
+only place `Decision(a)` is written down, so leaving it would have restored the
+bug in the next implementation to read it.
+
+Owner-routed terms are `NON_RECOVERABLE_TERMS`: `authorization`, `gates`,
+`independence`, `scope` and `audit`. A recovery string attached to any of them
+changes nothing, because each is a trip condition or an explicit refusal in the
+governing document.
 
 A hold names the blocking term and what is missing. It does not re-ask the
 owner. Missing or stale evidence routes to verification; a temporary failure
@@ -137,3 +154,4 @@ gap to `Activate`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]] -->

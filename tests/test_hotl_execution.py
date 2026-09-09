@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
@@ -290,6 +291,27 @@ class RecoveryTests(unittest.TestCase):
             self.assertIs(decision.outcome, Outcome.HOLD, term)
             self.assertIsNone(decision.recovery, term)
 
+    def test_the_companion_decision_formula_is_universal_not_existential(self):
+        """It is the only written spec of Decision(a), and it was stale.
+
+        The page still said recover "if AN unmet term authorizes a recovery"
+        after the code was corrected to require every one. A delta review of
+        #146 mutated that line and all 42 tests stayed green, which is the same
+        omission as the governing document keeping the six-term H(a) -- caught
+        there, missed here.
+        """
+
+        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        block = text.split("Decision(a) = execute", 1)[1].split("```", 1)[0]
+        recover = " ".join(block.split()).lower()
+        self.assertIn("every unmet term authorizes its own recovery", recover)
+        self.assertIn("owner-routed", recover)
+        # The existential form must not survive anywhere on the page.
+        self.assertNotIn("if an unmet term authorizes a recovery", text.lower())
+        # And the owner-routed set is named, not left to the reader.
+        for term in NON_RECOVERABLE_TERMS:
+            self.assertIn(f"`{term}`", text, term)
+
     def test_the_governing_formula_names_every_term_the_code_requires(self):
         """The document is authoritative, so a short formula recreates the gap.
 
@@ -380,3 +402,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]
