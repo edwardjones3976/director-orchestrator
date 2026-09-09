@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
 """The dispatcher must grant the least privilege a task needs, and no more."""
@@ -132,7 +133,7 @@ class EnforcementTests(unittest.TestCase):
         self.assertIn("cannot establish authorship", reason)
 
     def test_the_command_builds_without_the_provider_cli_installed(self):
-        """CI hosts no provider CLIs, so construction must not resolve PATH.
+        """CI hosts no provider CLIs, so construction must not fail on PATH.
 
         build_command called shutil.which and exited, which failed every
         command test on a runner rather than on a real dispatch.
@@ -141,6 +142,19 @@ class EnforcementTests(unittest.TestCase):
         with unittest.mock.patch.object(dispatch.shutil, "which", return_value=None):
             command = dispatch.build_command("grok", "review", "p.txt", 25)
         self.assertEqual(command[0], "grok")
+
+    def test_a_resolved_executable_is_dispatched_not_the_bare_name(self):
+        """Windows CLIs are .cmd shims; CreateProcess ignores PATHEXT.
+
+        Dropping the resolved path made every real dispatch die with
+        WinError 2 while every test still passed.
+        """
+
+        with unittest.mock.patch.object(
+            dispatch.shutil, "which", return_value="C:/tools/grok.cmd"
+        ):
+            command = dispatch.build_command("grok", "review", "p.txt", 25)
+        self.assertEqual(command[0], "C:/tools/grok.cmd")
 
     def test_the_codex_command_carries_the_prompt(self):
         import tempfile
@@ -191,3 +205,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]

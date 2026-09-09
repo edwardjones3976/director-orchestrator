@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | BEGIN]]
 """Dispatch a bounded task to a provider CLI with least-privilege permissions.
@@ -137,10 +138,14 @@ def is_eligible(provider: str, authors: set[str]) -> tuple[bool, str]:
 
 
 def build_command(provider: str, task: str, prompt_file: str, turns: int) -> list[str]:
-    # PATH resolution belongs to dispatch, not construction: building the
-    # command must not depend on which provider CLIs this host happens to have.
+    # The resolved path is kept when PATH has one: on Windows the CLIs are
+    # .cmd shims, and CreateProcess does not apply PATHEXT, so dispatching the
+    # bare name fails with WinError 2. Falling back to the bare name keeps
+    # construction independent of which CLIs this host happens to have; main()
+    # refuses to dispatch a command whose executable is missing.
     spec = PROVIDERS[provider]
-    command = [str(spec["executable"]), *list(spec["base"])]
+    command = [shutil.which(str(spec["executable"])) or str(spec["executable"]),
+               *list(spec["base"])]
     for rule in TASK_ALLOW_RULES[task]:
         if spec["allow"]:
             command += [str(spec["allow"]), rule]
@@ -188,3 +193,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:47 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
