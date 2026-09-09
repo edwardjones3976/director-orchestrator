@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
@@ -39,6 +40,10 @@ Set-StrictMode -Version Latest
 $originalLocation = Get-Location
 $profilePath = $null
 $composeProject = $null
+# Set only once the ownership check has proved this invocation owns the Compose
+# project name. Strict mode makes an unset read an error, and the outer catch
+# reads it, so it is declared here rather than beside the check.
+$composeProjectOwned = $false
 $composeEnvironmentNames = @(
     "DIRECTOR_ENV_FILE", "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT",
     "N8N_HOST_PORT", "APP_ENV", "LOG_LEVEL", "TZ", "ORCHESTRATOR_BASE_URL",
@@ -783,6 +788,52 @@ function Stop-PreviouslyRunningServices {
     }
 }
 
+function Get-N8nIntakeWebhookPath {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $workflowPath = Join-Path $RepositoryRoot "n8n\workflows\director-intake.json"
+    if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+        throw "The n8n intake workflow is missing. Full-stack readiness cannot be established."
+    }
+    try {
+        $definition = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "The n8n intake workflow is not valid JSON. Full-stack readiness cannot be established."
+    }
+    $webhooks = @($definition.nodes | Where-Object { $_.type -ceq "n8n-nodes-base.webhook" })
+    if ($webhooks.Count -ne 1) {
+        throw "The n8n intake workflow must declare exactly one webhook node; found $($webhooks.Count)."
+    }
+    $path = [string]$webhooks[0].parameters.path
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        throw "The n8n intake workflow's webhook node declares no path."
+    }
+    return $path
+}
+
+function Assert-N8nRouteMatchesWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Url,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $expected = Get-N8nIntakeWebhookPath -RepositoryRoot $RepositoryRoot
+    $parsed = $null
+    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsed)) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL is not an absolute URL. No value was printed."
+    }
+    if ($parsed.Scheme -notin @("http", "https")) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must use http or https. No value was printed."
+    }
+    # Compare the path the workflow serves, case-sensitively: n8n webhook paths
+    # are case-sensitive, so a differing case is a 404 rather than a nicety.
+    $actual = $parsed.AbsolutePath.TrimEnd("/")
+    if ($actual -cne "/webhook/$expected") {
+        throw "N8N_DIRECTOR_WEBHOOK_URL does not address the imported workflow: it must end with /webhook/$expected. No value was printed."
+    }
+}
+
 function Initialize-N8nIntakeWorkflow {
     param(
         [Parameter(Mandatory = $true)][string]$ComposeProject,
@@ -862,11 +913,27 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
 # would stop that deployment and only then reject the collision. The full
 # collision check runs after the secrets are filled, because two profiles both
 # holding REPLACE_WITH_RANDOM_SECRET would read as a collision here. These four
-# names come from the template rather than being generated, so they are
-# comparable before any of that.
-Assert-NoProfileCollisions -TargetValues (Read-DotEnv -Path $profilePath) -Names @(
+# names are fixed identities of the selected profile, so they are comparable
+# before any of that.
+#
+# The values come from $selected, never from the profile file. The stop uses
+# $composeProject, which is $selected.DIRECTOR_COMPOSE_PROJECT_NAME; an earlier
+# version of this check read the file instead, so a profile on disk carrying a
+# stale name had its stale name checked while a sibling's project was stopped.
+# Check the identity that is actually about to be addressed.
+$selectedIdentity = @{
+    DIRECTOR_COMPOSE_PROJECT_NAME = $composeProject
+    DIRECTOR_HOST_PORT = [string]$selected.DIRECTOR_HOST_PORT
+    N8N_HOST_PORT = [string]$selected.N8N_HOST_PORT
+    SQLITE_PATH = [string]$selected.SQLITE_PATH
+}
+Assert-NoProfileCollisions -TargetValues $selectedIdentity -Names @(
     "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH"
 )
+# Only now may anything address this Compose project. Every later teardown,
+# including the outer catch, reads this rather than assuming the name was ever
+# validated: the rollback stopped a foreign project after the check rejected it.
+$composeProjectOwned = $true
 
 # Every invocation stages the paid gate closed in the profile, but containers
 # started by an earlier activation keep their launch-time environment. Stop the
@@ -994,6 +1061,13 @@ if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
     # value, so without this the run reports full-stack readiness while n8n is
     # bypassed. Reject it rather than filling it in: the URL is the operator's.
     Assert-Configured -Values $values -Names @("N8N_DIRECTOR_WEBHOOK_URL")
+    # Non-blank is not the same as correct. A URL naming a path the imported
+    # workflow does not serve reported readiness just as happily, and Slack
+    # then posts to a 404 forever: the only HTTP check here is orchestrator
+    # health, and slack_bot uses this value verbatim. The expected path is read
+    # out of the committed workflow rather than written here twice, so editing
+    # the workflow's webhook path cannot leave this check asserting the old one.
+    Assert-N8nRouteMatchesWorkflow -Url ([string]$values["N8N_DIRECTOR_WEBHOOK_URL"]) -RepositoryRoot $repoRoot
 }
 if ($ProfileName -eq "long-table") {
     Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")
@@ -1247,7 +1321,13 @@ catch {
                 $outerRollbackErrors.Add("the Long Table profile switches could not be closed")
             }
         }
-        if ($null -ne $composeProject -and $composeProject) {
+        # $composeProjectOwned, not merely a non-empty name. The ownership check
+        # runs before anything addresses this project, and when it rejects a
+        # collision this handler is exactly the path that used to run anyway --
+        # stopping the sibling deployment the check had just refused to touch.
+        # A rejected ownership check leaves nothing of ours started, so there is
+        # nothing here to roll back.
+        if ($composeProjectOwned -and $composeProject) {
             docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot n8n n8n-db | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 $outerRollbackErrors.Add("the previously running Long Table services could not be stopped")
@@ -1311,3 +1391,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]

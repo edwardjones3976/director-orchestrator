@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | BEGIN]]
@@ -110,6 +111,28 @@ function Get-LiveFinalizerBody {
     return $body.Substring(1, $body.Length - 2)
 }
 """
+
+
+def _ps_literal(value: str) -> str:
+    """Quote a string as a PowerShell single-quoted literal."""
+
+    return "'" + value.replace("'", "''") + "'"
+
+
+# Loads the launcher's own route functions into the probe session. Extracting
+# them from the shipped script is the point: a copy pasted into the test would
+# pass while the launcher's copy was broken.
+SOURCE_HELPER = """
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$launcher = Get-Content -LiteralPath %s -Raw
+foreach ($name in 'Get-N8nIntakeWebhookPath', 'Assert-N8nRouteMatchesWorkflow') {
+    $start = $launcher.IndexOf("function $name {")
+    if ($start -lt 0) { throw "the launcher no longer defines $name" }
+    $end = $launcher.IndexOf("`nfunction ", $start + 10)
+    Invoke-Expression $launcher.Substring($start, $end - $start)
+}
+""" % _ps_literal(str(ROOT / "scripts" / "windows-isolated-live-validation.ps1"))
 
 
 def _run_powershell(probe: str, shell: str | None = None) -> str:
@@ -944,18 +967,64 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
         """
 
         ownership = self.script.index(
-            'Assert-NoProfileCollisions -TargetValues (Read-DotEnv -Path $profilePath) -Names'
+            "Assert-NoProfileCollisions -TargetValues $selectedIdentity -Names"
         )
         stop = self.script.index(
             "Stop-PreviouslyRunningServices -ComposeProject $composeProject"
         )
         self.assertLess(ownership, stop)
-        # Only template-supplied names are comparable this early: the secrets
-        # are still placeholders and would read as a collision between any two
+        # Only fixed identity names are comparable this early: the secrets are
+        # still placeholders and would read as a collision between any two
         # freshly copied profiles.
         window = self.script[ownership:stop]
         self.assertIn('"DIRECTOR_COMPOSE_PROJECT_NAME"', window)
         self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", window)
+
+    def test_the_ownership_check_validates_the_identity_that_is_stopped(self):
+        """Checking one name while stopping another proves nothing.
+
+        The stop addresses $composeProject, which is the selected profile's
+        fixed identity. The first version of this check read the profile file
+        instead, so a file carrying a stale name had its stale name compared
+        while a sibling's live project was stopped. Found by the second round
+        of an independent review of #142, which measured zero Docker calls on
+        the base against stop and ps on that head.
+        """
+
+        ownership = self.script.index("$selectedIdentity = @{")
+        stop = self.script.index(
+            "Stop-PreviouslyRunningServices -ComposeProject $composeProject"
+        )
+        self.assertLess(ownership, stop)
+        window = self.script[ownership:stop]
+        # The checked project name is the one the stop uses, not a file read.
+        self.assertIn("DIRECTOR_COMPOSE_PROJECT_NAME = $composeProject", window)
+        self.assertNotIn("Read-DotEnv", window)
+
+    def test_a_rejected_ownership_check_leaves_the_rollback_inert(self):
+        """The catch stopped the very project the check had just refused.
+
+        A rejected collision means nothing of ours was started, so there is
+        nothing to roll back -- but the handler ran anyway and stopped four
+        services in the sibling's project. Guarding on a non-empty name was not
+        enough, because the name is assigned before the check runs.
+        """
+
+        self.assertIn("$composeProjectOwned = $false", self.script)
+        self.assertIn("$composeProjectOwned = $true", self.script)
+        rollback = self.script.index(
+            "stop orchestrator slackbot n8n n8n-db"
+        )
+        guard = self.script.rindex("if ($composeProjectOwned", 0, rollback)
+        # The guard is the immediately enclosing condition, not one somewhere
+        # earlier in the file.
+        self.assertNotIn("}", self.script[guard:rollback].split("{", 1)[1])
+        # Ownership is granted only after the check, never beside the
+        # assignment of the name itself.
+        self.assertLess(
+            self.script.index("Assert-NoProfileCollisions -TargetValues $selectedIdentity"),
+            self.script.index("$composeProjectOwned = $true"),
+        )
 
     def test_full_stack_long_table_requires_the_n8n_route(self):
         """A full stack that starts n8n must not let Slack bypass it.
@@ -979,6 +1048,58 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
         # The requirement sits inside the -not $ApiOnly guard, so the API-only
         # canary, which starts no n8n, is not asked for a route it never uses.
         self.assertNotIn("}", self.script[guard:requirement].split("{", 1)[1])
+
+    def test_a_wrong_n8n_route_is_rejected_not_only_a_blank_one(self):
+        """Non-blank is not correct. A wrong path is a permanent 404.
+
+        Requiring the value to be set left a profile naming a path the imported
+        workflow does not serve reporting full-stack readiness, with slack_bot
+        posting to that path verbatim for the life of the deployment. The only
+        HTTP check in the launcher is orchestrator health, so nothing else
+        catches it. Found by the second round of an independent review of #142.
+
+        This runs the two real functions out of the launcher rather than
+        asserting on its source, because the defect was behavioural.
+        """
+
+        probe = SOURCE_HELPER + """
+$root = %s
+foreach ($url in @(
+    'http://n8n:5678/webhook/director-intake',
+    'http://n8n:5678/webhook/wrong-intake',
+    'http://n8n:5678/webhook/Director-Intake',
+    'http://n8n:5678/',
+    'not-a-url'
+)) {
+    try { Assert-N8nRouteMatchesWorkflow -Url $url -RepositoryRoot $root; "ACCEPT" }
+    catch { "REJECT" }
+}
+""" % _ps_literal(str(ROOT))
+        verdicts = _run_powershell(probe).split()
+        # Only the path the committed workflow actually serves is accepted, and
+        # the comparison is case-sensitive because n8n webhook paths are.
+        self.assertEqual(
+            verdicts, ["ACCEPT", "REJECT", "REJECT", "REJECT", "REJECT"]
+        )
+
+        # A correct validator the launcher never calls protects nothing:
+        # deleting the call site left this test green until this assertion was
+        # added. It must sit inside the full-stack guard, so the API-only
+        # canary, which starts no n8n, is not asked for a route it never uses.
+        call = self.script.index("Assert-N8nRouteMatchesWorkflow -Url")
+        guard = self.script.rindex(
+            'if ($ProfileName -eq "long-table" -and -not $ApiOnly) {', 0, call
+        )
+        self.assertNotIn("}", self.script[guard:call].split("{", 1)[1])
+
+    def test_the_expected_route_is_read_from_the_workflow_not_written_twice(self):
+        """A second hardcoded copy of the path would drift from the first."""
+
+        probe = SOURCE_HELPER + """
+Get-N8nIntakeWebhookPath -RepositoryRoot %s
+""" % _ps_literal(str(ROOT))
+        self.assertEqual(_run_powershell(probe).strip(), "director-intake")
+        self.assertNotIn('"/webhook/director-intake"', self.script)
 
     def test_slackbot_receives_only_its_required_environment(self):
         slack_section = self.compose.split("  slackbot:", 1)[1].split("  n8n-db:", 1)[0]
@@ -1780,3 +1901,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
