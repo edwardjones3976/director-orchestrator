@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
@@ -152,6 +153,21 @@ packet transport, blocked in the host provider bridge, hardcoded as
 unauthenticated in the automatic live dependency builder, and carries a typed
 external blocker. Configuring an allocation profile with a non-zero target for
 it does not make it dispatchable.
+The same setting must additionally cover every lane the primary roster can
+select. A lane bound in `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON`
+becomes a roster candidate as soon as an intake names a profile and capability
+that admit it, and the roster refuses to select *anyone* while any candidate is
+unranked. With `ALLOW_PAID_RUNS` and `WORKLOAD_POLICY_ENABLED` both true, the
+service therefore refuses to start and names the unranked lane and
+`TRUSTED_PROVIDER_COST_RANKS`. Two consequences are worth planning for:
+
+- An `antigravity` binding is satisfied by a `gemini` rank; the parser
+  normalizes the two names to one entry, so do not add a separate rank.
+- The requirement follows the activation bindings, not credentials. Removing a
+  lane from `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` removes its
+  rank requirement, because an unbound lane is never observed ready and never
+  reaches a roster. Leaving a lane bound while omitting its rank is the
+  configuration that previously failed only at dispatch.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -483,3 +499,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->

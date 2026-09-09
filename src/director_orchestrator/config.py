@@ -1,7 +1,9 @@
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -1172,6 +1174,37 @@ class Settings:
                     "INTAKE_PRIMARY_REQUIRED_CAPABILITIES must contain only "
                     + ", ".join(SELECTABLE_PRIMARY_CAPABILITIES)
                 )
+    # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
+    def unranked_selectable_primary_lanes(self) -> tuple[str, ...]:
+        """Activation-bound lanes a roster can select that carry no cost rank.
+
+        ``primary_roster.eligible_for`` holds the entire roster when any single
+        candidate is unranked, so the omission surfaces only at dispatch and
+        takes down all routing rather than one lane. This asks the same question
+        early, deriving the lane set from ``primary_roster`` rather than
+        restating it.
+
+        Scope is the activation-bound pool: ``provider_ready`` returns ``False``
+        for a lane with no binding, and the roster's ``available`` pool is
+        filtered through it, so an unbound lane can never become a candidate and
+        requiring a rank for it would refuse a working deployment.
+        """
+
+        from .allocation_profiles import canonical_allocation_lane
+        from .primary_roster import lanes_requiring_cost_rank
+
+        try:
+            bound_pool = set(self.primary_provider_activation_bindings())
+        except ValueError:
+            # Malformed bindings already fail langgraph_primary_readiness and
+            # abort PrimaryProviderActivationService construction, so no lane
+            # reaches a roster and none needs a rank from here.
+            return ()
+        ranked = {
+            canonical_allocation_lane(lane) for lane in self.trusted_provider_cost_ranks()
+        }
+        return tuple(sorted(lanes_requiring_cost_rank(bound_pool) - ranked))
+    # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
 
     def validate_workload_policy_configuration(self) -> None:
         self.validate_intake_routing_defaults()
@@ -1202,6 +1235,12 @@ class Settings:
             if not readiness["ready_specialist_ranks_complete"]:
                 raise ValueError(
                     "TRUSTED_PROVIDER_COST_RANKS must cover every configured ready specialist"
+                )
+            unranked = self.unranked_selectable_primary_lanes()
+            if unranked:
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS is missing a rank for selectable "
+                    f"primary lane(s): {', '.join(unranked)}"
                 )
 
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
@@ -2198,7 +2237,9 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
