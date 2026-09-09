@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | BEGIN]]
@@ -150,6 +151,34 @@ class DoneConjunctionTests(unittest.TestCase):
                 len(OWNER_TOUCHPOINTS),
                 repr(bogus),
             )
+
+    def test_no_non_boolean_attestation_ever_satisfies_recovery_proof(self):
+        """The last two `is True` sites, which the corpus never reached.
+
+        The previous commit drove eleven non-boolean values through the health
+        fields and the touchpoint probes and stopped there. A delta review of
+        #150 replaced both `restore_drill_recorded is True` checks with bool()
+        and all 22 tests stayed green, so bool("false") would have satisfied
+        recovery_proof -- the same one-field hole, on the remaining pair.
+        """
+
+        for bogus in self.NOT_TRUE:
+            term = next(
+                t for t in done_terms(TODAY, restore_drill_recorded=bogus)
+                if t.name == "recovery_proof"
+            )
+            self.assertFalse(term.holds, repr(bogus))
+            # The evidence must read as absent, not as an attestation.
+            self.assertIn("no restore drill record", term.evidence, repr(bogus))
+            self.assertNotIn("caller attests", term.evidence, repr(bogus))
+
+        # And the literal True still works.
+        attested = next(
+            t for t in done_terms(TODAY, restore_drill_recorded=True)
+            if t.name == "recovery_proof"
+        )
+        self.assertTrue(attested.holds)
+        self.assertIn("caller attests", attested.evidence)
 
     def test_a_boolean_task_count_is_not_a_wave(self):
         """True is an int, so dropping the bool guard would count it as one.
@@ -400,3 +429,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]
