@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:50 UTC | BEGIN]] -->
 # Director decision rules
 
@@ -200,9 +201,22 @@ q_i = round to integers by largest remainder,  Σ q_i = W
 floor((s_i − 0.03)·W)  ≤  n_i  ≤  floor((s_i + 0.05)·W)
 ```
 
-At `W = 20`, a 40% target is 8 assignments with a ceiling of 9. Zero-target
-lanes stay excluded. Admission and concurrency rules are unchanged; only the
-arithmetic gets easier to reason about.
+At `W = 20`, a 40% target is 8 assignments with a ceiling of 9. A zero target
+refuses a lane **in that profile**, including for accepted non-code research;
+the same lane is allocation-admissible under a profile with a non-zero target,
+subject to remaining capacity and other admission gates. In particular,
+`engineering` refuses Perplexity and Firecrawl research (both targets 0%), while
+`public_research` allows the same requests through allocation admission with
+targets of 25% and 15% respectively, when the other conditions pass.
+
+[`is_accepted_productive_kind`, workload_policy.py:512–529](../src/director_orchestrator/workload_policy.py#L512-L529)
+classifies these lanes' research as productive. The [`evaluate_assignment`
+admission call site, workload_policy.py:993–1002](../src/director_orchestrator/workload_policy.py#L993-L1002),
+applies that classification before the capacity check; the [zero-target check,
+lines 617–618](../src/director_orchestrator/workload_policy.py#L617-L618), returns
+`allocation_profile_lane_ineligible`. [allocation_profiles.py:17–18](../src/director_orchestrator/allocation_profiles.py#L17-L18)
+defines the two target sets. Admission and concurrency rules are unchanged;
+this wording grants no dispatch authority and activates no profile.
 
 ---
 
@@ -218,3 +232,4 @@ No percentage reduction is claimed. The largest risk to this delivery is not
 scheduling but whatever the blocker audit surfaces that nobody has looked at
 yet, and no decision rule surfaces that.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
