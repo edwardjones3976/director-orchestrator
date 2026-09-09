@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
@@ -42,7 +43,7 @@ from director_orchestrator.antigravity import (
 from director_orchestrator.config import Settings
 from director_orchestrator.contribution_tags import parse_contribution_tag, validate_inline_contribution_tags
 from director_orchestrator.engine import _STANDING_PROVIDER_ROLES
-from director_orchestrator.host_provider_bridge import SUPPORTED_HOST_LANES, UNSUPPORTED_HOST_LANES, _LANE_AUTH_ENV
+from director_orchestrator.host_provider_bridge import SUPPORTED_HOST_LANES, _LANE_AUTH_ENV
 from director_orchestrator.interactions import ProviderTransport
 from director_orchestrator.models import AssignmentKind, ProviderName
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter
@@ -50,7 +51,6 @@ from director_orchestrator.primary_default import _PRIMARY_LANE_AGENT, _PRIMARY_
 from director_orchestrator.primary_effect_gateways import SUPPORTED_EFFECT_ACTIONS
 from director_orchestrator.primary_transports import (
     ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA,
-    MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER,
     PRIMARY_PROVIDER_LANES,
     PrimaryProviderCapability,
     _PROVIDER_AUTH_ENVIRONMENT,
@@ -73,7 +73,6 @@ COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai")
 PROPOSED_ROUTES = {
     "claude-director-injected-native-packet",
     "grok-bot",
-    "microsoft-365-copilot-work-iq",
     "claude-native-acceptance-issuer",
     "cursor-native-acceptance-issuer",
     "ci-acceptance-issuer",
@@ -297,7 +296,7 @@ class IdentityTests(unittest.TestCase):
             with self.subTest(lane=lane):
                 self.assertEqual(profile["authority"]["production_authority_permitted"], permitted)
         refused = {lane for lane, profile in self.profiles.items() if not profile["authority"]["production_authority_permitted"]}
-        self.assertEqual(refused, {"github-copilot", "microsoft-365-copilot"})
+        self.assertEqual(refused, {"github-copilot"})
 
 
 class CharterMirrorTests(unittest.TestCase):
@@ -579,7 +578,7 @@ class ConfigMirrorTests(unittest.TestCase):
                 if lane in SUPPORTED_HOST_LANES:
                     self.assertEqual(len(bridge), 1)
                     self.assertEqual(bridge[0]["status"], "implemented_disabled_by_default")
-                elif lane in UNSUPPORTED_HOST_LANES:
+                elif lane in frozenset():
                     self.assertEqual(len(bridge), 1)
                     self.assertEqual(bridge[0]["status"], "prohibited")
                 else:
@@ -700,13 +699,7 @@ class ConfigMirrorTests(unittest.TestCase):
             search = [item for item in self.profiles[lane]["transports"] if item["kind"] == "public_search_cli"]
             self.assertEqual(len(search), 1, lane)
 
-    def test_microsoft_365_copilot_blocker_and_grok_bot_are_documented_honestly(self):
-        m365 = self.profiles["microsoft-365-copilot"]
-        work_iq = next(item for item in m365["transports"] if item["kind"] == "work_iq_rest")
-        self.assertIn(MICROSOFT_365_COPILOT_EXTERNAL_BLOCKER, work_iq["authority_note"])
-        self.assertEqual(work_iq["status"], "blocked_pending_evidence")
-        self.assertEqual(m365["gating"]["primary_lane_authentication_source"], "hard_coded_false")
-        self.assertIn('"microsoft-365-copilot": False', (SRC / "primary_default.py").read_text(encoding="utf-8"))
+    def test_grok_bot_is_documented_honestly(self):
         grok_bot = next(item for item in self.profiles["grok"]["transports"] if item["transport_id"] == "grok-bot")
         self.assertEqual(grok_bot["status"], "proposed")
         self.assertIsNone(grok_bot["enum_value"])
@@ -818,7 +811,7 @@ class HygieneTests(unittest.TestCase):
             "OPENAI_API_KEY", "SLACK_BOT_TOKEN", "ORCHESTRATOR_SHARED_SECRET",
             "ENTITLEMENT_POSTGRES_DSN_FILE", "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE",
             "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
-            "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", "SLACK_OWNER_USER_ID",
+            "SLACK_OWNER_USER_ID",
             "CHATGPT_BRIDGE_CHANNEL_IDS",
         ):
             with self.subTest(name=name):
@@ -917,3 +910,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

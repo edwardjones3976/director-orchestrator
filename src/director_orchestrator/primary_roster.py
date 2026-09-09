@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]]
@@ -30,7 +31,7 @@ PRIMARY_TEAM = frozenset({"openai", "claude", "cursor", "grok"})
 IMPLEMENTERS = ("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")
 RESEARCH_LANES = ("perplexity", "firecrawl")
 REVIEWERS = frozenset({"openai", "claude", "cursor", "grok"})
-KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"}
+KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot"}
 
 class PrimaryRosterHold(ValueError):
     """A pre-dispatch capability or allocation hold; never a provider failure."""
@@ -146,3 +147,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

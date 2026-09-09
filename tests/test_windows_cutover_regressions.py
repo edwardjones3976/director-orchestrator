@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 """Offline execution of the real rollback branch and host-bridge preflight."""
@@ -14,7 +15,6 @@ import unittest
 
 from director_orchestrator.host_provider_bridge import (
     SUPPORTED_HOST_LANES,
-    UNSUPPORTED_HOST_LANES,
 )
 
 
@@ -130,7 +130,6 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
         source = (ROOT / "scripts/windows-host-provider-bridge.ps1").read_text(encoding="utf-8")
         for pattern, expected in (
             (r'\$provider -notin @\(([^)]+)\)', SUPPORTED_HOST_LANES),
-            (r'foreach \(\$unsupported in @\(([^)]+)\)', UNSUPPORTED_HOST_LANES),
         ):
             match = re.search(pattern, source)
             self.assertIsNotNone(match)
@@ -249,9 +248,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
 
     def test_preflight_preserves_unsupported_and_invalid_command_refusals(self):
         cases = [
-            ({lane: None}, "cannot be enabled")
-            for lane in sorted(UNSUPPORTED_HOST_LANES)
-        ] + [
+            ({"microsoft-365-copilot": None}, "unallowlisted provider"),
             ({"unknown-lane": None}, "unallowlisted provider"),
             ({"cursor": []}, "empty command"),
             ({"cursor": ["director-nonexistent-offline-fixture-executable"]}, "executable is unavailable"),
@@ -268,3 +265,5 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
