@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
@@ -13,21 +14,19 @@ profile before plan approval and bind its digest to the immutable assignment pla
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
-| OpenAI / Codex production | 25% | 40% | 20% | 25% |
-| Claude | 30% | 25% | 25% | 30% |
+| OpenAI / Codex production | 27% | 40% | 20% | 32% |
+| Claude | 33% | 25% | 25% | 38% |
 | Cursor | 10% | 15% | 5% | 5% |
 | Grok | 10% | 10% | 5% | 5% |
 | Gemini / Antigravity | 5% | 10% | 5% | 5% |
 | Perplexity | 5% | 0% | 25% | 0% |
 | Firecrawl | 5% | 0% | 15% | 5% |
 | GitHub Copilot | 5% | 0% | 0% | 10% |
-| Microsoft 365 Copilot | 5% | 0% | 0% | 15% |
 | Total | 100% | 100% | 100% | 100% |
 
 Canonical profile IDs are `mixed`, `engineering`, `public_research`, and
 `enterprise`. Canonical lane IDs are `openai`, `claude`, `cursor`, `grok`,
-`antigravity`, `perplexity`, `firecrawl`, `github-copilot`, and
-`microsoft-365-copilot`. Models, native apps, CLI contacts, API transports, and
+`antigravity`, `perplexity`, `firecrawl`, and `github-copilot`. Models, native apps, CLI contacts, API transports, and
 aliases map to their existing parent lane; they never create a second quota or
 an independent reviewer. Gemini and Antigravity share the Antigravity lane.
 
@@ -141,3 +140,4 @@ selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->

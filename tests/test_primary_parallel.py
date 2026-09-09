@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:51 UTC | BEGIN]]
@@ -274,7 +275,6 @@ class ProviderRetryAuthorizationTests(unittest.TestCase):
     def test_live_transport_kinds_use_underlying_execution_categories(self) -> None:
         for name, expected in (
             ("responses-api", Transport.PROVIDER_API),
-            ("work-iq-rest-production", Transport.PROVIDER_API),
             ("native-cli", Transport.LOCAL_CLI),
             ("public-search-cli", Transport.LOCAL_CLI),
             ("authenticated-windows-host-bridge", Transport.LOCAL_CLI),
@@ -290,7 +290,7 @@ class ProviderRetryAuthorizationTests(unittest.TestCase):
 
     def test_live_aliases_and_bridge_wrappers_do_not_supply_new_evidence(self) -> None:
         for aliases in (
-            ("api", "responses-api", "work-iq-rest-production"),
+            ("api", "responses-api"),
             ("cli", "native-cli", "public-search-cli", "authenticated-windows-host-bridge"),
         ):
             for previous in aliases:
@@ -333,3 +333,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

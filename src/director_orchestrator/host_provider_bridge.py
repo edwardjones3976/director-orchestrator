@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -41,7 +42,6 @@ BRIDGE_PROTOCOL = "director-host-provider-bridge/v1"
 SUPPORTED_HOST_LANES = frozenset(
     {"openai", "claude", "cursor", "grok", "antigravity", "github-copilot"}
 )
-UNSUPPORTED_HOST_LANES = frozenset({"microsoft-365-copilot"})
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PACKET_BYTES = 1_048_576
@@ -239,8 +239,6 @@ class BridgeRequest:
     work_packet_digest: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
-        if self.provider in UNSUPPORTED_HOST_LANES:
-            raise HostProviderBridgeError(f"unsupported host provider lane: {self.provider}")
         if self.provider not in SUPPORTED_HOST_LANES:
             raise HostProviderBridgeError("unallowlisted host provider lane")
         _require_token(self.task_id, "task id")
@@ -392,8 +390,6 @@ class WindowsHostProviderExecutor:
             raise ValueError("bridge timeout must be between 1 and 3600 seconds")
         normalized: dict[str, tuple[str, ...]] = {}
         for provider, command in commands.items():
-            if provider in UNSUPPORTED_HOST_LANES:
-                raise ValueError(f"unsupported bridge provider: {provider}")
             if provider not in SUPPORTED_HOST_LANES:
                 raise ValueError(f"unallowlisted bridge provider: {provider}")
             argv = tuple(str(item) for item in command)
@@ -530,7 +526,7 @@ class HostBridgePacketTransport:
         ]
         | None = None,
     ) -> None:
-        if provider in UNSUPPORTED_HOST_LANES or provider not in SUPPORTED_HOST_LANES:
+        if provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
         # Redaction and local normalization are one decision: a lane that is not
         # shown the work packet cannot have its result bound by the host either.
@@ -690,3 +686,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

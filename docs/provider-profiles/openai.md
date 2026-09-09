@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | BEGIN]] -->
@@ -60,7 +62,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 
 | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | --- | --- | --- |
-| 25 | 40 | 20 | 25 |
+| 27 | 40 | 20 | 32 |
 
 ## Roles and responsibilities
 
@@ -282,7 +284,6 @@ Separation of duties:
 | `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
 | `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
 | `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `microsoft-365-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -307,3 +308,5 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:49 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->

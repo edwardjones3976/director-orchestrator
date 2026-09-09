@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -99,6 +102,67 @@ lower means cheaper. The Director has no built-in provider order and fails close
 before the planning call when the setting is absent, malformed, or incomplete.
 Use current operator-verified comparable cost evidence rather than copying a
 sample ranking from documentation.
+
+## Intake routing defaults
+
+Two owner-set variables supply the allocation profile and the primary capability
+request that every Slack intake carries. They are deployment configuration only.
+The Slack gateway never derives either value from message text: a Slack message
+is untrusted data and cannot steer provider selection.
+
+- `INTAKE_ALLOCATION_PROFILE` selects one of the four approved
+  [allocation profiles](provider-allocation-profiles.md): `engineering`,
+  `mixed`, `public_research`, or `enterprise`. The default is `engineering`.
+- `INTAKE_PRIMARY_REQUIRED_CAPABILITIES` is a comma-separated list drawn from
+  `public_research`, `bounded_scaffolding`, and `repository_assistance`. The
+  default is empty. A repeated entry is refused.
+
+Leaving both unset reproduces the previous behavior exactly, so an existing
+deployment changes nothing by upgrading. Startup validation refuses an unknown
+profile name, an unknown capability, and a repeated capability before the
+service accepts any intake; it does not wait for a per-task roster hold.
+
+`enterprise_context` is a valid intake capability but is **not** configurable.
+No scoped enterprise production adapter exists, so the roster selector holds
+every plan that requests it. Configuring it could therefore only produce one
+hold per task, and startup refuses it instead. This refusal is additive and
+removes no existing gate.
+
+These variables change which lanes can be selected, which creates one
+operational prerequisite:
+
+- `bounded_scaffolding` makes the Antigravity lane selectable, and
+  `repository_assistance` makes the GitHub Copilot lane selectable. Under
+  `engineering` the GitHub Copilot target is zero and the lane stays ineligible
+  on allocation grounds; `mixed` and `enterprise` give it a non-zero target.
+- **Every selectable lane must have a rank in `TRUSTED_PROVIDER_COST_RANKS`.**
+  The selector holds the *entire* roster with `primary_trusted_cost_rank_required`
+  when any candidate lane lacks a rank, not just that one lane. Configure a
+  `github-copilot` rank before enabling `repository_assistance`. The Antigravity
+  lane already draws its rank from the `gemini` entry — `antigravity` is
+  accepted as a spelling and normalizes to `gemini` — so a deployment with a
+  ready Gemini specialist already satisfies `bounded_scaffolding`.
+- The `ready_provider_ranks_complete` readiness boolean covers only the ready
+  specialists `claude`, `cursor`, `gemini`, `grok`, and `perplexity`. It does
+  **not** cover `github-copilot`, so a missing GitHub Copilot rank passes
+  startup validation and surfaces later as a plan-time hold. Verify the rank
+  when enabling the capability.
+
+The same setting must additionally cover every lane the primary roster can
+select. A lane bound in `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON`
+becomes a roster candidate as soon as an intake names a profile and capability
+that admit it, and the roster refuses to select *anyone* while any candidate is
+unranked. With `ALLOW_PAID_RUNS` and `WORKLOAD_POLICY_ENABLED` both true, the
+service therefore refuses to start and names the unranked lane and
+`TRUSTED_PROVIDER_COST_RANKS`. Two consequences are worth planning for:
+
+- An `antigravity` binding is satisfied by a `gemini` rank; the parser
+  normalizes the two names to one entry, so do not add a separate rank.
+- The requirement follows the activation bindings, not credentials. Removing a
+  lane from `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON` removes its
+  rank requirement, because an unbound lane is never observed ready and never
+  reaches a roster. Leaving a lane bound while omitting its rank is the
+  configuration that previously failed only at dispatch.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -379,12 +443,6 @@ canonical JSON object with exactly `actor`, `head_sha`, `kind`,
 `schema_version`, and `verdict`. Comments, prose, quotes, code fences, extra
 fields, and substring markers are never activation evidence.
 
-Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
-exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
-`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. Windows ACLs may grant access only
-to the current user, SYSTEM, or Administrators; POSIX files must be runtime-owned
-and have no group or other permissions.
-
 The Windows bridge permits plaintext HTTP only on an exact loopback host.
 Container-to-host use must use HTTPS. An all-interface bridge bind requires
 explicit TLS certificate and private-key files; the certificate must be trusted
@@ -429,3 +487,6 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
