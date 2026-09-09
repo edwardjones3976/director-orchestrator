@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
@@ -10,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from director_orchestrator.hotl_execution import (
+    NON_RECOVERABLE_TERMS,
     TERMS,
     TIER_ONE_CLASSES,
     CompletionRate,
@@ -241,6 +243,68 @@ class RecoveryTests(unittest.TestCase):
         # obstacle rather than only the one that stopped it.
         self.assertEqual(len(decision.blockers), 2)
 
+    def test_a_recovery_only_fires_when_every_unmet_term_authorises_one(self):
+        """One term's remedy must not carry the others.
+
+        Offering the first recovery found let a red `gates` advance on the
+        strength of a recoverable `verification` -- re-verification that has
+        nothing to do with the failing check. Constructed by a delta review of
+        #146. The document routes "a temporary failure" to "an authorized
+        recovery", one per failure.
+        """
+
+        evidence = _all(True)
+        evidence["bounds"] = TermEvidence(False, "daily ceiling reached")
+        evidence["verification"] = TermEvidence(
+            False, "evidence stale", recovery="re-run exact-SHA verification"
+        )
+        # bounds carries no recovery, so nothing authorises progress on it.
+        self.assertIs(decide(MERGE, evidence).outcome, Outcome.HOLD)
+
+        # Give it one and the decision may recover.
+        evidence["bounds"] = TermEvidence(
+            False, "daily ceiling reached", recovery="wait for the ceiling to reset"
+        )
+        decision = decide(MERGE, evidence)
+        self.assertIs(decision.outcome, Outcome.RECOVER)
+        self.assertEqual(len(decision.blockers), 2)
+
+    def test_every_owner_routed_term_holds_even_carrying_its_own_recovery(self):
+        """A recovery string on these does not make them recoverable.
+
+        Each is a trip condition or an explicit refusal in the governing
+        document, and a delta review of #146 reached RECOVER on every one by
+        attaching a recovery to it or to a sibling.
+        """
+
+        for term in ("authorization", "gates", "independence", "scope", "audit"):
+            self.assertIn(term, NON_RECOVERABLE_TERMS, term)
+            # Its own recovery, and every other term satisfied. Emptying
+            # NON_RECOVERABLE_TERMS makes this RECOVER, which the previous
+            # fall-through test could not detect.
+            evidence = _all(True)
+            evidence[term] = TermEvidence(
+                False, f"{term} unmet", recovery=f"retry {term}"
+            )
+            decision = decide(MERGE, evidence)
+            self.assertIs(decision.outcome, Outcome.HOLD, term)
+            self.assertIsNone(decision.recovery, term)
+
+    def test_the_governing_formula_names_every_term_the_code_requires(self):
+        """The document is authoritative, so a short formula recreates the gap.
+
+        It carried the six-letter form while the evidence bar carried items 6
+        and 10, which is how an implementation following it returned execute
+        for a prohibited path with no audit record.
+        """
+
+        text = DOC.read_text(encoding="utf-8")
+        formula = [line for line in text.splitlines() if line.startswith("H(a) = ")]
+        self.assertEqual(len(formula), 1, formula)
+        for letter in ("A(a)", "G(a)", "B(a)", "V(a)", "I(a)", "S(a)", "P(a)", "D(a)"):
+            self.assertIn(letter, formula[0], letter)
+        self.assertEqual(formula[0].count(" and "), len(TERMS) - 1)
+
     def test_an_unrecognised_term_is_refused_rather_than_dropped(self):
         """A term this predicate does not evaluate must not pass silently.
 
@@ -315,3 +379,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]

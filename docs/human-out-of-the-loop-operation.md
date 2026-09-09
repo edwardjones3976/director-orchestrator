@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
@@ -258,11 +259,19 @@ wins and the code is wrong.
 An action runs without returning to the owner only when every term holds:
 
 ```
-H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a)
+H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
 ```
 
-authorization, gates, bounds, verification, independence, safe stopping. It is
-a conjunction, not a score; one unmet term is decisive.
+authorization, gates, bounds, verification, independence, safe stopping, path
+scope, durable audit. It is a conjunction, not a score; one unmet term is
+decisive.
+
+`P` and `D` were absent from this formula while items 6 and 10 of the evidence
+bar above were not. An implementation following the six-letter form returned
+`execute` for a change reaching a prohibited path with no audit record, and an
+independent review found the omission here rather than only in the code. This
+page is authoritative, so leaving the short form would have recreated the same
+gap in the next implementation to read it.
 
 Two properties carry the weight, and both are pinned by tests that assert the
 negative:
@@ -332,3 +341,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->

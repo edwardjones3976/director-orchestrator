@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]]
@@ -75,13 +76,30 @@ TERMS: tuple[str, ...] = (
     "audit",
 )
 
-# A term the document routes to the owner rather than to a recovery. The rule is
-# the document's own: "only a blocker needing authority outside the standing
-# grant reaches the owner." An unmet `authorization` *is* that blocker -- it says
-# no standing grant covers this action -- so no other term's recovery may carry
-# the decision past it. Without this, evidence with authorization unmet and any
-# recoverable second term returned RECOVER instead of HOLD.
-NON_RECOVERABLE_TERMS: frozenset[str] = frozenset({"authorization"})
+# Terms the document routes to the owner or to SUSPENDED, never to a recovery.
+# Naming only `authorization` was too narrow. An independent review of #146
+# constructed a RECOVER for each of these by pairing it with a recoverable
+# `verification`, and every one is a trip condition or an explicit refusal in
+# the governing document:
+#
+#   authorization  no standing grant covers this action at all
+#   gates          "a tier-0 class is implicated at any point" -- a trip
+#                  condition; this term also carries item 7, and it cannot
+#                  distinguish a re-runnable red check from that implication,
+#                  so it fails to the safe side
+#   independence   "Absence of evidence is never consent... its silence may not
+#                  be counted, inferred, or waited out" -- a silent second
+#                  provider is not a recoverable delay
+#   scope          item 6, owned and prohibited paths: a change that reached a
+#                  prohibited path is not retried into compliance
+#   audit          "the audit ledger cannot be written" -- a trip condition
+#
+# What is left recoverable is the mechanical remainder: stale verification,
+# exhausted bounds, undefined stopping. That is what "a temporary failure routes
+# to an authorized recovery" describes.
+NON_RECOVERABLE_TERMS: frozenset[str] = frozenset(
+    {"authorization", "gates", "independence", "scope", "audit"}
+)
 
 
 class Outcome(StrEnum):
@@ -195,24 +213,31 @@ def decide(
             evaluated_at=now,
             terms=states,
         )
-    for term in unmet:
-        recovery = evidence[term].recovery
-        if recovery:
-            return Decision(
-                outcome=Outcome.RECOVER,
-                action=action,
-                tier=1,
-                blockers=tuple(f"{t}: {evidence[t].reason}" for t in unmet),
-                recovery=recovery,
-                evaluated_at=now,
-                terms=states,
-            )
-
+    # EVERY unmet term must authorise its own recovery. Offering the first
+    # recovery found let one term's remedy carry every other unmet term with it:
+    # an independent review of #146 paired a red `gates` with a recoverable
+    # `verification` and got RECOVER, which advances a decision whose CI is
+    # failing on the strength of a re-verification that has nothing to do with
+    # it. The document routes "a temporary failure" to "an authorized recovery",
+    # singular per failure -- a term with no recovery has nothing authorising
+    # progress on it.
+    if not all(evidence[term].recovery for term in unmet):
+        return Decision(
+            outcome=Outcome.HOLD,
+            action=action,
+            tier=1,
+            blockers=tuple(f"{t}: {evidence[t].reason}" for t in unmet),
+            evaluated_at=now,
+            terms=states,
+        )
+    # Only the first is offered: recoveries are re-evaluated from scratch, so
+    # chaining them here would skip a fresh reading of every term.
     return Decision(
-        outcome=Outcome.HOLD,
+        outcome=Outcome.RECOVER,
         action=action,
         tier=1,
         blockers=tuple(f"{t}: {evidence[t].reason}" for t in unmet),
+        recovery=evidence[unmet[0]].recovery,
         evaluated_at=now,
         terms=states,
     )
@@ -244,3 +269,4 @@ class CompletionRate:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]
