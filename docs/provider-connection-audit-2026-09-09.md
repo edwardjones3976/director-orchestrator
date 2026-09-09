@@ -1,3 +1,4 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | BEGIN]] -->
 # Provider connection audit — 2026-09-09
 
@@ -68,27 +69,55 @@ that has been discussed as if it were available.
 | Transport | Variables absent | What it closes |
 | --- | --- | --- |
 | **Host provider bridge** | `DIRECTOR_HOST_PROVIDER_BRIDGE_SECRET`, `..._URL`, `..._POSTGRES_DSN` | Grok's digest-verified CLI contact, the Antigravity team worker, and the Copilot packet wrapper. **D-11 and D-14 are blocked on infrastructure that does not exist yet, not merely on a decision** |
-| **ChatGPT Slack alias bridge** | `CHATGPT_BRIDGE_ENABLED`, `..._ALIAS_USER_ID`, `..._CHANNEL_ALLOWLIST`, `..._INTERNAL_TOKEN` | The orchestrator cannot drive `@ChatGPT` in Slack. Part of why bus posts go unanswered |
+| ~~**ChatGPT Slack alias bridge**~~ | — | **Retracted 2026-09-09 21:00 UTC. This row was wrong.** `/health` reports `chatgpt_bridge.enabled: true` with `slack_transport_configured`, `internal_auth_configured`, `alias_user_configured` and `channels_allowlisted` all true, and every `CHATGPT_BRIDGE_*` key is present. The bridge is configured |
 | **GitHub credentials** | `GITHUB_APP_ID`, `GITHUB_TOKEN`, `ORACLE_REVIEW_SECRET` | **The orchestrator cannot read a pull request or post a review.** Every review must therefore be performed by an owner-launched agent; the automated review-to-merge path cannot operate at all |
 | **Firecrawl** | `FIRECRAWL_API_KEY` | The repository research lane. The Director-side MCP surface is separate and works |
 | **GitHub Copilot** | `COPILOT_GITHUB_TOKEN` | The Lite hygiene lane; fails closed as unavailable |
 | **Microsoft 365 Copilot** | tenant and token file | Already known; blocked on tenant administration |
 
-## Why bus posts go unanswered — the honest reading
+## Why delegations do not get picked up — corrected 2026-09-09 21:00 UTC
 
-Two Director posts on 2026-09-09 and an availability check on 2026-09-08 all went
-unanswered. The channel history shows every provider exchange being initiated by
-the owner from a desktop client. Combined with the absent ChatGPT bridge and the
-absent GitHub credentials, the conclusion is that **the Slack identities are not
-autonomous listeners on this deployment.** Posting to the bus records a
-delegation durably and correctly; it does not by itself cause a provider to act.
+**The earlier version of this section was wrong, and wrong in the direction that
+makes a working component look broken.** It stated that two Director posts on
+2026-09-09 and the availability check on 2026-09-08 "all went unanswered", and
+concluded that the Slack identities are not autonomous listeners. That
+conclusion was drawn from the channel's top-level view. **The threads were never
+opened.**
 
-That is a configuration fact, not a provider failure, and it means the practical
-dispatch path today is owner-launched sessions with the bus as the durable
-record. The delegation packets are written for exactly that.
+They were not unanswered. Cursor replied to every one of them, in thread, within
+seconds:
+
+| Director post | Cursor reply | Latency |
+| --- | --- | --- |
+| 2026-09-09 02:58:15 PDT | `The agent failed to start. Please try again.` | 18 s |
+| 2026-09-09 09:18:23 PDT | same | 7 s |
+| 2026-09-09 09:23:38 PDT | same | 13 s |
+
+Three for three, the same message, always within seconds. That is not silence
+and it is not nonresponse. **Cursor is wired to this channel, is receiving the
+mentions, and is being triggered by them; the agent process fails to start.**
+
+This inverts the practical reading:
+
+- The Slack bus **is** a live dispatch surface. The mention reaches Cursor.
+- A-18 and A-19 were never declined and never ignored. They have never started.
+- The failure is a Cursor agent-launch fault, and each reply carries a **Try
+  Again** button, so the cheapest next action is an owner press, not a
+  reassignment.
+- The nonresponse counter in the operating charter must not be advanced for
+  these three. A launch failure is a transport fault, not a provider decision,
+  and counting it toward "three nonresponses ⇒ mark unavailable" would retire a
+  provider that never received the work.
+
+**Method note, recorded because the error is the reusable part.** The claim was
+asserted from a channel listing that shows reply counts but not replies. Reply
+counts were visible on all three posts. The rule that follows: a nonresponse
+finding requires opening the thread, and a thread that shows any reply count is
+not evidence of silence.
 
 ## What was not done
 
 No credential was created, modified or requested. No environment file was edited.
 No value was read into output. Every remediation above requires the owner.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | END]] -->
