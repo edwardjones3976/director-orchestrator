@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:30 UTC | BEGIN]] -->
 # Findings — Gate 8, the two holds, and schedule feasibility
 
@@ -137,7 +138,7 @@ to `antigravity.py`'s contract." That was wrong — the third correction I owe o
 this matrix, and the most consequential in the provider's favour.
 
 The team mode is implemented and sits behind one configuration switch,
-`LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` (`config.py:719`, default false).
+`LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` (`config.py:748`, default false).
 Behind it: `antigravity_team.py`, `_artifacts.py`, `_routing.py`, `_transport.py`
 and `_worker.py`; `team_ddl(schema)` composed into `_control_plane_ddl`, so the
 schema is created by the ordinary `Migrate`; a `director_primary_team_guard`
@@ -199,3 +200,4 @@ administrator who can consent to `WorkIQAgent.Ask`? A yes makes the lane a
 post-Sunday enablement; a no closes it permanently and, with it, the canary path
 in Finding 1.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | BEGIN]] -->
 # Close-out report — LangGraph-primary and n8n delivery
 
@@ -28,7 +29,7 @@ never rounded to a pass.
 | Candidate tree | **PENDING** | |
 | Deployment snapshot at planning | `a05237776bf4aac0f8224947cf44dea356ed8f56`, tree `4e1d578ccbd2db1e92b81de1659884061a87d160` | snapshot checkout |
 | Deployment control-script version | `OpenAI Codex \| GPT-6 \| 2026-09-06 \| 20:37 UTC` | snapshot `scripts/` |
-| Delivery branch | `claude/activation-plan-2026-09-13` | nine commits, documentation only |
+| Delivery branch (merged) | `claude/activation-plan-2026-09-13`, merged via PR #159 at 2026-09-09 19:18 UTC | head `7f14e8b`; merge commit `4f1d9c3`; nine commits, documentation only |
 
 The deployment ran eleven merges behind `main`, and the local `main` ref was 313
 commits stale. Neither was used as authority.
@@ -37,7 +38,7 @@ commits stale. Neither was used as authority.
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| Planning and decomposition | **Complete** | Six documents, 1,492+ lines, nine commits |
+| Planning and decomposition | **Complete** | Seven documents, 1,492+ lines, nine commits |
 | Decision rules adopted and applied | **Complete** | R1–R7 governing; the plan's schedule and ledger are their output |
 | Lane eligibility established | **Complete** | From `allocation_profiles.py`, `workload_policy.py`, `primary_transports.py` and the readiness functions, not from profile prose |
 | Gate 8 determination | **Complete — `F`** | Canary registered, not run |
@@ -210,3 +211,4 @@ requires.
 - The Firecrawl repository lane and the Perplexity lane are unexercised.
 - This report is a self-produced document and has had no independent review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
