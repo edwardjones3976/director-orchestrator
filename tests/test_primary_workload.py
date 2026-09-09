@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -115,6 +116,46 @@ class AllocationCompatibilityTests(unittest.TestCase):
 
 
 class AdmissionPolicyTests(unittest.TestCase):
+    def test_history_provenance_matches_exact_pre_retirement_source(self):
+        import hashlib
+        import json
+        from director_orchestrator.primary_workload import _PRE_RETIREMENT_V3
+        # Exact allocation snapshot at 6c09a1e1; never imported as current policy.
+        lanes = ("openai", "claude", "cursor", "grok", "antigravity", "perplexity",
+                 "firecrawl", "github-copilot", "microsoft-365-copilot")
+        weights = {"engineering": (40,25,15,10,10,0,0,0,0),
+                   "mixed": (25,30,10,10,5,5,5,5,5),
+                   "public_research": (20,25,5,5,5,25,15,0,0),
+                   "enterprise": (25,30,5,5,5,0,5,10,15)}
+        self.assertEqual(set(weights), set(_PRE_RETIREMENT_V3))
+        for profile, values in weights.items():
+            targets = dict(zip(lanes, values, strict=True))
+            payload = {"version": "capacity-allocation-v1", "profile": profile,
+                       "targets": targets, "window": 20, "soft_tolerance": 3,
+                       "hard_tolerance": 5, "unit": "admitted_assignment", "zero_target": "ineligible"}
+            expected = "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            self.assertEqual((expected, frozenset(k for k, v in targets.items() if v)),
+                             _PRE_RETIREMENT_V3[profile])
+        with self.assertRaises(TypeError):
+            _PRE_RETIREMENT_V3["engineering"] = (DIGEST, frozenset())
+
+    def test_historical_digest_and_lane_must_match_exact_profile(self):
+        from director_orchestrator.primary_workload import _valid_history_row, _PRE_RETIREMENT_V3
+        row = {"policy_version": POLICY_VERSION, "allocation_profile": "enterprise",
+               "policy_digest": _PRE_RETIREMENT_V3["enterprise"][0],
+               "provider_lane": "microsoft-365-copilot"}
+        self.assertTrue(_valid_history_row(row))
+        for changes in ({"policy_digest": DIGEST}, {"allocation_profile": "mixed"},
+                        {"provider_lane": "unknown"},
+                        {"policy_digest": POLICY_DIGEST, "allocation_profile": "engineering"},
+                        {"policy_digest": _PRE_RETIREMENT_V3["engineering"][0], "allocation_profile": "engineering"}):
+            with self.subTest(changes=changes):
+                self.assertFalse(_valid_history_row({**row, **changes}))
+        self.assertEqual("workload_unsupported_allocation_lane",
+                         admission_reason("microsoft-365-copilot", []))
+        self.assertEqual("workload_assignment_hard_limit",
+                         admission_reason("openai", ["openai"] * 9 + ["microsoft-365-copilot"] * 10))
+
     def test_bootstrap_is_explicit_and_aliases_do_not_invent_credit(self):
         self.assertIsNone(admission_reason("openai", []))
         for lane in ("firecrawl", "github-copilot"):
@@ -162,6 +203,60 @@ class AdmissionPolicyTests(unittest.TestCase):
 
 
 class PostgresAdmissionTests(unittest.TestCase):
+    def insert_old_history(self, providers):
+        from director_orchestrator.primary_workload import _PRE_RETIREMENT_V3
+        with self.handle.claim_store._pool.connection() as connection:
+            # Simulate upgrade input, not an available provider on the new schema.
+            connection.execute(f"ALTER TABLE {self.schema}.director_primary_workload_assignment "
+                "DROP CONSTRAINT director_primary_workload_assignment_provider_lane_check")
+            for index, (lane, profile) in enumerate(providers):
+                connection.execute(f"INSERT INTO {self.schema}.director_primary_workload_assignment "
+                    "(task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest,allocation_profile) "
+                    "VALUES ('previous',%s,%s,%s,1,%s,%s,%s)",
+                    (str(index), lane, DIGEST, POLICY_VERSION, _PRE_RETIREMENT_V3[profile][0], profile))
+        self.handle.close()
+        self.handle = open_postgres_control_plane(self.dsn, schema=self.schema,
+                                                allow_insecure_local_transport=True)
+
+    def test_all_four_prior_profiles_allow_current_admission_without_rewriting(self):
+        from director_orchestrator.primary_workload import _PRE_RETIREMENT_V3, read_admission_history
+        self.insert_old_history([("claude", profile) for profile in _PRE_RETIREMENT_V3])
+        with self.handle.claim_store._pool.connection() as connection:
+            before = connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment ORDER BY ledger_id").fetchall()
+            self.assertEqual(("claude",) * 4, read_admission_history(connection, schema=self.schema))
+            with connection.transaction():
+                admit_assignment(connection, schema=self.schema, task_id="current", assignment_id="1",
+                    provider="openai", reservation_digest=DIGEST, fencing_generation=1)
+            after = connection.execute(f"SELECT * FROM {self.schema}.director_primary_workload_assignment ORDER BY ledger_id").fetchall()
+            self.assertEqual(before, after[:-1])
+            self.assertEqual(POLICY_DIGEST, after[-1]["policy_digest"])
+            with self.assertRaisesRegex(WorkloadAdmissionHold, "identity_changed"), connection.transaction():
+                admit_assignment(connection, schema=self.schema, task_id="previous", assignment_id="0",
+                    provider="claude", reservation_digest=DIGEST, fencing_generation=1)
+
+    def test_retired_history_retains_last_nineteen_order_and_count(self):
+        from director_orchestrator.primary_workload import read_admission_history
+        self.insert_old_history([("openai", "engineering")] * 9 +
+                                [("claude", "engineering")] * 10 +
+                                [("microsoft-365-copilot", "enterprise")])
+        with self.handle.claim_store._pool.connection() as connection:
+            history = read_admission_history(connection, schema=self.schema)
+            self.assertEqual(("openai",) * 8 + ("claude",) * 10 + ("microsoft-365-copilot",), history)
+            with connection.transaction():
+                admit_assignment(connection, schema=self.schema, task_id="current", assignment_id="1",
+                    provider="openai", reservation_digest=DIGEST, fencing_generation=1)
+            self.assertEqual(21, connection.execute(f"SELECT count(*) AS n FROM {self.schema}.director_primary_workload_assignment").fetchone()["n"])
+
+    def test_unknown_history_digest_blocks_new_admission_without_repair(self):
+        with self.handle.claim_store._pool.connection() as connection:
+            connection.execute(f"INSERT INTO {self.schema}.director_primary_workload_assignment "
+                "(task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest) "
+                "VALUES ('unknown','1','claude',%s,1,%s,%s)", (DIGEST, POLICY_VERSION, DIGEST))
+            with self.assertRaisesRegex(WorkloadAdmissionHold, "history_invalid"), connection.transaction():
+                admit_assignment(connection, schema=self.schema, task_id="current", assignment_id="1",
+                    provider="openai", reservation_digest=DIGEST, fencing_generation=1)
+            self.assertEqual(1, connection.execute(f"SELECT count(*) AS n FROM {self.schema}.director_primary_workload_assignment").fetchone()["n"])
+
     def test_retirement_migration_preserves_history_but_rejects_new_rows(self):
         # Simulate a previously accepted immutable row under the old schema.
         with self.handle.claim_store._pool.connection() as connection:
@@ -505,3 +600,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | END]]
