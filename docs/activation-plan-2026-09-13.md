@@ -415,7 +415,7 @@ ordered by determination cost so the cheap answers arrive first.
 
 | # | Gate | Evidence slot | Cost to determine | Determined | Value |
 | --- | --- | --- | --- | --- | --- |
-| 8 | Long Table canary evidence bundle complete | bundle reference against baseline `4d26680f` / tree `1e0db56f`, or recorded not satisfied | minutes | **Wed (WO-15)** | `U` |
+| 8 | Long Table canary evidence bundle complete | **determined 2026-09-09** — canary registered, not run: `langgraph-canary.yaml` declares `registration_only: true`, runtime `disabled`, all effects false; no run evidence in either tree. See `findings-2026-09-09-gate8-and-holds.md` | minutes | **done — Tue night** | **`F`** |
 | 3 | Distinct deployment, graph, checkpoint and effect-ledger namespaces | worksheet | minutes | **Wed (WO-15)** | `U` |
 | 5 | Pre-cutover tasks bound or explicitly migrated | task inventory | minutes | **Wed (WO-15)** | `U` |
 | 4 | Legacy intake disabled before the writer lease is acquired | `legacy_new_intake_disabled` | one health read | Wed (WO-01) for D; WO-08 for L | `U` |
@@ -426,9 +426,14 @@ ordered by determination cost so the cheap answers arrive first.
 | 9 | Owner acceptance with exact commits, profile IDs, store digests, run IDs, costs, rollback drill | acceptance record | after 1–8 | Sat (WO-11) | `U` |
 
 ```
-Done      = AND over gates 1..9            currently U  (nine unknown, none false)
-Permitted = Done AND NOT (OR over no-go)   currently U  — not a pass
+Done      = AND over gates 1..9            F   (gate 8 determined false 2026-09-09)
+Permitted = Done AND NOT (OR over no-go)   F   — not a pass, and not an unknown
 ```
+
+Gate 8 is false, so the conjunction is false regardless of the other eight.
+`Activate` is not permitted under the gates as written. The owner's scope
+decision is **D-12** in `findings-2026-09-09-gate8-and-holds.md`; the Director
+recommends the floor deliverable.
 
 No status message, report or handoff states that this delivery is complete. Each
 states the computed value and names the gates still `U`.
