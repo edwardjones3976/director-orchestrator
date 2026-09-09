@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | BEGIN]]
 """Measure launch readiness instead of asserting it.
 
@@ -51,10 +52,17 @@ def done_terms(health: dict, *, restore_drill_recorded: bool = False) -> tuple[T
 
     primary = health.get("langgraph_primary", {})
     owner = primary.get("new_intake_owner")
-    runtime_active = bool(primary.get("primary_runtime_active"))
-    live_requested = bool(primary.get("live_provider_dispatch_requested"))
-    ledger = bool(primary.get("effect_ledger_ready"))
-    bindings = bool(primary.get("provider_activation_bindings_configured"))
+    # `is True`, never bool(). A health document is JSON off the wire, and
+    # bool() promotes the string "false", the string "0" and any non-empty
+    # object to a satisfied gate: an independent review of #150 constructed
+    # effect_ledger_ready="false" and got a term reading
+    # `effect_ledger_ready=True`. Only the literal boolean counts, and the
+    # evidence prints what was actually read rather than the coercion.
+    runtime_active = primary.get("primary_runtime_active")
+    live_requested = primary.get("live_provider_dispatch_requested")
+    ledger = primary.get("effect_ledger_ready")
+    bindings = primary.get("provider_activation_bindings_configured")
+    tasks = primary.get("graph_task_count")
 
     return (
         Term(
@@ -64,32 +72,50 @@ def done_terms(health: dict, *, restore_drill_recorded: bool = False) -> tuple[T
             f"new_intake_owner={owner!r}",
         ),
         Term(
+            # Both switches being on says a wave *may* run, not that one has.
+            # A review reproduced this term holding with graph_task_count=0.
+            # The count is the only field here that distinguishes a configured
+            # plane from an exercised one, so it is part of the conjunction.
             "real_execution_of_a_wave",
-            runtime_active and live_requested,
+            runtime_active is True and live_requested is True and isinstance(tasks, int)
+            and not isinstance(tasks, bool) and tasks > 0,
             Source.MEASURED,
-            f"primary_runtime_active={runtime_active}, "
-            f"live_provider_dispatch_requested={live_requested}",
+            f"primary_runtime_active={runtime_active!r}, "
+            f"live_provider_dispatch_requested={live_requested!r}, "
+            f"graph_task_count={tasks!r}",
         ),
         Term(
-            "durable_results",
-            ledger,
+            # effect_ledger_ready reports that the ledger is available, not
+            # that a wave's results are in it. Kept as a prerequisite, and
+            # named so, rather than promoted to durable results.
+            "durable_result_store_ready",
+            ledger is True,
             Source.MEASURED,
-            f"effect_ledger_ready={ledger}",
+            f"effect_ledger_ready={ledger!r}",
         ),
         Term(
-            "required_controls_installed",
-            bindings,
+            # This field validates the binding map's contents and provider
+            # coverage. It establishes nothing about installation, acceptance
+            # or readiness of the controls themselves -- a review reproduced it
+            # true with the runtime disabled and every secret-readiness field
+            # false -- so the claim is narrowed to what the field measures.
+            "provider_binding_map_configured",
+            bindings is True,
             Source.MEASURED,
-            f"provider_activation_bindings_configured={bindings}",
+            f"provider_activation_bindings_configured={bindings!r}",
         ),
         Term(
             # No health field reports a restore drill, so this cannot be
             # measured here. Reporting it as attested keeps the gap visible
-            # rather than letting a default stand in for evidence.
+            # rather than letting a default stand in for evidence, and the
+            # evidence string differs by case so that "the caller said so"
+            # cannot read as a record.
             "recovery_proof",
-            bool(restore_drill_recorded),
+            restore_drill_recorded is True,
             Source.ATTESTED,
-            "restore drill record supplied by the caller",
+            "caller attests a restore drill record; not verified here"
+            if restore_drill_recorded is True
+            else "no restore drill record supplied",
         ),
     )
 
@@ -108,7 +134,12 @@ OWNER_TOUCHPOINTS: tuple[tuple[str, str | None], ...] = (
     ("broker_init_and_registry_digest", None),
     ("ci_issuer_adoption", None),
     ("snapshot_root", "authority_root_configured"),
-    ("authority_pins", "authority_pins_valid"),
+    # authority_pins deliberately has no probe. `authority_pins_valid` returns
+    # true when BOTH pins are empty (config.py), so using it credited this
+    # touchpoint as satisfied on a default configuration and reduced k without
+    # evidence that any pin was ever set. A field that is true for "unset" does
+    # not settle a touchpoint; the owner does.
+    ("authority_pins", None),
     ("provider_binding_map", "provider_activation_bindings_configured"),
     ("effect_gateway_decision", None),
     ("actor_allowlist", "completion_evidence_actor_allowlist_configured"),
@@ -137,7 +168,9 @@ def owner_touchpoints(health: dict) -> tuple[Touchpoint, ...]:
         if probe is None:
             out.append(Touchpoint(name, False, Source.ATTESTED))
         else:
-            out.append(Touchpoint(name, bool(primary.get(probe)), Source.MEASURED))
+            # `is True` for the same reason as the terms: a JSON "false" or a
+            # non-empty object must not satisfy a touchpoint by truthiness.
+            out.append(Touchpoint(name, primary.get(probe) is True, Source.MEASURED))
     return tuple(out)
 
 
@@ -188,3 +221,4 @@ def should_recheck(
         return True, f"expected value {expected:g} exceeds cost {cost_of_check:g}"
     return False, f"expected value {expected:g} does not exceed cost {cost_of_check:g}"
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | END]]
