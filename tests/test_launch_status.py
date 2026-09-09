@@ -18,7 +18,6 @@ from director_orchestrator.launch_status import (
     should_recheck,
 )
 
-# The live stack as measured on 2026-09-08.
 # An illustrative health document, NOT a measurement of the live stack. An
 # earlier comment called it "the live stack as measured on 2026-09-08"; a
 # review compared it against real configuration readiness on this host and
