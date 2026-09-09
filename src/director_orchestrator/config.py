@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
@@ -953,27 +954,36 @@ class Settings:
     ) -> dict[str, bool]:
         """Expose only non-sensitive workload-enforcement readiness booleans.
 
-        ``credentialed_specialist_ranks_complete`` answers one narrow question:
-        do the specialist lanes this class holds an API credential for all carry
-        a cost rank. It is deliberately not a statement about the roster, and the
-        earlier name ``ready_provider_ranks_complete`` claimed one it never made.
+        ``ready_specialist_ranks_complete`` answers one narrow question: do the
+        specialist lanes that are *ready* all carry a cost rank. It is
+        deliberately not a statement about the roster, and the earlier name
+        ``ready_provider_ranks_complete`` claimed one it never made.
 
-        Rank coverage for the lanes a roster can actually select is the separate
-        question ``unranked_selectable_primary_lanes`` asks over the
-        activation-bound pool. That is the right axis for the lanes missing here:
-        ``github-copilot``, ``microsoft-365-copilot``, ``firecrawl`` and
-        ``antigravity`` reach a roster through
-        ``primary_provider_activation_bindings`` and have no credential in
-        ``readiness`` to report at all, and ``openai`` is the roster's mandatory
-        floor rather than a credentialed specialist -- ``core_inventory_ready``
-        already refuses a pool without it.
+        "Ready" is ``readiness()``, which is more than holding a credential: it
+        also requires the lane to be enabled and correctly configured. A named
+        specialist that is configured with a credential but disabled is
+        therefore *not* counted, and needs no rank. Naming this field for the
+        credential would publish a coverage claim on ``/health`` that the
+        computation does not make -- a configured-but-disabled ``grok``,
+        ``perplexity`` or ``gemini`` leaves it ``True`` with that lane unranked.
 
-        The two checks are not nested and neither subsumes the other. A
-        credentialed specialist that is not activation-bound must carry a rank
-        here and is out of scope there. ``gemini`` is exactly that: the roster
-        knows the lane only as ``antigravity``, so a deployment holding a Gemini
-        credential without that binding is asked for a rank here and nowhere
-        else. Collapsing the two into either one alone would drop a requirement.
+        Rank coverage for the lanes a roster can actually select is a separate
+        question, over the activation-bound pool rather than this set. That is
+        the right axis for the lanes missing here: ``github-copilot``,
+        ``microsoft-365-copilot``, ``firecrawl`` and ``antigravity`` reach a
+        roster through ``primary_provider_activation_bindings`` and have no
+        entry in ``readiness`` to report at all, and ``openai`` is the roster's
+        mandatory floor rather than a specialist -- ``core_inventory_ready``
+        already refuses a pool without it. That complementary check is proposed
+        as ``unranked_selectable_primary_lanes`` in pull request #147 and does
+        not exist at this revision; only the check described here is enforced.
+
+        The two checks are not nested and neither subsumes the other. A ready
+        specialist that is not activation-bound must carry a rank here and is
+        out of scope there. ``gemini`` is exactly that: the roster knows the
+        lane only as ``antigravity``, so a deployment with Gemini ready but
+        without that binding is asked for a rank here and nowhere else.
+        Collapsing the two into either one alone would drop a requirement.
         """
 
         if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
@@ -988,7 +998,7 @@ class Settings:
         # with no matching ``readiness`` key is a coverage hole, and defaulting it
         # to False silently reports the lane as un-credentialed and therefore
         # exempt. Fail loudly at startup instead.
-        credentialed_specialists = {
+        ready_specialists = {
             provider
             for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
             if provider_readiness[provider]
@@ -1007,8 +1017,8 @@ class Settings:
             "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
             "selector_mode_valid": self.primary_workhorse == "cheapest_capable",
             "cost_ranks_valid": bool(cost_ranks),
-            "credentialed_specialist_ranks_complete": bool(credentialed_specialists)
-            and credentialed_specialists.issubset(cost_ranks),
+            "ready_specialist_ranks_complete": bool(ready_specialists)
+            and ready_specialists.issubset(cost_ranks),
         }
 
     def trusted_provider_cost_ranks(self) -> dict[str, int]:
@@ -1101,7 +1111,7 @@ class Settings:
             if not readiness["cost_ranks_valid"]:
                 # Re-run the parser to preserve the precise structural error.
                 self.trusted_provider_cost_ranks()
-            if not readiness["credentialed_specialist_ranks_complete"]:
+            if not readiness["ready_specialist_ranks_complete"]:
                 raise ValueError(
                     "TRUSTED_PROVIDER_COST_RANKS must cover every configured ready specialist"
                 )
@@ -2099,3 +2109,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]

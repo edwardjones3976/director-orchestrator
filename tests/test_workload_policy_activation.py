@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -146,7 +147,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                 "shadow_sample_valid": True,
                 "selector_mode_valid": True,
                 "cost_ranks_valid": False,
-                "credentialed_specialist_ranks_complete": False,
+                "ready_specialist_ranks_complete": False,
             },
         )
 
@@ -246,11 +247,56 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         )
 
         readiness = settings.workload_policy_readiness()
-        self.assertTrue(readiness["credentialed_specialist_ranks_complete"])
-        # The retired name asserted coverage of every ready provider while only
-        # ever measuring five hardcoded credentialed specialists. /health must
-        # not keep publishing that claim under either name.
+        self.assertTrue(readiness["ready_specialist_ranks_complete"])
+        # Two retired names, each of which published a claim the computation
+        # does not make: "ready_provider" asserted coverage of every ready
+        # provider while only ever measuring five hardcoded specialists, and
+        # "credentialed_specialist" asserted credential coverage while the set
+        # is filtered by readiness. /health must publish neither.
         self.assertNotIn("ready_provider_ranks_complete", readiness)
+        self.assertNotIn("credentialed_specialist_ranks_complete", readiness)
+
+    def test_a_credentialed_but_unready_specialist_is_not_counted(self) -> None:
+        """Readiness is not credential presence, and the name must not say it is.
+
+        ``readiness()`` requires the lane to be enabled and configured, not just
+        to hold an API key. Under the name
+        ``credentialed_specialist_ranks_complete`` this field read True while a
+        lane holding a credential carried no rank, publishing a credential
+        coverage claim on /health that the computation never made. Found by an
+        independent review of #152; reproduced here for each lane whose
+        readiness has an enablement switch of its own.
+        """
+
+        for lane, credential in (
+            ("grok", {"grok_api_key": "grok-secret", "grok_enabled": False}),
+            (
+                "perplexity",
+                {"perplexity_api_key": "pplx-secret", "perplexity_enabled": False},
+            ),
+        ):
+            with self.subTest(lane=lane):
+                settings = replace(
+                    Settings(),
+                    allow_paid_runs=True,
+                    workload_policy_enabled=True,
+                    primary_workhorse="cheapest_capable",
+                    trusted_provider_cost_ranks_json='{"claude": 2, "cursor": 1}',
+                    claude_routine_url="https://example.invalid/claude",
+                    claude_routine_token="token",
+                    cursor_api_key="cursor-secret",
+                    gemini_api_key="",
+                    **credential,
+                )
+
+                # The credential is present and the lane is still unranked, so
+                # a field named for credentials would have to report False.
+                self.assertFalse(settings.readiness()[lane])
+                readiness = settings.workload_policy_readiness()
+                self.assertTrue(readiness["ready_specialist_ranks_complete"])
+                self.assertNotIn(
+                    "credentialed_specialist_ranks_complete", readiness
+                )
 
     def test_specialist_without_a_readiness_key_fails_loudly(self) -> None:
         """A listed specialist with no readiness key is a hole, not an exemption.
@@ -284,7 +330,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 settings.workload_policy_readiness()
 
-    def test_credentialed_specialist_outside_activation_pool_still_requires_rank(
+    def test_ready_specialist_outside_activation_pool_still_requires_rank(
         self,
     ) -> None:
         """AGENTS.md rule 4: this requirement exists nowhere else.
@@ -317,7 +363,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         self.assertTrue(unranked_gemini.readiness()["gemini"])
         self.assertFalse(
             unranked_gemini.workload_policy_readiness()[
-                "credentialed_specialist_ranks_complete"
+                "ready_specialist_ranks_complete"
             ]
         )
         with self.assertRaisesRegex(ValueError, "every configured ready specialist"):
@@ -1015,3 +1061,4 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
