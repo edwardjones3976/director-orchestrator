@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from collections import Counter
 import hashlib
 import json
 from typing import Any, Sequence
+from types import MappingProxyType
 
 from .langgraph_postgres import _require_schema
 from .allocation_profiles import allocation_targets, allocation_profile_digest, DEFAULT_ALLOCATION_PROFILE
@@ -27,11 +29,33 @@ LEGACY_V2_DIGEST = "sha256:" + hashlib.sha256(json.dumps({
     "window":20,"hard_tolerance":5,"unit":"admitted_assignment","bootstrap":"fixed_twenty_slot_denominator",
 },sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
+# Read-only history provenance from allocation_profiles.py at
+# 6c09a1e1aba8921464fa3564cdeb00b34ce1b962. These identities never authorize a
+# new reservation or replace an existing row's immutable admission binding.
+_PRE_RETIREMENT_V3 = MappingProxyType({
+    "engineering": ("sha256:84a77ab961f256ab03384b8474bb5c903c04d7248c6b0bb0b74bf79c2b1c6219",
+                    frozenset({"openai", "claude", "cursor", "grok", "antigravity"})),
+    "mixed": ("sha256:8d52b872f98a03b893e87f53e607ddf8525092f647c7179baa23732f55fe94f3",
+              frozenset({"openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"})),
+    "public_research": ("sha256:bc543fafca4d720f6260fbee218600a1d8b88f93d0d73ae19b34040bac522a5b",
+                        frozenset({"openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl"})),
+    "enterprise": ("sha256:7dc8522cf2d607d150d71924bb0a6eabe2b4ef1312f70942924bd74349e47313",
+                   frozenset({"openai", "claude", "cursor", "grok", "antigravity", "firecrawl", "github-copilot", "microsoft-365-copilot"})),
+})
+_HISTORY_LANES = frozenset(TARGETS) | {"microsoft-365-copilot"}
+
 def _valid_history_row(row):
     if row["policy_version"] == "primary-assignment-count-v2":
-        return row["policy_digest"] == LEGACY_V2_DIGEST
+        return (row["policy_digest"] == LEGACY_V2_DIGEST and
+                row["provider_lane"] in {"openai", "claude", "cursor", "antigravity", "grok", "perplexity"})
     try:
-        return row["policy_version"] == POLICY_VERSION and row["policy_digest"] == allocation_profile_digest(row["allocation_profile"])
+        if row["policy_version"] != POLICY_VERSION:
+            return False
+        profile = row["allocation_profile"]
+        if row["policy_digest"] == allocation_profile_digest(profile):
+            return row["provider_lane"] in TARGETS
+        old_digest, old_lanes = _PRE_RETIREMENT_V3[profile]
+        return row["policy_digest"] == old_digest and row["provider_lane"] in old_lanes
     except ValueError:
         return False
 
@@ -49,7 +73,9 @@ def admission_reason(provider: str, history: Sequence[str], *, allocation_profil
     targets = allocation_targets(allocation_profile)
     if provider not in targets:
         return "workload_unsupported_allocation_lane"
-    if any(item not in TARGETS for item in history):
+    # Durable readers authenticate each row's profile digest before exposing its
+    # lane. Retired work still occupies its original position in the last 19.
+    if any(item not in _HISTORY_LANES for item in history):
         return "workload_history_invalid"
     if targets[provider] == 0:
         return "workload_profile_lane_ineligible"
@@ -135,3 +161,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | END]]

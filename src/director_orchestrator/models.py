@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -123,7 +124,6 @@ class ProviderName(StrEnum):
     OPENAI = "openai"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
-    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
 
 
 class AssignmentKind(StrEnum):
@@ -1251,3 +1251,4 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

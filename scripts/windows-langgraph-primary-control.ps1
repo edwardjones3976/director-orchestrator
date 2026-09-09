@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
@@ -489,7 +490,7 @@ if ($missing.Count -gt 0) {
 }
 $requiredProviders = @(
     "openai", "claude", "cursor", "grok", "antigravity", "perplexity",
-    "firecrawl", "github-copilot", "microsoft-365-copilot"
+    "firecrawl", "github-copilot"
 )
 $configuredProviders = @(([string]$values["LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS"]).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $coreProviders = @("openai", "claude", "cursor", "grok")
@@ -830,3 +831,4 @@ if ($Action -eq "Rollback") {
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

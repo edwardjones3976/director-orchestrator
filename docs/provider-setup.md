@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
@@ -147,12 +148,6 @@ operational prerequisite:
   startup validation and surfaces later as a plan-time hold. Verify the rank
   when enabling the capability.
 
-`microsoft-365-copilot` remains unreachable regardless of these settings. It is
-absent from the roster implementers, refused by name in the native command
-packet transport, blocked in the host provider bridge, hardcoded as
-unauthenticated in the automatic live dependency builder, and carries a typed
-external blocker. Configuring an allocation profile with a non-zero target for
-it does not make it dispatchable.
 The same setting must additionally cover every lane the primary roster can
 select. A lane bound in `LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON`
 becomes a roster candidate as soon as an intake names a profile and capability
@@ -448,12 +443,6 @@ canonical JSON object with exactly `actor`, `head_sha`, `kind`,
 `schema_version`, and `verdict`. Comments, prose, quotes, code fences, extra
 fields, and substring markers are never activation evidence.
 
-Microsoft Work IQ requires the tenant, a protected non-symlink token file, and
-exact `MICROSOFT_365_COPILOT_EXPECTED_SUBJECT` plus
-`MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`. Windows ACLs may grant access only
-to the current user, SYSTEM, or Administrators; POSIX files must be runtime-owned
-and have no group or other permissions.
-
 The Windows bridge permits plaintext HTTP only on an exact loopback host.
 Container-to-host use must use HTTPS. An all-interface bridge bind requires
 explicit TLS certificate and private-key files; the certificate must be trusted
@@ -500,3 +489,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->

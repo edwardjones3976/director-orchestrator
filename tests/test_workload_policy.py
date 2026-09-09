@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
@@ -164,7 +165,7 @@ class WorkloadTargetTests(unittest.TestCase):
                 Provider.OPENAI: 40,
                 Provider.GEMINI: 10,
                 Provider.PERPLEXITY: 0,
-                Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0, Provider.MICROSOFT_365_COPILOT: 0,
+                Provider.FIRECRAWL: 0, Provider.GITHUB_COPILOT: 0,
             },
         )
         self.assertEqual(sum(actual.values()), 100)
@@ -182,7 +183,7 @@ class WorkloadTargetTests(unittest.TestCase):
                 DirectProductionProvider.GROK: 10,
                 DirectProductionProvider.GEMINI: 10,
                 DirectProductionProvider.PERPLEXITY: 0,
-                DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0, DirectProductionProvider.MICROSOFT_365_COPILOT: 0,
+                DirectProductionProvider.FIRECRAWL: 0, DirectProductionProvider.GITHUB_COPILOT: 0,
                 DirectProductionProvider.EXTERNAL_OPENAI: 40,
             },
         )
@@ -1353,3 +1354,4 @@ class InputValidationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

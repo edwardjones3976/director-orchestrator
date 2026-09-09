@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -384,36 +385,7 @@ that host-side DSN is a secret-store value and must never be copied into logs or
 checked-in profile files.
 
 The bridge currently permits only explicitly configured Claude, Grok,
-Antigravity, and GitHub Copilot packet-wrapper commands. Cursor and Microsoft 365
-Copilot remain direct and are never aliased through the Windows bridge.
-
-The exact roster identity is `microsoft-365-copilot`, not Windows Copilot. It uses
-the production Work IQ REST endpoint
-`https://workiq.svc.cloud.microsoft/rest/conversations/{conversationId}/chat`.
-The production contract requires a delegated work or school Entra identity with
-admin-consented `WorkIQAgent.Ask`; personal and application permissions are
-unsupported. The organization administrator must enable Work IQ. The lane is
-limited to one synchronous, text-only research/review turn with web grounding
-disabled and no external-effect authority.
-
-The lane reports
-`microsoft_365_copilot_work_iq_capability_evidence_missing` until Director
-cryptographically verifies the delegated JWT against the configured tenant's
-Microsoft OIDC discovery document and cached JWKS. The token must have the exact
-tenant, issuer, Work IQ audience and `WorkIQAgent.Ask` scope, and must be within
-its signed `nbf`/`exp` window. Director then creates a prompt-free production
-Work IQ conversation. Only the successful authenticated response, bound to its
-Microsoft request ID, body digest, conversation ID, signed token subject, and a
-five-minute-or-shorter expiry, proves tenant enablement and the current Copilot
-license/billing entitlement. Environment booleans, self-computed digests,
-configuration, or a consumer-app installation are not evidence. The preflight
-sends no model prompt and beta endpoint paths are never accepted.
-
-Official contract references:
-
-- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/rest/copilotroot-post-conversations>
-- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/permissions>
-- <https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/copilot-apis-security-authentication>
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct and are never aliased through the Windows bridge.
 
 Endpoint and secret configuration alone never makes a host-bridge lane callable.
 Before composing adapters, the container sends a fresh HMAC-authenticated
@@ -664,3 +636,4 @@ identity cannot authorize successful completion.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -66,10 +68,10 @@ roles:
     vote_grants_authority: false
   allocation:
     profiles:
-      mixed: 30
+      mixed: 33
       engineering: 25
       public_research: 25
-      enterprise: 30
+      enterprise: 38
     default_profile: "engineering"
     overall_effort_policy: "telemetry_only_no_separate_allocation"
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
@@ -337,3 +339,5 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
