@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
@@ -491,7 +492,8 @@ class DispatchGateTests(unittest.TestCase):
         )
         self.assertIn("7", pinned.split())
 
-    def _dispatch(self, stdout: bytes, returncode: int = 0):
+    def _dispatch(self, stdout: bytes = b"", returncode: int = 0, *,
+                  timeout: bool = False, prompt: str = "review this"):
         """Run main() to completion against a stubbed child process.
 
         Asserting on source text cannot show that main() calls anything. A
@@ -514,11 +516,13 @@ class DispatchGateTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             captured["command"] = command
             captured["kwargs"] = kwargs
+            if timeout:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
             return Completed()
 
         with tempfile.TemporaryDirectory() as raw:
             path = pathlib.Path(raw) / "p.txt"
-            path.write_text("review this", encoding="utf-8")
+            path.write_text(prompt, encoding="utf-8")
             argv = [
                 "--pr", "143", "--task", "review", "--provider", "grok",
                 "--prompt-file", str(path),
@@ -548,6 +552,44 @@ class DispatchGateTests(unittest.TestCase):
                 return code, err.getvalue() + err.buffer.getvalue().decode(
                     "utf-8", errors="replace"
                 ), captured
+
+    def test_main_refuses_merge_imperatives_in_a_review(self):
+        for prompt in (
+            "go ahead and merge",
+            "Merge the PR if CI is green",
+            "please merge PR 143",
+            "run `gh pr merge` when done",
+            "do not merge it; then merge PR 143",
+        ):
+            with self.subTest(prompt=prompt):
+                with unittest.mock.patch.object(dispatch, "build_command") as build:
+                    code, err, captured = self._dispatch(prompt=prompt)
+                self.assertEqual(code, 3)
+                self.assertIn("asks for a merge", err)
+                build.assert_not_called()
+                self.assertEqual(captured, {})
+
+    def test_main_dispatches_negation_and_quoted_merge_evidence(self):
+        for prompt in (
+            "do not merge it if tests fail",
+            "(a review packet that quotes `gh pr merge` as evidence)",
+            'The earlier instruction was "please merge PR 143". Review the refusal.',
+            "Review this reproduction:\n```sh\ngh pr merge 143\n```",
+            "Review this reproduction:\n    go ahead and merge\nExplain the defect.",
+            "> Merge the PR if CI is green\nReview this quoted instruction.",
+            "please don't merge the PR",
+        ):
+            with self.subTest(prompt=prompt):
+                code, err, captured = self._dispatch(prompt=prompt)
+                self.assertEqual(code, 0, err)
+                self.assertNotIn("REFUSED", err)
+                self.assertEqual(captured["kwargs"]["input"], prompt.encode("utf-8"))
+
+    def test_main_reports_and_refuses_a_wall_clock_timeout(self):
+        code, err, captured = self._dispatch(timeout=True)
+        self.assertEqual(code, 5)
+        self.assertIn("WALL-CLOCK TIMEOUT", err)
+        self.assertEqual(captured["kwargs"]["timeout"], 3600)
 
     def test_main_reports_exhaustion_rather_than_passing_the_exit_code_through(self):
         """Disconnecting the detector from main() left every test green."""
@@ -595,6 +637,51 @@ class DispatchGateTests(unittest.TestCase):
 
 
 class AuthorshipTrailerTests(unittest.TestCase):
+    def test_main_refuses_a_real_trailer_coauthor_before_building_a_command(self):
+        import contextlib
+        import io
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            repository = pathlib.Path(raw)
+
+            def git(*arguments):
+                return subprocess.run(
+                    ["git", *arguments], cwd=repository, capture_output=True,
+                    text=True, check=True,
+                ).stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "Test")
+            git("commit", "--allow-empty", "--no-gpg-sign", "-q", "-m", "base")
+            base = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "--no-gpg-sign", "-q", "-m",
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | BEGIN]]\n"
+                "candidate\n"
+                "[[Claude Code | Claude Opus 5 | 2026-09-09 | 00:00 UTC | END]]\n\n"
+                "Co-Authored-By: OpenAI Codex <noreply@example.invalid>")
+            head = git("rev-parse", "HEAD")
+            prompt = repository / "p.txt"
+            prompt.write_text("review this", encoding="utf-8")
+            for task in ("review", "merge"):
+                with self.subTest(task=task), contextlib.chdir(repository), \
+                     unittest.mock.patch.object(dispatch, "pull_request_range", return_value=(base, head)), \
+                     unittest.mock.patch.object(dispatch, "build_command") as build:
+                    out, err = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = dispatch.main([
+                            "--pr", "143", "--task", task, "--provider", "codex",
+                            "--prompt-file", str(prompt), "--print-command",
+                        ])
+                    self.assertEqual(code, 2)
+                    self.assertIn("REFUSED", err.getvalue())
+                    self.assertIn("materially authored", err.getvalue())
+                    self.assertIn("OpenAI Codex", err.getvalue())
+                    self.assertEqual(out.getvalue(), "")
+                    build.assert_not_called()
+
     def test_a_co_authored_by_trailer_counts_as_authorship(self):
         """Reading only the contribution tags missed a stated coauthor.
 
@@ -655,3 +742,4 @@ class AuthorshipTrailerTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:20 UTC | END]]

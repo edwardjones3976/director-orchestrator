@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
@@ -200,18 +201,22 @@ def is_eligible(provider: str, authors: set[str]) -> tuple[bool, str]:
     return True, ""
 
 
-# Instructions a review prompt must not carry. Eligibility is computed for the
-# --task flag, and the prompt is then free text: a review dispatch whose prompt
-# said "please merge this PR now" cleared the review gate and asked for a merge.
-# An independent review of #143 built exactly that command.
-MERGE_SHAPED = (
-    "gh pr merge",
-    "merge this pull request",
-    "merge this pr",
-    "merge the pull request",
-    "merge it if",
-    "squash and merge",
-    "--squash --delete-branch",
+# Recognize common commands/imperatives, not mentions of the word "merge".
+# Markdown evidence blocks and quoted spans do not instruct the reviewer. A
+# quoted command following "run" or "execute" still does. This remains an
+# accident guardrail, not a natural-language authorization/security boundary.
+_EVIDENCE_BLOCK = re.compile(
+    r"(?ms)^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?^ {0,3}\1[^\n]*(?:\n|$)"
+    r"|(?m:^[ \t]*>[^\n]*$|^(?: {4}|\t)[^\n]*$)"
+)
+_QUOTED_SPAN = re.compile(r'''`[^`\n]*`|"[^"\n]*"|(?<!\w)'[^'\n]*'(?!\w)''')
+_MERGE_INSTRUCTION = re.compile(
+    r"^(?:[-*+]\s+|\d+[.)]\s+)?(?:please\s+)?"
+    r"(?:(?:go\s+ahead\s+and\s+|squash\s+and\s+)merge\b"
+    r"|merge\s+(?:(?:this|the|that)\s+)?(?:pr\b|pull\s+request\b|it\b)"
+    r"|(?:run|execute)\s+(?:gh\s+pr\s+merge\b|quoted_merge_command\b)"
+    r"|gh\s+pr\s+merge\b)",
+    re.IGNORECASE,
 )
 
 
@@ -220,13 +225,23 @@ def task_prompt_mismatch(task: str, prompt: str) -> str:
 
     if task != "review":
         return ""
-    lowered = prompt.lower()
-    for phrase in MERGE_SHAPED:
-        if phrase in lowered:
-            # Reported without quoting surrounding prompt text, which can carry
-            # a pull-request body.
+    prose = _EVIDENCE_BLOCK.sub("\n", prompt)
+    prose = _QUOTED_SPAN.sub(
+        lambda match: " quoted_merge_command "
+        if re.search(r"\bgh\s+pr\s+merge\b", match[0], re.IGNORECASE) else " quoted_text ",
+        prose,
+    )
+    for clause in re.split(r"[.!?;:\n]+|,|\b(?:then|but)\b", prose, flags=re.IGNORECASE):
+        clause = clause.strip()
+        # Negation precedes the imperative. Do not discard a later positive
+        # instruction in a separate clause ("do not merge it; then merge PR 143").
+        if re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)?(?:please\s+)?"
+                    r"(?:do\s+not|don't|never|must\s+not)\b", clause, re.IGNORECASE):
+            continue
+        if _MERGE_INSTRUCTION.match(clause):
+            # Do not echo potentially private surrounding packet text.
             return (
-                f"a review prompt asks for a merge ({phrase!r}); "
+                "a review prompt asks for a merge; "
                 "dispatch --task merge and be re-checked for eligibility"
             )
     return ""
@@ -389,3 +404,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:20 UTC | END]]
