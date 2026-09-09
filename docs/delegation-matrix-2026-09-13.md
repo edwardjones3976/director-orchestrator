@@ -1,3 +1,4 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | BEGIN]] -->
 # Delegation matrix — 2026-09-13 delivery (rev 2)
 
@@ -352,3 +353,4 @@ be an external action requiring the owner. Every assignment above is a prepared
 work order awaiting owner launch. The profile sheets grant no authority, and a
 documented route is not an authorized one.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->

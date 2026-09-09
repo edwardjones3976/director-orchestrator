@@ -1,3 +1,4 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]] -->
 # LangGraph-primary + n8n activation plan (v4 — ASAP)
 
@@ -552,3 +553,4 @@ reconciliation and host-bridge secrets. The Stage A runbook warns against
 exactly this. Recommend consolidating to one protected payload after Sunday;
 not urgent enough to spend deadline time on now.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
