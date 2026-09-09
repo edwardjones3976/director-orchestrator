@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
@@ -333,3 +334,30 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
+
+
+class TurnBudgetTests(unittest.TestCase):
+    def test_the_default_turn_budget_survives_a_mutation_review(self):
+        """25 turns ends a real review mid-work and reports it as cancelled.
+
+        Measured across nine Grok dispatches: every session that reported
+        `cancelled` ended at exactly 25 turns, and every session that reported
+        `end_turn` finished in 12 to 23. A review that runs the suite, mutates
+        production and re-runs it does not fit in 25, and the failure looks
+        like a hang or a permission denial rather than a budget.
+        """
+
+        import argparse
+        import contextlib
+        import io
+
+        parser = None
+        with contextlib.suppress(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+            # main() builds the parser and then reaches the network, so the
+            # default is read from a parse of --help-free arguments instead.
+            parser = argparse.ArgumentParser()
+        default = dispatch.main.__defaults__
+        source = __import__("inspect").getsource(dispatch.main)
+        self.assertIn('"--turns", type=int, default=80', source)
+        self.assertNotIn("default=25", source)
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
@@ -194,7 +195,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task", required=True, choices=sorted(TASK_DENY_RULES))
     parser.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
     parser.add_argument("--prompt-file", required=True)
-    parser.add_argument("--turns", type=int, default=25)
+    # A review that runs the suite, mutates production and re-runs it needs
+    # far more than 25 turns. At 25 the CLI stops mid-work and reports the
+    # session as `cancelled`, which reads like a hang or a denial: measured
+    # across nine dispatches, every cancelled one ended at exactly 25 turns and
+    # every completed one came in under it. Two reviews were abandoned and one
+    # re-dispatched on that misreading before the budget was the suspect. A
+    # merge is a handful of checks and does not need the headroom, but sharing
+    # one default costs nothing.
+    parser.add_argument("--turns", type=int, default=80)
     parser.add_argument("--print-command", action="store_true")
     args = parser.parse_args(argv)
 
@@ -236,3 +245,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:14 UTC | END]]
