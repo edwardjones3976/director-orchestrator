@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -99,6 +100,58 @@ lower means cheaper. The Director has no built-in provider order and fails close
 before the planning call when the setting is absent, malformed, or incomplete.
 Use current operator-verified comparable cost evidence rather than copying a
 sample ranking from documentation.
+
+## Intake routing defaults
+
+Two owner-set variables supply the allocation profile and the primary capability
+request that every Slack intake carries. They are deployment configuration only.
+The Slack gateway never derives either value from message text: a Slack message
+is untrusted data and cannot steer provider selection.
+
+- `INTAKE_ALLOCATION_PROFILE` selects one of the four approved
+  [allocation profiles](provider-allocation-profiles.md): `engineering`,
+  `mixed`, `public_research`, or `enterprise`. The default is `engineering`.
+- `INTAKE_PRIMARY_REQUIRED_CAPABILITIES` is a comma-separated list drawn from
+  `public_research`, `bounded_scaffolding`, and `repository_assistance`. The
+  default is empty. A repeated entry is refused.
+
+Leaving both unset reproduces the previous behavior exactly, so an existing
+deployment changes nothing by upgrading. Startup validation refuses an unknown
+profile name, an unknown capability, and a repeated capability before the
+service accepts any intake; it does not wait for a per-task roster hold.
+
+`enterprise_context` is a valid intake capability but is **not** configurable.
+No scoped enterprise production adapter exists, so the roster selector holds
+every plan that requests it. Configuring it could therefore only produce one
+hold per task, and startup refuses it instead. This refusal is additive and
+removes no existing gate.
+
+These variables change which lanes can be selected, which creates one
+operational prerequisite:
+
+- `bounded_scaffolding` makes the Antigravity lane selectable, and
+  `repository_assistance` makes the GitHub Copilot lane selectable. Under
+  `engineering` the GitHub Copilot target is zero and the lane stays ineligible
+  on allocation grounds; `mixed` and `enterprise` give it a non-zero target.
+- **Every selectable lane must have a rank in `TRUSTED_PROVIDER_COST_RANKS`.**
+  The selector holds the *entire* roster with `primary_trusted_cost_rank_required`
+  when any candidate lane lacks a rank, not just that one lane. Configure a
+  `github-copilot` rank before enabling `repository_assistance`. The Antigravity
+  lane already draws its rank from the `gemini` entry — `antigravity` is
+  accepted as a spelling and normalizes to `gemini` — so a deployment with a
+  ready Gemini specialist already satisfies `bounded_scaffolding`.
+- The `ready_provider_ranks_complete` readiness boolean covers only the ready
+  specialists `claude`, `cursor`, `gemini`, `grok`, and `perplexity`. It does
+  **not** cover `github-copilot`, so a missing GitHub Copilot rank passes
+  startup validation and surfaces later as a plan-time hold. Verify the rank
+  when enabling the capability.
+
+`microsoft-365-copilot` remains unreachable regardless of these settings. It is
+absent from the roster implementers, refused by name in the native command
+packet transport, blocked in the host provider bridge, hardcoded as
+unauthenticated in the automatic live dependency builder, and carries a typed
+external blocker. Configuring an allocation profile with a non-zero target for
+it does not make it dispatchable.
 
 ## Trusted OpenAI debate-turn accounting
 
@@ -429,3 +482,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]] -->

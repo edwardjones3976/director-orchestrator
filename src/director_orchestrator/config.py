@@ -1,7 +1,9 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -56,6 +58,20 @@ import re
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
+
+from .allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE
+
+# The owner sets the routing capability request through deployment configuration.
+# `enterprise_context` is deliberately absent: `select_primary_roster` holds every
+# plan that requests it because no scoped enterprise production adapter exists, so
+# configuring it could only produce a per-task hold. Authority for the full set is
+# `SlackIntake.primary_required_capabilities`; this is the configurable subset.
+SELECTABLE_PRIMARY_CAPABILITIES = (
+    "public_research",
+    "bounded_scaffolding",
+    "repository_assistance",
+)
+UNAVAILABLE_PRIMARY_CAPABILITIES = ("enterprise_context",)
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -623,6 +639,16 @@ class Settings:
     primary_workhorse: str = os.getenv(
         "PRIMARY_WORKHORSE", "cheapest_capable"
     ).strip().lower()
+    # Owner-set intake routing defaults. The Slack gateway never derives these
+    # from message text: rule 6 treats Slack text as untrusted data, so the
+    # allocation profile and the capability request stay deployment
+    # configuration. The defaults reproduce the historical hardcoded intake.
+    intake_allocation_profile: str = os.getenv(
+        "INTAKE_ALLOCATION_PROFILE", DEFAULT_ALLOCATION_PROFILE
+    ).strip().lower()
+    intake_primary_required_capabilities: tuple[str, ...] = _csv(
+        "INTAKE_PRIMARY_REQUIRED_CAPABILITIES", ""
+    )
     # Operator-authored ordinal ranks are intentionally required instead of a
     # built-in provider order. Lower positive integers are cheaper, and ranks
     # must be unique so the runtime never invents a tie-breaking cost order.
@@ -1115,7 +1141,40 @@ class Settings:
             )
         return dict(sorted(parsed.items()))
 
+    def validate_intake_routing_defaults(self) -> None:
+        """Refuse an unroutable intake profile or capability before startup.
+
+        These steer `select_primary_roster`. An unknown value would otherwise
+        surface once per task as a `PrimaryRosterHold` long after deployment,
+        so it fails closed here instead. This adds a gate; the plan-time holds
+        in `primary_roster` are unchanged and still apply.
+        """
+
+        if self.intake_allocation_profile not in ALLOCATION_PROFILES:
+            raise ValueError(
+                "INTAKE_ALLOCATION_PROFILE must be one of "
+                + ", ".join(sorted(ALLOCATION_PROFILES))
+            )
+        requested = self.intake_primary_required_capabilities
+        if len(set(requested)) != len(requested):
+            raise ValueError(
+                "INTAKE_PRIMARY_REQUIRED_CAPABILITIES must not repeat a capability"
+            )
+        for capability in requested:
+            if capability in UNAVAILABLE_PRIMARY_CAPABILITIES:
+                raise ValueError(
+                    f"INTAKE_PRIMARY_REQUIRED_CAPABILITIES cannot request "
+                    f"'{capability}': no scoped production adapter exists, so "
+                    "every plan requesting it is held before dispatch"
+                )
+            if capability not in SELECTABLE_PRIMARY_CAPABILITIES:
+                raise ValueError(
+                    "INTAKE_PRIMARY_REQUIRED_CAPABILITIES must contain only "
+                    + ", ".join(SELECTABLE_PRIMARY_CAPABILITIES)
+                )
+
     def validate_workload_policy_configuration(self) -> None:
+        self.validate_intake_routing_defaults()
         readiness = self.workload_policy_readiness()
         if not readiness["mode_valid"]:
             raise ValueError(
@@ -2137,7 +2196,9 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
