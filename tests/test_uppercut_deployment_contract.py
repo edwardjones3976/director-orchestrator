@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
@@ -1106,7 +1107,7 @@ foreach ($url in @(
         """
 
         probe = SOURCE_HELPER + """
-$file = Join-Path $env:TEMP ("q" + [Guid]::NewGuid().ToString("N") + ".env")
+$file = Join-Path ([IO.Path]::GetTempPath()) ("q" + [Guid]::NewGuid().ToString("N") + ".env")
 Set-Content -LiteralPath $file -Encoding ascii -Value @(
     'DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director"',
     "N8N_HOST_PORT='5678'",
@@ -1967,3 +1968,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | END]]
