@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
@@ -18,7 +19,8 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
+import weakref
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -26,6 +28,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from director_orchestrator import delegation_ledger
+from director_orchestrator import store as store_module
 from director_orchestrator.delegation import GRANT_SCHEMA_VERSION, Tier1Class
 from director_orchestrator.delegation_ledger import (
     AUDIT_SCHEMA_VERSION,
@@ -141,6 +144,202 @@ class MemoryAnchor:
         if self.head != expected:
             raise RuntimeError("anchor changed")
         self.head = updated
+
+
+class StreamingAuditVerificationTests(unittest.TestCase):
+    """Exercise real SQLite chains through 10,000 rows, without timing assertions."""
+
+    @staticmethod
+    def _record_at(index):
+        return record(recorded_at=NOW + timedelta(seconds=index))
+
+    def _seed(self, store, total):
+        # Build a valid fixture in O(N); using append N times would verify O(N**2)
+        # rows. Only this test double may provision its anchor from a fixture.
+        chain = "0" * 64
+        with store._connect() as connection:
+            for index in range(total):
+                item = self._record_at(index)
+                document, digest, at = item.canonical_json(), item.digest, item.recorded_at.isoformat()
+                connection.execute(
+                    "INSERT INTO delegated_decision_audit(record_digest, record_json, recorded_at) "
+                    "VALUES (?, ?, ?)", (digest, document, at),
+                )
+                chain = store_module._audit_chain_digest(chain, index + 1, digest, document, at)
+        store._audit_anchor.head = (total, chain)
+
+    @contextmanager
+    def _track_rows(self, store, retained_ids):
+        live = weakref.WeakValueDictionary()
+        seen = 0
+        connect = store._connect
+        parse = store_module.parse_record
+        chain_digest = store_module._audit_chain_digest
+        hashed_page = {}
+        test = self
+
+        class TrackedRow(dict):
+            __slots__ = ("__weakref__",)
+
+        @contextmanager
+        def tracked_connect():
+            with connect() as connection:
+                audit_cursor = None
+
+                def execute(sql, parameters=()):
+                    nonlocal audit_cursor
+                    if sql.lstrip().upper().startswith("SELECT") and "delegated_decision_audit" in sql:
+                        def track(cursor, values):
+                            nonlocal seen
+                            row = TrackedRow(sqlite3.Row(cursor, values))
+                            live[row["ledger_id"]] = row
+                            seen += 1
+                            # Page plus the previous/current iterator row is
+                            # constant overhead. Detect list(cursor), fetchmany,
+                            # or any other hidden retention as well as fetchall.
+                            test.assertLessEqual(len(live), len(retained_ids) + 2)
+                            return row
+
+                        audit_cursor = connection.cursor()
+                        audit_cursor.row_factory = track
+                        return audit_cursor.execute(sql, parameters)
+                    if sql.lstrip().upper().startswith("INSERT INTO DELEGATED_DECISION_AUDIT"):
+                        test.assertEqual(set(live), set())
+                    return connection.execute(sql, parameters)
+
+                try:
+                    yield Mock(wraps=connection, execute=Mock(side_effect=execute))
+                finally:
+                    if audit_cursor is not None:
+                        audit_cursor.close()
+
+        def checked_parse(document):
+            test.assertEqual(set(live), retained_ids)
+            test.assertTrue(any(row["record_json"] is document for row in live.values()))
+            test.assertTrue(any(hashed is document for hashed in hashed_page.values()))
+            return parse(document)
+
+        def checked_hash(previous, ledger_id, digest, document, at):
+            if ledger_id in retained_ids:
+                hashed_page[ledger_id] = document
+            return chain_digest(previous, ledger_id, digest, document, at)
+
+        with patch.object(store, "_connect", tracked_connect), patch.object(
+            store_module, "parse_record", checked_parse
+        ), patch.object(
+            store_module, "_audit_chain_digest", checked_hash
+        ):
+            yield lambda: seen
+        self.assertEqual(len(live), 0)
+
+    def test_reads_retain_only_the_page_through_10000_rows(self):
+        for total in (100, 10_000):
+            with self.subTest(total=total), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+                self._seed(store, total)
+                for offset, limit in ((0, 1), (total // 2, 7), (0, 1_000), (total - 2, 7), (total, 7)):
+                    with self.subTest(offset=offset, limit=limit):
+                        indices = range(offset, min(offset + limit, total))
+                        expected = [self._record_at(index) for index in indices]
+                        after = self._record_at(offset - 1).digest if offset else None
+                        with self._track_rows(store, {index + 1 for index in indices}) as seen:
+                            self.assertEqual(store.delegation_audit_records(limit=limit, after_digest=after), expected)
+                            self.assertEqual(seen(), total)
+
+    def test_append_retains_no_history_through_10000_rows(self):
+        for total in (100, 10_000):
+            with self.subTest(total=total), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+                self._seed(store, total)
+                item = self._record_at(total)
+                with self._track_rows(store, set()) as seen:
+                    self.assertEqual(store.append_delegation_audit_record(item), item.digest)
+                    self.assertEqual(seen(), total)
+                self.assertEqual(store._audit_anchor.head[0], total + 1)
+
+    def test_reader_does_not_reserve_the_writer(self):
+        for mode in ("delete", "wal"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+                with store._connect() as connection:
+                    self.assertEqual(connection.execute("PRAGMA journal_mode=" + mode).fetchone()[0], mode)
+                store.append_delegation_audit_record(record())
+                chain_digest = store_module._audit_chain_digest
+                reservations = []
+
+                def reserve_while_hashing(*args):
+                    with closing(sqlite3.connect(store.path, timeout=0)) as writer:
+                        try:
+                            writer.execute("BEGIN IMMEDIATE")
+                            reservations.append(True)
+                        finally:
+                            writer.rollback()
+                    return chain_digest(*args)
+
+                with patch.object(store_module, "_audit_chain_digest", reserve_while_hashing):
+                    self.assertEqual(store.delegation_audit_records(), [record()])
+                self.assertEqual(reservations, [True])
+
+    def test_concurrent_wal_append_keeps_the_verified_read_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, anchor = str(Path(directory) / "audit.sqlite3"), MemoryAnchor()
+            reader = TaskStore(path, delegation_audit_anchor=anchor)
+            writer = TaskStore(path, delegation_audit_anchor=anchor)
+            with reader._connect() as connection:
+                connection.execute("PRAGMA journal_mode=wal")
+            self._seed(reader, 3)
+            chain_digest = store_module._audit_chain_digest
+            appended = False
+
+            def append_while_hashing(*args):
+                nonlocal appended
+                if not appended:
+                    appended = True
+                    writer.append_delegation_audit_record(self._record_at(3))
+                return chain_digest(*args)
+
+            with patch.object(store_module, "_audit_chain_digest", append_while_hashing):
+                self.assertEqual(reader.delegation_audit_records(), [self._record_at(i) for i in range(3)])
+            self.assertTrue(appended)
+            self.assertEqual(anchor.head[0], 4)
+
+    def test_append_between_anchor_read_and_scan_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, anchor = str(Path(directory) / "audit.sqlite3"), MemoryAnchor()
+            reader = TaskStore(path, delegation_audit_anchor=anchor)
+            writer = TaskStore(path, delegation_audit_anchor=anchor)
+            self._seed(reader, 3)
+            connect = reader._connect
+            scans = []
+
+            @contextmanager
+            def raced_connect():
+                with connect() as connection:
+                    def execute(sql, parameters=()):
+                        if sql.lstrip().upper().startswith("SELECT") and "delegated_decision_audit" in sql:
+                            scans.append(sql)
+                            writer.append_delegation_audit_record(self._record_at(3))
+                        return connection.execute(sql, parameters)
+
+                    yield Mock(wraps=connection, execute=Mock(side_effect=execute))
+
+            with patch.object(reader, "_connect", raced_connect):
+                with self.assertRaisesRegex(DelegationAuditLedgerCorrupt, "external anchor"):
+                    reader.delegation_audit_records(limit=1)
+            self.assertEqual(len(scans), 1)
+
+    def test_corruption_outside_retained_page_still_rejects(self):
+        for ledger_id in (1, 3):
+            with self.subTest(ledger_id=ledger_id), tempfile.TemporaryDirectory() as directory:
+                store = TaskStore(str(Path(directory) / "audit.sqlite3"), delegation_audit_anchor=MemoryAnchor())
+                self._seed(store, 3)
+                with store._connect() as connection:
+                    connection.execute("DROP TRIGGER delegated_decision_audit_no_update")
+                    connection.execute(
+                        "UPDATE delegated_decision_audit SET record_json = '{}' WHERE ledger_id = ?", (ledger_id,),
+                    )
+                with self.assertRaises(DelegationAuditLedgerCorrupt):
+                    store.delegation_audit_records(limit=1, after_digest=self._record_at(0).digest)
 
 
 class ExternalAnchorRegressionTests(unittest.TestCase):
@@ -834,8 +1033,7 @@ class AppendOnlyLedgerTests(unittest.TestCase):
             stored = record()
             store.append_delegation_audit_record(stored)
             forged = replace(stored, outcome=RecordedOutcome.DELEGATED)
-            # Reach past the triggers the way a compromised operator would, by
-            # rewriting the file rather than issuing an UPDATE.
+            # Reach past the update trigger to construct a digest inconsistency.
             connection = sqlite3.connect(store.path)
             try:
                 with connection:
@@ -848,7 +1046,13 @@ class AppendOnlyLedgerTests(unittest.TestCase):
                     )
             finally:
                 connection.close()
-            with self.assertRaises(DelegationAuditLedgerCorrupt):
+            # Authenticate the inconsistent bytes with the TEST-ONLY anchor.
+            # Otherwise the outer chain check rejects first, hiding removal of
+            # the independent per-record digest check this regression exercises.
+            store._audit_anchor.head = (1, store_module._audit_chain_digest(
+                "0" * 64, 1, stored.digest, forged.canonical_json(), stored.recorded_at.isoformat(),
+            ))
+            with self.assertRaisesRegex(DelegationAuditLedgerCorrupt, stored.digest):
                 store.delegation_audit_records()
 
     def test_unvalidated_input_is_not_accepted_for_append(self):
@@ -941,3 +1145,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
@@ -3933,9 +3934,18 @@ class TaskStore:
         return self.save(record)
 
     def _verified_audit_snapshot(
-        self, connection: sqlite3.Connection
+        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None
     ) -> tuple[tuple[int, str], list[sqlite3.Row]]:
-        """Materialize once and verify exactly those rows against the anchor."""
+        """Verify every row, retaining only the page from the same cursor.
+
+        Time is O(total history), inherent for a linear chain with a single head;
+        bounded verification time needs authenticated checkpoints (out of scope).
+        Retention is O(limit) rows plus one row's hashing workspace, independent
+        of history length. The reader caps limit at 1,000; append uses zero and
+        retains no history. StreamingAuditVerificationTests exercises real SQLite
+        chains through 10,000 rows, including the maximum page size. This is a
+        tested ceiling, not a latency guarantee or a cap on ledger length.
+        """
 
         if self._audit_anchor is None:
             raise DelegationAuditAnchorUnavailable("external audit anchor is required")
@@ -3951,22 +3961,30 @@ class TaskStore:
         ):
             raise DelegationAuditAnchorUnavailable("external audit anchor is malformed")
         count, chain = 0, "0" * 64
-        # Materialize the entire chain, including rows outside the requested page.
-        # Verifying only returned rows would miss deletions and forged tails.
-        rows = connection.execute(
+        page: list[sqlite3.Row] = []
+        after_found = after_digest is None
+        # Never stop hashing at the page boundary: the prefix and tail must also
+        # match the anchor. Iterating the cursor avoids materializing history.
+        for row in connection.execute(
             "SELECT ledger_id, record_digest, record_json, recorded_at "
             "FROM delegated_decision_audit ORDER BY ledger_id"
-        ).fetchall()
-        for row in rows:
+        ):
             count += 1
             if row["ledger_id"] != count:
                 raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
             chain = _audit_chain_digest(
                 chain, count, row["record_digest"], row["record_json"], row["recorded_at"]
             )
+            if after_found:
+                if len(page) < limit:
+                    page.append(row)
+            elif row["record_digest"] == after_digest:
+                after_found = True
         if count != expected[0] or not hmac.compare_digest(chain, expected[1]):
             raise DelegationAuditLedgerCorrupt("audit chain differs from external anchor")
-        return (count, chain), rows
+        if not after_found:
+            raise ValueError("after_digest is not in this ledger")
+        return (count, chain), page
 
     def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
         """Append one immutable delegation audit record and return its digest.
@@ -3977,7 +3995,11 @@ class TaskStore:
 
         Appending executes no decision. It writes evidence about one, which
         ``docs/human-out-of-the-loop-operation.md`` requires to happen before the
-        action rather than after it.
+        action rather than after it. Verification streams all history in O(N)
+        time with O(1) retained rows; see _verified_audit_snapshot for the tested
+        ceiling. BEGIN IMMEDIATE remains necessary here to serialize verification,
+        insertion and external anchor advancement across store instances, including
+        the interval between anchor advancement and SQLite commit.
         """
 
         if not isinstance(record, DelegationAuditRecord):
@@ -4014,11 +4036,14 @@ class TaskStore:
     def delegation_audit_records(
         self, *, limit: int = 100, after_digest: str | None = None
     ) -> list[DelegationAuditRecord]:
-        """Read the ledger from a single materialization verified against the anchor.
+        """Read a bounded page from one cursor verified against the external anchor.
 
         Use the last returned record's digest as ``after_digest`` for the next
         page. An unknown cursor is refused, never treated as the first page.
-        Cursor lookup, pagination and parsing use only that verified snapshot.
+        Cursor lookup and page retention happen during the full-chain traversal;
+        parsing uses only those retained, hashed row objects, never a second query.
+        Verification remains O(total history) time with O(limit) retained rows;
+        see _verified_audit_snapshot for the tested ceiling.
         Every returned row is re-parsed and its digest recomputed rather than trusted.
         A record is meant to be independently checkable by a reader who was not
         present when it was written, and that property is worth nothing if the
@@ -4035,20 +4060,17 @@ class TaskStore:
         ):
             raise ValueError("after_digest must be a full record digest")
         with self._lock, self._connect() as connection:
-            # Serialize checkpoint verification with appenders in other stores.
-            connection.execute("BEGIN IMMEDIATE")
-            _, rows = self._verified_audit_snapshot(connection)
-        after_index = 0
-        if after_digest is not None:
-            after_index = next(
-                (index for index, row in enumerate(rows, start=1)
-                 if row["record_digest"] == after_digest),
-                None,
+            # A deferred read transaction needs no writer reservation: the cursor
+            # supplies one SQLite snapshot, and the retained page must match the
+            # observed external head before anything returns. A concurrent append
+            # may cause a fail-closed mismatch; never retry or rebase that anchor.
+            # In rollback-journal mode, the read lock can still delay writer commit.
+            connection.execute("BEGIN")
+            _, rows = self._verified_audit_snapshot(
+                connection, limit=limit, after_digest=after_digest
             )
-            if after_index is None:
-                raise ValueError("after_digest is not in this ledger")
         records: list[DelegationAuditRecord] = []
-        for row in rows[after_index:after_index + limit]:
+        for row in rows:
             try:
                 record = parse_record(row["record_json"])
             except DelegationAuditError as exc:
@@ -4149,3 +4171,4 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | END]]
