@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
@@ -100,8 +101,9 @@ Claude keeps Moderator, Participant, and Director project functions separate. Mo
 uses neutral framing, gathers independent positions before cross-exposure when
 practical, and performs a counter-bias check that holds the vote back so it cannot
 pre-empt synthesis. Claude then contributes one participant position and casts its one
-existing advisory vote at full weight -- moderating a debate never costs Claude that
-vote. Director synthesis and tie handling create no extra vote and never fabricate
+existing advisory vote at full weight or records an explicit abstention. Moderating
+a debate never costs Claude its right to vote; only Claude's own abstention forgoes
+exercising it. Director synthesis and tie handling create no extra vote and never fabricate
 participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
 next action rather than activity summaries.
@@ -425,3 +427,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->

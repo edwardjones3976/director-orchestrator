@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
@@ -163,9 +164,10 @@ independence, safety, and deterministic gates always outrank cost.
   supervision, recovery, and milestone reporting. Moderator, Participant, and
   Director functions remain distinct, and Claude holds all three at once in
   every debate it joins. Its single advisory vote at weight 2.0 is booked under
-  Participant and is cast in full whether or not Claude is also moderating;
-  separating the functions decides where the vote is recorded, never whether it
-  exists. Actual Claude material authorship removes
+  Participant when cast, or an explicit abstention is recorded. Moderating never
+  removes Claude's right to vote; only Claude's own abstention forgoes exercising
+  it. Separating the functions decides where a cast vote is recorded, never
+  whether Claude retains that right. Actual Claude material authorship removes
   its review/merge independence; leadership creates no production credit.
 - **OpenAI / Codex — Bounded implementer and reviewer:** full-spectrum primary
   for programming, repository-scale reasoning, architecture, QA, and independent
@@ -388,8 +390,9 @@ The acting Director keeps three functions separate throughout that process:
   forfeits Claude's vote.
 - **Participant:** records its independently formed initial position before
   specialist conclusions are exposed and casts the single existing Claude vote
-  at weight 2.0 during synthesis. Claude votes in every debate it takes part in,
-  including every debate it moderates. Planning, moderation, synthesis, and
+  at weight 2.0 during synthesis or records an explicit abstention. Claude retains
+  its right to vote in every debate it joins, including every debate it moderates;
+  only Claude's own abstention forgoes exercising it. Planning, moderation, synthesis, and
   acceptance earn no additional vote; that rule bars a second Claude vote and
   never the first.
 - **Director:** compares evidence quality, reports uncertainty and dissent,
@@ -829,3 +832,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
@@ -82,15 +83,17 @@ Perplexity, Claude, and OpenAI boundaries in
 [`provider-roles-contract.yaml`](provider-roles-contract.yaml); keep the acting Director's
 three canonical functions distinct — Moderator, Participant, and Director.
 Only Participant votes, casting the single existing Claude advisory vote at
-weight 2.0; Moderator and Director add no second vote on top of it. Claude holds
-all three functions at once and votes in every debate it joins, including every
-debate it moderates -- separating the functions decides where the one vote is
-recorded, never whether Claude gets one. Coordination, planning, and
+weight 2.0 or recording an explicit abstention; Moderator and Director add no second vote
+on top of it. Claude holds all three functions at once and retains its right to vote
+in every debate it joins, including every
+debate it moderates. Only Claude's own abstention forgoes exercising that right;
+separating the functions decides where a cast vote is recorded, never whether Claude
+retains the right to vote. Coordination, planning, and
 acceptance review are Director duties, not separate functions.
 
 | Lane | Provider/capability | Shared workflow skill | Why it may fit |
 | --- | --- | --- | --- |
-| Acting project Director | Claude | none | <Moderator, Participant, and Director kept distinct; the one Claude vote is booked under Participant and is cast even when Claude moderates> |
+| Acting project Director | Claude | none | <Moderator, Participant, and Director kept distinct; Participant records Claude's one vote at full weight or an explicit abstention; moderating preserves the right to vote> |
 | Primary | <OpenAI/Codex, Cursor, or Grok> | <skill name or none> | <bounded contribution> |
 | Independent | <different provider> | <skill name or none> | <research, reproduction, QA, or review> |
 | Supplemental | <Antigravity, Perplexity, Firecrawl, or none> | <skill name or none> | <bounded contribution> |
@@ -136,3 +139,4 @@ changes authority, scope, cost, privacy, repository target, or risk.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->

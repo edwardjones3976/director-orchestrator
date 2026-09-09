@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | BEGIN]]
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -824,6 +826,88 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(material.authorizes_external_action)
 
 
+class ModeratorVoteDocumentationTests(unittest.TestCase):
+    ROOT = Path(__file__).resolve().parents[1]
+
+    @staticmethod
+    def unconditional_claims(text):
+        # Inspect separate bullets, YAML fields, table cells, and sentences so
+        # an abstention elsewhere cannot excuse an unconditional local claim.
+        blocks = re.split(r"\n\s*\n|\n(?=\s*(?:[-*] |[\w-]+:|\|))", text)
+        problems = []
+        for block in blocks:
+            normalized = " ".join(block.split())
+            for clause in re.split(r"[.!?](?=\s|$)|[;|]", normalized):
+                universal_or_mandatory = re.search(
+                    r"\b(?:votes|voting|cast(?:s|ing)? [^.!?;|]{0,160})\s+"
+                    r"(?:in|at|during) (?:every|each|all) debates?\b"
+                    r"|\b(?:must|shall|always|has to|is required to) "
+                    r"(?:casts?\b[^.!?;|]{0,80}\bvote|votes?)\b"
+                    r"|\b(?:voting|(?:claude|participant|director)(?:'s)? (?:advisory )?vote) "
+                    r"(?:is )?(?:mandatory|required|compulsory|unconditional)\b"
+                    r"|\bvotes? unconditionally\b"
+                    r"|\b(?:claude|participant|director) (?:must not|cannot|may not|shall not) abstain\b",
+                    clause, re.I,
+                )
+                cast_claim = re.search(
+                    r"\b(?:casts?|casting) (?=its |the |one |single )(?:its |the )?(?:one |single )?"
+                    r"(?:existing )?(?:Claude )?(?:advisory |weighted )?vote\b"
+                    r"|\b(?:is cast|vote cast)\b",
+                    clause, re.I,
+                )
+                relevant = re.search(r"\b(?:claude|participant|director|advisory)\b", clause, re.I)
+                optional = re.search(
+                    r"\b(?:abstain\w*|abstention|if cast|when cast|may cast|only for an invited turn)\b",
+                    clause, re.I,
+                )
+                if universal_or_mandatory or (cast_claim and relevant and not optional):
+                    problems.append(clause.strip())
+        return problems
+
+    def test_all_documentation_surfaces_allow_explicit_abstention(self):
+        # Discover new documentation, including templates and both profile
+        # sources and rendered sheets; do not freeze this to the known defects.
+        paths = set(self.ROOT.glob("*.md"))
+        for directory in ("docs", "prompts", ".agents", ".claude", ".github"):
+            paths.update(
+                path for path in (self.ROOT / directory).rglob("*")
+                if path.suffix in {".md", ".yaml", ".yml", ".rst", ".txt"}
+            )
+        for path in sorted(paths):
+            with self.subTest(path=path.relative_to(self.ROOT).as_posix()):
+                self.assertEqual(self.unconditional_claims(path.read_text(encoding="utf-8")), [])
+
+    def test_guard_rejects_historical_and_mandatory_variants(self):
+        for claim in (
+            "Claude votes in every debate it takes part in.",
+            "Claude votes in every\ndebate it moderates.",
+            "Participant is the Claude vote, cast at full weight in every debate Claude joins.",
+            "Claude casts its one existing advisory vote at full weight.",
+            "Claude's advisory vote is booked under Participant and is cast in full whether or not Claude moderates.",
+            "cast the single existing Claude advisory vote during synthesis",
+            "The single Participant vote cast later in synthesis.",
+            "Claude must vote.", "Participant shall cast its vote.",
+            "Claude always votes.", "Voting is mandatory.",
+            "Claude votes unconditionally.", "Claude cannot abstain.",
+        ):
+            with self.subTest(claim=claim):
+                # A separate general permission must not mask the bad claim.
+                self.assertTrue(self.unconditional_claims(claim + "\n\nVoting permits explicit abstention."))
+
+    def test_guard_preserves_entitlement_and_optional_exercise(self):
+        for claim in (
+            "Claude retains its right to vote in every debate it moderates.",
+            "Moderation never removes Claude's vote.",
+            "Claude casts its one advisory vote or records an explicit abstention.",
+            "Voting is encouraged, not mandatory.",
+            "Participant may cast its single advisory vote or abstain.",
+            "A cast vote is recorded under Participant.",
+            "Advisory weight is cast only for an invited turn.",
+        ):
+            with self.subTest(claim=claim):
+                self.assertEqual(self.unconditional_claims(claim), [])
+
+
 class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_claude_vote_and_abstention_survive_moderated_debate(self):
         # Exercise the real prompts, typed review admission, ledger, and tally.
@@ -882,6 +966,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         openai_api_key="test-openai", claude_routine_url="https://claude.invalid/fire",
                         claude_routine_token="test-claude", cursor_api_key="test-cursor",
                         grok_enabled=True, grok_api_key="test-grok", project_allowlist=("demo",),
+                        slack_bot_token="test-slack",
                         repository_allowlist=("example/demo",), allowed_starting_refs=("main",),
                         max_agent_hops=4, sqlite_path=str(Path(directory) / "tasks.sqlite3"),
                     )
@@ -895,7 +980,7 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     director.claude_abstains = abstain
                     director.fixture_plan = debate_plan()
                     if moderator == ProviderName.CLAUDE:
-                        # The executing Director votes at synthesis; specialists
+                        # The executing Director votes or abstains at synthesis; specialists
                         # occupy separate seats, so Claude cannot vote twice.
                         for assignment in director.fixture_plan.assignments:
                             if assignment.agent == ProviderName.CLAUDE:
@@ -932,6 +1017,17 @@ class ModeratorVoteRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual("claude" in tally["abstaining"], abstain)
                     self.assertEqual(tally["configured_weight_total"], 8.5)
                     self.assertFalse(tally["authorizes_external_action"])
+                    messages = "\n".join(post["message"] for post in engine.notifier.posts)
+                    self.assertIn("casts its single advisory vote or records an explicit abstention", messages)
+                    self.assertIn(
+                        f"One {'Claude' if moderator == ProviderName.CLAUDE else 'OpenAI'} advisory vote at its configured weight "
+                        "or an explicit abstention", messages,
+                    )
+                    if moderator == ProviderName.CLAUDE:
+                        self.assertIn(
+                            "Claude Participant abstained from the advisory vote." if abstain
+                            else "Claude Participant cast its one advisory vote for A.", messages,
+                        )
                     if moderator == ProviderName.OPENAI:
                         contributions = [
                             turn.verified_debate_contribution for turn in completed.collaboration_turns
@@ -1138,7 +1234,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn("never collapsed or renamed into duty buckets", contract)
 
         # The voting boundary is what the canonical identities carry: the
-        # Participant holds the one authenticated position and vote, and
+        # Participant holds the one authenticated position and may vote or abstain;
         # neither Moderator nor Director votes.
         moderator = contract.split('- id: "moderator"', 1)[1].split("- id:", 1)[0]
         participant = contract.split('- id: "participant"', 1)[1].split("- id:", 1)[0]
@@ -1413,3 +1509,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]

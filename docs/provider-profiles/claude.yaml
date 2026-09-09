@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
@@ -89,7 +90,7 @@ roles:
     - prevent premature cross-exposure
     - run the counter-bias pass against the favored view
     boundary: Moderating never removes, reduces, or defers Claude's vote. The counter-bias pass is vote-free only so that it cannot
-      pre-empt the single Participant vote cast later in synthesis.
+      pre-empt synthesis, where Participant casts its one vote or records an explicit abstention.
     vote_count: null
     vote_weight: null
   - id: participant
@@ -98,10 +99,11 @@ roles:
     vote_weight: 2.0
     duties:
     - record an independently formed initial position before specialist conclusions are exposed
-    - cast the single existing Claude advisory vote during synthesis
-    boundary: Participant is the one authenticated Claude position and vote, cast at full weight in every debate Claude joins,
-      including every debate it moderates. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a
-      second Claude vote and never the first.
+    - cast the single existing Claude advisory vote during synthesis or record an explicit abstention
+    boundary: Participant records the one authenticated Claude position and, at synthesis, its single advisory vote at full weight
+      or an explicit abstention. Claude retains its right to vote in every debate it joins, including every debate it moderates;
+      only Claude's own abstention forgoes exercising it. The votes, vote_count, and vote_weight fields describe entitlement, not
+      mandatory participation. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second Claude vote and never the first.
   - id: director
     votes: false
     duties:
@@ -341,3 +343,4 @@ sources:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
