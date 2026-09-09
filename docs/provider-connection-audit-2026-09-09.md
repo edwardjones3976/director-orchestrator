@@ -1,8 +1,9 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | BEGIN]] -->
 # Provider connection audit — 2026-09-09
 
-> **Three findings in this audit were corrected at 21:00 UTC. Read the corrections before relying on anything below:** Grok is now ready, the ChatGPT bridge row was wrong, and the nonresponse section was wrong. Each is marked in place.
+> **Four findings in this audit were corrected. At 21:00 UTC: Read the corrections before relying on anything below:** Grok is now ready, the ChatGPT bridge row was wrong, and the nonresponse section was wrong. At 21:35 UTC: the Grok credential variable was named wrongly. Each is marked in place.
 
 Evaluated `Settings.readiness()` and each lane's readiness function against the
 deployment environment file. Presence and length only; no credential value was
@@ -42,8 +43,8 @@ pattern recorded in the compliance audit.
 ```
 GROK_ENABLED           = true
 GROK_DAILY_BUDGET_USD  = 5.00
-GROK_API_KEY           = absent      <- resolved by 21:00 UTC
-GROK_REPOSITORY_TRANSPORT = absent   <- resolved by 21:00 UTC
+XAI_API_KEY            = absent      <- present and non-empty as of 21:00 UTC
+(repository transport)               <- not required; see the correction below
 ```
 
 `grok_primary_readiness` therefore fails on `credential_configured` and
@@ -52,17 +53,14 @@ switched on and budgeted while being unable to execute. Failing closed is
 correct behaviour; the inconsistency is that the roster advertises a lane that
 cannot act.
 
-**Remediation, owner-only, pick one:**
-
-1. Add `GROK_API_KEY` and `GROK_REPOSITORY_TRANSPORT`. The remaining defaults are
-   already correct — `GROK_API_BASE` defaults to the official `api.x.ai`
-   endpoint, `GROK_MODEL` to `grok-4.6`, and `GROK_MODE` to
-   `cursor_family_primary`.
-2. Set `GROK_ENABLED=false` so the roster states the truth until a credential
-   exists.
-
-Leaving it as-is is the one option to avoid: an enabled, budgeted, uncredentialed
-lane will be counted in the roster and will fail at dispatch.
+**Variable-name correction, 21:35 UTC.** This section originally named
+`GROK_API_KEY` and `GROK_REPOSITORY_TRANSPORT`. **Neither is read by the code.**
+The credential is `XAI_API_KEY` (`config.py`: `grok_api_key = os.getenv("XAI_API_KEY", "")`),
+and repository transport is computed from the `GROK_CLI_*` group and is required
+only when `GROK_ALLOW_REPOSITORY_WRITE` or `GROK_ALLOW_REVIEW_VERDICT` is true —
+both default false. Acting on the original instruction would have set two
+variables nothing reads and left the lane closed while appearing to fix it.
+See [the Grok lane separation note](grok-lanes-separation-2026-09-09.md).
 
 **Scope of this finding.** It governs *orchestrator-dispatched* Grok work. A Grok
 session the owner launches directly is a different surface and is unaffected —
@@ -128,3 +126,4 @@ No credential was created, modified or requested. No environment file was edited
 No value was read into output. Every remediation above requires the owner.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
