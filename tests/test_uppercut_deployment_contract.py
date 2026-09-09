@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | BEGIN]]
@@ -126,7 +127,7 @@ SOURCE_HELPER = """
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $launcher = Get-Content -LiteralPath %s -Raw
-foreach ($name in 'Get-N8nIntakeWebhookPath', 'Assert-N8nRouteMatchesWorkflow') {
+foreach ($name in 'Read-DotEnv', 'Get-N8nIntakeWebhookPath', 'Get-N8nServiceEndpoint', 'Assert-N8nRouteMatchesWorkflow') {
     $start = $launcher.IndexOf("function $name {")
     if ($start -lt 0) { throw "the launcher no longer defines $name" }
     $end = $launcher.IndexOf("`nfunction ", $start + 10)
@@ -1092,6 +1093,69 @@ foreach ($url in @(
         )
         self.assertNotIn("}", self.script[guard:call].split("{", 1)[1])
 
+    def test_a_quoted_sibling_project_name_still_collides(self):
+        """Compose strips quotes; a comparison that keeps them does not.
+
+        A sibling profile holding
+        DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director" compared
+        unequal to the unquoted selected name, so the ownership check cleared
+        it and the launcher stopped that project -- the exact deployment the
+        check exists to protect. An independent review of #142 confirmed the
+        resolution against the real Compose parser: zero Docker calls on the
+        base, stop and ps on the head.
+        """
+
+        probe = SOURCE_HELPER + """
+$file = Join-Path $env:TEMP ("q" + [Guid]::NewGuid().ToString("N") + ".env")
+Set-Content -LiteralPath $file -Encoding ascii -Value @(
+    'DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director"',
+    "N8N_HOST_PORT='5678'",
+    'PLAIN=unquoted'
+)
+$values = Read-DotEnv -Path $file
+Remove-Item -LiteralPath $file -Force
+$values['DIRECTOR_COMPOSE_PROJECT_NAME']
+$values['N8N_HOST_PORT']
+$values['PLAIN']
+"""
+        lines = _run_powershell(probe).split()
+        # Both quote styles are stripped, and an unquoted value is untouched.
+        self.assertEqual(
+            lines, ["project-uppercut-director", "5678", "unquoted"]
+        )
+
+    def test_the_route_must_address_the_n8n_service_not_merely_the_right_path(self):
+        """The right path on the wrong destination is still unreachable.
+
+        slack_bot posts the intake, with its authorization header, to this URL
+        verbatim from inside the Compose network. Checking only the path
+        accepted port 5679 against a service listening on 5678, and accepted
+        container loopback and unrelated hosts; a review of #142 drove a
+        full-stack run to readiness that way.
+        """
+
+        probe = SOURCE_HELPER + """
+$root = %s
+$endpoint = Get-N8nServiceEndpoint -RepositoryRoot $root
+"$($endpoint.Host):$($endpoint.Port)"
+foreach ($url in @(
+    'http://n8n:5678/webhook/director-intake',
+    'http://n8n:5679/webhook/director-intake',
+    'http://localhost:5678/webhook/director-intake',
+    'http://127.0.0.1:5678/webhook/director-intake',
+    'http://evil.example/webhook/director-intake'
+)) {
+    try { Assert-N8nRouteMatchesWorkflow -Url $url -RepositoryRoot $root; "ACCEPT" }
+    catch { "REJECT" }
+}
+""" % _ps_literal(str(ROOT))
+        output = _run_powershell(probe).split()
+        # The endpoint is read from compose, never restated in this test.
+        self.assertEqual(output[0], "n8n:5678")
+        self.assertEqual(
+            output[1:], ["ACCEPT", "REJECT", "REJECT", "REJECT", "REJECT"]
+        )
+
     def test_the_expected_route_is_read_from_the_workflow_not_written_twice(self):
         """A second hardcoded copy of the path would drift from the first."""
 
@@ -1902,3 +1966,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]

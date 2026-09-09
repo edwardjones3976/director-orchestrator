@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | BEGIN]]
@@ -199,7 +200,29 @@ function Read-DotEnv {
         if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) { continue }
         $separator = $line.IndexOf("=")
         if ($separator -lt 1) { continue }
-        $values[$line.Substring(0, $separator).Trim()] = $line.Substring($separator + 1).Trim()
+        $raw = $line.Substring($separator + 1).Trim()
+        # Compose strips one matching pair of surrounding quotes from an
+        # env-file value, so the quoted and unquoted spellings name the same
+        # project. Keeping the quotes made them compare unequal, and a sibling
+        # profile holding DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director"
+        # therefore slipped past the ownership check while Docker resolved it to
+        # exactly the project the check exists to protect. Found by an
+        # independent review of #142, which confirmed the resolution against the
+        # real Compose parser.
+        #
+        # Escape sequences inside a double-quoted value are not interpreted
+        # here. This is a comparison, and any value whose meaning depends on
+        # them would differ from the profiles this script writes, which are
+        # always unquoted.
+        if ($raw.Length -ge 2) {
+            foreach ($quote in @('"', "'")) {
+                if ($raw.StartsWith($quote) -and $raw.EndsWith($quote)) {
+                    $raw = $raw.Substring(1, $raw.Length - 2)
+                    break
+                }
+            }
+        }
+        $values[$line.Substring(0, $separator).Trim()] = $raw
     }
     return $values
 }
@@ -812,6 +835,30 @@ function Get-N8nIntakeWebhookPath {
     return $path
 }
 
+function Get-N8nServiceEndpoint {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    # Read the service name and the port it listens on out of the compose file
+    # rather than restating them here, so moving the service or changing its
+    # port cannot leave this asserting the old endpoint. The published host
+    # port is deliberately not consulted: slack_bot dials from inside the
+    # network, where only the container port exists.
+    $composePath = Join-Path $RepositoryRoot "docker-compose.yml"
+    if (-not (Test-Path -LiteralPath $composePath -PathType Leaf)) {
+        throw "docker-compose.yml is missing. Full-stack readiness cannot be established."
+    }
+    $compose = Get-Content -LiteralPath $composePath -Raw
+    $service = "n8n"
+    if ($compose -notmatch "(?m)^\s{2}${service}:\s*$") {
+        throw "docker-compose.yml declares no $service service. Full-stack readiness cannot be established."
+    }
+    $match = [Regex]::Match($compose, "(?m)^\s+N8N_PORT:\s*(?<port>\d+)\s*$")
+    if (-not $match.Success) {
+        throw "docker-compose.yml does not set N8N_PORT for the $service service."
+    }
+    return [pscustomobject]@{ Host = $service; Port = [int]$match.Groups["port"].Value }
+}
+
 function Assert-N8nRouteMatchesWorkflow {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Url,
@@ -819,12 +866,27 @@ function Assert-N8nRouteMatchesWorkflow {
     )
 
     $expected = Get-N8nIntakeWebhookPath -RepositoryRoot $RepositoryRoot
+    $endpoint = Get-N8nServiceEndpoint -RepositoryRoot $RepositoryRoot
     $parsed = $null
     if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsed)) {
         throw "N8N_DIRECTOR_WEBHOOK_URL is not an absolute URL. No value was printed."
     }
     if ($parsed.Scheme -notin @("http", "https")) {
         throw "N8N_DIRECTOR_WEBHOOK_URL must use http or https. No value was printed."
+    }
+    # The right path on the wrong destination is still a destination Slack
+    # cannot reach. slack_bot sends the intake, with its authorization header,
+    # to this URL verbatim from inside the Compose network, so the only host
+    # that resolves is the n8n service name and the only port it listens on is
+    # the container port. Checking the path alone accepted port 5679 against a
+    # service listening on 5678, and accepted unrelated hosts and container
+    # loopback; an independent review of #142 drove a full-stack run to
+    # readiness that way. Both halves come from docker-compose.yml.
+    if ($parsed.Host -cne $endpoint.Host) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must address the $($endpoint.Host) service over the Compose network. No value was printed."
+    }
+    if ($parsed.Port -ne $endpoint.Port) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must use the n8n container port $($endpoint.Port), not the host-published port. No value was printed."
     }
     # Compare the path the workflow serves, case-sensitively: n8n webhook paths
     # are case-sensitive, so a differing case is a 404 rather than a nicety.
@@ -1392,3 +1454,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
