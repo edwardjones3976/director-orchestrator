@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
@@ -295,3 +296,99 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]]
+
+
+class ApproverCarriesTheMergeTests(unittest.TestCase):
+    """The section no existing test read.
+
+    The suite above slices the HOTL section at the next `##`, so "Approver
+    carries the merge" was never inspected by anything. An independent review of
+    #151 constructed the consequence: its operative first sentence read as one
+    exact-SHA ACCEPT carrying a candidate to a terminal result, with the
+    two-provider clause reading as who executes rather than as a precondition.
+    An agent following that sentence alone could merge on one verdict, which is
+    weaker than AGENTS.md rule 10 and than the evidence bar. Both files are
+    pinned here so a later section cannot weaken them untested again.
+    """
+
+    FILES = ("AGENTS.md", "docs/team-operating-charter.md")
+
+    def _section(self, name: str) -> str:
+        """The section body, whitespace-collapsed and stripped of emphasis.
+
+        Matching raw markdown is unreliable for prose: `**One\\n`ACCEPT` is not
+        merge authority.**` wraps mid-phrase and carries inline emphasis, so a
+        plain substring test fails on a sentence that is plainly present. That
+        already cost a round on a different document. Normalise, then match.
+        """
+
+        text = (ROOT / name).read_text(encoding="utf-8")
+        marker = "Approver carries the merge"
+        self.assertIn(marker, text, name)
+        body = text.split(marker, 1)[1]
+        # Stop at the next heading of any depth, so the section cannot be
+        # extended past its own boundary to satisfy these assertions.
+        for boundary in ("\n## ", "\n### "):
+            body = body.split(boundary, 1)[0]
+        return " ".join(body.replace("**", "").split())
+
+    def _operative(self, name: str) -> str:
+        """Only the operative paragraphs, not the whole section.
+
+        Asserting against the section as a whole was itself too weak: "live
+        grant" and "ATTENDED" also appear in the blocker list further down, so
+        deleting them from the operative sentence left both assertions passing.
+        The finding this section exists to fix was precisely that a walk-back
+        elsewhere does not repair an operative sentence, so the operative
+        sentence is what gets pinned.
+        """
+
+        body = self._section(name)
+        start = body.index("One `ACCEPT` is not merge authority") if (
+            "One `ACCEPT` is not merge authority" in body
+        ) else 0
+        end = body.find("Rule 3 is untouched")
+        return body[start:end if end > start else len(body)]
+
+    def test_one_accept_is_never_stated_as_merge_authority(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("One `ACCEPT` is not merge authority", operative, name)
+            self.assertIn("does not authorise the merge", operative, name)
+            self.assertIn("OWNER_DECISION_REQUIRED", operative, name)
+            # The preconditions belong in the operative sentence itself.
+            # "a live grant under" rather than "live grant": the latter also
+            # occurs in the ATTENDED sentence a few lines down, so deleting the
+            # precondition entirely still satisfied it.
+            self.assertIn("a live grant under", operative, name)
+            self.assertIn("two concurring exact-SHA `ACCEPT`", operative, name)
+            self.assertIn("every other item of the evidence bar", operative, name)
+
+    def test_the_reviewer_and_the_executing_agent_are_required_to_differ(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("does not execute", operative, name)
+            self.assertIn("second concurring provider executes", operative, name)
+            self.assertIn("three distinct identities", operative, name)
+
+    def test_the_attended_default_names_the_blocker_instead_of_merging(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("ATTENDED", operative, name)
+            self.assertIn("not to merge", operative, name)
+            # And the blocker list further down must offer it as a reason.
+            self.assertIn("no live grant", self._section(name), name)
+
+    def test_scope_is_stated_as_non_protected_branches_only(self):
+        for name in self.FILES:
+            body = self._section(name)
+            self.assertIn("non-protected branches", body, name)
+            self.assertIn("only", body, name)
+
+    def test_the_tier_one_class_is_not_described_as_already_assigned(self):
+        """Calling it "exactly the act assigned here" read as turning it on."""
+
+        for name in self.FILES:
+            body = self._section(name)
+            self.assertNotIn("exactly the act assigned here", body, name)
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]]

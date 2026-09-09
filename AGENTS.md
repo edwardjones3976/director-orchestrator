@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
@@ -77,16 +78,34 @@ Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
 
 > If they approve it, they should merge it as well.
 
-Operative form. An eligible reviewer that returns an exact-SHA `ACCEPT` carries
-that candidate to a terminal result instead of handing it back to a queue. When
-two providers concur, the second concurring provider executes the merge: the
-producer is the first identity, the reserved rotating reviewer that supplied the
-first `ACCEPT` is the second, and the concurring provider that executes is the
-third. That satisfies the three-identity requirement rather than collapsing it.
-`docs/human-out-of-the-loop-operation.md` evidence-bar item 5 names the producer,
-the reviewer, and the agent executing the decision, and its item 4 names the
-second concurring provider separately from item 3's reviewer, so the executing
-approver fills the third slot and does not occupy the reviewer's.
+Operative form. This adds a duty to finish, never a shortcut to merge. **One
+`ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+approver to carry the candidate towards a terminal result rather than hand it
+back to a queue; it does not authorise the merge and does not skip
+`OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
+requires, without exception, a live grant under
+`docs/human-out-of-the-loop-operation.md`, **two** concurring exact-SHA `ACCEPT`
+verdicts from different non-author providers, and every other item of the
+evidence bar. In `ATTENDED` state, or with no live grant, the duty discharged
+here is to say so on the pull request and name the blocker — not to merge.
+
+Where a merge is authorised, the two-identity split is mandatory: the provider
+that supplied the first `ACCEPT` is the reviewer and does **not** execute, and
+the second concurring provider executes. With the producer that is three
+distinct identities, which is what the requirement asks for; one provider
+holding both the only verdict and the merge is the collapse it forbids.
+`docs/human-out-of-the-loop-operation.md` evidence-bar item 5 names the
+producer, the reviewer, and the agent executing the decision, and its item 4
+names the second concurring provider separately from item 3's reviewer, so the
+executing approver fills the third slot and does not occupy the reviewer's.
+
+An earlier draft of this section stated the first sentence as an approver
+carrying a candidate "to a terminal result", with the two-provider clause
+reading as who executes rather than as a precondition. An independent review of
+#151 constructed the misreading: an agent following that sentence alone could
+merge on one verdict, which is weaker than rule 10 and than the evidence bar.
+The walk-backs further down were the intended meaning but were not the operative
+sentence, and an operative sentence is what gets followed.
 
 Rule 3 is untouched. An approving reviewer is by definition not the author: a
 material author may not review the candidate at all, so an approver can never be
@@ -95,16 +114,23 @@ an author eligible to review, accept, or merge.
 
 Scope is non-protected branches only. Merging into a protected branch remains
 tier 0, never delegable under any configuration, and owner-only for every lane.
-Tier 1 already enumerates "Executing an eligible merge of a pull request into a
-non-protected branch" as a delegable class, which is exactly the act assigned
-here. This adds no decision class, widens no tier, changes no two-verdict
-requirement, and gives merge authority to no lane that does not already hold it.
+Tier 1 enumerates "Executing an eligible merge of a pull request into a
+non-protected branch" as a delegable class, and that class is delegable **only
+while a live grant names it**; its presence in the enumeration turns nothing on.
+This section assigns a duty to finish, not that class: it adds no decision
+class, widens no tier, changes no two-verdict requirement, and gives merge
+authority to no lane that does not already hold it. An earlier draft equated the
+tier-1 entry with the act this section assigns, which read as switching that
+class on without a grant.
 
 An approver that cannot execute the merge says so on the pull request and names
-the blocker: an ineligible lane, an unbound or absent actor, a refusing gate, a
-missing second concurring verdict, a protected target, or a still-required owner
-decision. The failure being corrected is silence. Leaving an approved candidate
-open without stating why is a reporting failure, not a neutral outcome.
+the blocker: **no live grant, or a deployment in `ATTENDED` state**, an
+ineligible lane, an unbound or absent actor, a refusing gate, a missing second
+concurring verdict, a protected target, or a still-required owner decision. In
+the default configuration this is the normal outcome, not an edge case: the
+grant is off unless the owner has configured one. The failure being corrected is
+silence. Leaving an approved candidate open without stating why is a reporting
+failure, not a neutral outcome.
 
 This adds an obligation and removes no gate. Every deterministic check still
 runs: approving bypasses no trusted CI, security evidence, exact-SHA binding,
@@ -183,3 +209,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
