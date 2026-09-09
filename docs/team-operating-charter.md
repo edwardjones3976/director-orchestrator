@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
@@ -188,11 +189,15 @@ independence, safety, and deterministic gates always outrank cost.
 - **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
-  ideation, including the bounded sandbox execution those need. Its ideas and
-  artifacts are non-authoritative evidence: it cannot perform exact-SHA
-  review, final acceptance, deterministic merge, or define research-contract
-  or methodology truth, and every work assignment must feed a later Claude,
-  Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+  ideation, including the bounded sandbox execution those need. On that default
+  path its ideas and artifacts are non-authoritative evidence: it cannot perform
+  exact-SHA review, final acceptance, deterministic merge, or define
+  research-contract or methodology truth, and every work assignment must feed a
+  later Claude, Cursor, or Grok assignment that independently verifies and
+  integrates or rejects it. The one exception is the default-off team mode
+  described below, which is the only path on which Antigravity is admissible as
+  a reviewer at all; final acceptance and deterministic merge stay outside what
+  any mode grants it.
   A rights-ledger mechanism exists to record a `review_verdict` grant to
   Antigravity against an exact verified build, and any such grant is not
   self-service: it requires the configuration flag, a recorded grant, an
@@ -214,7 +219,7 @@ independence, safety, and deterministic gates always outrank cost.
   weight is cast only for an invited turn and stays advisory inside the immutable
   denominator. Keep credentials and external-write paths out of disposable
   sandboxes unless a later work order explicitly and safely provides them.
-- **Antigravity outbound contract.** Ordinary Antigravity *work* is sent no
+- **Antigravity outbound contract (default path).** Ordinary Antigravity *work* is sent no
   model-authored prose of any kind. `src/director_orchestrator/antigravity.py`
   composes that request from three sources only: fixed strings that live in that
   file, values of closed enums, and integers inside declared bounds. The
@@ -249,6 +254,44 @@ independence, safety, and deterministic gates always outrank cost.
   change. Repository, starting ref, draft PR, and public research query are refused
   as fields. Rejections report labels drawn from the same file and never quote the
   assignment.
+- **Antigravity team mode — default off, documented, not live.** A second,
+  separately gated contract exists beside the closed one above:
+  `antigravity-team-engineering/v1`, implemented default-off across
+  `src/director_orchestrator/antigravity_team*.py`. It inverts that boundary for
+  one explicitly selected assignment. Under it Antigravity receives the full v1
+  work packet — objective, dependencies, constraints, acceptance checks, and
+  approval requirements — plus the exact repository source bytes of an
+  owner-signed manifest, base64-encoded into the worker prompt. It is granted
+  `writable_paths`, and a validated proposal becomes real Git blob, tree, and
+  commit objects held by a private `refs/director/team/` retention anchor. It is
+  also the only path on which the primary roster will plan Antigravity for
+  independent review: the lane is admitted as a reviewer when, and only when,
+  team mode is on. Documenting this route does not authorize it.
+
+  The route is off unless `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` is true,
+  and the closed subordinate contract stays the default in every other case.
+  Startup fails closed in both directions: live primary composition raises when
+  the setting is true and no typed enrolled routing services are supplied, and
+  raises again when routing services are present while the setting is off, so
+  neither the flag nor the services can enable the route alone. Beyond the flag,
+  each assignment needs its own owner-HMAC-signed `TeamGrant` bound to that exact
+  `task_id`, `assignment_id`, and packet digest; a live entitlement query at all
+  five boundaries — `disclosure`, `dispatch`, `execution`, `command`, `result` —
+  that re-reads revocation, scope, installed build, and entitlement generation
+  every time; a monetary reservation through the shared signed budget authority;
+  and fresh, challenge-bound signed worker containment evidence produced before
+  any packet or source byte is exported. A grant signature never substitutes for
+  the live query. Antigravity still may not self-accept, merge, deploy, or
+  publish in this mode, and review remains restricted to an exact target it did
+  not materially author.
+
+  No production assembly exists today. `PrimaryTeamRouting` is constructed
+  nowhere in this repository — not in the service and not in the test suite — so
+  no configuration currently reaches the route, and
+  `docs/provider-profiles/antigravity.yaml` records it as
+  `not_qualified_not_live`. Host enrollment, issuer acceptance, activation
+  generations, and live cutover remain separately owner-gated. See
+  `docs/antigravity-team-engineering.md`.
 - **Perplexity.ai — Research Programmers:** evidence-only methodological, theoretical, source-discovery,
   and fact-verification research under the strict contract below.
 
@@ -771,3 +814,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
