@@ -7,9 +7,7 @@
         "path": "director-intake",
         "authentication": "headerAuth",
         "responseMode": "responseNode",
-        "options": {
-          "ignoreBots": true
-        }
+        "options": {}
       },
       "id": "b1f2a5c0-0001-4a00-9000-000000000001",
       "name": "Slack Gateway Webhook",
@@ -23,7 +21,7 @@
           "name": "Director gateway header auth"
         }
       },
-      "notes": "Inbound authentication is a credential, never an inline secret. Bind the Header Auth credential in the n8n UI before activating."
+      "notes": "Bind a Header Auth credential whose Name is exactly 'Authorization' and whose Value is 'Bearer <ORCHESTRATOR_SHARED_SECRET>'. slack_bot._forward sends that one header and no custom gateway header, so any other header name rejects the orchestrator's own caller. 'Ignore Bots' is deliberately OFF: the caller is python-httpx, which user-agent bot filters can classify as a bot and drop before authentication."
     },
     {
       "parameters": {
@@ -31,9 +29,27 @@
         "url": "http://orchestrator:8080/v1/intake",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Director-Intake-Issued-At",
+              "value": "={{ $json.headers['x-director-intake-issued-at'] || '' }}"
+            },
+            {
+              "name": "X-Director-Intake-Nonce",
+              "value": "={{ $json.headers['x-director-intake-nonce'] || '' }}"
+            },
+            {
+              "name": "X-Director-Intake-Signature",
+              "value": "={{ $json.headers['x-director-intake-signature'] || '' }}"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ source_event_id: $json.body.event_id, channel_id: $json.body.event.channel, thread_ts: $json.body.event.thread_ts || $json.body.event.ts, user_id: $json.body.event.user, text: $json.body.event.text, allocation_profile: 'engineering', permalink: $json.body.event.permalink || null, received_at: new Date().toISOString() }) }}",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
         "options": {
           "timeout": 30000,
           "response": {
@@ -45,7 +61,7 @@
         }
       },
       "id": "b1f2a5c0-0002-4a00-9000-000000000002",
-      "name": "Create Director Task",
+      "name": "Relay To Orchestrator",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-80, 0],
@@ -56,12 +72,12 @@
           "name": "Orchestrator shared secret"
         }
       },
-      "notes": "httpBearerAuth, not httpHeaderAuth. The bearer credential holds a single token and produces Authorization: Bearer <token>. httpHeaderAuth is for custom headers such as X-API-Key. source_event_id is the stable Slack event ID and is the idempotency key: re-delivery creates no second task."
+      "notes": "Pass-through relay, not a normalizer. slack_bot._forward already builds the canonical SlackIntake (source_event_id, channel_id, thread_ts, user_id, text, allocation_profile, primary_required_capabilities, permalink, received_at), HMAC-signs it, and posts it here. The body is forwarded unchanged: SlackIntake sets extra='forbid', and the attestation in approvals._slack_intake_attestation_payload covers intake.model_dump(mode='json'), so adding, dropping, or regenerating any field breaks validation, the signature, or both. allocation_profile is owner-set deployment configuration and must never be injected here. The three X-Director-Intake-* headers are forwarded because verify_slack_intake_attestation requires them once ALLOW_PAID_RUNS is true; they are empty and unused while it is false. source_event_id is the idempotency key: re-delivery creates no second task."
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: 'accepted', task: $json.body.task_id || null }) }}",
+        "responseBody": "={{ JSON.stringify($json.body) }}",
         "options": {
           "responseCode": 202
         }
@@ -70,7 +86,8 @@
       "name": "Accepted",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [180, -100]
+      "position": [180, -100],
+      "notes": "The orchestrator's TaskRecord is returned verbatim. slack_bot._intake_receipt_task_id requires one task_id matching DIR-(LG-)?[A-F0-9]+ at the top level or under data, and _forward additionally requires HTTP 202 exactly. A summarised or renamed body makes the bot post 'DIRECTOR - BLOCKED' on a successful intake."
     },
     {
       "parameters": {
@@ -85,14 +102,14 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [180, 100],
-      "notes": "A non-2xx from /v1/intake must not return 200. Only the upstream status code is echoed; no response body, provider output or secret-shaped value is relayed."
+      "notes": "A non-2xx from /v1/intake must not return 200 or 202. Only the upstream status code is echoed; no response body, provider output or secret-shaped value is relayed."
     }
   ],
   "connections": {
     "Slack Gateway Webhook": {
-      "main": [[{ "node": "Create Director Task", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Relay To Orchestrator", "type": "main", "index": 0 }]]
     },
-    "Create Director Task": {
+    "Relay To Orchestrator": {
       "main": [
         [{ "node": "Accepted", "type": "main", "index": 0 }],
         [{ "node": "Intake Failed", "type": "main", "index": 0 }]
@@ -111,5 +128,5 @@
   "tags": [],
   "meta": {},
   "id": "director-intake",
-  "versionId": "2"
+  "versionId": "3"
 }
