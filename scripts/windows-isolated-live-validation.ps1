@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
@@ -413,7 +414,10 @@ function Assert-ProfileIdentity {
 }
 
 function Assert-NoProfileCollisions {
-    param([Parameter(Mandatory = $true)][hashtable]$TargetValues)
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$TargetValues,
+        [string[]]$Names = @()
+    )
 
     $identityNames = @(
         "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH",
@@ -423,6 +427,7 @@ function Assert-NoProfileCollisions {
         "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
         "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"
     )
+    if ($Names.Count -gt 0) { $identityNames = @($identityNames | Where-Object { $Names -contains $_ }) }
     foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")) {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
         $other = Read-DotEnv -Path $otherPath
@@ -852,6 +857,17 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     Copy-Item -LiteralPath $profileTemplate -Destination $profilePath
 }
 
+# The stop below reaches a Compose project by name, so ownership of that name
+# must be proved first: if a sibling profile already claims it, this invocation
+# would stop that deployment and only then reject the collision. The full
+# collision check runs after the secrets are filled, because two profiles both
+# holding REPLACE_WITH_RANDOM_SECRET would read as a collision here. These four
+# names come from the template rather than being generated, so they are
+# comparable before any of that.
+Assert-NoProfileCollisions -TargetValues (Read-DotEnv -Path $profilePath) -Names @(
+    "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH"
+)
+
 # Every invocation stages the paid gate closed in the profile, but containers
 # started by an earlier activation keep their launch-time environment. Stop the
 # previously running orchestrator and Slack intake, and prove they are stopped,
@@ -970,6 +986,14 @@ if ($EnablePaidRuns) {
 }
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
+}
+if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
+    # A full-stack run starts n8n, but slack_bot only routes through it when
+    # N8N_DIRECTOR_WEBHOOK_URL is set; blank means Slack posts straight to the
+    # orchestrator. Profiles copied from the earlier template carry a blank
+    # value, so without this the run reports full-stack readiness while n8n is
+    # bypassed. Reject it rather than filling it in: the URL is the operator's.
+    Assert-Configured -Values $values -Names @("N8N_DIRECTOR_WEBHOOK_URL")
 }
 if ($ProfileName -eq "long-table") {
     Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")
@@ -1286,3 +1310,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]

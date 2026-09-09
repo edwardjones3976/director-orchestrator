@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | BEGIN]]
@@ -932,6 +933,53 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
         ):
             self.assertIn(f'"{name}"', self.script)
 
+    def test_project_ownership_is_proved_before_any_service_is_stopped(self):
+        """Stopping by Compose project name reaches whoever owns that name.
+
+        The collision check ran after Stop-PreviouslyRunningServices, so a
+        profile sharing another deployment's project name stopped that
+        deployment and only then rejected the collision. Found by an
+        independent review of #142, which measured the base issuing zero Docker
+        calls and the head issuing stop and ps before the same rejection.
+        """
+
+        ownership = self.script.index(
+            'Assert-NoProfileCollisions -TargetValues (Read-DotEnv -Path $profilePath) -Names'
+        )
+        stop = self.script.index(
+            "Stop-PreviouslyRunningServices -ComposeProject $composeProject"
+        )
+        self.assertLess(ownership, stop)
+        # Only template-supplied names are comparable this early: the secrets
+        # are still placeholders and would read as a collision between any two
+        # freshly copied profiles.
+        window = self.script[ownership:stop]
+        self.assertIn('"DIRECTOR_COMPOSE_PROJECT_NAME"', window)
+        self.assertNotIn("ORCHESTRATOR_SHARED_SECRET", window)
+
+    def test_full_stack_long_table_requires_the_n8n_route(self):
+        """A full stack that starts n8n must not let Slack bypass it.
+
+        slack_bot forwards to n8n only when N8N_DIRECTOR_WEBHOOK_URL is set;
+        blank posts straight to the orchestrator. Profiles copied from the
+        earlier template carry a blank value, so full-stack readiness was
+        reported with n8n bypassed. Found by an independent review of #142.
+        """
+
+        self.assertIn(
+            'if ($ProfileName -eq "long-table" -and -not $ApiOnly) {',
+            self.script,
+        )
+        requirement = self.script.index(
+            'Assert-Configured -Values $values -Names @("N8N_DIRECTOR_WEBHOOK_URL")'
+        )
+        guard = self.script.rindex(
+            'if ($ProfileName -eq "long-table" -and -not $ApiOnly) {', 0, requirement
+        )
+        # The requirement sits inside the -not $ApiOnly guard, so the API-only
+        # canary, which starts no n8n, is not asked for a route it never uses.
+        self.assertNotIn("}", self.script[guard:requirement].split("{", 1)[1])
+
     def test_slackbot_receives_only_its_required_environment(self):
         slack_section = self.compose.split("  slackbot:", 1)[1].split("  n8n-db:", 1)[0]
         self.assertNotIn("env_file:", slack_section)
@@ -1731,3 +1779,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:21 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:39 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
