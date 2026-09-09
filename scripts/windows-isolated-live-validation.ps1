@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
@@ -200,31 +201,54 @@ function Read-DotEnv {
         if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) { continue }
         $separator = $line.IndexOf("=")
         if ($separator -lt 1) { continue }
-        $raw = $line.Substring($separator + 1).Trim()
-        # Compose strips one matching pair of surrounding quotes from an
-        # env-file value, so the quoted and unquoted spellings name the same
-        # project. Keeping the quotes made them compare unequal, and a sibling
-        # profile holding DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director"
-        # therefore slipped past the ownership check while Docker resolved it to
-        # exactly the project the check exists to protect. Found by an
-        # independent review of #142, which confirmed the resolution against the
-        # real Compose parser.
-        #
-        # Escape sequences inside a double-quoted value are not interpreted
-        # here. This is a comparison, and any value whose meaning depends on
-        # them would differ from the profiles this script writes, which are
-        # always unquoted.
-        if ($raw.Length -ge 2) {
-            foreach ($quote in @('"', "'")) {
-                if ($raw.StartsWith($quote) -and $raw.EndsWith($quote)) {
-                    $raw = $raw.Substring(1, $raw.Length - 2)
-                    break
-                }
-            }
-        }
-        $values[$line.Substring(0, $separator).Trim()] = $raw
+        # The raw text, exactly as written. This function also feeds the
+        # credential copy at Copy-ProviderCredentialValues, so normalising here
+        # rewrites values that are then handed to Compose: a review of #142
+        # measured CLAUDE_ROUTINE_TOKEN='synthetic # literal' surviving before a
+        # normalising version of this function and arriving as "synthetic"
+        # after it. Identity comparison normalises separately, in
+        # ConvertTo-ComposeValue, where changing the value harms nothing.
+        $values[$line.Substring(0, $separator).Trim()] = $line.Substring($separator + 1).Trim()
     }
     return $values
+}
+
+function ConvertTo-ComposeValue {
+    <#
+      .SYNOPSIS
+      Resolve an env-file value the way Compose does, for comparison only.
+
+      Never use this on a value that will be written back or handed to a
+      service. It is deliberately lossy: it answers "which project does this
+      name?", not "what did the operator write?".
+    #>
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw)
+
+    $value = $Raw.Trim()
+    if ($value.Length -ge 2) {
+        foreach ($quote in @('"', "'")) {
+            if ($value.StartsWith($quote)) {
+                # A closing quote ends the value; anything after it is a
+                # comment. `NAME="project" # sibling` resolves to `project`,
+                # and matching only start-and-end let exactly that spelling
+                # through the ownership check.
+                $close = $value.IndexOf($quote, 1)
+                if ($close -gt 0) { return $value.Substring(1, $close - 1) }
+            }
+        }
+    }
+    # Unquoted: an inline comment needs whitespace before the '#', which is
+    # what distinguishes it from a '#' inside a value.
+    $comment = $value.IndexOf(" #")
+    if ($comment -ge 0) { $value = $value.Substring(0, $comment).Trim() }
+    $tab = $value.IndexOf("`t#")
+    if ($tab -ge 0) { $value = $value.Substring(0, $tab).Trim() }
+    # ${VAR:-default} and ${VAR-default} resolve to the default when VAR is
+    # unset, which is how a sibling can name a project without writing it
+    # literally. The undefined-variable case is the one that matters here.
+    $interpolated = [Regex]::Match($value, '^\$\{[A-Za-z_][A-Za-z0-9_]*:?-(?<default>[^}]*)\}$')
+    if ($interpolated.Success) { return $interpolated.Groups["default"].Value }
+    return $value
 }
 
 function Set-DotEnvValue {
@@ -460,9 +484,15 @@ function Assert-NoProfileCollisions {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
         $other = Read-DotEnv -Path $otherPath
         foreach ($name in $identityNames) {
-            if ($other.ContainsKey($name) -and
-                -not [string]::IsNullOrWhiteSpace([string]$other[$name]) -and
-                [string]$other[$name] -ceq [string]$TargetValues[$name]) {
+            if (-not $other.ContainsKey($name)) { continue }
+            # Compare what Compose resolves, not what was typed. A sibling that
+            # quotes its project name, comments after it, or writes it as an
+            # interpolation default still names the same project, and a raw
+            # string comparison let each of those spellings through the check
+            # that exists to stop this launcher touching that deployment.
+            $theirs = ConvertTo-ComposeValue -Raw ([string]$other[$name])
+            $ours = ConvertTo-ComposeValue -Raw ([string]$TargetValues[$name])
+            if (-not [string]::IsNullOrWhiteSpace($theirs) -and $theirs -ceq $ours) {
                 throw "$profilePath collides with $otherPath on $name. No service was started."
             }
         }
@@ -849,14 +879,34 @@ function Get-N8nServiceEndpoint {
     }
     $compose = Get-Content -LiteralPath $composePath -Raw
     $service = "n8n"
-    if ($compose -notmatch "(?m)^\s{2}${service}:\s*$") {
+    # Scope to the n8n service's own block. Searching the whole document let a
+    # different service declaring N8N_PORT earlier in the file decide this
+    # answer: a review of #142 put N8N_PORT: 5679 under another service and the
+    # validator then accepted 5679 while n8n stayed on 5678.
+    $header = [Regex]::Match($compose, "(?m)^(?<indent>\s{2})${service}:\s*$")
+    if (-not $header.Success) {
         throw "docker-compose.yml declares no $service service. Full-stack readiness cannot be established."
     }
-    $match = [Regex]::Match($compose, "(?m)^\s+N8N_PORT:\s*(?<port>\d+)\s*$")
-    if (-not $match.Success) {
+    $rest = $compose.Substring($header.Index + $header.Length)
+    # The block ends at the next line indented no further than the service key.
+    $next = [Regex]::Match($rest, "(?m)^\s{0,$($header.Groups['indent'].Value.Length)}\S")
+    $block = if ($next.Success) { $rest.Substring(0, $next.Index) } else { $rest }
+
+    $port = [Regex]::Match($block, "(?m)^\s+N8N_PORT:\s*(?<port>\d+)\s*$")
+    if (-not $port.Success) {
         throw "docker-compose.yml does not set N8N_PORT for the $service service."
     }
-    return [pscustomobject]@{ Host = $service; Port = [int]$match.Groups["port"].Value }
+    # Protocol too: https against a service serving http is as unreachable as
+    # the wrong port, and was accepted while only the port was checked.
+    $protocol = [Regex]::Match($block, "(?m)^\s+N8N_PROTOCOL:\s*(?<scheme>[A-Za-z]+)\s*$")
+    if (-not $protocol.Success) {
+        throw "docker-compose.yml does not set N8N_PROTOCOL for the $service service."
+    }
+    return [pscustomobject]@{
+        Host = $service
+        Port = [int]$port.Groups["port"].Value
+        Scheme = $protocol.Groups["scheme"].Value.ToLowerInvariant()
+    }
 }
 
 function Assert-N8nRouteMatchesWorkflow {
@@ -871,8 +921,8 @@ function Assert-N8nRouteMatchesWorkflow {
     if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsed)) {
         throw "N8N_DIRECTOR_WEBHOOK_URL is not an absolute URL. No value was printed."
     }
-    if ($parsed.Scheme -notin @("http", "https")) {
-        throw "N8N_DIRECTOR_WEBHOOK_URL must use http or https. No value was printed."
+    if ($parsed.Scheme -cne $endpoint.Scheme) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must use $($endpoint.Scheme), which is the protocol the n8n service serves. No value was printed."
     }
     # The right path on the wrong destination is still a destination Slack
     # cannot reach. slack_bot sends the intake, with its authorization header,
@@ -1455,3 +1505,4 @@ finally {
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
@@ -128,7 +129,7 @@ SOURCE_HELPER = """
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $launcher = Get-Content -LiteralPath %s -Raw
-foreach ($name in 'Read-DotEnv', 'Get-N8nIntakeWebhookPath', 'Get-N8nServiceEndpoint', 'Assert-N8nRouteMatchesWorkflow') {
+foreach ($name in 'Read-DotEnv', 'ConvertTo-ComposeValue', 'Assert-NoProfileCollisions', 'Get-N8nIntakeWebhookPath', 'Get-N8nServiceEndpoint', 'Assert-N8nRouteMatchesWorkflow') {
     $start = $launcher.IndexOf("function $name {")
     if ($start -lt 0) { throw "the launcher no longer defines $name" }
     $end = $launcher.IndexOf("`nfunction ", $start + 10)
@@ -1094,36 +1095,80 @@ foreach ($url in @(
         )
         self.assertNotIn("}", self.script[guard:call].split("{", 1)[1])
 
-    def test_a_quoted_sibling_project_name_still_collides(self):
-        """Compose strips quotes; a comparison that keeps them does not.
+    def test_every_compose_spelling_of_a_sibling_name_collides(self):
+        """Compare what Compose resolves, not what the operator typed.
 
-        A sibling profile holding
-        DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director" compared
-        unequal to the unquoted selected name, so the ownership check cleared
-        it and the launcher stopped that project -- the exact deployment the
-        check exists to protect. An independent review of #142 confirmed the
-        resolution against the real Compose parser: zero Docker calls on the
-        base, stop and ps on the head.
+        Stripping only a matching start-and-end quote pair was not enough. A
+        delta review of #142 confirmed against the real Compose parser that a
+        quoted name with a trailing comment, an unquoted name with a comment,
+        and an interpolation default all resolve to the same project, and each
+        evaded the ownership guard -- producing stop and ps calls against the
+        protected deployment.
         """
 
         probe = SOURCE_HELPER + """
-$file = Join-Path ([IO.Path]::GetTempPath()) ("q" + [Guid]::NewGuid().ToString("N") + ".env")
+foreach ($raw in @(
+    'project-uppercut-director',
+    '"project-uppercut-director"',
+    "'project-uppercut-director'",
+    '"project-uppercut-director" # sibling',
+    'project-uppercut-director # sibling',
+    '${MISSING:-project-uppercut-director}',
+    '${MISSING-project-uppercut-director}'
+)) { ConvertTo-ComposeValue -Raw $raw }
+"""
+        resolved = _run_powershell(probe).split()
+        self.assertEqual(resolved, ["project-uppercut-director"] * 7)
+
+    def test_reading_a_profile_never_rewrites_a_credential(self):
+        """Read-DotEnv also feeds the credential copy, so it must not normalise.
+
+        A normalising version of it corrupted values on their way to Compose:
+        the delta review measured CLAUDE_ROUTINE_TOKEN='synthetic # literal'
+        arriving as "synthetic". Resolution belongs in ConvertTo-ComposeValue,
+        which is used only to compare identities.
+        """
+
+        probe = SOURCE_HELPER + """
+$file = Join-Path ([IO.Path]::GetTempPath()) ("c" + [Guid]::NewGuid().ToString("N") + ".env")
 Set-Content -LiteralPath $file -Encoding ascii -Value @(
-    'DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director"',
-    "N8N_HOST_PORT='5678'",
-    'PLAIN=unquoted'
+    "CLAUDE_ROUTINE_TOKEN='synthetic # literal'",
+    'QUOTED="keep me"'
 )
 $values = Read-DotEnv -Path $file
 Remove-Item -LiteralPath $file -Force
-$values['DIRECTOR_COMPOSE_PROJECT_NAME']
-$values['N8N_HOST_PORT']
-$values['PLAIN']
+$values['CLAUDE_ROUTINE_TOKEN']
+$values['QUOTED']
 """
-        lines = _run_powershell(probe).split()
-        # Both quote styles are stripped, and an unquoted value is untouched.
-        self.assertEqual(
-            lines, ["project-uppercut-director", "5678", "unquoted"]
-        )
+        lines = [line for line in _run_powershell(probe).splitlines() if line.strip()]
+        self.assertEqual(lines[0].strip(), "'synthetic # literal'")
+        self.assertEqual(lines[1].strip(), '"keep me"')
+
+    def test_the_collision_check_rejects_through_the_real_comparison(self):
+        """Replacing the equality with $false left all 66 tests green.
+
+        The quoted-sibling test exercised the resolver and never the branch
+        that throws, so disabling the comparison altogether went unnoticed.
+        """
+
+        probe = SOURCE_HELPER + """
+$root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $root | Out-Null
+Push-Location $root
+try {
+    Set-Content -LiteralPath '.env.uppercut' -Encoding ascii -Value @(
+        'DIRECTOR_COMPOSE_PROJECT_NAME="project-uppercut-director" # sibling'
+    )
+    $profilePath = '.env.long-table'
+    Set-Content -LiteralPath $profilePath -Encoding ascii -Value @('X=1')
+    $target = @{ DIRECTOR_COMPOSE_PROJECT_NAME = 'project-uppercut-director' }
+    try {
+        Assert-NoProfileCollisions -TargetValues $target -Names @('DIRECTOR_COMPOSE_PROJECT_NAME')
+        'ACCEPTED'
+    } catch { 'REJECTED' }
+} finally { Pop-Location; Remove-Item -LiteralPath $root -Recurse -Force }
+"""
+        self.assertEqual(_run_powershell(probe).strip(), "REJECTED")
 
     def test_the_route_must_address_the_n8n_service_not_merely_the_right_path(self):
         """The right path on the wrong destination is still unreachable.
@@ -1144,7 +1189,8 @@ foreach ($url in @(
     'http://n8n:5679/webhook/director-intake',
     'http://localhost:5678/webhook/director-intake',
     'http://127.0.0.1:5678/webhook/director-intake',
-    'http://evil.example/webhook/director-intake'
+    'http://evil.example/webhook/director-intake',
+    'https://n8n:5678/webhook/director-intake'
 )) {
     try { Assert-N8nRouteMatchesWorkflow -Url $url -RepositoryRoot $root; "ACCEPT" }
     catch { "REJECT" }
@@ -1153,9 +1199,48 @@ foreach ($url in @(
         output = _run_powershell(probe).split()
         # The endpoint is read from compose, never restated in this test.
         self.assertEqual(output[0], "n8n:5678")
+        # The last case is https against a service declaring N8N_PROTOCOL: http.
+        # Accepting any http-or-https scheme let that through, and it is as
+        # unreachable as the wrong port.
         self.assertEqual(
-            output[1:], ["ACCEPT", "REJECT", "REJECT", "REJECT", "REJECT"]
+            output[1:],
+            ["ACCEPT", "REJECT", "REJECT", "REJECT", "REJECT", "REJECT"],
         )
+
+    def test_the_endpoint_is_read_from_compose_rather_than_constant(self):
+        """Returning a constant 5678 left this and all 66 tests green.
+
+        Asserting against the real compose file cannot distinguish a value that
+        was read from one that happens to match. A delta review of #142 made
+        exactly that mutation and nothing failed. This points the reader at a
+        synthetic compose file declaring a different port and protocol, so only
+        an implementation that actually reads answers correctly -- and it also
+        covers the scoping defect, by declaring N8N_PORT under an earlier
+        service.
+        """
+
+        probe = SOURCE_HELPER + """
+$root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $root | Out-Null
+try {
+    Set-Content -LiteralPath (Join-Path $root 'docker-compose.yml') -Encoding ascii -Value @(
+        'services:',
+        '  decoy:',
+        '    environment:',
+        '      N8N_PORT: 5679',
+        '      N8N_PROTOCOL: https',
+        '  n8n:',
+        '    environment:',
+        '      N8N_PORT: 7001',
+        '      N8N_PROTOCOL: http'
+    )
+    $endpoint = Get-N8nServiceEndpoint -RepositoryRoot $root
+    "$($endpoint.Scheme)://$($endpoint.Host):$($endpoint.Port)"
+} finally { Remove-Item -LiteralPath $root -Recurse -Force }
+"""
+        # 7001 is n8n's own port; 5679 belongs to the service declared before
+        # it, which a whole-document search returned instead.
+        self.assertEqual(_run_powershell(probe).strip(), "http://n8n:7001")
 
     def test_the_expected_route_is_read_from_the_workflow_not_written_twice(self):
         """A second hardcoded copy of the path would drift from the first."""
@@ -1969,3 +2054,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
