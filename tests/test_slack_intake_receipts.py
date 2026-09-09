@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | BEGIN]]
@@ -48,6 +49,8 @@ class SlackIntakeReceiptTests(unittest.TestCase):
             slack_owner_user_id="UFIXTURE",
             orchestrator_base_url="http://director.invalid",
             n8n_webhook_url="",
+            intake_allocation_profile="engineering",
+            intake_primary_required_capabilities=(),
         )
         # Load a separate module object: no live Bolt initialization, environment
         # settings, or shared slack_bot event ledger is used by these tests.
@@ -350,3 +353,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
