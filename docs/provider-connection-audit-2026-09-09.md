@@ -2,6 +2,8 @@
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 17:40 UTC | BEGIN]] -->
 # Provider connection audit — 2026-09-09
 
+> **Three findings in this audit were corrected at 21:00 UTC. Read the corrections before relying on anything below:** Grok is now ready, the ChatGPT bridge row was wrong, and the nonresponse section was wrong. Each is marked in place.
+
 Evaluated `Settings.readiness()` and each lane's readiness function against the
 deployment environment file. Presence and length only; no credential value was
 read into output, and nothing was changed — every remediation below is
@@ -10,7 +12,7 @@ owner-reserved.
 ## Result
 
 `readiness()` is the repository's own definition of "connected". Six of seven
-keys are true.
+keys were true at 17:40 UTC.
 
 | Key | State | Basis |
 | --- | --- | --- |
@@ -20,7 +22,12 @@ keys are true.
 | `claude` | **READY** | `CLAUDE_ROUTINE_URL` and `CLAUDE_ROUTINE_TOKEN` present — the two fields `readiness()` actually reads |
 | `gemini` | **READY** | all eleven `gemini_supplemental_readiness` checks pass |
 | `perplexity` | **READY** | enabled, credential present, `research_only` mode by default |
-| `grok` | **NOT READY** | see below |
+| ~~`grok`~~ | **SUPERSEDED — now READY** | See the correction below |
+
+**Grok correction, 21:00 UTC.** `/health` on the running deployment reports
+`providers.grok: true`. **All seven providers are ready.** The Grok defect
+recorded below was real when measured and has since been remediated by the
+owner; it is retained for the record, not as a live finding.
 
 **A near-miss worth recording.** `ANTHROPIC_API_KEY` is present but empty, which
 looks like a broken Claude lane and is not one. `readiness()["claude"]` reads
@@ -30,13 +37,13 @@ The empty key is unused by that path. This audit initially recorded it as a
 defect and corrected before reporting — the same restrictive-reading error
 pattern recorded in the compliance audit.
 
-## The one real defect: Grok is enabled without a credential
+## The one real defect: Grok is enabled without a credential — RESOLVED
 
 ```
 GROK_ENABLED           = true
 GROK_DAILY_BUDGET_USD  = 5.00
-GROK_API_KEY           = absent
-GROK_REPOSITORY_TRANSPORT = absent
+GROK_API_KEY           = absent      <- resolved by 21:00 UTC
+GROK_REPOSITORY_TRANSPORT = absent   <- resolved by 21:00 UTC
 ```
 
 `grok_primary_readiness` therefore fails on `credential_configured` and
