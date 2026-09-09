@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | BEGIN]]
@@ -60,20 +61,29 @@ class DenyRuleTests(unittest.TestCase):
                 self.assertNotIn("Bash(*", rule)
                 self.assertTrue(rule.endswith(":*)"), f"{task}: {rule}")
 
-    def test_a_provider_that_cannot_enforce_a_deny_list_is_refused(self):
-        """Dropping the gate silently is worse than refusing the dispatch.
+    def test_the_deny_list_is_never_described_as_a_boundary(self):
+        """It is a guardrail against drift, not a control against intent.
 
-        codex carries no deny flag, so it is admitted only on the separate,
-        measured ground that its sandbox withholds the GitHub credential. A
-        provider with neither must not be dispatched to review at all.
+        An independent review of #143 executed the bypasses under its own
+        review grant: python/subprocess reached `gh pr merge --help`,
+        `gh auth token` plus urllib reached the API with merge-capable auth,
+        and `gh issue close` reaches a pull request because a pull request is
+        an issue. A prefix matcher over direct command strings cannot bound an
+        agent that can spawn a subprocess. Claiming otherwise in this file is
+        how the claim ended up in a commit message and a status report.
         """
 
-        spec = dict(dispatch.PROVIDERS["codex"])
-        spec["github_unreachable"] = False
-        with unittest.mock.patch.dict(dispatch.PROVIDERS, {"codex": spec}):
-            with self.assertRaises(SystemExit) as caught:
-                dispatch.build_command("codex", "review", "p.txt", 25)
-        self.assertIn("cannot enforce", str(caught.exception))
+        import inspect
+
+        source = inspect.getsource(dispatch)
+        prose = source.split('"""', 2)[1].lower()
+        self.assertIn("not a security boundary", prose)
+        for overclaim in (
+            "the gate is real",
+            "keeps a review a review",
+            "coexist, so the gate",
+        ):
+            self.assertNotIn(overclaim, prose, overclaim)
 
 
 class EnforcementTests(unittest.TestCase):
@@ -208,14 +218,69 @@ class EnforcementTests(unittest.TestCase):
             command = dispatch.build_command("grok", "review", "p.txt", 25)
         self.assertEqual(command[0], "C:/tools/grok.cmd")
 
-    def test_the_codex_command_carries_the_prompt(self):
+    def test_no_prompt_text_ever_reaches_the_argument_vector(self):
+        """Prompt text in argv is a command injection on Windows.
+
+        Both CLIs resolve to .CMD shims, and Windows hands a .CMD invocation to
+        the command shell, which reparses the argument string. An independent
+        review of #143 put
+
+            SAFE" & echo PR143_INJECTION_MARKER & rem "
+
+        in a prompt and the echo ran, entirely outside the provider's
+        permission controls. Prompts quote pull-request bodies and review
+        comments, so their text is not trusted.
+
+        A path is fine; the text is not. grok resolves to grok.EXE rather than
+        a shim and reads a file, so it was never reachable this way. codex took
+        the prompt positionally, which is the route that was demonstrated, and
+        now reads stdin.
+        """
+
         import tempfile
 
+        hostile = 'SAFE" & echo PR143_INJECTION_MARKER & rem "'
         with tempfile.TemporaryDirectory() as raw:
             path = pathlib.Path(raw) / "p.txt"
-            path.write_text("REVIEW THIS EXACT TEXT", encoding="utf-8")
-            command = dispatch.build_command("codex", "review", str(path), 25)
-        self.assertIn("REVIEW THIS EXACT TEXT", command)
+            path.write_text(hostile, encoding="utf-8")
+            for provider in dispatch.PROVIDERS:
+                for task in dispatch.TASK_DENY_RULES:
+                    command = dispatch.build_command(provider, task, str(path), 25)
+                    for argument in command:
+                        self.assertNotIn(
+                            "PR143_INJECTION_MARKER", argument, f"{provider} {task}"
+                        )
+
+    def test_codex_takes_its_prompt_on_stdin_not_positionally(self):
+        """The positional prompt is the argv route that was demonstrated."""
+
+        command = dispatch.build_command("codex", "review", "p.txt", 25)
+        self.assertEqual(command[-1], "-")
+        self.assertNotIn("p.txt", command)
+
+    def test_the_codex_sandbox_is_pinned_at_dispatch(self):
+        """Inheriting the host config is inheriting whatever it happens to say.
+
+        This host's ~/.codex/config.toml carries sandbox_mode
+        "danger-full-access" with approval_policy "never". An earlier version
+        claimed the opposite -- that codex's sandbox withholds the GitHub
+        credential -- on the strength of an HTTP 401 that came from `codex
+        sandbox`, a different command from the `codex exec` built here. The
+        grant must be what this file says, not what a config file elsewhere
+        says.
+        """
+
+        command = dispatch.build_command("codex", "review", "p.txt", 25)
+        self.assertIn("-s", command)
+        self.assertEqual(command[command.index("-s") + 1], "workspace-write")
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+        self.assertNotIn("danger-full-access", command)
+
+    def test_no_provider_claims_github_is_unreachable(self):
+        """That exemption was disproved by running gh under the real dispatch."""
+
+        for provider, spec in dispatch.PROVIDERS.items():
+            self.assertNotIn("github_unreachable", spec, provider)
 
 
 class EligibilityTests(unittest.TestCase):
@@ -267,3 +332,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:03 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]

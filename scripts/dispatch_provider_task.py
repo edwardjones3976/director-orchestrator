@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | BEGIN]]
@@ -21,15 +22,25 @@ which its grant did not permit. Owner instruction, 2026-09-09: give it full
 capabilities.
 
 So each CLI is now dispatched with its own full-approval flag, and permission is
-subtracted rather than added. What is subtracted is only what would let a
-reviewer alter the thing it is judging: the merge, the branch, and the pull
-request's state. Everything a review actually needs is available.
+subtracted rather than added: the merge, the branch, and the pull request's
+state. Everything a review actually needs is available.
 
-That subtraction is not a preference. AGENTS.md rule 3 requires the producer,
-the reviewer, and the acting agent to be three distinct identities, and rule 4
-forbids model output from removing an approval requirement. A review grant that
-could merge would collapse the reviewer and the acting agent into one identity,
-so the deny list is what keeps a review a review.
+**The deny list is not a security boundary, and must not be described as one.**
+An earlier version of this file claimed it was. An independent review disproved
+that by execution, under its own review grant, on this host: `gh pr merge` and
+`git push` are refused as literals, and the same session still reached
+`python`/`subprocess`, `curl`, `urllib` with the token from `gh auth token`,
+`gh issue close` (a pull request is an issue), `gh pr review --approve`,
+`gh pr comment`, `gh alias set`, and `git send-pack`. A prefix matcher over
+direct command strings cannot bound an agent that can spawn a subprocess.
+
+What the rules do buy is that the obvious spelling of a mutation is refused, so
+a reviewer does not merge by drifting into it. That is a guardrail against
+accident, not a control against intent. AGENTS.md rule 3 -- producer, reviewer
+and acting agent are three distinct identities -- is therefore enforced by the
+dispatch policy and by review, not by this list. Closing it for real needs
+credential isolation or a brokered write path, which is a larger change than
+this file; until then, do not claim the reviewer cannot write.
 
 Eligibility is computed, not asserted. A provider named in the contribution tags
 of the pull request's own commits materially authored it and cannot merge it, so
@@ -71,30 +82,32 @@ TASK_DENY_RULES: dict[str, tuple[str, ...]] = {
 PROVIDERS: dict[str, dict[str, object]] = {
     "grok": {
         "executable": "grok",
-        # --always-approve auto-approves every tool execution. Measured
-        # 2026-09-09: under it Grok ran `python -c "print(6*7)"` and answered
-        # 42, and a --deny rule still refused a matching command with "Denied
-        # by permission policy". Full capability and a binding deny list
-        # coexist, so the gate below is real rather than decorative.
         "base": ["--output-format", "json", "--always-approve"],
+        # A path, never the prompt text. grok resolves to grok.EXE rather than
+        # a .CMD shim and has always read the prompt from a file, so it was not
+        # reachable by the injection below; `--prompt-file -` is not a stdin
+        # spelling it accepts ("Failed to read '-'"), so this stays a path.
         "prompt": ["--prompt-file", "{prompt_file}"],
         "deny": "--deny",
-        "github_unreachable": False,
         "turns": ["--max-turns", "{turns}"],
     },
     "codex": {
         "executable": "codex",
-        # codex exec exposes no per-rule flag, so it cannot carry the deny list.
-        # Its sandbox supplies the same gate by construction: measured, a codex
-        # session running `gh` gets "Unable to determine: HTTP 401
-        # (authentication required)" because the sandbox withholds the GitHub
-        # credential. It therefore cannot merge, edit, close, or push whatever
-        # it is reviewing. If that ever changes, this flag must change with it
-        # and the review dispatch must start refusing.
-        "base": ["exec", "--skip-git-repo-check"],
-        "prompt": ["{prompt_text}"],
+        # `-s` pins the sandbox at dispatch. Without it codex exec inherits
+        # whatever ~/.codex/config.toml says, and on this host that is
+        # sandbox_mode = "danger-full-access" with approval_policy = "never".
+        # An earlier version of this file asserted the opposite -- that codex's
+        # sandbox withholds the GitHub credential -- citing an HTTP 401. That
+        # 401 came from `codex sandbox`, a different command from the `codex
+        # exec` this dispatcher actually builds. An independent review ran
+        # `gh pr view` under the real dispatch and got OPEN. The claim was
+        # false and the exemption it justified is gone.
+        "base": ["exec", "--skip-git-repo-check", "-s", "workspace-write"],
+        "prompt": ["-"],
         "deny": None,
-        "github_unreachable": True,
+        # codex exec has no per-rule flag, so TASK_DENY_RULES cannot reach it.
+        # That is recorded here rather than papered over: see the module
+        # docstring on what these rules are and are not.
         "turns": [],
     },
 }
@@ -165,21 +178,13 @@ def build_command(provider: str, task: str, prompt_file: str, turns: int) -> lis
     spec = PROVIDERS[provider]
     command = [shutil.which(str(spec["executable"])) or str(spec["executable"]),
                *list(spec["base"])]
-    if TASK_DENY_RULES[task] and not (spec["deny"] or spec["github_unreachable"]):
-        # Never dispatch a task whose gate this CLI can neither express nor
-        # already satisfy. Silently dropping the deny list hands a reviewer the
-        # merge, which is the one thing a review grant must not carry.
-        raise SystemExit(f"{provider} cannot enforce the {task} deny list")
     if spec["deny"]:
         for rule in TASK_DENY_RULES[task]:
             command += [str(spec["deny"]), rule]
     for part in list(spec["turns"]):
         command.append(part.replace("{turns}", str(turns)))
     for part in list(spec["prompt"]):
-        if part == "{prompt_text}":
-            command.append(pathlib.Path(prompt_file).read_text(encoding="utf-8"))
-        else:
-            command.append(part.replace("{prompt_file}", prompt_file))
+        command.append(part.replace("{prompt_file}", prompt_file))
     return command
 
 
@@ -210,7 +215,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if shutil.which(command[0]) is None:
         raise SystemExit(f"{command[0]} is not on PATH")
-    return subprocess.run(command).returncode
+    # The prompt is piped, never passed as an argument. Both CLIs are .CMD
+    # shims on Windows, and Windows hands a .CMD invocation to the command
+    # shell, which reparses the argument string: an independent review put
+    #     SAFE" & echo MARKER & rem "
+    # in a prompt and the echo ran, outside the provider's permission controls
+    # entirely. Prompts routinely quote pull-request bodies and review
+    # comments, so the text is not trusted input.
+    return subprocess.run(
+        command,
+        input=pathlib.Path(args.prompt_file).read_bytes(),
+    ).returncode
 
 
 if __name__ == "__main__":
@@ -220,3 +235,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:27 UTC | END]]
