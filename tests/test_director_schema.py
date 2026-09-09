@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
@@ -832,12 +833,23 @@ class ModeratorVoteDocumentationTests(unittest.TestCase):
 
     @staticmethod
     def unconditional_claims(text):
-        """Find selected English claim forms, not every semantic paraphrase.
+        """Match KNOWN LEXICAL PATTERNS.
+
+        This guard is NOT exhaustive over natural-language paraphrase.
+        A passing run means "no known unconditional phrasing", never
+        "no unconditional claim exists". A semantic reintroduction can pass.
+        A human reviewing documentation wording must read it and must not treat
+        this test as a substitute for reading it.
 
         Matching is clause-local and some spans are length-bounded. It does not
         resolve cross-sentence pronouns or infer obligations from arbitrary
         synonyms (for example, an implicit requirement to submit a "ballot").
-        New wording still needs human review; [] is not proof of absence.
+
+        Known, accepted gaps (documented examples, not rejection patterns):
+        - "Claude's participation entails a vote each time."
+        - "No debate concludes without the Participant vote."
+        - "Withholding the Claude vote is not an option."
+        - "Claude will have voted in all debates."
         """
         # Inspect separate bullets, YAML fields, table cells, and sentences so
         # an abstention elsewhere cannot excuse an unconditional local claim.
@@ -1575,3 +1587,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | END]]
