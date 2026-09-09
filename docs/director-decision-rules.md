@@ -1,4 +1,4 @@
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:50 UTC | BEGIN]] -->
 # Director decision rules
 
@@ -232,4 +232,4 @@ No percentage reduction is claimed. The largest risk to this delivery is not
 scheduling but whatever the blocker audit surfaces that nobody has looked at
 yet, and no decision rule surfaces that.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:50 UTC | END]] -->
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]] -->
