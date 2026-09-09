@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -23,10 +24,11 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .primary_workload import admission_reason
-from .allocation_profiles import allocation_targets, DEFAULT_ALLOCATION_PROFILE
+from .allocation_profiles import ALLOCATION_PROFILES, allocation_targets, DEFAULT_ALLOCATION_PROFILE
 
 PRIMARY_TEAM = frozenset({"openai", "claude", "cursor", "grok"})
 IMPLEMENTERS = ("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")
+RESEARCH_LANES = ("perplexity", "firecrawl")
 REVIEWERS = frozenset({"openai", "claude", "cursor", "grok"})
 KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"}
 
@@ -38,6 +40,40 @@ def core_inventory_ready(available: Sequence[str], *, director_provider: str = "
     """Check the caller-supplied execution capability; default to the OpenAI floor."""
     pool = set(available)
     return director_provider in {"openai", "claude"} and director_provider in pool and len(pool & PRIMARY_TEAM) >= 3
+
+
+def lanes_requiring_cost_rank(pool: Sequence[str] | frozenset[str] | set[str]) -> frozenset[str]:
+    """Lanes in ``pool`` that some admissible intake can turn into a candidate.
+
+    ``eligible_for`` and the research selector both hold the whole roster on
+    ``primary_trusted_cost_rank_required`` when a candidate has no rank. This is
+    the same question asked before startup, so it reads the very tuples those
+    selectors iterate -- ``IMPLEMENTERS`` and ``RESEARCH_LANES`` -- instead of
+    restating them. A lane added to either tuple is covered without editing here.
+
+    The per-intake variables are deliberately over-approximated, because they
+    arrive with the task rather than the configuration:
+
+    * Allocation profile: ``SlackIntake`` may name any profile, so a lane is
+      required as soon as *some* profile gives it a non-zero target. A lane that
+      no profile can admit is exempt -- ``admission_reason`` already refuses it
+      with ``workload_profile_lane_ineligible`` under every profile, and a lane
+      absent from the target table is refused with
+      ``workload_unsupported_allocation_lane``.
+    * Capability gates: the ``antigravity``/``github-copilot`` conditions inside
+      ``eligible_for`` and the ``public_research`` gate on ``RESEARCH_LANES`` are
+      not consulted, because any intake may request the gating capability. That
+      keeps the derivation correct for a fourth gated lane without teaching this
+      function about the gate.
+
+    Callers scope ``pool`` to lanes that can actually reach a roster.
+    """
+    selectable = frozenset(IMPLEMENTERS) | frozenset(RESEARCH_LANES)
+    return frozenset(
+        lane
+        for lane in frozenset(pool) & selectable
+        if any(allocation_targets(profile).get(lane, 0) > 0 for profile in ALLOCATION_PROFILES)
+    )
 
 
 @dataclass(frozen=True)
@@ -70,7 +106,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
     if "public_research" in required_capabilities:
         if not public_research_query:
             raise PrimaryRosterHold("primary_public_research_scope_required")
-        research_lanes = [lane for lane in ("perplexity", "firecrawl") if lane in pool
+        research_lanes = [lane for lane in RESEARCH_LANES if lane in pool
                           and admission_reason(lane, history, allocation_profile=allocation_profile) is None]
         if not research_lanes:
             raise PrimaryRosterHold("primary_public_research_unavailable")
@@ -109,3 +145,4 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]

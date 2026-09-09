@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | BEGIN]]
@@ -578,12 +579,18 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
     source_event_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
     if not source_event_id or not thread_ts or not _claim_event(source_event_id):
         return
+    # Routing steering is owner-set deployment configuration, never parsed out of
+    # `text`: rule 6 treats the Slack message as untrusted data. The attestation
+    # below covers the whole intake, so these fields are bound to the gateway
+    # secret exactly like every other field.
     intake = SlackIntake(
         source_event_id=source_event_id,
         channel_id=event["channel"],
         thread_ts=thread_ts,
         user_id=event["user"],
         text=text,
+        allocation_profile=settings.intake_allocation_profile,
+        primary_required_capabilities=settings.intake_primary_required_capabilities,
         received_at=datetime.now(timezone.utc),
     )
     payload = intake.model_dump(mode="json")
@@ -814,3 +821,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 20:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]

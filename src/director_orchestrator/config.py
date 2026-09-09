@@ -1,4 +1,11 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -53,6 +60,20 @@ import re
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
+
+from .allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE
+
+# The owner sets the routing capability request through deployment configuration.
+# `enterprise_context` is deliberately absent: `select_primary_roster` holds every
+# plan that requests it because no scoped enterprise production adapter exists, so
+# configuring it could only produce a per-task hold. Authority for the full set is
+# `SlackIntake.primary_required_capabilities`; this is the configurable subset.
+SELECTABLE_PRIMARY_CAPABILITIES = (
+    "public_research",
+    "bounded_scaffolding",
+    "repository_assistance",
+)
+UNAVAILABLE_PRIMARY_CAPABILITIES = ("enterprise_context",)
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -620,6 +641,16 @@ class Settings:
     primary_workhorse: str = os.getenv(
         "PRIMARY_WORKHORSE", "cheapest_capable"
     ).strip().lower()
+    # Owner-set intake routing defaults. The Slack gateway never derives these
+    # from message text: rule 6 treats Slack text as untrusted data, so the
+    # allocation profile and the capability request stay deployment
+    # configuration. The defaults reproduce the historical hardcoded intake.
+    intake_allocation_profile: str = os.getenv(
+        "INTAKE_ALLOCATION_PROFILE", DEFAULT_ALLOCATION_PROFILE
+    ).strip().lower()
+    intake_primary_required_capabilities: tuple[str, ...] = _csv(
+        "INTAKE_PRIMARY_REQUIRED_CAPABILITIES", ""
+    )
     # Operator-authored ordinal ranks are intentionally required instead of a
     # built-in provider order. Lower positive integers are cheaper, and ranks
     # must be unique so the runtime never invents a tie-breaking cost order.
@@ -978,7 +1009,39 @@ class Settings:
     def workload_policy_readiness(
         self, *, effective_mode: str | None = None
     ) -> dict[str, bool]:
-        """Expose only non-sensitive workload-enforcement readiness booleans."""
+        """Expose only non-sensitive workload-enforcement readiness booleans.
+
+        ``ready_specialist_ranks_complete`` answers one narrow question: do the
+        specialist lanes that are *ready* all carry a cost rank. It is
+        deliberately not a statement about the roster, and the earlier name
+        ``ready_provider_ranks_complete`` claimed one it never made.
+
+        "Ready" is ``readiness()``, which is more than holding a credential: it
+        also requires the lane to be enabled and correctly configured. A named
+        specialist that is configured with a credential but disabled is
+        therefore *not* counted, and needs no rank. Naming this field for the
+        credential would publish a coverage claim on ``/health`` that the
+        computation does not make -- a configured-but-disabled ``grok``,
+        ``perplexity`` or ``gemini`` leaves it ``True`` with that lane unranked.
+
+        Rank coverage for the lanes a roster can actually select is a separate
+        question, over the activation-bound pool rather than this set. That is
+        the right axis for the lanes missing here: ``github-copilot``,
+        ``microsoft-365-copilot``, ``firecrawl`` and ``antigravity`` reach a
+        roster through ``primary_provider_activation_bindings`` and have no
+        entry in ``readiness`` to report at all, and ``openai`` is the roster's
+        mandatory floor rather than a specialist -- ``core_inventory_ready``
+        already refuses a pool without it. That complementary check is proposed
+        as ``unranked_selectable_primary_lanes`` in pull request #147 and does
+        not exist at this revision; only the check described here is enforced.
+
+        The two checks are not nested and neither subsumes the other. A ready
+        specialist that is not activation-bound must carry a rank here and is
+        out of scope there. ``gemini`` is exactly that: the roster knows the
+        lane only as ``antigravity``, so a deployment with Gemini ready but
+        without that binding is asked for a rank here and nowhere else.
+        Collapsing the two into either one alone would drop a requirement.
+        """
 
         if effective_mode is not None and effective_mode not in {"enforced", "shadow"}:
             raise ValueError("effective workload mode must be enforced or shadow")
@@ -987,10 +1050,15 @@ class Settings:
             cost_ranks = self.trusted_provider_cost_ranks()
         except ValueError:
             cost_ranks = {}
+        provider_readiness = self.readiness()
+        # Indexed rather than ``.get(provider, False)``: a specialist listed here
+        # with no matching ``readiness`` key is a coverage hole, and defaulting it
+        # to False silently reports the lane as un-credentialed and therefore
+        # exempt. Fail loudly at startup instead.
         ready_specialists = {
             provider
             for provider in ("claude", "cursor", "gemini", "grok", "perplexity")
-            if self.readiness().get(provider, False)
+            if provider_readiness[provider]
         }
         return {
             "enabled": self.workload_policy_enabled,
@@ -1006,7 +1074,7 @@ class Settings:
             "shadow_sample_valid": self.workload_policy_shadow_assignments == 5,
             "selector_mode_valid": self.primary_workhorse == "cheapest_capable",
             "cost_ranks_valid": bool(cost_ranks),
-            "ready_provider_ranks_complete": bool(ready_specialists)
+            "ready_specialist_ranks_complete": bool(ready_specialists)
             and ready_specialists.issubset(cost_ranks),
         }
 
@@ -1075,7 +1143,71 @@ class Settings:
             )
         return dict(sorted(parsed.items()))
 
+    def validate_intake_routing_defaults(self) -> None:
+        """Refuse an unroutable intake profile or capability before startup.
+
+        These steer `select_primary_roster`. An unknown value would otherwise
+        surface once per task as a `PrimaryRosterHold` long after deployment,
+        so it fails closed here instead. This adds a gate; the plan-time holds
+        in `primary_roster` are unchanged and still apply.
+        """
+
+        if self.intake_allocation_profile not in ALLOCATION_PROFILES:
+            raise ValueError(
+                "INTAKE_ALLOCATION_PROFILE must be one of "
+                + ", ".join(sorted(ALLOCATION_PROFILES))
+            )
+        requested = self.intake_primary_required_capabilities
+        if len(set(requested)) != len(requested):
+            raise ValueError(
+                "INTAKE_PRIMARY_REQUIRED_CAPABILITIES must not repeat a capability"
+            )
+        for capability in requested:
+            if capability in UNAVAILABLE_PRIMARY_CAPABILITIES:
+                raise ValueError(
+                    f"INTAKE_PRIMARY_REQUIRED_CAPABILITIES cannot request "
+                    f"'{capability}': no scoped production adapter exists, so "
+                    "every plan requesting it is held before dispatch"
+                )
+            if capability not in SELECTABLE_PRIMARY_CAPABILITIES:
+                raise ValueError(
+                    "INTAKE_PRIMARY_REQUIRED_CAPABILITIES must contain only "
+                    + ", ".join(SELECTABLE_PRIMARY_CAPABILITIES)
+                )
+    # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
+    def unranked_selectable_primary_lanes(self) -> tuple[str, ...]:
+        """Activation-bound lanes a roster can select that carry no cost rank.
+
+        ``primary_roster.eligible_for`` holds the entire roster when any single
+        candidate is unranked, so the omission surfaces only at dispatch and
+        takes down all routing rather than one lane. This asks the same question
+        early, deriving the lane set from ``primary_roster`` rather than
+        restating it.
+
+        Scope is the activation-bound pool: ``provider_ready`` returns ``False``
+        for a lane with no binding, and the roster's ``available`` pool is
+        filtered through it, so an unbound lane can never become a candidate and
+        requiring a rank for it would refuse a working deployment.
+        """
+
+        from .allocation_profiles import canonical_allocation_lane
+        from .primary_roster import lanes_requiring_cost_rank
+
+        try:
+            bound_pool = set(self.primary_provider_activation_bindings())
+        except ValueError:
+            # Malformed bindings already fail langgraph_primary_readiness and
+            # abort PrimaryProviderActivationService construction, so no lane
+            # reaches a roster and none needs a rank from here.
+            return ()
+        ranked = {
+            canonical_allocation_lane(lane) for lane in self.trusted_provider_cost_ranks()
+        }
+        return tuple(sorted(lanes_requiring_cost_rank(bound_pool) - ranked))
+    # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
+
     def validate_workload_policy_configuration(self) -> None:
+        self.validate_intake_routing_defaults()
         readiness = self.workload_policy_readiness()
         if not readiness["mode_valid"]:
             raise ValueError(
@@ -1100,9 +1232,15 @@ class Settings:
             if not readiness["cost_ranks_valid"]:
                 # Re-run the parser to preserve the precise structural error.
                 self.trusted_provider_cost_ranks()
-            if not readiness["ready_provider_ranks_complete"]:
+            if not readiness["ready_specialist_ranks_complete"]:
                 raise ValueError(
                     "TRUSTED_PROVIDER_COST_RANKS must cover every configured ready specialist"
+                )
+            unranked = self.unranked_selectable_primary_lanes()
+            if unranked:
+                raise ValueError(
+                    "TRUSTED_PROVIDER_COST_RANKS is missing a rank for selectable "
+                    f"primary lane(s): {', '.join(unranked)}"
                 )
 
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
@@ -2097,4 +2235,11 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
