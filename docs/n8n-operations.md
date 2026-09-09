@@ -62,38 +62,39 @@ docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <
 
 The n8n container and the orchestrator container must appear on the same network.
 
-## Credentials to create first
+## Credentials
 
 | n8n credential type | Name used in the workflows | Holds |
 | --- | --- | --- |
-| Header Auth | `Director gateway header auth` | Name `Authorization`, Value `Bearer <ORCHESTRATOR_SHARED_SECRET>` |
-| Bearer Auth | `Orchestrator shared secret` | `ORCHESTRATOR_SHARED_SECRET`. Produces `Authorization: Bearer …` on the call to `/v1/intake` |
 | Slack API | `Director Slack bot` | The bot token for the status posts |
 
-**The header credential name must be `Authorization`.** `slack_bot._forward`
-sends exactly `Authorization: Bearer <shared secret>` plus the three attestation
-headers, and no custom gateway header. A Header Auth credential configured with
-any other name — `X-API-Key`, `X-Gateway-Token` — rejects the orchestrator's own
-caller. The webhook gate and the outbound call therefore hold the same secret;
-this adds no new secret to the deployment.
+**Intake holds no credential at all, by design.** The webhook is unauthenticated
+and the relay forwards the caller's own `Authorization` header downstream, so the
+orchestrator stays the single authenticator and n8n never stores
+`ORCHESTRATOR_SHARED_SECRET`. A secret n8n does not hold cannot leak from n8n's
+database, its encryption key, or an exported workflow.
 
-**Bearer, not header, outbound.** The call to `/v1/intake` uses `httpBearerAuth`,
-which takes a single token field and emits `Authorization: Bearer <token>`.
-`httpHeaderAuth` is the wrong type there — it is for custom headers, and using it
-means hand-writing both the header name and the `Bearer ` prefix.
+The trade is that any process able to reach `127.0.0.1:<n8n port>` can make the
+relay forward a request. That process still needs a valid bearer to get past
+`/v1/intake`, which returns 401 without one, so the relay grants no authority it
+did not already have. Do not "harden" this by binding a Header Auth credential
+unless you also name it exactly `Authorization`: `slack_bot._forward` sends that
+header and no custom gateway header, so any other name rejects the orchestrator's
+own caller.
 
 ## Director Intake
 
 ```
-Slack Gateway Webhook  →  Relay To Orchestrator  →  Accepted        (202)
+Slack Gateway Webhook  →  Create Director Task  →  Accepted        (202)
                                                └─→  Intake Failed   (502)
 ```
 
-**Inbound.** The Webhook node authenticates with the Header Auth credential.
-**Ignore Bots is deliberately off**: the caller is `python-httpx`, and
-user-agent bot filters can classify HTTP-library agents as bots and drop the
-request before authentication ever runs. n8n also offers an IP allowlist under
-the node's options; set it if the gateway has a fixed address.
+**Inbound.** The Webhook node carries no authentication and no credential; the
+caller's `Authorization` header is forwarded downstream instead. **Ignore Bots is
+deliberately off**: the caller is `python-httpx`, and user-agent bot filters can
+classify HTTP-library agents as bots and drop the request before it is relayed.
+n8n also offers an IP allowlist under the node's options; set it if the gateway
+has a fixed address.
 
 **Idempotency.** `source_event_id` is the stable Slack event ID and the
 orchestrator deduplicates on it, so a re-delivered Slack event creates no second
@@ -106,10 +107,18 @@ additionally requires HTTP **202** exactly — not 200, not 201. A summarised or
 renamed response body makes the bot post `DIRECTOR — BLOCKED` on an intake that
 actually succeeded.
 
-**Failure.** `Relay To Orchestrator` uses `onError: continueErrorOutput`, so a
+**Failure.** `Create Director Task` uses `onError: continueErrorOutput`, so a
 non-2xx takes the second output into `Intake Failed`, which responds **502**.
 Only the upstream status code is echoed; no response body, provider output or
 secret-shaped value is relayed back through the webhook.
+
+**The error branch is not optional.** Without it, a downstream failure leaves the
+execution with no `Respond to Webhook` node on its path, and n8n answers the
+webhook **200 with an empty body**. The Slack bot's `raise_for_status()` passes
+on a 200, the `!= 202` check then fails, and every message gets
+`DIRECTOR — BLOCKED` with nothing in the response to say why. `Director Intake`
+therefore sets `saveDataErrorExecution: all`: a relay whose failures are not
+recorded cannot be diagnosed from either end.
 
 ## Director Status
 
@@ -165,9 +174,10 @@ dual-writer no-go regardless of their databases.
 ## Importing
 
 1. Confirm the n8n container shares a network with the orchestrator container.
-2. Open the editor and create the three credentials above.
-3. Import each workflow file, then open every node carrying a
-   `REPLACE_WITH_CREDENTIAL_ID` placeholder and select the real credential.
+2. Import each workflow file.
+3. `Director Intake` needs no credential. For `Director Status`, create the Slack
+   API credential and bind it on `Post Status`, replacing the
+   `REPLACE_WITH_CREDENTIAL_ID` placeholder.
 4. Open `Post Status` and replace `REPLACE_WITH_CHANNEL_ID` with the Director
    channel.
 5. Activate `Director Status` first and watch one cycle; it is read-only.
@@ -186,26 +196,33 @@ docker compose exec n8n sh -lc 'wget -qO- http://orchestrator:8080/health | head
 A DNS failure here means the containers are not on one network, and nothing
 below can pass.
 
-**2. The relay accepts an authenticated call and rejects an unauthenticated one.**
-Use the editor's **Execute workflow** listener and the `/webhook-test/` path;
-`/webhook/` only answers once the workflow is active. Post a body shaped exactly
-like `SlackIntake` — a `source_event_id` you have not used before, the configured
-channel and owner IDs, a `thread_ts`, a short `text`, `received_at` in ISO-8601.
-Expect **202** and a body containing a `DIR-…` `task_id`. Repeat with no
-`Authorization` header and expect **403** from the webhook itself.
+**2. The orchestrator rejects an unauthenticated intake.** Post to
+`/v1/intake` directly, with no `Authorization` header. Expect **401** and
+`{"detail":"Unauthorized"}`. This creates nothing, so it is the safe first probe.
 
-**3. Idempotency.** Re-post the identical body. Expect 202 again and the **same**
+**3. The relay surfaces that rejection rather than swallowing it.** Post the same
+unauthenticated request to `/webhook/director-intake`. Expect **502**. A **200
+with an empty body** is the signature of a relay with no error branch: the
+execution ended without reaching a `Respond to Webhook` node. It is the one
+result that looks like success from the outside and fails at the Slack bot.
+
+**4. A valid intake returns 202.** Post a body shaped exactly like `SlackIntake`
+— a `source_event_id` you have not used before, the configured channel and owner
+IDs, a `thread_ts`, a short `text`, `received_at` in ISO-8601 — with a real
+bearer. Expect **202** and a body containing a `DIR-…` `task_id`.
+
+**5. Idempotency.** Re-post the identical body. Expect 202 again and the **same**
 `task_id`. A second, different ID means deduplication is not working and the
 gateway will double-book every Slack retry.
 
-**4. The extra-field guard.** Add one field the model does not define. Expect the
+**6. The extra-field guard.** Add one field the model does not define. Expect the
 relay to return **502**, driven by a 422 from `/v1/intake`. This is the check
 that catches a workflow that has drifted back into rebuilding the body.
 
-**5. Downstream failure surfaces as 502, never 202.** Stop the orchestrator, post
+**7. Downstream failure surfaces as 502, never 202.** Stop the orchestrator, post
 a valid body, and confirm 502. Restart it before continuing.
 
-**6. End to end through Slack, last.** Post `DIRECTOR …` in the configured
+**8. End to end through Slack, last.** Post `DIRECTOR …` in the configured
 channel as the owner and confirm the bot replies `<task id> — ACCEPTED`. A
 `DIRECTOR — BLOCKED` reply with a 202 in the n8n execution log means the response
 shape is wrong, not the intake.
