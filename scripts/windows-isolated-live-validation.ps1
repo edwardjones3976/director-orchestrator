@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
@@ -608,9 +609,13 @@ function Get-ValidatedUsageCheckProviders {
 
     # Mirrors SUPPORTED_PROVIDERS in src/director_orchestrator/usage.py. OpenAI,
     # Claude, and Cursor are mandatory check providers. An optional provider is
-    # scheduled only when it is listed here, explicitly enabled, and carries a
-    # configured credential; anything not listed is never dispatched. The
-    # returned set is the exact partition the usage-check endpoint must report.
+    # listed explicitly and carries a configured credential. Grok and Perplexity
+    # also require their enable flags. Gemini has no enable flag: usage.py's
+    # run_once uses Settings.usage_check_readiness(), which delegates to
+    # gemini_supplemental_readiness() in config.py (credential, configuration,
+    # mode and budget checks). Global usage/paid gates still apply at runtime.
+    # Anything not listed is never dispatched. The returned set is the exact
+    # partition the usage-check endpoint must report, not full runtime readiness.
     $mandatory = @("openai", "claude", "cursor")
     $known = @("openai", "claude", "cursor", "grok", "perplexity", "gemini")
     if (-not $Values.ContainsKey("USAGE_CHECK_PROVIDERS") -or
@@ -1574,3 +1579,4 @@ finally {
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]

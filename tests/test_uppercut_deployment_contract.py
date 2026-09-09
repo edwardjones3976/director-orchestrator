@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
@@ -1622,7 +1623,43 @@ class LongTableDeploymentContractTests(unittest.TestCase):
         self.assertIn(
             'if ($ProfileName -eq "long-table" -and -not $ApiOnly)', self.script
         )
-        self.assertIn("Initialize-N8nIntakeWorkflow", self.script)
+        # Find the executable call, then run its real guard with a capture-only
+        # initializer. The definition alone must not satisfy this contract.
+        probe = POWERSHELL_PRELUDE + PS_SCOPE_HELPERS + "\n$ast = Get-ScriptAst " + _ps_literal(
+            str(ROOT / "scripts" / "windows-isolated-live-validation.ps1")
+        ) + r'''
+$calls = @($ast.FindAll({
+    param($n)
+    $n -is [System.Management.Automation.Language.CommandAst] -and
+    $n.GetCommandName() -eq 'Initialize-N8nIntakeWorkflow'
+}, $true))
+if ($calls.Count -ne 1) { throw "expected exactly one initializer call, found $($calls.Count)" }
+$guard = $calls[0].Parent
+while ($guard -and $guard -isnot [System.Management.Automation.Language.IfStatementAst]) {
+    $guard = $guard.Parent
+}
+if (-not $guard -or -not (Test-PsTopLevel -Node $guard)) { throw 'initializer guard is not at script level' }
+function Initialize-N8nIntakeWorkflow {
+    param($ComposeProject, $ProfilePath, $RepositoryRoot)
+    $script:received += "$ComposeProject|$ProfilePath|$RepositoryRoot"
+}
+$composeProject = 'probe-compose'
+$profilePath = 'probe-profile'
+$repoRoot = 'probe-repo'
+foreach ($ProfileName in 'long-table', 'uppercut') {
+    foreach ($ApiOnly in $false, $true) {
+        $script:received = @()
+        Invoke-Expression $guard.Extent.Text
+        Write-Output ("$ProfileName|$ApiOnly|" + $received.Count + '|' + ($received -join ','))
+    }
+}
+'''
+        self.assertEqual(_run_powershell(probe).strip().splitlines(), [
+            "long-table|False|1|probe-compose|probe-profile|probe-repo",
+            "long-table|True|0|",
+            "uppercut|False|0|",
+            "uppercut|True|0|",
+        ])
         self.assertIn("$repoRoot = Split-Path -Parent $PSScriptRoot", self.script)
     def test_full_stack_profile_binds_slack_n8n_and_optional_bridge_to_project_channel(self):
         for line in (
@@ -1767,6 +1804,32 @@ foreach ($entry in $scenarios.GetEnumerator()) {
             self.assertIn(fragment, detail, name)
         for secret in ("xai-test", "pplx-test", "gem-test", "sk-test"):
             self.assertNotIn(secret, output)
+    def test_gemini_prevalidation_requires_listing_and_credential_without_enable_flag(self):
+        probe = POWERSHELL_PRELUDE + _function_source(
+            self.script, "Get-ValidatedUsageCheckProviders"
+        ) + r'''
+$scenarios = [ordered]@{
+    'unlisted' = @{ USAGE_CHECK_PROVIDERS = 'openai,claude,cursor'; GEMINI_API_KEY = 'synthetic' }
+    'ready' = @{ USAGE_CHECK_PROVIDERS = 'openai,claude,cursor,gemini'; GEMINI_API_KEY = 'synthetic' }
+    'missing' = @{ USAGE_CHECK_PROVIDERS = 'openai,claude,cursor,gemini' }
+    'placeholder' = @{ USAGE_CHECK_PROVIDERS = 'openai,claude,cursor,gemini'; GEMINI_API_KEY = 'REPLACE_WITH_GEMINI_API_KEY' }
+}
+foreach ($entry in $scenarios.GetEnumerator()) {
+    try {
+        $providers = @(Get-ValidatedUsageCheckProviders -Values $entry.Value -ProfileLabel 'probe')
+        Write-Output ($entry.Key + '|ok|' + ($providers -join ','))
+    } catch {
+        Write-Output ($entry.Key + '|error|' + $_.Exception.Message)
+    }
+}
+'''
+        results = _scenario_results(_run_powershell(probe))
+        self.assertEqual(results['unlisted'], ('ok', 'claude,cursor,openai'))
+        self.assertEqual(results['ready'], ('ok', 'claude,cursor,gemini,openai'))
+        for name in ('missing', 'placeholder'):
+            self.assertEqual(results[name][0], 'error', name)
+            self.assertIn('GEMINI_API_KEY is not configured', results[name][1], name)
+
     def test_usage_partition_rejects_providers_outside_the_validated_set(self):
         probe = (
             POWERSHELL_PRELUDE
@@ -2143,3 +2206,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
