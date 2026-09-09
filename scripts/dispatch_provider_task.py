@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | BEGIN]]
@@ -25,9 +26,15 @@ that: the prompt asked it to construct a malformed input and observe the result,
 which its grant did not permit. Owner instruction, 2026-09-09: give it full
 capabilities.
 
-So each CLI is now dispatched with its own full-approval flag, and permission is
-subtracted rather than added: the merge, the branch, and the pull request's
-state. Everything a review actually needs is available.
+Grok is dispatched with full approval and literal command deny rules. Codex
+exec is dispatched with an explicit workspace-write sandbox and NO rule-level
+guardrail: it has no per-command deny flag, so TASK_DENY_RULES never reaches it.
+Even the obvious spelling of a merge command is not denied at the Codex rule
+level. Workspace-write does not establish that GitHub credentials are withheld.
+This is acceptable only for the owner's bounded, full-capability review workflow,
+with independent review and owner action gates retained; it provides no technical
+guarantee that a reviewer cannot write. Credential isolation or a brokered write
+path is needed for that guarantee.
 
 **The deny list is not a security boundary, and must not be described as one.**
 An earlier version of this file claimed it was. An independent review disproved
@@ -38,7 +45,7 @@ that by execution, under its own review grant, on this host: `gh pr merge` and
 `gh pr comment`, `gh alias set`, and `git send-pack`. A prefix matcher over
 direct command strings cannot bound an agent that can spawn a subprocess.
 
-What the rules do buy is that the obvious spelling of a mutation is refused, so
+For Grok, the rules buy that the obvious spelling of a mutation is refused, so
 a reviewer does not merge by drifting into it. That is a guardrail against
 accident, not a control against intent. AGENTS.md rule 3 -- producer, reviewer
 and acting agent are three distinct identities -- is therefore enforced by the
@@ -63,6 +70,9 @@ import re
 import shutil
 import subprocess
 import sys
+
+REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[1]
+GITHUB_REPOSITORY = "edwardjones3976/director-orchestrator"
 
 
 # Full capability, minus the verbs that would let a reviewer change its own
@@ -157,7 +167,7 @@ def material_authors(base: str, head: str) -> set[str]:
     """
 
     out = subprocess.run(
-        ["git", "log", "--format=%B", f"{base}..{head}"],
+        ["git", "-C", str(REPOSITORY_ROOT), "log", "--format=%B", f"{base}..{head}"],
         capture_output=True, text=True, check=True,
     ).stdout
     names = {name.strip() for name in _TAG.findall(out)}
@@ -173,9 +183,9 @@ def pull_request_range(pr: str) -> tuple[str, str]:
     """
 
     out = subprocess.run(
-        ["gh", "pr", "view", pr, "--json", "baseRefOid,headRefOid",
+        ["gh", "pr", "view", pr, "--repo", GITHUB_REPOSITORY, "--json", "baseRefOid,headRefOid",
          "-q", ".baseRefOid + \" \" + .headRefOid"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, cwd=REPOSITORY_ROOT,
     )
     if out.returncode != 0 or len(out.stdout.split()) != 2:
         raise SystemExit(f"could not resolve the range for pull request {pr}")
@@ -212,6 +222,8 @@ _EVIDENCE_BLOCK = re.compile(
 _QUOTED_SPAN = re.compile(r'''`[^`\n]*`|"[^"\n]*"|(?<!\w)'[^'\n]*'(?!\w)''')
 _MERGE_INSTRUCTION = re.compile(
     r"^(?:[-*+]\s+|\d+[.)]\s+)?(?:please\s+)?"
+    r"(?:you\s+(?:should|must|need\s+to|have\s+to)\s+|"
+    r"I\s+(?:want|need|would\s+like)\s+you\s+to\s+)?"
     r"(?:(?:go\s+ahead\s+and\s+|squash\s+and\s+)merge\b"
     r"|merge\s+(?:(?:this|the|that)\s+)?(?:pr\b|pull\s+request\b|it\b)"
     r"|(?:run|execute)\s+(?:gh\s+pr\s+merge\b|quoted_merge_command\b)"
@@ -221,7 +233,14 @@ _MERGE_INSTRUCTION = re.compile(
 
 
 def task_prompt_mismatch(task: str, prompt: str) -> str:
-    """Return why this prompt does not match its task, or an empty string."""
+    """An accident guardrail over natural language, not an authorization boundary.
+
+    Recognize common requests, including "you should merge" and "I want you to
+    merge", while masking quoted evidence and retaining negation. Natural
+    language has unbounded paraphrases: this gate never becomes an authorization
+    boundary, regardless of how many examples it recognizes. Return a refusal
+    reason or an empty string; an empty string grants no authority.
+    """
 
     if task != "review":
         return ""
@@ -405,3 +424,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
