@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -583,24 +584,6 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 services=None,  # type: ignore[arg-type]
             )
 
-    def test_automatic_live_discovery_reports_typed_microsoft_365_copilot_blocker(self):
-        settings = replace(
-            Settings(),
-            repository_snapshot_root=str(Path.cwd()),
-        )
-
-        with patch(
-            "director_orchestrator.primary_transports._which", return_value=None
-        ), self.assertRaisesRegex(
-            ValueError,
-            r"external_blockers=microsoft-365-copilot:"
-            r"microsoft_365_copilot_work_iq_capability_evidence_missing",
-        ):
-            build_automatic_primary_live_dependencies(
-                settings,
-                handle=None,  # type: ignore[arg-type]
-                services=None,  # type: ignore[arg-type]
-            )
 
 
 class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
@@ -675,7 +658,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             settings.max_task_budget_usd,
             sum(item.estimated_cost_usd for item in record.plan.assignments),
         )
-        # Every lane, including microsoft-365-copilot, keeps its own slot.
+        # Every supported lane keeps its own slot.
         self.assertEqual(
             list(lanes),
             [
@@ -2954,3 +2937,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

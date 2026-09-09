@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | BEGIN]]
@@ -101,7 +102,7 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
         )
         return request.model_copy(update={"gateway_proof": proof})
 
-    def test_default_live_roster_uses_all_nine_exact_lane_ids(self) -> None:
+    def test_default_live_roster_uses_all_eight_exact_lane_ids(self) -> None:
         self.assertEqual(
             (
                 "openai",
@@ -112,7 +113,6 @@ class PrimaryAuthenticatedIngressTests(unittest.TestCase):
                 "perplexity",
                 "firecrawl",
                 "github-copilot",
-                "microsoft-365-copilot",
             ),
             Settings().langgraph_primary_required_providers,
         )
@@ -498,3 +498,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

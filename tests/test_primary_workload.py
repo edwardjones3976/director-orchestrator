@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -116,7 +117,7 @@ class AllocationCompatibilityTests(unittest.TestCase):
 class AdmissionPolicyTests(unittest.TestCase):
     def test_bootstrap_is_explicit_and_aliases_do_not_invent_credit(self):
         self.assertIsNone(admission_reason("openai", []))
-        for lane in ("firecrawl", "github-copilot", "microsoft-365-copilot"):
+        for lane in ("firecrawl", "github-copilot"):
             self.assertEqual(admission_reason(lane, HISTORY),
                              "workload_profile_lane_ineligible")
 
@@ -161,6 +162,30 @@ class AdmissionPolicyTests(unittest.TestCase):
 
 
 class PostgresAdmissionTests(unittest.TestCase):
+    def test_retirement_migration_preserves_history_but_rejects_new_rows(self):
+        # Simulate a previously accepted immutable row under the old schema.
+        with self.handle.claim_store._pool.connection() as connection:
+            connection.execute(f"ALTER TABLE {self.schema}.director_primary_workload_assignment "
+                "DROP CONSTRAINT director_primary_workload_assignment_provider_lane_check")
+            connection.execute(f"INSERT INTO {self.schema}.director_primary_workload_assignment "
+                "(task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest) "
+                "VALUES ('historic','historic-1','microsoft-365-copilot',%s,1,'primary-assignment-count-v3',%s)",
+                (DIGEST, DIGEST))
+        self.handle.close()
+        self.handle = open_postgres_control_plane(
+            self.dsn, schema=self.schema, allow_insecure_local_transport=True)
+        with self.handle.claim_store._pool.connection() as connection:
+            row = connection.execute(f"SELECT provider_lane,reservation_digest,policy_digest FROM "
+                f"{self.schema}.director_primary_workload_assignment WHERE task_id='historic'").fetchone()
+            self.assertEqual(tuple(row.values()) if isinstance(row, dict) else tuple(row),
+                             ("microsoft-365-copilot", DIGEST, DIGEST))
+            import psycopg
+            with self.assertRaises(psycopg.errors.CheckViolation), connection.transaction():
+                connection.execute(f"INSERT INTO {self.schema}.director_primary_workload_assignment "
+                    "(task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest) "
+                    "VALUES ('new','new-1','microsoft-365-copilot',%s,1,'primary-assignment-count-v3',%s)",
+                    (DIGEST, DIGEST))
+
     @classmethod
     def setUpClass(cls):
         cls.dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "")
@@ -479,3 +504,4 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
