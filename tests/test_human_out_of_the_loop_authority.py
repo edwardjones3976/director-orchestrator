@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
@@ -287,8 +288,6 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("does not alter what a review must contain", handoff)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]]
@@ -344,11 +343,35 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
         """
 
         body = self._section(name)
-        start = body.index("One `ACCEPT` is not merge authority") if (
-            "One `ACCEPT` is not merge authority" in body
-        ) else 0
-        end = body.find("Rule 3 is untouched")
-        return body[start:end if end > start else len(body)]
+        # End on a marker both files carry, immediately after the identity
+        # paragraph. Ending on an AGENTS.md-only phrase made the WHOLE charter
+        # section operative, so moving the live grant, the two verdicts and
+        # ATTENDED into its closing walk-back still satisfied every assertion.
+        # A walk-back is exactly what does not repair an operative sentence.
+        end = body.find("no-self-merge bar")
+        self.assertGreater(end, 0, f"{name}: no shared end marker")
+        return body[:end]
+
+    def test_the_first_operative_sentence_is_the_disclaimer(self):
+        """Restoring the old sentence as the opening kept all five tests green.
+
+        Asserting the disclaimer appears SOMEWHERE in the operative text let
+        "an eligible reviewer that returns an exact-SHA ACCEPT carries that
+        candidate to a terminal result" go back in front of it, which is the
+        exact sentence a review of #151 showed an agent could merge on. What
+        matters is which sentence is read first.
+        """
+
+        for name in self.FILES:
+            operative = self._operative(name)
+            disclaimer = operative.index("One `ACCEPT` is not merge authority")
+            carries = operative.find("carries that candidate to a terminal result")
+            self.assertEqual(
+                carries, -1,
+                f"{name}: the superseded operative sentence is back",
+            )
+            # Nothing but a lead-in may precede it.
+            self.assertLess(disclaimer, 200, f"{name}: the disclaimer is buried")
 
     def test_one_accept_is_never_stated_as_merge_authority(self):
         for name in self.FILES:
@@ -380,15 +403,39 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
             self.assertIn("no live grant", self._section(name), name)
 
     def test_scope_is_stated_as_non_protected_branches_only(self):
+        """The combined phrase. "only" alone also matches "owner-only".
+
+        Softening the charter to "The obligation reaches non-protected
+        branches." kept this green, because the word "only" survived elsewhere
+        in the paragraph.
+        """
+
         for name in self.FILES:
-            body = self._section(name)
-            self.assertIn("non-protected branches", body, name)
-            self.assertIn("only", body, name)
+            self.assertIn("non-protected branches only", self._section(name), name)
 
     def test_the_tier_one_class_is_not_described_as_already_assigned(self):
-        """Calling it "exactly the act assigned here" read as turning it on."""
+        """Equating the tier-1 entry with this duty reads as turning it on.
+
+        Banning one exact string is not enough: "exactly the act this section
+        assigns" says the same thing and passed. Every paraphrase that equates
+        them is rejected, and the section must state the grant condition
+        instead.
+        """
 
         for name in self.FILES:
             body = self._section(name)
-            self.assertNotIn("exactly the act assigned here", body, name)
+            for equating in (
+                "exactly the act assigned here",
+                "exactly the act this section assigns",
+                "the act assigned here",
+                "the act this section assigns",
+            ):
+                self.assertNotIn(equating, body, f"{name}: {equating}")
+            # And the condition that actually governs it is stated.
+            self.assertIn("only while a live grant names it", body, name)
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]]
+
+
+if __name__ == "__main__":
+    unittest.main()
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -119,8 +120,8 @@ non-protected branch" as a delegable class, and that class is delegable **only
 while a live grant names it**; its presence in the enumeration turns nothing on.
 This section assigns a duty to finish, not that class: it adds no decision
 class, widens no tier, changes no two-verdict requirement, and gives merge
-authority to no lane that does not already hold it. An earlier draft equated the
-tier-1 entry with the act this section assigns, which read as switching that
+authority to no lane that does not already hold it. An earlier draft equated
+that enumeration entry with this section's own duty, which read as switching the
 class on without a grant.
 
 An approver that cannot execute the merge says so on the pull request and names
@@ -210,3 +211,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->

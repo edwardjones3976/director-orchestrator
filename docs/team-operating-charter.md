@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
@@ -676,7 +677,10 @@ bar is unaffected and never lifts.
 
 The obligation reaches non-protected branches **only**. Merging into a protected
 branch stays owner-only for every lane and is never delegable, and no lane gains
-merge authority it does not already hold. An approver that cannot execute the
+merge authority it does not already hold. Tier 1 enumerates the non-protected
+merge as a delegable class, and that class is delegable **only while a live
+grant names it**; appearing in the enumeration turns nothing on. This section
+assigns a duty to finish, not that class. An approver that cannot execute the
 merge states that on the pull request and names the blocker — no live grant or an
 `ATTENDED` deployment, ineligible lane, unbound or absent actor, refusing gate,
 missing second concurring verdict, protected target, or a still-required owner
@@ -857,3 +861,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
