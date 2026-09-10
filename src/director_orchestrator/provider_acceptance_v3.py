@@ -32,9 +32,12 @@ ADOPTION_VERSION = "director-two-party-adoption/v1"
 ADOPTION_DOMAIN = (ADOPTION_VERSION + "\0").encode()
 ROLES = frozenset({"security", "independent_review", "ci"})
 # These modules exist in the image as well as the owner-reviewed source tree.
+# [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | BEGIN]]
 POLICY_MODULES = ("provider_acceptance_v2.py", "provider_acceptance_v3.py",
-    "acceptance_journal.py", "ci_acceptance_issuer.py", "native_acceptance_issuer.py", "primary_activation_evidence.py",
+    "acceptance_journal.py", "ci_acceptance_issuer.py", "native_acceptance_issuer.py", "native_v3_review_issuer.py",
+    "primary_activation_evidence.py",
     "primary_generation.py", "config.py", "primary_default.py", "policy.py")
+# [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | END]]
 
 
 def implementation_digest() -> str:
