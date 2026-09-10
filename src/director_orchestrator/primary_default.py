@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
@@ -1997,13 +1998,16 @@ class DefaultPrimaryApplication:
             self.services.discard(command.task_id)
         return self._record_from_projection(updated)
 
-    def cancel(self, task_id: str) -> TaskRecord:
+    def cancel(self, task_id: str, *, expected_fencing_generation: int | None = None) -> TaskRecord:
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
         self.services.hydrate(projection)
         try:
-            updated = self.coordinator.cancel(task_id)
+            updated = self.coordinator.cancel(task_id, **(
+                {"expected_fencing_generation": expected_fencing_generation}
+                if expected_fencing_generation is not None else {}
+            ))
         finally:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
@@ -2912,3 +2916,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | BEGIN]]
@@ -445,9 +446,16 @@ class PrimaryCommandResponse(BaseModel):
         if not hmac.compare_digest(request.task_id, task_id):
             raise PrimaryCommandBindingError("durable receipt belongs to another task")
         request.validate_replay(str(receipt.command_digest))
-        if request.expected_fencing_generation != int(
-            receipt.writer_fencing_generation
-        ):
+        receipt_generation = int(receipt.writer_fencing_generation)
+        # Only cancellation may atomically acquire an expired writer while
+        # admitting the original signed command. Its immutable command digest
+        # above still binds the old generation and every original proof field.
+        cancellation_takeover = (
+            isinstance(request, CancellationRequest)
+            and operation == PrimaryCommandOperation.CANCELLATION
+            and receipt_generation == request.expected_fencing_generation + 1
+        )
+        if request.expected_fencing_generation != receipt_generation and not cancellation_takeover:
             raise PrimaryCommandBindingError(
                 "command receipt belongs to another writer generation"
             )
@@ -584,3 +592,4 @@ def verify_primary_ingress_proof(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
