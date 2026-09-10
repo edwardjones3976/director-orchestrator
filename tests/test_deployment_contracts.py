@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | BEGIN]]
@@ -9,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -17,6 +20,93 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def _run_status_sequence(self, responses):
+        workflow = json.loads(
+            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+        )
+        code = next(node for node in workflow["nodes"] if node["name"] == "Diff Readiness")
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required to execute the stored n8n status code")
+        result = subprocess.run(
+            [node, "-e", """
+const fs = require('node:fs');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const run = new Function('items', '$getWorkflowStaticData', input.code);
+const store = {};
+const outputs = input.responses.map(json => run([{json}], () => store));
+process.stdout.write(JSON.stringify({outputs, store}));
+"""],
+            input=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
+            text=True, encoding="utf-8", capture_output=True, timeout=10, check=True,
+        )
+        return json.loads(result.stdout)
+
+    def _status_response(self, **providers):
+        return {"statusCode": 200, "body": {
+            "providers": {name: providers.get(name, True) for name in (
+                "slack", "openai_director", "cursor", "claude", "gemini", "grok", "perplexity"
+            )},
+            "parallel_dispatch": {"kill_switch_open": True},
+            "langgraph_primary": {"ambiguous_effect_count": 0},
+        }}
+
+    def test_status_executes_provider_changes_and_suppresses_unchanged_health(self):
+        healthy = self._status_response()
+        down = self._status_response(gemini=False)
+        result = self._run_status_sequence([healthy, healthy, down, down, healthy])
+        initial, quiet, changed, still_down, recovered = result["outputs"]
+        self.assertEqual(len(initial), 1)
+        self.assertEqual(quiet, [])
+        self.assertEqual(still_down, [])
+        self.assertEqual(changed[0]["json"]["changed"], ["provider_gemini_ready"])
+        self.assertIn("true → false", changed[0]["json"]["text"])
+        self.assertIn("false → true", recovered[0]["json"]["text"])
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertEqual(sum(key.startswith("provider_") for key in watched), 7)
+
+    def test_status_executes_transport_http_and_repeated_ambiguity_alarms(self):
+        ambiguous = self._status_response()
+        ambiguous["body"]["langgraph_primary"]["ambiguous_effect_count"] = 1
+        stopped = self._status_response()
+        stopped["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        responses = [{"error": "connection refused"}, {"statusCode": 503},
+                     ambiguous, ambiguous, stopped]
+        result = self._run_status_sequence(responses)
+        for index, output in enumerate(result["outputs"]):
+            with self.subTest(response=index):
+                self.assertEqual(len(output), 1)
+                self.assertIs(output[0]["json"]["alarm"], True)
+        self.assertIn("unreachable", result["outputs"][0][0]["json"]["text"])
+        self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
+        self.assertIn("kill switch engaged", result["outputs"][4][0]["json"]["text"])
+
+    def test_status_only_emits_fixed_boolean_provider_fields(self):
+        response = self._status_response(gemini="sensitive-test-value", grok={"key": "sensitive-test-value"})
+        response["body"]["providers"]["api_key"] = "sensitive-test-value"
+        response["body"]["credentials"] = {"token": "sensitive-test-value"}
+        result = self._run_status_sequence([response])
+        self.assertNotIn("sensitive-test-value", json.dumps(result))
+        self.assertNotIn("api_key", json.dumps(result))
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertIsNone(watched["provider_gemini_ready"])
+        self.assertIsNone(watched["provider_grok_ready"])
+        self.assertIs(watched["provider_openai_director_ready"], True)
+
+    def test_status_connects_schedule_health_diff_and_slack_without_other_routes(self):
+        workflow = json.loads(
+            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+        )
+        names = ["Every 5 minutes", "Read Health", "Diff Readiness", "Post Status"]
+        self.assertEqual({node["name"] for node in workflow["nodes"]}, set(names))
+        self.assertEqual(workflow["connections"], {
+            source: {"main": [[{"node": target, "type": "main", "index": 0}]]}
+            for source, target in zip(names, names[1:])
+        })
+        health = next(node for node in workflow["nodes"] if node["name"] == "Read Health")
+        self.assertEqual(health["parameters"]["url"], "http://orchestrator:8080/health")
+        self.assertEqual(health["onError"], "continueRegularOutput")
+        self.assertTrue(health["parameters"]["options"]["response"]["response"]["fullResponse"])
+
     def test_default_primary_postgres_is_dedicated_healthy_and_default_off(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         environment = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -352,3 +442,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | END]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | END]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]
