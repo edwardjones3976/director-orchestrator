@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
@@ -168,3 +169,9 @@ an acceptance signature or activate the runtime.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
+
+The separately versioned, default-disabled two-party acceptance contract is
+documented in [two-party activation v3](two-party-activation-v3.md). Its explicit
+selection preserves this lifecycle and requires signed owner adoption and
+qualified native evidence; this document grants no adoption or activation.
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]] -->
