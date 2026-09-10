@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -21,7 +22,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "ValidateProviders", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "PrepareOfflineHandoff", "ValidateProviders", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
     [string]$EnvironmentFile,
     [string]$ComposeProject,
@@ -343,6 +344,17 @@ function Stop-And-Prove-AllIntake {
     Assert-AllIntakeStopped
 }
 
+function Assert-OfflineHandoffProfile {
+    if ($script:acceptanceMode -cne "provider-v2") {
+        throw "PrepareOfflineHandoff requires a selected provider-v2 generation."
+    }
+    foreach ($name in @("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "DIRECTOR_PROVIDER_VALIDATION_ENABLED")) {
+        if (-not $script:values.ContainsKey($name) -or [string]$script:values[$name] -cne "false") {
+            throw "PrepareOfflineHandoff requires explicit false in the initial generation-bound profile: $name."
+        }
+    }
+}
+
 function Assert-AllIntakeStopped {
     foreach ($service in @("slackbot", "n8n", "orchestrator")) {
         $running = [string](@(Invoke-Compose ps --status running -q $service) | Select-Object -Last 1)
@@ -468,6 +480,7 @@ $acceptanceMode = "github-v1"
 if ($values.ContainsKey("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE")) {
     $acceptanceMode = [string]$values["LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"]
 }
+if ($Action -eq "PrepareOfflineHandoff") { Assert-OfflineHandoffProfile }
 switch -CaseSensitive ($acceptanceMode) {
     "github-v1" {
         $required += @("LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
@@ -764,6 +777,16 @@ if ($Action -eq "ValidateProviders") {
     return
 }
 
+if ($Action -eq "PrepareOfflineHandoff") {
+    Invoke-Evidence -Command require-staged
+    Stop-And-Prove-AllIntake
+    $legacyInventory = Get-LegacyInventory
+    Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
+    Invoke-Evidence -Command require-ready
+    Assert-AllIntakeStopped
+    Write-Host "Offline handoff inventory prepared; selected-project intake remains stopped. No runtime was started or activated."
+    return
+}
 if ($Action -eq "Activate") {
     Stop-And-Prove-AllIntake
     $legacyInventory = Get-LegacyInventory
@@ -832,3 +855,4 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 # Primary staging and generation controls
@@ -119,11 +120,37 @@ absent. Health explicitly reports `staged_ready` and `evidence_only`, with actua
 runtime, graph, router, dispatch, effects and writer readiness false. It does
 not infer ownership of another service from its own successful startup.
 
-Final immutable legacy inventory is still captured only by Activate after all
-mutating surfaces stop. Activate selects the normal application and retains the
-existing acceptance, provider, ownership and effect gates. Provider-v2 normal
-startup also verifies the selected immutable generation before database setup.
-Rollback selects the normal application after its existing fenced proof.
+`PrepareOfflineHandoff` supplies the inventory prerequisite for a separately
+authorized Stage A run. Before selecting the initial generation, set explicit
+`ALLOW_PAID_RUNS=false`,
+`LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false` and
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` in its protected profile. The action
+rejects missing or enabled values rather than rewriting them. Validation mode
+is part of the resolved Compose digest, so adding it later requires a fresh
+generation. The action requires provider-v2 mode and the same clean candidate,
+image, database and selected-generation verification as the other controls.
+
+After authenticated acceptance and restore pass `require-staged`, the action
+stops and proves the selected project's Slack gateway, n8n and orchestrator
+closed, reads the real legacy database inventory, binds it immutably, calls
+`require-ready`, and proves those services remain stopped. An identical inventory
+can be retried; changed inventory is refused. It changes no switches, starts no
+services, transfers no intake ownership and records no `ACTIVATED` stage. It
+neither calls `Activate` nor relaxes acceptance or restore requirements.
+
+The stop proof covers only the selected Compose project. Before this action or
+Stage A, the operator must separately establish that Default Director (D) and
+any other deployment cannot admit the same intake or mutate the inventoried
+legacy database. Sibling services are not stopped by this action; this is not
+host-wide fencing. Keep that quarantine in force through the handoff.
+
+`Activate` also captures and binds final inventory after stopping intake, then
+selects the normal application with its existing live provider, acceptance,
+ownership and effect gates. Provider-v2 normal startup verifies the selected
+immutable generation and runtime acceptance, including bound inventory, before
+offline provider doubles are selected. `PrepareOfflineHandoff` satisfies that
+inventory prerequisite without being live activation. Rollback selects the
+normal application after its existing fenced proof.
 
 `ValidateProviders` requires the verified staged container and freshly checked
 generation/acceptance/restore evidence. It checks the validation manifest's
@@ -140,3 +167,4 @@ work. Developing these controls did not enroll a host, call any provider, create
 an acceptance signature or activate the runtime.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
