@@ -650,4 +650,4 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]]
-# [[Gemini | Antigravity | 2026-09-10 | 17:04 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-10 | 17:07 UTC | END]]
