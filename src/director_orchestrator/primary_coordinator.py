@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -520,6 +521,7 @@ class PrimaryTaskCoordinator:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        budget_limits=None,
     ) -> ProviderAttemptReservation:
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
@@ -530,6 +532,7 @@ class PrimaryTaskCoordinator:
             budget_evidence_digest=budget_evidence_digest,
             team_admission=team_admission,
             budget_admission=budget_admission,
+            budget_limits=budget_limits,
         )
 
     def record_provider_attempt(
@@ -921,3 +924,4 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

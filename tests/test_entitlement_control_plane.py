@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:09 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
@@ -775,6 +777,133 @@ class EntitlementControlPlanePostgresTests(unittest.TestCase):
             allow_insecure_local_transport=True,
         )
         second.close()
+
+    def _configured_budget_fixture(self):
+        from tests.test_primary_workload import PostgresAdmissionTests
+
+        primary = PostgresAdmissionTests()
+        primary.dsn = TEST_DSN
+        primary.setUp()
+        self.addCleanup(primary.tearDown)
+        dsn_file = _write_secret(TEST_DSN)
+        self.addCleanup(Path(dsn_file).unlink, missing_ok=True)
+        settings = replace(
+            Settings(), entitlement_control_plane_enabled=True,
+            entitlement_postgres_dsn_file=dsn_file,
+            entitlement_postgres_schema=self.schema,
+            entitlement_trusted_verifier_secret_file=VERIFIER_SECRET_FILE,
+            entitlement_route_verifier_secret_file=ROUTE_SECRET_FILE,
+            entitlement_owner_authority_secret_file=OWNER_SECRET_FILE,
+            entitlement_allow_insecure_local_postgres=True,
+            langgraph_primary_postgres_dsn=TEST_DSN,
+            langgraph_primary_allow_insecure_local_postgres=True,
+        )
+        return settings, primary.handle
+
+    def _budget_factory_snapshot(self, primary_handle):
+        with primary_handle.pool.connection() as connection:
+            objects = connection.execute(
+                """SELECT namespace.nspname, object.oid, object.relname AS name, 'relation' AS kind
+                   FROM pg_class AS object JOIN pg_namespace AS namespace
+                     ON namespace.oid = object.relnamespace WHERE namespace.nspname = ANY(%s)
+                   UNION ALL
+                   SELECT namespace.nspname, object.oid, object.proname AS name, 'function' AS kind
+                   FROM pg_proc AS object JOIN pg_namespace AS namespace
+                     ON namespace.oid = object.pronamespace WHERE namespace.nspname = ANY(%s)
+                   ORDER BY nspname, kind, name, oid""",
+                ([self.schema, primary_handle.schema], [self.schema, primary_handle.schema]),
+            ).fetchall()
+            registrations = connection.execute(
+                f"SELECT * FROM {self.schema}.entitlement_project_registration "
+                "ORDER BY project_profile_id, registration_generation"
+            ).fetchall()
+            spending = connection.execute(
+                f"SELECT (SELECT count(*) FROM {primary_handle.schema}.director_primary_provider_budget) AS budgets, "
+                f"(SELECT count(*) FROM {primary_handle.schema}.director_primary_provider_spend) AS reservations, "
+                f"(SELECT count(*) FROM {primary_handle.schema}.director_primary_provider_attempt) AS attempts"
+            ).fetchone()
+        return objects, registrations, spending
+
+    def test_configured_budget_routing_reuses_enrollment_without_creating_authority(self) -> None:
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        from director_orchestrator.antigravity_team_routing import (
+            PrimaryProviderBudgetRouting, configured_provider_budget_routing,
+        )
+
+        settings, handle = self._configured_budget_fixture()
+        before = self._budget_factory_snapshot(handle)
+        routing = configured_provider_budget_routing(settings, handle)
+        self.assertIsInstance(routing, PrimaryProviderBudgetRouting)
+        self.assertIs(routing.pool, handle.pool)
+        self.assertIs(routing.authority.entitlements._pool, handle.pool)
+        self.assertEqual(routing.authority.schema, handle.schema)
+        self.assertEqual(routing.authority.entitlements.schema, self.schema)
+        self.assertEqual(routing.authority.entitlements._storage_identity, self.handle.storage_identity)
+        with self.assertRaisesRegex(TeamAuthorizationError, "one authoritative daily task budget"):
+            routing.admission("openai", {"project": "uppercut", "task_id": "not-funded"})
+        self.assertEqual(self._budget_factory_snapshot(handle), before)
+        self.assertEqual(before[2], {"budgets": 0, "reservations": 0, "attempts": 0})
+
+    def test_configured_budget_routing_missing_manifest_creates_nothing(self) -> None:
+        from director_orchestrator.antigravity_team_routing import configured_provider_budget_routing
+
+        settings, handle = self._configured_budget_fixture()
+        missing_schema = f"entitlement_missing_{uuid.uuid4().hex[:8]}_v1"
+        try:
+            for existing_empty_schema in (False, True):
+                with self.subTest(existing_empty_schema=existing_empty_schema):
+                    with handle.pool.connection() as connection:
+                        if existing_empty_schema:
+                            connection.execute(f"CREATE SCHEMA {missing_schema}")
+                    with self.assertRaisesRegex(EntitlementControlPlaneError, "runtime cannot initialize"):
+                        configured_provider_budget_routing(
+                            replace(settings, entitlement_postgres_schema=missing_schema), handle)
+                    with handle.pool.connection() as connection:
+                        observed = connection.execute(
+                            "SELECT to_regnamespace(%s) IS NOT NULL AS schema_present, "
+                            "to_regclass(%s) IS NOT NULL AS manifest_present, "
+                            "(SELECT count(*) FROM pg_class AS object JOIN pg_namespace AS namespace "
+                            "ON namespace.oid = object.relnamespace WHERE namespace.nspname = %s) AS objects",
+                            (missing_schema, f"{missing_schema}.entitlement_schema_manifest", missing_schema),
+                        ).fetchone()
+                    self.assertEqual(observed, {"schema_present": existing_empty_schema,
+                                                "manifest_present": False, "objects": 0})
+        finally:
+            with handle.pool.connection() as connection:
+                connection.execute(f"DROP SCHEMA IF EXISTS {missing_schema} CASCADE")
+
+    def test_configured_budget_routing_rejects_database_and_role_mismatch(self) -> None:
+        from psycopg.conninfo import make_conninfo
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        from director_orchestrator.antigravity_team_routing import configured_provider_budget_routing
+
+        settings, handle = self._configured_budget_fixture()
+        before = self._budget_factory_snapshot(handle)
+        for field in ("dbname", "user"):
+            with self.subTest(field=field):
+                Path(settings.entitlement_postgres_dsn_file).write_text(
+                    make_conninfo(TEST_DSN, **{field: f"unrelated_{uuid.uuid4().hex[:8]}"}),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(TeamAuthorizationError, "share database and role"):
+                    configured_provider_budget_routing(settings, handle)
+        self.assertEqual(self._budget_factory_snapshot(handle), before)
+
+    def test_configured_budget_routing_refuses_tampered_guard_without_repair(self) -> None:
+        from director_orchestrator.antigravity_team_routing import configured_provider_budget_routing
+
+        settings, handle = self._configured_budget_fixture()
+        with handle.pool.connection() as connection:
+            connection.execute(f"DROP TRIGGER entitlement_install_attestation_immutable "
+                               f"ON {self.schema}.entitlement_install_attestation")
+        with self.assertRaisesRegex(EntitlementControlPlaneError, "trigger contract"):
+            configured_provider_budget_routing(settings, handle)
+        with handle.pool.connection() as connection:
+            guard = connection.execute(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = %s::regclass AND tgname = %s",
+                (f"{self.schema}.entitlement_install_attestation", "entitlement_install_attestation_immutable"),
+            ).fetchone()
+        self.assertIsNone(guard)
 
     def test_foreign_schema_manifest_is_refused(self) -> None:
         with self.handle.pool.connection() as connection:
@@ -2012,3 +2141,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:09 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

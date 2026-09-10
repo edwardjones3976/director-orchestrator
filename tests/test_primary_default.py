@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
@@ -382,9 +383,15 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             repository_snapshot_root=str(Path.cwd()),
         )
         handle = SimpleNamespace(
-            claim_store=SimpleNamespace(), pool=SimpleNamespace(), close=lambda: None
+            claim_store=SimpleNamespace(), pool=SimpleNamespace(), close=lambda: None,
+            schema="test_budget_v1",
         )
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
         dependencies = SimpleNamespace(
+            team_routing=None,
+            budget_routing=PrimaryProviderBudgetRouting(
+                authority=PrimaryProviderBudgetAuthority(object(), primary_schema=handle.schema), pool=handle.pool),
             validate=lambda _required: None,
             adapters={provider: PacketBoundaryAdapter(
                     provider, SimpleNamespace(dispatch=lambda *_args, **_kwargs: {}))
@@ -583,6 +590,35 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 handle=None,  # type: ignore[arg-type]
                 services=None,  # type: ignore[arg-type]
             )
+
+    def test_automatic_live_factory_requires_budget_enrollment_with_team_disabled(self):
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        settings = replace(Settings(), langgraph_primary_antigravity_team_enabled=False,
+            entitlement_control_plane_enabled=False)
+        adapters = {provider: object() for provider in ("openai", "claude", "cursor")}
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, {})), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None):
+            with self.assertRaisesRegex(TeamAuthorizationError, "enrolled daily provider budget"):
+                build_automatic_primary_live_dependencies(settings, None, None)
+
+    def test_automatic_live_factory_keeps_independent_typed_budget_resolver(self):
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
+        settings = replace(Settings(), langgraph_primary_antigravity_team_enabled=False)
+        routing = PrimaryProviderBudgetRouting(
+            authority=PrimaryProviderBudgetAuthority(object(), primary_schema="test_budget_v1"), pool=object())
+        providers = ("openai", "claude", "cursor")
+        adapters = {provider: object() for provider in providers}
+        capabilities = {provider: SimpleNamespace(transport_kind="test") for provider in providers}
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing) as construct:
+            dependencies = build_automatic_primary_live_dependencies(settings, None, None)
+        construct.assert_called_once_with(settings, None)
+        self.assertIs(dependencies.budget_routing, routing)
+        self.assertIsNone(dependencies.team_routing)
 
 
 
@@ -2938,3 +2974,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
