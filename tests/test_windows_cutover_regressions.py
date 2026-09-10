@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
@@ -182,6 +183,11 @@ function docker {
             $command = $arguments[14..($arguments.Count - 1)]
             if ($command[0] -eq '-m' -and $command[1] -eq 'director_orchestrator.primary_activation_evidence' -and
                 $command[2] -cin @('require-staged', 'bind-legacy-inventory', 'require-ready')) {
+                if ($command[3] -cne '--artifact' -or $command[4] -cne '/data/langgraph-primary-activation-evidence.json') {
+                    throw 'unexpected evidence artifact'
+                }
+                # Translate the container path at the fixture transport boundary.
+                $command[4] = Join-Path (Split-Path -Parent $EnvironmentPath) 'activation-evidence.json'
                 Record-Event $command[2]
             } elseif ($command[0] -eq '-c' -and $command.Count -eq 2) {
                 Record-Event 'inventory'
@@ -487,3 +493,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | END]]
