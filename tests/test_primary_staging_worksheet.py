@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]]
 """Drift tests binding ``docs/primary-staging-worksheet.md`` to the code it describes.
@@ -86,11 +87,43 @@ def _flat(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
-def _script_names(block_start: str, block_end: str) -> set[str]:
+def _required_addition_names(block: str) -> set[str]:
+    """Read the script's static required arrays, not names in refusal guards."""
+    pattern = re.compile(r"^[ \t]*\$required\s*\+=\s*@\(([^)]*)\)", re.MULTILINE)
+    arrays = list(pattern.finditer(block))
+    if not arrays or re.search(r"\$required\s*\+?=", pattern.sub("", block)):
+        raise AssertionError("required assignments need explicit static array coverage")
+    names = set()
+    for array in arrays:
+        if re.fullmatch(r'\s*"[A-Z][A-Z0-9_]{2,}"(?:\s*,\s*"[A-Z][A-Z0-9_]{2,}")*\s*', array[1]) is None:
+            raise AssertionError("required array is no longer a literal name list")
+        names.update(NAME_PATTERN.findall(array[1]))
+    return names
+
+
+def _script_names(block_start: str, block_end: str, *, required_additions=False) -> set[str]:
     source = CONTROL_SCRIPT.read_text(encoding="utf-8")
     start = source.index(block_start)
     end = source.index(block_end, start)
-    return set(NAME_PATTERN.findall(source[start:end]))
+    block = source[start:end]
+    return _required_addition_names(block) if required_additions else set(NAME_PATTERN.findall(block))
+
+
+class RequiredNameExtractionTests(unittest.TestCase):
+    def test_guard_names_do_not_hide_or_inflate_actual_required_additions(self):
+        block = '''
+        foreach ($marker in @("GUARD_ONLY_NAME")) { throw "REFUSAL_ONLY_NAME" }
+        $required += @("FIRST_REQUIRED_NAME", "SECOND_REQUIRED_NAME")
+        '''
+        self.assertEqual(_required_addition_names(block), {"FIRST_REQUIRED_NAME", "SECOND_REQUIRED_NAME"})
+        self.assertEqual(_required_addition_names(block + '\n$required += @("NEW_REQUIRED_NAME")'),
+                         {"FIRST_REQUIRED_NAME", "SECOND_REQUIRED_NAME", "NEW_REQUIRED_NAME"})
+
+    def test_dynamic_required_assignments_refuse_instead_of_disappearing(self):
+        for additional in ('$required += $computed', '$required += @($computed)',
+                           '$required = @("REPLACEMENT_NAME")'):
+            with self.subTest(additional=additional), self.assertRaises(AssertionError):
+                _required_addition_names('$required += @("KNOWN_NAME")\n' + additional)
 
 
 class CoreInventoryRuleTests(unittest.TestCase):
@@ -170,7 +203,7 @@ class WorksheetWordingTests(unittest.TestCase):
     def test_inventory_lists_every_name_the_control_script_requires(self):
         inventory = _section(self.text, INVENTORY)
         always = _script_names("$required = @(", "$acceptanceMode =")
-        by_mode = _script_names("switch -CaseSensitive ($acceptanceMode)", "default {")
+        by_mode = _script_names("switch -CaseSensitive ($acceptanceMode)", "default {", required_additions=True)
         distinct = _script_names("foreach ($secret in @(", "))")
         self.assertGreaterEqual(len(always), 20)
         self.assertEqual(len(by_mode), 6)
@@ -312,3 +345,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]]
