@@ -1,3 +1,4 @@
+# [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 """Explicit two-party acceptance; v2 receipts are never converted or reinterpreted.
 
@@ -32,13 +33,10 @@ ADOPTION_VERSION = "director-two-party-adoption/v1"
 ADOPTION_DOMAIN = (ADOPTION_VERSION + "\0").encode()
 ROLES = frozenset({"security", "independent_review", "ci"})
 # These modules exist in the image as well as the owner-reviewed source tree.
-# [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | BEGIN]]
 POLICY_MODULES = ("provider_acceptance_v2.py", "provider_acceptance_v3.py",
     "acceptance_journal.py", "ci_acceptance_issuer.py", "native_acceptance_issuer.py", "native_v3_review_issuer.py",
     "primary_activation_evidence.py",
     "primary_generation.py", "config.py", "primary_default.py", "policy.py")
-# [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | END]]
-
 
 def implementation_digest() -> str:
     """Digest actual installed policy bytes; a commit label is not installation proof."""
@@ -219,3 +217,4 @@ class TwoPartyAcceptanceJournal(AcceptanceJournal):
     def verify_package(raw, *, expected, authorities, now, policy):
         return verify_two_party_acceptance(raw, expected=expected, authorities=authorities, now=now, policy=policy)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | END]]

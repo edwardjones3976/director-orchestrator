@@ -1,98 +1,70 @@
-<!-- [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | BEGIN]] -->
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | BEGIN]] -->
 # Native v3 independent-review issuer (collect-only)
 
-This module publishes one **write-once** `independent_review` receipt for the
-`provider-v3-two-party` verifier. It is an implementation of a collect-only
-producer for actual Grok Bot. It is **not** owner adoption, activation,
-security analysis, CI issuance, or a native product launcher.
+Collect-only producer of one **challenge-bound**, **write-once**
+`independent_review` receipt for `provider-v3-two-party`. It is **not** owner
+adoption, activation, security analysis, CI issuance, provider launch, or a
+native product wire schema.
 
-## What it consumes
+## Enrolled reviewers
 
-All three inputs are required and must already exist under protected custody:
+Product identity is separate from the observed canonical provider family:
 
-1. **Adopted challenge context** — exact `ReviewContext` JSON for the candidate
-   under review (challenge, packet digest, material authors, lifetime).
-2. **Protected native review capture** — opaque capture bytes whose SHA-256 is
-   the observation `capture_digest` and the receipt
-   `transport_evidence_digest`.
-3. **Separately signed native observation** — an
-   `director-native-product-observation/v1` envelope signed by the installed
-   **observation** authority (not by this signer).
+| Enrolled family | Qualified product | Typical use |
+| --- | --- | --- |
+| `openai` | `codex` | Enrolled Codex reviewing Bot-authored work |
+| `grok` | `grok-bot` | Qualified actual Grok Bot independent review |
 
-This producer never creates observation signatures, never invents owner
-adoption, and never starts a provider session.
+Unqualified model aliases (`unknown`, `default`, `grok-bot-default`, …) still
+refuse. Chat ACCEPT or branding alone is not qualification.
 
-## Installed configuration
+## Trust chain (enforced before signing)
 
-Pinned with `--config` / `--config-sha256`. Closed fields:
+1. `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE` must be exactly `provider-v3-two-party`
+   **before** configuration secrets or registry bytes are opened.
+2. Installed config is digest-pinned and must **not** embed a private key.
+   The Ed25519 private key is read only from
+   `<root>/broker/private.key` after canonical containment checks reused from
+   `native_acceptance_issuer`.
+3. Owner-pinned registry (`registry_path` + `registry_sha256`) is loaded and
+   passed through `provider_acceptance_v3.validate_adoption`. The installed
+   signer and observation keys must match the enrolled
+   `independent_review` and `observation_authority` entries; revocations refuse.
+4. Challenge context comes only from
+   `<root>/authorizations/<challenge>.json` (`base` + `context`). It must match
+   the adopted repository, PR, packet digest, and activation identity. Caller
+   path labels are not “adoption.”
 
-| Field | Meaning |
-| --- | --- |
-| `root` | Absolute issuer root; capture and observation paths must stay inside it |
-| `role` | Must be `independent_review` |
-| `provider` | Must be `grok` (canonical lowercase) |
-| `principal` / `deployment` | Installed signer identity |
-| `public_key` / `private_key` | Ed25519 signer key pair (raw, base64) |
-| `observation_public_key` | Ed25519 observation authority public key |
+## Protected capture contract (internal)
 
-Signer and observation keys must differ. The public key must match the private
-key. Configuration bytes are digested; a pin mismatch refuses before any
-signing.
+Capture bytes at `<root>/captures/<challenge>.json` use the **internal**
+document version `director-protected-independent-review-capture/v1`. This is a
+documented protected-custody contract, **not** a claim of real native product
+wire qualification (that remains the separately signed observation).
 
-## Mode gate
+Required fields:
 
-`LANGGRAPH_PRIMARY_ACCEPTANCE_MODE` must be exactly `provider-v3-two-party`.
-Other modes refuse before signing so a v2 deployment cannot accidentally mint a
-v3-domain receipt.
+- `verdict` must be exactly `ACCEPT` (rejected / missing / malformed terminal
+  reviews refuse; opaque `CHANGES_REQUIRED` bytes cannot force ACCEPT)
+- `challenge`, `packet_digest`, `candidate_commit`, `candidate_tree` must equal
+  the authorized context
+- `session_id`, `provider_family`, `product` must match enrollment and the
+  signed observation
 
-## Qualification rules
+## Observation
 
-Before signing, the collector checks:
-
-- Context lifetime includes `now`.
-- Reviewer `provider` is **not** in `material_author_providers`.
-- Observation signature verifies under `OBSERVATION_DOMAIN`.
-- Observation `product` is `grok-bot`, `transport` is
-  `native-product-capture`, `authentication` is `native-account-observed`.
-- `provider_family` equals the installed `grok` provider.
-- `served_model` is not an unqualified alias (`unknown`, `unavailable`,
-  `unverified`, `default`, `auto`, `grok-bot-default`, `grok-default`,
-  `default-model`). Alias-only analytics without a corroborated session/family
-  are refused; the collector never guesses the underlying family.
-- Observation `context` bytes equal the adopted challenge context.
-- Observation `capture_digest` equals the digest of the protected capture file.
-- Observation lifetime is nested inside the challenge lifetime and includes
-  `now`.
+`<root>/observations/<challenge>.json` must verify under `OBSERVATION_DOMAIN`
+with the enrolled observation key. Session, capture digest, context, product,
+and family must match the protected capture and authorization.
 
 ## Publication
 
-Output is write-once (`open(..., "xb")`). A second collect to the same path
-refuses. The published document is:
-
-```json
-{
-  "version": "director-provider-acceptance/v3-two-party",
-  "context": { "...": "exact ReviewContext document" },
-  "receipt": {
-    "role": "independent_review",
-    "provider": "grok",
-    "principal": "...",
-    "deployment": "...",
-    "session_id": "...",
-    "transport_evidence_digest": "<capture sha256>",
-    "verdict": "ACCEPT",
-    "ci_checks": [],
-    "ci_workflow_ref": "",
-    "ci_workflow_commit": "",
-    "native_observation": { "document": {}, "signature": "..." },
-    "signature": "..."
-  }
-}
-```
-
-The receipt signature uses the v3 `DOMAIN` over the canonical
-`{version, context, receipt-without-signature}` payload expected by
-`provider_acceptance_v3.verify_two_party_acceptance`.
+- Durable single-claim in `<root>/broker/claims.sqlite3` (failures remain
+  claimed; no dispatch/retry/reset)
+- Output only at `<root>/public/<challenge>.json` (filename is challenge-derived;
+  alternate paths are not accepted)
+- Receipt signature uses the v3 `DOMAIN` expected by
+  `verify_two_party_acceptance`
 
 ## CLI
 
@@ -100,10 +72,7 @@ The receipt signature uses the v3 `DOMAIN` over the canonical
 python -m director_orchestrator.native_v3_review_issuer collect \
   --config /run/issuer/issuer.json \
   --config-sha256 <64-hex> \
-  --context /run/issuer/context.json \
-  --capture /run/issuer/captures/<id>.bin \
-  --observation /run/issuer/observations/<id>.json \
-  --output /run/issuer/public/<challenge>.json
+  --challenge <64-hex-challenge>
 ```
 
 ## Non-goals
@@ -112,13 +81,24 @@ python -m director_orchestrator.native_v3_review_issuer collect \
 - No manufacturing of observation or owner-adoption signatures
 - No CI or security receipt roles
 - No merge, activation, paid dispatch, or runtime setting changes
-- Chat ACCEPT or branding alone is not qualification
+- No inventing a native Grok Bot wire protocol
+
+## Dependencies reused (not duplicated)
+
+- Path/custody: `canonical_native_path`, `contained_native_path`, `claim`,
+  `write_new`, `context_from` from `native_acceptance_issuer`
+- Adoption: `validate_adoption` from `provider_acceptance_v3`
+- Full Windows SID/ACL `Config.identity` / `verify_boundary` from the v2 native
+  issuer remain the production broker boundary for **dispatching** issuers; this
+  collect-only module does not weaken those guards and does not claim to replace
+  them. Outer `verify_two_party_acceptance` still rejects unregistered attacker
+  keys.
 
 ## Tests
 
-`tests/test_native_v3_review_issuer.py` uses synthetic Ed25519 keys only. It
-proves a successful collect under the v3 signature domain and refuses tampered
-context/capture, wrong observer keys, expired evidence, author-family
-reviewers, unqualified alias-only models, repeated publication, and wrong
-acceptance mode.
-<!-- [[Grok Bot | unreported | 2026-09-10 | 15:45 UTC | END]] -->
+`tests/test_native_v3_review_issuer.py` covers successful collect through the
+complete existing v3 verifier fixtures, plus refusals for rejected/malformed
+terminal capture, mismatched session/context/candidate, unprotected
+custody/invalid adoption, durable claim replay, wrong mode/expiry/observer key,
+author-family reviewers, and unqualified aliases.
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | END]] -->
