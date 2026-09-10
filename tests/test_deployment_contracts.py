@@ -1,3 +1,4 @@
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -7,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -231,11 +233,36 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("upstream_status", failed["parameters"]["responseBody"])
 
         # The ambiguous branch must terminate without a Respond node, so the
-        # webhook answers 200 empty and the gateway records an unconfirmed
+        # webhook answers n8n's standard 200 message -- body text undocumented,
+        # so only the absence of a Respond node is asserted -- and the gateway
+        # records an unconfirmed
         # delivery rather than a fabricated success or failure.
         stop = self._intake_node("Ambiguous Delivery - Stop")
         self.assertEqual(stop["type"], "n8n-nodes-base.noOp")
         self.assertNotIn("Ambiguous Delivery - Stop", workflow["connections"])
+
+    def test_n8n_treats_a_5xx_as_unproven_because_intake_is_reserved_first(self):
+        # A-19'' P1. The relay once classified every 400-599 as a definite
+        # refusal. That is false for 5xx: primary intake is reserved before
+        # later operations can fail (primary_coordinator.reserve path), and
+        # main.py wraps those exceptions as 503 -- so a task can already exist
+        # behind one. Reporting "no task was created" there loses a live task.
+        # This asserts the boundary numerically, not by matching prose.
+        classifier = self._intake_node("Definite Upstream Refusal")
+        condition = json.dumps(classifier["parameters"]["conditions"])
+
+        bounds = [int(n) for n in re.findall(r"statusCode\s*<=\s*(\d{3})", condition)]
+        self.assertEqual(len(bounds), 1, "expected exactly one upper bound")
+        self.assertLess(
+            bounds[0],
+            500,
+            "5xx must not be classified as a definite refusal; a task may exist",
+        )
+        self.assertNotIn("599", condition)
+
+        # And the operator-facing text must not contradict the classifier.
+        notes = json.dumps(self._intake_node("Intake Failed").get("notes", ""))
+        self.assertNotIn("503", notes)
 
     def test_n8n_intake_relays_no_response_body_on_failure(self):
         # Only the upstream status code may cross back through the webhook.
@@ -324,3 +351,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | END]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | END]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | BEGIN]] -->
 # n8n operations
@@ -89,7 +90,7 @@ own caller.
 Slack Gateway Webhook → Create Director Task ─┬─ success → Exactly 202? ─┬─ yes → Accepted                    (202)
                                               │                          └─ no  → Unexpected Upstream Success (502)
                                               └─ error   → Definite refusal? ─┬─ yes → Intake Failed          (502)
-                                                                              └─ no  → Ambiguous - Stop  (no response)
+                                                                              └─ no  → Ambiguous - Stop  (n8n default 200)
 ```
 
 **Inbound.** The Webhook node carries no authentication and no credential; the
@@ -110,31 +111,51 @@ additionally requires HTTP **202** exactly — not 200, not 201. A summarised or
 renamed response body makes the bot post `DIRECTOR — BLOCKED` on an intake that
 actually succeeded.
 
-**Failure.** `Create Director Task` uses `onError: continueErrorOutput`, so a
-non-2xx takes the second output into `Intake Failed`, which responds **502**.
+**Failure.** `Create Director Task` uses `onError: continueErrorOutput`, so an
+error takes the second output. Only a numeric **4xx** reaches `Intake Failed`,
+which responds **502**. A **5xx** or a transport error with no status goes to
+the ambiguity branch for reconciliation instead.
 Only the upstream status code is echoed; no response body, provider output or
 secret-shaped value is relayed back through the webhook.
 
 **Definite refusal and ambiguous delivery are not the same thing, and the whole
 design turns on the difference.**
 
-An upstream **status code** means the orchestrator answered. A 401, 422 or 503 is
-proof that no task was created, so the gateway can be told plainly: the error
-branch responds **502**.
+An upstream **4xx** means the orchestrator refused before reserving intake. A 401
+or 422 is proof that no task was created, so the gateway can be told plainly: the
+error branch responds **502**.
+
+**A 5xx is not proof of anything.** Primary intake is reserved before later
+operations can fail (`primary_coordinator.py`, `primary_default.py`), and
+`main.py` wraps such exceptions as **503** — so a task may already exist behind
+one. 5xx is therefore classified as unproven and takes the same path as a
+missing status code.
 
 **No** status code — a timeout, a dropped socket, a response lost after the task
 was written — means the outcome is genuinely unknown. The task may exist.
 Answering 502 there would assert a failure that may not have happened, and 202
 would assert a success that may not have happened. So that branch deliberately
-reaches **no Respond node at all**, n8n answers 200 with an empty body, and the
+reaches **no Respond node at all**, n8n answers with n8n's standard message with a 200 status, and the
 gateway posts *"Acceptance could not be confirmed. The request state must be
 reconciled before retrying."* — which is exactly right for an unknown delivery.
 
-That 200-empty is documented n8n behaviour: a workflow finishing without
-executing a Respond to Webhook node returns a standard message with a 200 status.
-**The citation explains the mechanism, not the cause.** A 200-empty tells you the
-execution ended without responding; it does not tell you why. For that, read the
-n8n container logs, which carry the upstream status.
+That is documented n8n behaviour: a workflow finishing without executing a
+Respond to Webhook node returns a standard message with a 200 status, while a
+workflow that *errors* before the first Respond node returns 500.
+
+**Do not assert the body shape.** n8n does not document the standard message's
+text, and the gateway rejects any non-202 before it parses a body, so nothing
+depends on it. Historically, probes on 2026-09-09 against the *pre-fix* workflow
+— which used `onError: stopWorkflow` — measured a zero-byte body at 200. That
+observation stands as measured and is not the contract; do not generalise it to
+the corrected design.
+
+**The citation explains the mechanism, not the cause.** Scope it correctly: a
+non-202 does **not** prove the execution ended without responding — `Intake
+Failed` and `Unexpected Upstream Success` are Respond nodes and both answer 502.
+Only n8n's **default 200** indicates the NoOp path, where no Respond node ran.
+Even then the status alone does not identify which upstream condition produced
+it. For that, read the n8n container logs, which carry the upstream status.
 
 **Execution retention stays `none`, and that is a security setting, not a
 diagnostic one.** The webhook item includes `$json.headers`, which carries the
@@ -236,10 +257,11 @@ below can pass.
 `{"detail":"Unauthorized"}`. This creates nothing, so it is the safe first probe.
 
 **3. The relay surfaces that rejection rather than swallowing it.** Post the same
-unauthenticated request to `/webhook/director-intake`. Expect **502** — a
-definite upstream status. A **200 with an empty body** here means the execution
-ended without reaching a `Respond to Webhook` node, which is correct only for an
-ambiguous delivery and wrong for a status the orchestrator actually returned.
+unauthenticated request to `/webhook/director-intake`. A 401 is a numeric 4xx,
+so expect **502**. **Any 200 here is a failure of this check** — it means the
+execution ended without reaching a `Respond to Webhook` node, which is correct
+only for 5xx or a transport error and wrong for a 4xx the orchestrator actually
+returned. Assert the status code, not the body.
 
 **Confirm you are on the Director instance first.** More than one n8n runs on
 this host. Check `environment` in the orchestrator's `/health` before trusting
@@ -259,10 +281,20 @@ gateway will double-book every Slack retry.
 relay to return **502**, driven by a 422 from `/v1/intake`. This is the check
 that catches a workflow that has drifted back into rebuilding the body.
 
-**7. Downstream failure surfaces as 502, never 202.** Point the relay at a
-closed port or an outage fixture and confirm 502 for a definite refusal. **Do not
-stop the real orchestrator to produce this** — it is a shared service and the
-outage is indistinguishable from the ambiguous case you are not testing here.
+**7. Failure surfaces correctly, never 202. Two fixtures, two outcomes.** These
+are different paths and must be exercised separately.
+
+*7a — HTTP error with a status.* Drive a fixture that answers **422** or **401**.
+Expect the relay to respond **502** carrying that `upstream_status`.
+
+*7b — transport error with no status.* Point the relay at a **closed port**. A
+refused connection carries no status code, so it reaches `Ambiguous Delivery -
+Stop` and n8n answers n8n's standard message with a 200 status — **not 502, and not
+necessarily an empty body.** Assert the status only. The gateway rejects the
+non-202 before parsing and posts the reconciliation message. Expecting 502 here
+was wrong and was corrected on 2026-09-10.
+
+**Do not stop the real orchestrator to produce either** — it is a shared service.
 
 **8. End to end through Slack, last.** Post `DIRECTOR …` in the configured
 channel as the owner and confirm the bot replies `<task id> — ACCEPTED`. A
@@ -280,3 +312,4 @@ A status post is coordination evidence, not a gate result, and a 202 from intake
 means the request was accepted for planning — not that any work was done.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->

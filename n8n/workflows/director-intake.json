@@ -81,7 +81,7 @@
           "conditions": [
             {
               "id": "c0000000-0000-4000-9000-000000000002",
-              "leftValue": "={{ typeof $json.error?.statusCode === 'number' && $json.error.statusCode >= 400 && $json.error.statusCode <= 599 }}",
+              "leftValue": "={{ typeof $json.error?.statusCode === 'number' && $json.error.statusCode >= 400 && $json.error.statusCode <= 499 }}",
               "rightValue": true,
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [-80, 160],
-      "notes": "The distinction this whole workflow turns on. An upstream status code means the orchestrator answered and no task was created, so the caller can be told plainly. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
+      "notes": "The distinction this whole workflow turns on. A 4xx means the orchestrator refused before reserving intake, so no task was created and the caller can be told plainly. A 5xx is NOT that: primary intake is reserved before later operations can fail, and main.py wraps those as 503, so a task may already exist behind one. 5xx therefore takes the same unproven path as a missing status code. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
     },
     {
       "parameters": {
@@ -134,7 +134,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [180, 80],
-      "notes": "A definite upstream refusal — 401, 422, 503. Only the status code is echoed; no response body, provider output or secret-shaped value is relayed."
+      "notes": "A definite upstream refusal — 401 or 422 only. 5xx is excluded: a task may exist behind it. Only the status code is echoed; no response body, provider output or secret-shaped value is relayed."
     },
     {
       "parameters": {},
@@ -143,7 +143,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [180, 240],
-      "notes": "Deliberately reaches no Respond node, so the webhook answers 200 with an empty body and the gateway reports 'Acceptance could not be confirmed. The request state must be reconciled before retrying.' That is the correct outcome for an unknown delivery: the task may exist. This preserves the stop-on-ambiguous-delivery invariant that test_deployment_contracts.py protects. Silence here is a refusal to claim, not a missing branch."
+      "notes": "Deliberately reaches no Respond node, so n8n answers its standard message with a 200 status (the body text is undocumented and must not be asserted) and the gateway reports 'Acceptance could not be confirmed. The request state must be reconciled before retrying.' That is the correct outcome for an unknown delivery: the task may exist. This preserves the stop-on-ambiguous-delivery invariant that test_deployment_contracts.py protects. Silence here is a refusal to claim, not a missing branch."
     }
   ],
   "connections": {
