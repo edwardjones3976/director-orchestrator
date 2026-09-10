@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-10 | 17:07 UTC | BEGIN]]
 # [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]]
 """Functional and refusal tests for the collect-only v3 independent-review issuer."""
 from __future__ import annotations
@@ -48,7 +49,7 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.now = int(time.time())
         # Process-local mode must be active before Config.load.
         self.env = patch.dict(os.environ, {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": v3.MODE})
@@ -598,7 +599,55 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         with self.assertRaisesRegex(IssuerError, "material author"):
             self.collect()
 
+    def test_audit_directories_and_sidecars(self):
+        (self.root / "code").mkdir(exist_ok=True)
+        self._write_config(runtime_roots=[str(self.root / "code")])
+        self._write_observation()
+
+        for weak_path, kind in [
+            (self.root / "captures", "protected"),
+            (self.root / "observations", "protected"),
+            (self.root / "broker" / "claims.sqlite3", "private"),
+            (self.root / "broker" / "claims.sqlite3-wal", "private"),
+            (self.root / "broker" / "claims.sqlite3-shm", "private"),
+            (self.root / "broker" / "claims.sqlite3-journal", "private"),
+        ]:
+            with self.subTest(weak_path=weak_path.name):
+                if weak_path.name.startswith("claims.sqlite3"):
+                    weak_path.write_bytes(b"")
+
+                def mock_boundary(root, broker_sid, worker_sid, worker, consumed, runtime_roots, full):
+                    if full:
+                        for c in consumed:
+                            if c["path"] == str(weak_path):
+                                if c["kind"] != kind:
+                                    raise IssuerError(f"wrong kind for {weak_path.name}")
+                                raise IssuerError(f"rejected {weak_path.name}")
+
+                with patch("director_orchestrator.native_v3_review_issuer.verify_boundary", side_effect=mock_boundary):
+                    with self.assertRaisesRegex(IssuerError, f"rejected {weak_path.name}"):
+                        self.collect()
+
+                if weak_path.name.startswith("claims.sqlite3"):
+                    weak_path.unlink()
+
+    def test_positive_first_use_absent_sidecar_and_required_present_path(self):
+        (self.root / "code").mkdir(exist_ok=True)
+        self._write_config(runtime_roots=[str(self.root / "code")])
+        self._write_observation()
+
+        def mock_boundary(root, broker_sid, worker_sid, worker, consumed, runtime_roots, full):
+            if full:
+                paths = {c["path"] for c in consumed}
+                assert str(self.root / "captures") in paths
+                assert str(self.root / "observations") in paths
+                assert str(self.root / "broker") in paths
+                assert str(self.root / "broker" / "claims.sqlite3-wal") not in paths
+
+        with patch("director_orchestrator.native_v3_review_issuer.verify_boundary", side_effect=mock_boundary):
+            self.collect()
 
 if __name__ == "__main__":
     unittest.main()
 # [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]]
+# [[Gemini | Antigravity | 2026-09-10 | 17:04 UTC | END]]

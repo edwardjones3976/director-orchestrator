@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-10 | 17:07 UTC | BEGIN]]
 # [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]]
 """Collect-only v3 independent-review receipt producer.
 
@@ -486,6 +487,8 @@ def collect(cfg: Config, *, challenge: str, now: int | None = None) -> dict:
         observation_path = contained_native_path(
             str(cfg.root / "observations" / f"{challenge}.json"), [str(cfg.root)]
         )
+        captures_dir = contained_native_path(str(cfg.root / "captures"), [str(cfg.root)])
+        observations_dir = contained_native_path(str(cfg.root / "observations"), [str(cfg.root)])
         public_dir = contained_native_path(str(cfg.root / "public"), [str(cfg.root)])
         broker_dir = contained_native_path(str(cfg.root / "broker"), [str(cfg.root)])
     except NativeIssuerError as exc:
@@ -494,17 +497,32 @@ def collect(cfg: Config, *, challenge: str, now: int | None = None) -> dict:
     claims_path = broker_dir / "claims.sqlite3"
     key_path = broker_dir / "private.key"
 
+    consumed = [
+        {"path": str(cfg.config_path), "kind": "protected"},
+        {"path": str(cfg.registry_path), "kind": "protected"},
+        {"path": str(auth_path), "kind": "protected"},
+        {"path": str(captures_dir), "kind": "protected"},
+        {"path": str(capture_path), "kind": "protected"},
+        {"path": str(observations_dir), "kind": "protected"},
+        {"path": str(observation_path), "kind": "protected"},
+        {"path": str(public_dir), "kind": "public"},
+        {"path": str(broker_dir), "kind": "private"},
+        {"path": str(key_path), "kind": "private"},
+    ]
+
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        db_file = broker_dir / f"claims.sqlite3{suffix}"
+        try:
+            db_file.lstat()
+            consumed.append({"path": str(db_file), "kind": "private"})
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise IssuerError(f"failed to stat database sidecar: {exc}") from exc
+
     # Boundary over every consumed path and the public destination before secrets.
     cfg.identity(
-        consumed=[
-            {"path": str(cfg.config_path), "kind": "protected"},
-            {"path": str(cfg.registry_path), "kind": "protected"},
-            {"path": str(auth_path), "kind": "protected"},
-            {"path": str(capture_path), "kind": "protected"},
-            {"path": str(observation_path), "kind": "protected"},
-            {"path": str(public_dir), "kind": "public"},
-            {"path": str(key_path), "kind": "private"},
-        ],
+        consumed=consumed,
         full=True,
     )
 
@@ -576,3 +594,4 @@ def main(argv: list[str] | None = None) -> None:
 if __name__ == "__main__":
     main()
 # [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-10 | 17:07 UTC | END]]
