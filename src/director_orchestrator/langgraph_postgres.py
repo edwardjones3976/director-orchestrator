@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
@@ -2465,6 +2466,18 @@ class PostgresConditionalClaimStore:
                             AND lease_expires_at <= clock_timestamp()
                         RETURNING *""", parameters,
                         missing="cancellation writer acquisition lost its exact fence")
+                else:
+                    # Fresh authority needs a full lease before cancellation's
+                    # next transaction; a live same-owner renewal keeps its fence.
+                    writer = self._one_row(connection, f"""
+                        UPDATE {schema}.director_primary_task_writer
+                        SET lease_expires_at=clock_timestamp()+make_interval(secs => %(lease)s),
+                            updated_at=clock_timestamp()
+                        WHERE task_id=%(task_id)s AND fencing_generation=%(expected)s
+                            AND owner_token=%(owner_token)s
+                            AND lease_expires_at > clock_timestamp()
+                        RETURNING *""", parameters,
+                        missing="cancellation writer renewal lost its exact live fence")
                 parameters["generation"] = writer["fencing_generation"]
                 claimed = self._optional_row(connection, f"""
                     INSERT INTO {schema}.director_primary_command_authorization (
@@ -5141,3 +5154,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]

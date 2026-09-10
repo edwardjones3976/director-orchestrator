@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 """Owner-authenticated cancellation against the disposable PostgreSQL lane."""
 from __future__ import annotations
@@ -160,6 +161,40 @@ class AuthenticatedCancellationTests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         self.assertEqual(request.expected_fencing_generation, response.json()["fencing_generation"])
         self.assertEqual("CANCELLED", response.json()["terminal_classification"])
+        self.provider.assert_not_called()
+        self.effect.assert_not_called()
+
+    def test_live_expiring_writer_is_renewed_before_cancellation_and_replay(self):
+        request = self.signed()
+        with self.handle.pool.connection() as connection:
+            original_expiry = connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_writer "
+                "SET lease_expires_at=clock_timestamp()+interval '2 seconds' "
+                "WHERE task_id=%s RETURNING lease_expires_at", (self.task,)
+            ).fetchone()["lease_expires_at"]
+        admitted_writers = []
+        cancel = self.application.cancel
+
+        def cancel_after_original_expiry(*args, **kwargs):
+            admitted = self.snapshot()
+            admitted_writers.append(admitted[0])
+            self.coordinator.authorize_cancellation(**self.admission(request))
+            self.assertEqual(admitted, self.snapshot())
+            # This delay reproduces the admission-to-cancel lease race.
+            time.sleep(max(0, original_expiry.timestamp() - time.time()) + 0.1)
+            return cancel(*args, **kwargs)
+
+        with patch.object(self.application, "cancel", side_effect=cancel_after_original_expiry):
+            response = self.send(request)
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual("CANCELLED", response.json()["terminal_classification"])
+        self.assertEqual(request.expected_fencing_generation, response.json()["fencing_generation"])
+        self.assertGreater(admitted_writers[0]["lease_expires_at"], original_expiry)
+        after = self.snapshot()
+        self.assertEqual(1, len(after[1]))
+        self.assertTrue(after[2]["kill_switch"])
+        self.assertEqual(200, self.send(request).status_code)
+        self.assertEqual(after, self.snapshot())
         self.provider.assert_not_called()
         self.effect.assert_not_called()
 
@@ -391,3 +426,4 @@ class AuthenticatedCancellationTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
