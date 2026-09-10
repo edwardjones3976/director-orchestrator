@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | BEGIN]]
@@ -336,6 +337,7 @@ class Settings:
     )
     # Optional immutable canary authority. Both values are required together;
     # ordinary deployments retain origin-tracking branch verification.
+    # Explicit provider-v3-two-party selection also requires signed owner adoption; default unchanged.
     langgraph_primary_acceptance_mode: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1"))
     langgraph_primary_acceptance_registry_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", ""))
     langgraph_primary_acceptance_registry_sha256: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", ""))
@@ -2219,3 +2221,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
