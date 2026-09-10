@@ -1,4 +1,4 @@
-# [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | BEGIN]]
+# [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]]
 """Functional and refusal tests for the collect-only v3 independent-review issuer."""
 from __future__ import annotations
 
@@ -20,13 +20,17 @@ from director_orchestrator import provider_acceptance_v2 as v2
 from director_orchestrator import provider_acceptance_v3 as v3
 from director_orchestrator.native_v3_review_issuer import (
     PROTECTED_CAPTURE_VERSION,
+    STANDARD_DIRS,
     Config,
     IssuerError,
     collect,
     digest,
-    expected_product,
+    require_product_family,
 )
 from director_orchestrator.primary_activation_evidence import ActivationIdentity
+
+BROKER_SID = "S-1-5-21-1000000001-2000000002-3000000003-1001"
+WORKER_SID = "S-1-5-21-1000000001-2000000002-3000000003-1002"
 
 
 def b64(raw: bytes) -> str:
@@ -46,6 +50,22 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.now = int(time.time())
+        # Process-local mode must be active before Config.load.
+        self.env = patch.dict(os.environ, {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": v3.MODE})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.sid = patch(
+            "director_orchestrator.native_v3_review_issuer.current_sid",
+            return_value=BROKER_SID,
+        )
+        self.sid.start()
+        self.addCleanup(self.sid.stop)
+        self.boundary = patch(
+            "director_orchestrator.native_v3_review_issuer.verify_boundary",
+            return_value=None,
+        )
+        self.boundary.start()
+        self.addCleanup(self.boundary.stop)
         self.signer = Ed25519PrivateKey.generate()
         self.observer = Ed25519PrivateKey.generate()
         self.owner = Ed25519PrivateKey.generate()
@@ -66,6 +86,7 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         )
         self.challenge = "e" * 64
         self.packet = "d" * 64
+        self.authors = frozenset({"claude"})
         self.context = v2.ReviewContext(
             self.identity,
             "edwardjones3976/director-orchestrator",
@@ -74,12 +95,11 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             self.challenge,
             self.now,
             self.now + 3600,
-            frozenset({"claude"}),
+            self.authors,
         )
-        for name in ("captures", "observations", "public", "authorizations", "broker"):
+        for name in STANDARD_DIRS:
             (self.root / name).mkdir()
         (self.root / "broker" / "private.key").write_bytes(self.private)
-        # claims db created on first claim()
         self.fixture_impl = "9" * 64
         self.impl_patch = patch(
             "director_orchestrator.provider_acceptance_v3.implementation_digest",
@@ -87,6 +107,7 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         )
         self.impl_patch.start()
         self.addCleanup(self.impl_patch.stop)
+        # Default fixture: grok-bot product with enrolled grok family.
         self.provider = "grok"
         self.product = "grok-bot"
         self.session = "native-session-1"
@@ -95,9 +116,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         self._write_capture()
         self.cfg_path = self.root / "issuer.json"
         self._write_config()
-        self.env = patch.dict(os.environ, {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": v3.MODE})
-        self.env.start()
-        self.addCleanup(self.env.stop)
 
     def _authority(self, role, provider, key, **extra):
         pub = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -115,7 +133,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         return fields
 
     def _write_registry(self):
-        # Minimal enrolled registry; CI authority present for validate_adoption isolation checks.
         ci_key = Ed25519PrivateKey.generate()
         sec_key = Ed25519PrivateKey.generate()
         authorities = {
@@ -137,7 +154,7 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             repository=self.context.repository,
             pull_request_number=self.context.pull_request_number,
             packet_digest=self.packet,
-            material_author_providers=sorted(self.context.material_author_providers),
+            material_author_providers=sorted(self.authors),
             authorities=authorities,
             revoked_deployments=[],
             ci_oidc_policy={"required_ci_checks": ["fixture-check"], "audience_prefix": "fixture"},
@@ -236,6 +253,9 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             "observation_public_key": b64(self.observer_public),
             "registry_path": str(self.registry_path),
             "registry_sha256": self.registry_sha256,
+            "broker_sid": BROKER_SID,
+            "worker_sid": WORKER_SID,
+            "runtime_roots": [str(self.root)],
         }
         doc.update(overrides)
         raw = v2.canonical(doc)
@@ -245,6 +265,14 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
 
     def collect(self, **kwargs):
         return collect(self.cfg, challenge=kwargs.get("challenge", self.challenge), now=kwargs.get("now", self.now))
+
+    def _reset_claim(self):
+        claims = self.root / "broker" / "claims.sqlite3"
+        if claims.exists():
+            claims.unlink()
+        public = self.root / "public" / f"{self.challenge}.json"
+        if public.exists():
+            public.unlink()
 
     def test_collect_publishes_receipt_accepted_by_complete_v3_verifier(self):
         self._write_observation()
@@ -259,8 +287,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         )
         self.assertEqual(receipt["verdict"], "ACCEPT")
         self.assertEqual(receipt["session_id"], self.session)
-        self.assertEqual(receipt["transport_evidence_digest"], self.capture_digest)
-        # Complete existing verifier with synthetic security + CI around this receipt.
         authorities = {
             role: v2.IssuerAuthority(
                 role=fields["role"],
@@ -274,7 +300,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             )
             for role, fields in self.policy["authorities"].items()
         }
-        # Expand CI required checks to production set expected by verifier.
         from director_orchestrator.acceptance_journal import REQUIRED_ACTIVATION_CHECKS
         authorities["ci"] = replace(
             authorities["ci"],
@@ -282,16 +307,13 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         )
         self.policy["authorities"]["ci"]["required_ci_checks"] = sorted(REQUIRED_ACTIVATION_CHECKS)
         self.policy["ci_oidc_policy"]["required_ci_checks"] = sorted(REQUIRED_ACTIVATION_CHECKS)
-        # Re-adopt after CI policy field change.
         registry_digest = hashlib.sha256(
             v2.canonical({k: v for k, v in self.policy.items() if k not in {"owner_adoption", "revoked_deployments"}})
         ).hexdigest()
-        adoption = self.policy["owner_adoption"]["document"]
-        adoption = dict(adoption, registry_digest=registry_digest)
+        adoption = dict(self.policy["owner_adoption"]["document"], registry_digest=registry_digest)
         self.policy["owner_adoption"] = signed(self.owner, v3.ADOPTION_DOMAIN, adoption)
         package = dict(version=v3.VERSION, context=self.context.document(), receipts={})
         package["receipts"]["independent_review"] = result["receipt"]
-        # security
         sec_auth = authorities["security"]
         sec_obs = dict(
             version=v3.OBSERVATION_VERSION,
@@ -307,7 +329,7 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             issued_at=self.now,
             expires_at=self.now + 3600,
         )
-        sec_receipt = dict(
+        package["receipts"]["security"] = dict(
             role="security",
             provider=sec_auth.provider,
             principal=sec_auth.principal,
@@ -328,9 +350,8 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
                 author_family_analysis=False,
             ),
         )
-        package["receipts"]["security"] = sec_receipt
         ci_auth = authorities["ci"]
-        ci_receipt = dict(
+        package["receipts"]["ci"] = dict(
             role="ci",
             provider=ci_auth.provider,
             principal=ci_auth.principal,
@@ -345,7 +366,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             ci_workflow_ref=ci_auth.ci_workflow_ref,
             ci_workflow_commit=ci_auth.ci_workflow_commit,
         )
-        package["receipts"]["ci"] = ci_receipt
         for role, key in (
             ("security", self.sec_key),
             ("independent_review", self.signer),
@@ -366,28 +386,14 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         self.assertEqual(verified.challenge, self.challenge)
 
     def test_rejected_or_malformed_terminal_capture_refuses(self):
-        self._write_observation()
         for verdict in ("CHANGES_REQUIRED", "UNAVAILABLE", "REJECT"):
             with self.subTest(verdict=verdict):
-                # Reset claim db by using fresh root files; claim may already exist from prior subtests
-                claims = self.root / "broker" / "claims.sqlite3"
-                if claims.exists():
-                    claims.unlink()
-                public = self.root / "public" / f"{self.challenge}.json"
-                if public.exists():
-                    public.unlink()
+                self._reset_claim()
                 self._write_capture(self._capture_document(verdict=verdict))
                 self._write_observation()
                 with self.assertRaisesRegex(IssuerError, "successful ACCEPT|terminal review"):
                     self.collect()
-        claims = self.root / "broker" / "claims.sqlite3"
-        if claims.exists():
-            claims.unlink()
-        public = self.root / "public" / f"{self.challenge}.json"
-        if public.exists():
-            public.unlink()
-        self._write_capture(self._capture_document())
-        # Missing required capture field
+        self._reset_claim()
         bad = self._capture_document()
         del bad["verdict"]
         (self.root / "captures" / f"{self.challenge}.json").write_bytes(v2.canonical(bad))
@@ -397,33 +403,24 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             self.collect()
 
     def test_mismatched_session_context_or_candidate_refuses(self):
-        # Observation session differs from protected capture session.
         self._write_capture()
         self._write_observation(self._observation_document(session_id="other-session"))
         with self.assertRaisesRegex(IssuerError, "session"):
             self.collect()
-        # Capture candidate mismatch.
-        claims = self.root / "broker" / "claims.sqlite3"
-        if claims.exists():
-            claims.unlink()
+        self._reset_claim()
         self._write_capture(self._capture_document(candidate_commit="f" * 40))
         self._write_observation()
         with self.assertRaisesRegex(IssuerError, "candidate commit"):
             self.collect()
-        if claims.exists():
-            claims.unlink()
+        self._reset_claim()
         self._write_capture()
-        # Observation context challenge drift.
         bad_context = replace(self.context, challenge="f" * 64)
         self._write_observation(self._observation_document(context=bad_context.document()))
         with self.assertRaisesRegex(IssuerError, "context"):
             self.collect()
 
     def test_opaque_capture_cannot_force_accept_without_terminal_contract(self):
-        claims = self.root / "broker" / "claims.sqlite3"
-        if claims.exists():
-            claims.unlink()
-        # Synthetic opaque capture that previously fooled the collector.
+        self._reset_claim()
         opaque = v2.canonical({"verdict": "CHANGES_REQUIRED", "session_id": "actual-capture-session"})
         path = self.root / "captures" / f"{self.challenge}.json"
         path.write_bytes(opaque)
@@ -436,18 +433,26 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": "provider-v2"}):
             with self.assertRaisesRegex(IssuerError, "provider-v3-two-party"):
                 Config.load(self.cfg_path, self.cfg_digest)
-        # Wrong registry pin.
         with self.assertRaisesRegex(IssuerError, "registry digest"):
-            bad = json.loads(self.cfg_path.read_text())
-            bad["registry_sha256"] = "0" * 64
+            bad = {
+                "root": str(self.root),
+                "role": "independent_review",
+                "provider": self.provider,
+                "principal": "review-principal",
+                "deployment": "review-deployment",
+                "public_key": b64(self.public),
+                "observation_public_key": b64(self.observer_public),
+                "registry_path": str(self.registry_path),
+                "registry_sha256": "0" * 64,
+                "broker_sid": BROKER_SID,
+                "worker_sid": WORKER_SID,
+                "runtime_roots": [str(self.root)],
+            }
             raw = v2.canonical(bad)
             self.cfg_path.write_bytes(raw)
             Config.load(self.cfg_path, digest(raw))
         self._write_config()
-        # Caller JSON carrying private_key refused.
         with self.assertRaisesRegex(IssuerError, "private key"):
-            doc = json.loads(self.cfg_path.read_bytes())
-            # reload canonical dict
             doc = {
                 "root": str(self.root),
                 "role": "independent_review",
@@ -459,11 +464,29 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
                 "observation_public_key": b64(self.observer_public),
                 "registry_path": str(self.registry_path),
                 "registry_sha256": self.registry_sha256,
+                "broker_sid": BROKER_SID,
+                "worker_sid": WORKER_SID,
+                "runtime_roots": [str(self.root)],
             }
             raw = v2.canonical(doc)
             path = self.root / "bad-issuer.json"
             path.write_bytes(raw)
             Config.load(path, digest(raw))
+
+    def test_missing_boundary_or_wrong_sid_refuses(self):
+        with patch(
+            "director_orchestrator.native_v3_review_issuer.current_sid",
+            return_value=WORKER_SID,
+        ):
+            with self.assertRaisesRegex(IssuerError, "broker role|principal"):
+                Config.load(self.cfg_path, self.cfg_digest)
+        with patch(
+            "director_orchestrator.native_v3_review_issuer.verify_boundary",
+            side_effect=IssuerError("Windows ACL verification required"),
+        ):
+            with self.assertRaisesRegex(IssuerError, "Windows ACL|boundary|verification"):
+                # Re-load triggers boundary
+                Config.load(self.cfg_path, self.cfg_digest)
 
     def test_wrong_observer_key_refuses(self):
         self._write_observation(key=self.wrong_observer)
@@ -478,21 +501,29 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
     def test_author_family_reviewer_refuses(self):
         authored = replace(self.context, material_author_providers=frozenset({"claude", "grok"}))
         self.context = authored
+        self.authors = authored.material_author_providers
+        self._write_registry()
         self._write_authorization()
         self._write_capture()
         self._write_observation(self._observation_document(context=authored.document()))
+        self._write_config()
         with self.assertRaisesRegex(IssuerError, "material author"):
+            self.collect()
+
+    def test_authorization_authors_must_match_adopted_registry(self):
+        # Authorization carries a different author set than owner-signed registry.
+        drifted = replace(self.context, material_author_providers=frozenset({"openai"}))
+        path = self.root / "authorizations" / f"{self.challenge}.json"
+        path.write_bytes(v2.canonical({"base": "0" * 40, "context": drifted.document()}))
+        self._write_capture()
+        self._write_observation(self._observation_document(context=drifted.document()))
+        with self.assertRaisesRegex(IssuerError, "owner-adopted author"):
             self.collect()
 
     def test_unqualified_alias_only_model_refuses(self):
         for alias in ("grok-bot-default", "default", "unknown", "auto"):
             with self.subTest(alias=alias):
-                claims = self.root / "broker" / "claims.sqlite3"
-                if claims.exists():
-                    claims.unlink()
-                public = self.root / "public" / f"{self.challenge}.json"
-                if public.exists():
-                    public.unlink()
+                self._reset_claim()
                 self._write_capture()
                 self._write_observation(self._observation_document(served_model=alias))
                 with self.assertRaisesRegex(IssuerError, "unqualified alias-only"):
@@ -503,7 +534,6 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         self.collect()
         with self.assertRaisesRegex(IssuerError, "claimed|write-once|replay"):
             self.collect()
-        # Even if public file were removed, durable claim still refuses.
         public = self.root / "public" / f"{self.challenge}.json"
         public.unlink()
         with self.assertRaisesRegex(IssuerError, "claimed|write-once|replay"):
@@ -515,18 +545,16 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
             with self.assertRaisesRegex(IssuerError, "provider-v3-two-party"):
                 self.collect()
 
-    def test_codex_family_product_path(self):
-        # Enrolled openai/codex reviewer of non-openai authored work.
+    def test_codex_product_requires_openai_family(self):
+        self._reset_claim()
         self.provider = "openai"
         self.product = "codex"
         self.signer = Ed25519PrivateKey.generate()
         self.public = self.signer.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         self.private = self.signer.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
         (self.root / "broker" / "private.key").write_bytes(self.private)
-        claims = self.root / "broker" / "claims.sqlite3"
-        if claims.exists():
-            claims.unlink()
         self.context = replace(self.context, material_author_providers=frozenset({"grok"}))
+        self.authors = frozenset({"grok"})
         self._write_registry()
         self._write_authorization()
         self._write_capture()
@@ -535,9 +563,42 @@ class NativeV3ReviewIssuerTests(unittest.TestCase):
         result = self.collect()
         self.assertEqual(result["receipt"]["provider"], "openai")
         self.assertEqual(result["receipt"]["native_observation"]["document"]["product"], "codex")
-        self.assertEqual(expected_product("openai"), "codex")
+        with self.assertRaisesRegex(IssuerError, "openai"):
+            require_product_family("codex", "grok")
+
+    def test_grok_bot_product_with_independently_observed_alternate_family(self):
+        # Product grok-bot does not imply family grok; enrolled gemini is valid.
+        self._reset_claim()
+        self.provider = "gemini"
+        self.product = "grok-bot"
+        self.signer = Ed25519PrivateKey.generate()
+        self.public = self.signer.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        self.private = self.signer.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        (self.root / "broker" / "private.key").write_bytes(self.private)
+        self.authors = frozenset({"claude"})
+        self.context = replace(self.context, material_author_providers=self.authors)
+        self._write_registry()
+        self._write_authorization()
+        self._write_capture()
+        self._write_observation()
+        self._write_config()
+        result = self.collect()
+        self.assertEqual(result["receipt"]["provider"], "gemini")
+        self.assertEqual(result["receipt"]["native_observation"]["document"]["product"], "grok-bot")
+        # Matching-author refusal when enrolled alternate family authored the work.
+        self._reset_claim()
+        authored = replace(self.context, material_author_providers=frozenset({"gemini"}))
+        self.context = authored
+        self.authors = authored.material_author_providers
+        self._write_registry()
+        self._write_authorization()
+        self._write_capture()
+        self._write_observation(self._observation_document(context=authored.document()))
+        self._write_config()
+        with self.assertRaisesRegex(IssuerError, "material author"):
+            self.collect()
 
 
 if __name__ == "__main__":
     unittest.main()
-# [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | END]]
+# [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]]

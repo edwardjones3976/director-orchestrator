@@ -1,70 +1,42 @@
-<!-- [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | BEGIN]] -->
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]] -->
 # Native v3 independent-review issuer (collect-only)
 
 Collect-only producer of one **challenge-bound**, **write-once**
-`independent_review` receipt for `provider-v3-two-party`. It is **not** owner
-adoption, activation, security analysis, CI issuance, provider launch, or a
-native product wire schema.
+`independent_review` receipt for `provider-v3-two-party`.
 
-## Enrolled reviewers
+## Custody (enforced)
 
-Product identity is separate from the observed canonical provider family:
+Before any private-key read or signature:
 
-| Enrolled family | Qualified product | Typical use |
-| --- | --- | --- |
-| `openai` | `codex` | Enrolled Codex reviewing Bot-authored work |
-| `grok` | `grok-bot` | Qualified actual Grok Bot independent review |
+1. Mode must be `provider-v3-two-party`.
+2. Config is the fixed `<root>/issuer.json` digest pin (no embedded private key).
+3. Distinct `broker_sid` / `worker_sid` and non-empty `runtime_roots`.
+4. `current_sid()` must equal `broker_sid`.
+5. `verify_boundary(...)` from `native_acceptance_issuer` must succeed over root,
+   code, config, runtime roots, broker private key, claims, and each consumed
+   registry/authorization/capture/observation plus the public destination.
+6. Non-Windows hosts and missing ACL evidence **fail closed**.
 
-Unqualified model aliases (`unknown`, `default`, `grok-bot-default`, …) still
-refuse. Chat ACCEPT or branding alone is not qualification.
+Private key bytes are read only from `<root>/broker/private.key` after those checks.
 
-## Trust chain (enforced before signing)
+## Product vs family
 
-1. `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE` must be exactly `provider-v3-two-party`
-   **before** configuration secrets or registry bytes are opened.
-2. Installed config is digest-pinned and must **not** embed a private key.
-   The Ed25519 private key is read only from
-   `<root>/broker/private.key` after canonical containment checks reused from
-   `native_acceptance_issuer`.
-3. Owner-pinned registry (`registry_path` + `registry_sha256`) is loaded and
-   passed through `provider_acceptance_v3.validate_adoption`. The installed
-   signer and observation keys must match the enrolled
-   `independent_review` and `observation_authority` entries; revocations refuse.
-4. Challenge context comes only from
-   `<root>/authorizations/<challenge>.json` (`base` + `context`). It must match
-   the adopted repository, PR, packet digest, and activation identity. Caller
-   path labels are not “adoption.”
+| Product | Family rule |
+| --- | --- |
+| `codex` | Must be enrolled `openai` |
+| `grok-bot` | Independently observed enrolled family (not inferred from Bot branding) |
 
-## Protected capture contract (internal)
+## Authorization
 
-Capture bytes at `<root>/captures/<challenge>.json` use the **internal**
-document version `director-protected-independent-review-capture/v1`. This is a
-documented protected-custody contract, **not** a claim of real native product
-wire qualification (that remains the separately signed observation).
+`<root>/authorizations/<challenge>.json` must match the owner-adopted repository,
+PR, packet, activation, and **exact** `material_author_providers` set.
 
-Required fields:
+## Capture / observation / publication
 
-- `verdict` must be exactly `ACCEPT` (rejected / missing / malformed terminal
-  reviews refuse; opaque `CHANGES_REQUIRED` bytes cannot force ACCEPT)
-- `challenge`, `packet_digest`, `candidate_commit`, `candidate_tree` must equal
-  the authorized context
-- `session_id`, `provider_family`, `product` must match enrollment and the
-  signed observation
-
-## Observation
-
-`<root>/observations/<challenge>.json` must verify under `OBSERVATION_DOMAIN`
-with the enrolled observation key. Session, capture digest, context, product,
-and family must match the protected capture and authorization.
-
-## Publication
-
-- Durable single-claim in `<root>/broker/claims.sqlite3` (failures remain
-  claimed; no dispatch/retry/reset)
-- Output only at `<root>/public/<challenge>.json` (filename is challenge-derived;
-  alternate paths are not accepted)
-- Receipt signature uses the v3 `DOMAIN` expected by
-  `verify_two_party_acceptance`
+Internal capture `director-protected-independent-review-capture/v1` requires
+terminal `ACCEPT` and exact challenge/packet/candidate/session binding.
+Observation must match. Output only `<root>/public/<challenge>.json` after a
+durable SQLite claim.
 
 ## CLI
 
@@ -74,31 +46,4 @@ python -m director_orchestrator.native_v3_review_issuer collect \
   --config-sha256 <64-hex> \
   --challenge <64-hex-challenge>
 ```
-
-## Non-goals
-
-- No provider launch, host bridge, or credential acquisition
-- No manufacturing of observation or owner-adoption signatures
-- No CI or security receipt roles
-- No merge, activation, paid dispatch, or runtime setting changes
-- No inventing a native Grok Bot wire protocol
-
-## Dependencies reused (not duplicated)
-
-- Path/custody: `canonical_native_path`, `contained_native_path`, `claim`,
-  `write_new`, `context_from` from `native_acceptance_issuer`
-- Adoption: `validate_adoption` from `provider_acceptance_v3`
-- Full Windows SID/ACL `Config.identity` / `verify_boundary` from the v2 native
-  issuer remain the production broker boundary for **dispatching** issuers; this
-  collect-only module does not weaken those guards and does not claim to replace
-  them. Outer `verify_two_party_acceptance` still rejects unregistered attacker
-  keys.
-
-## Tests
-
-`tests/test_native_v3_review_issuer.py` covers successful collect through the
-complete existing v3 verifier fixtures, plus refusals for rejected/malformed
-terminal capture, mismatched session/context/candidate, unprotected
-custody/invalid adoption, durable claim replay, wrong mode/expiry/observer key,
-author-family reviewers, and unqualified aliases.
-<!-- [[Grok Bot | unreported | 2026-09-10 | 16:00 UTC | END]] -->
+<!-- [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]] -->
