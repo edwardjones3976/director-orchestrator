@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | BEGIN]] -->
@@ -23,8 +24,10 @@ builds the canonical `SlackIntake` — `source_event_id`, `channel_id`,
 `thread_ts`, `user_id`, `text`, `allocation_profile`,
 `primary_required_capabilities`, `permalink`, `received_at` — HMAC-signs it with
 `build_slack_intake_attestation`, and POSTs that object to
-`N8N_DIRECTOR_WEBHOOK_URL`. n8n receives an already-normalized intake, not a raw
-Slack event envelope.
+`N8N_DIRECTOR_WEBHOOK_URL` when that setting is nonempty. When it is empty, the
+gateway posts directly to `ORCHESTRATOR_BASE_URL` plus `/v1/intake` and bypasses
+n8n. When configured as the relay, n8n receives an already-normalized intake,
+not a raw Slack event envelope.
 
 Three consequences bind the workflow:
 
@@ -42,7 +45,8 @@ Three consequences bind the workflow:
 ## Which n8n
 
 The relay only works from **inside the Director Compose project**. The HTTP node
-resolves `orchestrator:8080` by Docker DNS, and the Slack bot posts to
+resolves `orchestrator:8080` by Docker DNS. To use this relay, configure the
+Slack bot's `N8N_DIRECTOR_WEBHOOK_URL` as
 `http://n8n:5678/webhook/director-intake` — the internal hostname, which resolves
 to whichever n8n container shares that project's network. An n8n on another
 project, or a standalone install, can neither reach the orchestrator nor receive
@@ -70,11 +74,13 @@ The n8n container and the orchestrator container must appear on the same network
 | --- | --- | --- |
 | Slack API | `Director Slack bot` | The bot token for the status posts |
 
-**Intake holds no credential at all, by design.** The webhook is unauthenticated
-and the relay forwards the caller's own `Authorization` header downstream, so the
-orchestrator stays the single authenticator and n8n never stores
-`ORCHESTRATOR_SHARED_SECRET`. A secret n8n does not hold cannot leak from n8n's
-database, its encryption key, or an exported workflow.
+**Intake has no bound n8n credential.** The webhook is unauthenticated and the
+relay forwards the caller's own `Authorization` header downstream, leaving the
+orchestrator as the authenticator. That bearer contains
+`ORCHESTRATOR_SHARED_SECRET`, so n8n processes the secret and may persist it
+transiently in webhook or execution data. The absence of a bound credential does
+not guarantee that n8n's database never contains the secret. The retention
+settings below limit saved executions; they do not prove zero transient storage.
 
 The trade is that any process able to reach `127.0.0.1:<n8n port>` can make the
 relay forward a request. That process still needs a valid bearer to get past
@@ -160,8 +166,8 @@ it. For that, read the n8n container logs, which carry the upstream status.
 **Execution retention stays `none`, and that is a security setting, not a
 diagnostic one.** The webhook item includes `$json.headers`, which carries the
 caller's `Authorization: Bearer <shared secret>`. Retaining error executions
-would persist that into n8n's database, undoing the point of a relay that holds
-no credential. Diagnose from the container logs instead. Even `none` controls
+would retain that secret in n8n's database despite the absence of a bound
+credential. Diagnose from the container logs instead. Even `none` controls
 completion cleanup rather than proving zero transient storage.
 
 **Strict 202.** The gateway requires 202 exactly, so the success output passes
@@ -313,3 +319,4 @@ means the request was accepted for planning — not that any work was done.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 19:20 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | END]] -->
