@@ -143,7 +143,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [180, 240],
-      "notes": "Deliberately reaches no Respond node, so the webhook answers 200 with an empty body and the gateway reports 'Acceptance could not be confirmed. The request state must be reconciled before retrying.' That is the correct outcome for an unknown delivery: the task may exist. This preserves the stop-on-ambiguous-delivery invariant that test_deployment_contracts.py protects. Silence here is a refusal to claim, not a missing branch."
+      "notes": "Deliberately reaches no Respond node, so n8n answers its standard message with a 200 status (the body text is undocumented and must not be asserted) and the gateway reports 'Acceptance could not be confirmed. The request state must be reconciled before retrying.' That is the correct outcome for an unknown delivery: the task may exist. This preserves the stop-on-ambiguous-delivery invariant that test_deployment_contracts.py protects. Silence here is a refusal to claim, not a missing branch."
     }
   ],
   "connections": {

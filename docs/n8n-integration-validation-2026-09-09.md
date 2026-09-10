@@ -1,3 +1,4 @@
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | BEGIN]] -->
 # Director Intake ↔ n8n — integration validation, 2026-09-09
@@ -77,7 +78,22 @@ non-2xx the execution ends before reaching any `Respond to Webhook` node.
 This is documented n8n behaviour, not an inference from the observation. The
 Respond to Webhook node reference states that when "the workflow finishes without
 executing the Respond to Webhook node", it "returns a standard message with a 200
-status". The observed 200-empty is precisely that path.
+status".
+
+**Corrected 2026-09-10 — the fit is not exact, and the original wording
+overstated it.** That reference also states that a workflow which *errors*
+before the first Respond node returns **500**. The pre-fix workflow used
+`onError: stopWorkflow`, so the error path would predict 500, yet 200 was
+measured. The measured status matches the completion path; the measured
+zero-byte body matches neither path's documented output.
+
+**This is an unresolved discrepancy and is recorded as one.** Why the deployed
+instance answered 200 rather than 500 is *not* established by these
+observations — whether n8n classified the stopped execution as finished, whether
+the installed version behaves differently from the current documentation, or
+something else, was never determined. Do not infer a cause from the status.
+Both observations stand as measured. Neither is the contract, and the corrected design must not assert a
+body shape.
 
 Compounding it, the deployed workflow sets `saveDataErrorExecution: "none"`, so
 the failing executions are not recorded. Neither end of the integration can say
@@ -137,9 +153,12 @@ From `/health`, recorded because it changes earlier findings:
   `reconciliation_worker_ready: false`, with
   `reconciliation_hold_reason: "historical_parallel_plan_requires_reconciliation"`
   and one held historical parallel plan. **If `create_intake` raises under those
-  conditions, `/v1/intake` returns 503** — which the corrected relay would
-  surface as 502 rather than swallow. This has not been observed, because
-  observing it requires a valid bearer.
+  conditions, `/v1/intake` returns 503.** The prediction first written here —
+  that the corrected relay would surface that as 502 — was **wrong**, and is
+  corrected on 2026-09-10: intake is reserved before later operations can fail,
+  so a task may exist behind a 503. The corrected relay routes 5xx to the
+  ambiguity branch for reconciliation, not to 502. This has not been observed,
+  because observing it requires a valid bearer.
 - `parallel_dispatch.kill_switch_open: false` — the kill switch is **engaged**.
   The corrected status workflow alarms on this; the previous revision watched a
   key `/health` does not return and would have stayed silent.
@@ -157,3 +176,4 @@ Producer of the corrected candidate is Claude, which is therefore ineligible to
 review or accept it. The probes above are testing, not review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
+<!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->

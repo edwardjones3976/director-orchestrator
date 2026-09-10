@@ -1,3 +1,4 @@
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -232,7 +233,9 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("upstream_status", failed["parameters"]["responseBody"])
 
         # The ambiguous branch must terminate without a Respond node, so the
-        # webhook answers 200 empty and the gateway records an unconfirmed
+        # webhook answers n8n's standard 200 message -- body text undocumented,
+        # so only the absence of a Respond node is asserted -- and the gateway
+        # records an unconfirmed
         # delivery rather than a fabricated success or failure.
         stop = self._intake_node("Ambiguous Delivery - Stop")
         self.assertEqual(stop["type"], "n8n-nodes-base.noOp")
@@ -348,3 +351,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | END]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | END]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]
