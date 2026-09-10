@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | BEGIN]] -->
@@ -32,9 +33,11 @@
 > not matching any documented namespace was recorded as a curiosity instead of
 > being resolved before measuring.
 
-Status: **the relay does not satisfy the Slack bot's contract.** The cause is
-identified and the repository candidate is corrected. One decisive fact is still
-unmeasured and needs a command only the owner can run.
+Historical status at the time of the probes: the relay did not satisfy the
+Slack bot's contract. The instance identity question below was subsequently
+resolved by V-01, and V-02 reproduced the contract failure on the Director
+instance. The cause of the specific 200/empty response remains unresolved; this
+record does not establish the current deployed revision or current health.
 
 ## What was measured
 
@@ -95,9 +98,11 @@ something else, was never determined. Do not infer a cause from the status.
 Both observations stand as measured. Neither is the contract, and the corrected design must not assert a
 body shape.
 
-Compounding it, the deployed workflow sets `saveDataErrorExecution: "none"`, so
-the failing executions are not recorded. Neither end of the integration can say
-what happened.
+The workflow sets `saveDataErrorExecution: "none"`. This requests cleanup of
+completed error-execution data; it does not prove that execution data was never
+persisted or that container logs contain no evidence. V-02 found the upstream
+422 in the n8n logs. The corrected intake candidate retains completed-execution
+cleanup rather than adding durable records of forwarded authorization headers.
 
 ## What the deployed workflow gets right
 
@@ -106,14 +111,19 @@ deployed workflow is a **pass-through relay**. It forwards
 `{{ JSON.stringify($json.body ?? $json) }}` unchanged, forwards the caller's
 `Authorization` header and the three `X-Director-Intake-*` attestation headers,
 and returns the orchestrator's body verbatim with a 202. That is the correct
-architecture, and it holds no credential of its own — a secret n8n does not store
-cannot leak from n8n.
+architecture. It does not configure an orchestrator credential of its own, but
+forwarded bearer headers pass through n8n and may be stored initially. Completion
+cleanup is not a guarantee of zero storage.
 
 The repository candidate on `claude/n8n-v2` rebuilt the body from a raw Slack
 event envelope that never arrives. It has been corrected to the deployed design,
-plus the error branch and the execution-recording setting the deployed one lacks.
+plus the error branch. Completed execution retention remains disabled.
 
-## The unmeasured fact
+## Superseded question — resolved by V-01 and V-02
+
+The following question and proposed probes are retained as historical context.
+They are no longer pending operator instructions: port 45678 belongs to Edge
+Engine; Director n8n is 5678, and its backend reachability was demonstrated.
 
 **Is the n8n on port 45678 on the Director Compose network?** The relay resolves
 `orchestrator:8080` by Docker DNS. A 401 from the orchestrator and a DNS failure
@@ -127,15 +137,16 @@ an instance created outside the documented bootstrap. It could still be the righ
 container on the right network — the host port is only how the editor is reached
 — but that has not been established.
 
-Settling it takes one command:
+The originally proposed host probes were:
 
 ```
 docker ps --format "{{.Names}}\t{{.Ports}}"
 docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' <n8n container> <orchestrator container>
 ```
 
-If the two containers do not share a network, the workflow is correct and the
-deployment is wrong, and no amount of workflow editing will fix it.
+The proposed inference above was too strong: a network mismatch alone would
+not prove the workflow correct. V-02 instead established backend reachability
+and a relay contract failure on the correct Director instance.
 
 ## Readiness observed at the same time
 
@@ -177,3 +188,4 @@ review or accept it. The probes above are testing, not review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 20:05 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]] -->
