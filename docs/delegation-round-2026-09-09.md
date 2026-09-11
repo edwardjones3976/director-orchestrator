@@ -1,8 +1,12 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | BEGIN]] -->
 # Delegation round — 2026-09-09, ASAP scope
 
 **Issued by:** Claude, acting Director-Orchestrator
+
+**Where this is referenced:** `docs/close-out-report-2026-09-13.md` and `docs/activation-plan-2026-09-13.md` should link here (they have not yet been updated to reflect this supersession).
+
 **Supersedes** the assignment table in `docs/delegation-matrix-2026-09-13.md` for
 this round. The matrix's lane eligibility, quota arithmetic and independence
 rules are unchanged and still govern.
@@ -20,7 +24,7 @@ to prevent.
 | Was | Now | Reason |
 | --- | --- | --- |
 | **A-03, A-04, A-05** — three fix-PR partitions | **Cut from this round** | The five blockers live in the `LIVE_OK` and live-dispatch path. That path is not traversed by the floor deliverable, so the fixes are follow-on, not delivery work |
-| **A-15** — Perplexity research on n8n auth | **Cut under R3** | The question it would answer has been answered: the A-16 Director-side research established `httpBearerAuth` for the bearer call, Header/JWT auth on the inbound hop, and `Respond to Webhook` for non-2xx mapping. No outcome of A-15 now changes any action, so its value of information is zero. Perplexity remains fully eligible; it simply has no live question this round |
+| **A-15** — Perplexity research on n8n auth | **Cut under R3** | The question it would answer has been answered: the A-16 Director-side research established `httpBearerAuth` for the bearer call, Header/JWT auth on the inbound hop, and `Respond to Webhook` for non-2xx mapping. No outcome of A-15 now changes any action, so its value of information is zero. Perplexity is admissible only under a profile with a non-zero target (public_research gives it 25%); under engineering it is refused; it simply has no live question this round |
 | **A-13, A-14** — Antigravity fixture artifact and debate seat | **Cut from this round** | A-13's retry-backoff variants feed reconciliation work that is now follow-on. A-14's debate question — three-profile topology versus in-place repair — was settled when profile L left the plan. Antigravity's credential is provisioned and its readiness passes all eleven checks; it has no question this round, which is a scoping fact and not a capability judgement |
 | **A-01** — full evidence blocker audit | **Narrowed** | Now one question about the `Accept`/`Migrate`/Stage A path only |
 
@@ -88,10 +92,13 @@ including how the webhook is repointed between profiles.
 ## Standing constraints, unchanged
 
 `ALLOW_PAID_RUNS`, live provider dispatch and the provider activation bindings
-stay closed. Nothing in this round opens them, and no assignment here is a paid
-provider call. Every submission carries a fresh outer contribution pair per
-changed commentable file. Rebase onto current `main` before opening any pull
+stay closed. Nothing in this round opens them. A-11 is a paid provider call; it
+is blocked while `ALLOW_PAID_RUNS` stays closed, and requires explicit owner
+authorization of the paid gate before it can run. Every submission carries a fresh
+outer contribution pair per changed commentable file. Merge current `main` into
+the branch (a merge commit, never a rebase or force-push) before opening any pull
 request — the attribution job diffs `pull_request.base.sha`..`head`, so a branch
 behind `main` fails on files it never touched.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->

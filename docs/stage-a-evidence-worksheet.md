@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | BEGIN]] -->
 # Stage A evidence worksheet — profile S
@@ -47,6 +48,7 @@ candidate: ☐. **Blank or mismatched pins are a stop, not a proceed.**
 | `configuration_valid` | `/health` → `langgraph_primary` | true | ______ |
 | Snapshot clean **inside the container** | `git -c safe.directory=/repository status --porcelain=v2` | empty | ______ |
 | Snapshot at the intended authority | same, `rev-parse HEAD` and `HEAD^{tree}` | equals the pins | ______ |
+| Primary-plane quiescence | provider dispatches, assignments, writer claims and reconciliation | zero / none | ______ |
 | No in-flight legacy work you will strand | legacy task inventory | owner's call | ______ |
 | Protected configuration backup taken | three switch names, prior values, via the protected-payload procedure | done | ______ |
 
@@ -66,11 +68,12 @@ Record the exit state and the UTC timestamp for each. Any refusal is
 | 4 | `SelectGeneration` | ______ | ______ | |
 | 5 | `PrepareAcceptance` | ______ | ______ | emits unsigned JSON to stdout |
 | 6 | `Preflight` | ______ | ______ | |
-| 7 | `Accept -AcceptanceArtifactPath` | ______ | ______ | |
-| 8 | `Migrate` | ______ | ______ | creates control-plane + team DDL |
-| 9 | `Backup` | ______ | ______ | file name: ______ |
-| 10 | `RestoreDrill` | ______ | ______ | |
-| 11 | `Health` | ______ | ______ | |
+| 7 | obtain acceptance artifact from independent issuers | ______ | ______ | artifact path: ______, issuer identities: ______ |
+| 8 | `Accept -AcceptanceArtifactPath` | ______ | ______ | |
+| 9 | `Migrate` | ______ | ______ | creates control-plane + team DDL |
+| 10 | `Backup` | ______ | ______ | file name: ______ |
+| 11 | `RestoreDrill` | ______ | ______ | |
+| 12 | `Health` | ______ | ______ | |
 
 ## 4. Stage A switch write
 
@@ -227,7 +230,8 @@ estimate, and that comparison is the only honest measure of whether R5 helped.
 A completed Stage A pass proves that the primary plane owns intake and runs its
 own lifecycle with the money switched off. It proves **nothing** about live
 provider execution, and its provider results are produced by in-process doubles.
-It satisfies one of the nine activation gates (namespaces) and leaves eight
-outstanding, Gate 8 among them at `F`. Do not describe it as an activation.
+It supplies evidence for gates 2, 3 and 6 and leaves six outstanding, Gate 8
+among them at `F`. Do not describe it as an activation.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
