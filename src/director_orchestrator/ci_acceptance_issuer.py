@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
@@ -247,8 +248,15 @@ def collect_ci_evidence(client: GitHubEvidenceClient, *, expected: ReviewContext
 
 def issue_ci_receipt(*, expected: ReviewContext, policy: GitHubOIDCPolicy,
                      run_id: int, run_attempt: int, github_token: str,
-                     oidc_request_url: str, oidc_request_token: str) -> dict:
+                     oidc_request_url: str, oidc_request_token: str,
+                     acceptance_mode: str = "provider-v2") -> dict:
     """Observe API evidence, create one key, obtain bound OIDC, sign only CI."""
+    if acceptance_mode == "provider-v2":
+        version, domain = VERSION, DOMAIN
+    elif acceptance_mode == "provider-v3-two-party":
+        from .provider_acceptance_v3 import VERSION as version, DOMAIN as domain
+    else:
+        raise ProviderAcceptanceError("unknown CI acceptance mode")
     evidence = collect_ci_evidence(GitHubEvidenceClient(github_token), expected=expected,
                                   policy=policy, run_id=run_id, run_attempt=run_attempt)
     key = Ed25519PrivateKey.generate()
@@ -267,8 +275,8 @@ def issue_ci_receipt(*, expected: ReviewContext, policy: GitHubOIDCPolicy,
         transport_evidence_digest=hashlib.sha256(canonical(evidence)).hexdigest(),
         verdict="SUCCESS", ci_checks=evidence["checks"], ci_workflow_ref=policy.workflow_ref,
         ci_workflow_commit=policy.workflow_sha)
-    receipt["signature"] = base64.b64encode(key.sign(DOMAIN + canonical(
-        dict(version=VERSION, context=expected.document(), receipt=receipt)))).decode()
+    receipt["signature"] = base64.b64encode(key.sign(domain + canonical(
+        dict(version=version, context=expected.document(), receipt=receipt)))).decode()
     return {"receipt": receipt, "ci_identity": envelope}
 
 
@@ -294,7 +302,8 @@ def main() -> None:
         run_attempt=int(os.environ["CI_CANDIDATE_RUN_ATTEMPT"]),
         github_token=os.environ["GITHUB_TOKEN"],
         oidc_request_url=os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"],
-        oidc_request_token=os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"])
+        oidc_request_token=os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"],
+        acceptance_mode=os.environ.get("CI_ACCEPTANCE_MODE", "provider-v2"))
     Path(args.output).write_bytes(canonical(result))
 
 
@@ -303,3 +312,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:17 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
