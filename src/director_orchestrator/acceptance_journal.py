@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:24 UTC | BEGIN]]
@@ -38,6 +39,14 @@ def _activation_errors(method):
 
 
 class AcceptanceJournal:
+    policy_version = POLICY_VERSION
+    envelope_version = "director-provider-acceptance-envelope/v2"
+    policy_extra_fields = frozenset()
+
+    @staticmethod
+    def verify_package(raw, *, expected, authorities, now, policy):
+        return verify_provider_acceptance(raw, expected=expected, authorities=authorities, now=now)
+
     @_activation_errors
     def __init__(self, path: str, registry_path: str, registry_sha256: str, *, read_only: bool = False):
         self.read_only = read_only
@@ -81,8 +90,8 @@ class AcceptanceJournal:
             raise ActivationEvidenceError("owner-pinned v2 registry mismatch")
         doc = json.loads(raw, object_pairs_hook=_pairs)
         _closed(doc, {"version", "activation", "repository", "pull_request_number", "packet_digest",
-                      "material_author_providers", "authorities", "revoked_deployments", "ci_oidc_policy"})
-        if doc["version"] != POLICY_VERSION or not isinstance(doc["revoked_deployments"], list):
+                      "material_author_providers", "authorities", "revoked_deployments", "ci_oidc_policy"} | self.policy_extra_fields)
+        if doc["version"] != self.policy_version or not isinstance(doc["revoked_deployments"], list):
             raise ActivationEvidenceError("invalid v2 registry policy")
         authorities = self.authorities(doc)
         if not REQUIRED_ACTIVATION_CHECKS <= authorities["ci"].required_ci_checks:
@@ -172,7 +181,7 @@ class AcceptanceJournal:
         package = source
         if policy["ci_oidc_policy"] is not None:
             _closed(source, {"version", "package", "ci_identity"})
-            if source["version"] != "director-provider-acceptance-envelope/v2":
+            if source["version"] != self.envelope_version:
                 raise ActivationEvidenceError("dynamic CI requires authenticated envelope")
             package = source["package"]
         challenge = package.get("context", {}).get("challenge")
@@ -196,7 +205,7 @@ class AcceptanceJournal:
                     raise ActivationEvidenceError("CI receipt session differs from authenticated issuer run")
             if any(a.deployment in policy["revoked_deployments"] for a in authorities.values()):
                 raise ActivationEvidenceError("effective issuer is currently revoked")
-            verify_provider_acceptance(canonical(package), expected=context, authorities=authorities, now=now)
+            self.verify_package(canonical(package), expected=context, authorities=authorities, now=now, policy=policy)
             encoded = canonical(source)
             digest = hashlib.sha256(encoded).hexdigest()
             authority_document = {}
@@ -257,7 +266,7 @@ class AcceptanceJournal:
                 raise ActivationEvidenceError("effective CI issuer is currently revoked")
             if authenticated_ci != authorities["ci"]:
                 raise ActivationEvidenceError("CI public key archive does not authenticate")
-        verify_provider_acceptance(canonical(package), expected=context, authorities=authorities, now=row[2])
+        self.verify_package(canonical(package), expected=context, authorities=authorities, now=row[2], policy=policy)
         encoded = canonical(source)
         digest = hashlib.sha256(encoded).hexdigest()
         if (asdict(identity) != snapshot["activation"] or item.get("source_artifact_digest") != digest
@@ -266,13 +275,35 @@ class AcceptanceJournal:
             raise ActivationEvidenceError("accepted package or projection was tampered")
 
 
+def journal_class(mode):
+    if mode == "provider-v2":
+        return AcceptanceJournal
+    if mode == "provider-v3-two-party":
+        from .provider_acceptance_v3 import TwoPartyAcceptanceJournal
+        return TwoPartyAcceptanceJournal
+    raise ActivationEvidenceError("unknown acceptance mode")
+
+
+def reject_unsigned_profile(registry_path, registry_sha256, journal_path):
+    """A selected signed generation cannot be bypassed by changing only mode."""
+    # Compose supplies inert default mount paths even for pristine github-v1.
+    # Pins or non-default paths, rather than those placeholders, select a profile.
+    if (registry_sha256 or os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+            or registry_path not in (None, "", "/run/director-acceptance-registry/registry.json")
+            or journal_path not in (None, "", "/data/primary-acceptance-v2.sqlite3")
+            or os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH") not in
+                (None, "", "/data/generation-unselected.json")):
+        raise ActivationEvidenceError("github-v1 cannot ignore a selected signed acceptance profile")
+
+
 def journal_from_environment(*, read_only=False):
     mode = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1")
     if mode == "github-v1":
+        reject_unsigned_profile(os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH"),
+            os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"),
+            os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"))
         return None
-    if mode != "provider-v2":
-        raise ActivationEvidenceError("unknown acceptance mode")
-    return AcceptanceJournal(os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"],
+    return journal_class(mode)(os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH"],
         os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH"],
         os.environ["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"], read_only=read_only)
 
@@ -281,10 +312,10 @@ def require_runtime_acceptance(settings):
     """Before DB access verify readiness once and return its immutable identity."""
     mode = settings.langgraph_primary_acceptance_mode
     if mode == "github-v1":
+        reject_unsigned_profile(settings.langgraph_primary_acceptance_registry_path,
+            settings.langgraph_primary_acceptance_registry_sha256, settings.langgraph_primary_acceptance_journal_path)
         return
-    if mode != "provider-v2":
-        raise ActivationEvidenceError("unknown acceptance mode")
-    journal = AcceptanceJournal(settings.langgraph_primary_acceptance_journal_path,
+    journal = journal_class(mode)(settings.langgraph_primary_acceptance_journal_path,
         settings.langgraph_primary_acceptance_registry_path, settings.langgraph_primary_acceptance_registry_sha256,
         read_only=True)
     from .primary_activation_evidence import ActivationEvidenceStore
@@ -326,3 +357,4 @@ def bind_runtime_database(identity, handle):
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
