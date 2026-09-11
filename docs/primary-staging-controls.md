@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]] -->
@@ -128,7 +130,7 @@ authorized Stage A run. Before selecting the initial generation, set explicit
 `DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` in its protected profile. The action
 rejects missing or enabled values rather than rewriting them. Validation mode
 is part of the resolved Compose digest, so adding it later requires a fresh
-generation. The action requires provider-v2 mode and the same clean candidate,
+generation. The action requires an explicitly selected signed-provider mode (provider-v2 or provider-v3-two-party / two-party) and the same clean candidate,
 image, database and selected-generation verification as the other controls.
 
 After authenticated acceptance and restore pass `require-staged`, the action
@@ -175,3 +177,5 @@ documented in [two-party activation v3](two-party-activation-v3.md). Its explici
 selection preserves this lifecycle and requires signed owner adoption and
 qualified native evidence; this document grants no adoption or activation.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
