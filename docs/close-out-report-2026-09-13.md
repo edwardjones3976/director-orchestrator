@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | BEGIN]] -->
@@ -152,7 +153,7 @@ would have idled a capable lane.
 | # | Error | Correction |
 | --- | --- | --- |
 | 1 | Zero allocation target read as ineligible for all work | A zero target refuses the lane in that profile, including for accepted non-code research; a profile with a non-zero target (public_research: Perplexity 25%, Firecrawl 15%) admits it. |
-| 2 | Analysis and review charged against direct-production quota | Quota counts implementation only; Grok's is unused |
+| 2 | Analysis and review charged against direct-production quota | The allocation check counts accepted productive work — implementation, plus accepted Perplexity/Firecrawl research — and ordinary analysis and review consume no production credit (Grok's analyses are unused quota) |
 | 3 | Antigravity team mode described as needing a contract rewrite | Implemented behind a configuration switch with team DDL, guard trigger, grant writable paths, pinned SSH worker and qualification canary |
 
 One attribution defect: two documents edited across multiple commits without a
@@ -214,3 +215,4 @@ requires.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
@@ -59,7 +60,7 @@ remaining capacity, capability, evidence and approval gates still apply.
 | **Perplexity** | evidence-only research | **Refused in `engineering`; allocation-admissible in `public_research`** | Accepted non-code research is productive under `is_accepted_productive_kind`, so the zero target in `engineering` refuses it. The 25% target in `public_research` permits it subject to admission and the remaining gates (§1). Each assignment needs an owner approval bound to the digest of the exact outbound query, and a later mutation invalidates that approval. Output is untrusted evidence until a primary lane evaluates it |
 | **Firecrawl** | public search transport | **Repository lane refused in `engineering`; allocation-admissible in `public_research`** | Accepted non-code research is productive, so the zero target in `engineering` refuses it. The 15% target in `public_research` permits it subject to admission and the remaining gates (§1). Surface one: the repository lane, which executes on the LangGraph primary path, has no legacy adapter, and needs `FIRECRAWL_API_KEY` added to the deployment. Surface two: a Firecrawl MCP server connected to the Director's own session, already live and already used — these are different transports and evidence from one is not evidence about the other |
 | **GitHub Copilot (Lite)** | supplemental hygiene reviewer | **Yes, post-freeze, non-gating** | Explicitly carries no workload share, range or ceiling, and no production credit, so a Lite observation does not consume a quota slot. Requires required checks green and a frozen exact candidate; fails closed without an authenticated contact; at most three conditional attempts; a substantive Copilot-authored fix would make it a material author and ineligible to review that candidate |
-| **Microsoft 365 Copilot** | retired, transport-blocked | **Not yet — the blocker is capability, not allocation** | The lane was retired by #161 and is not in LANES. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with `microsoft_365_copilot_work_iq_capability_evidence_missing`, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path |
+| **Microsoft 365 Copilot** | retired, transport-blocked | **No — retired by #161** | The lane was retired by #161 and is not in LANES. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with `microsoft_365_copilot_work_iq_capability_evidence_missing`, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path |
 
 `direct-provider-to-provider` is the one route catalogued as **prohibited**.
 Every exchange between lanes in this matrix is brokered by the Director.
@@ -367,3 +368,4 @@ documented route is not an authorized one.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
