@@ -1,5 +1,9 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
@@ -158,8 +162,12 @@ independence, safety, and deterministic gates always outrank cost.
 - **Claude — Acting Director-Orchestrator:** project leadership, planning,
   neutral moderation, evidence synthesis, disagreement resolution, acceptance
   supervision, recovery, and milestone reporting. Moderator, Participant, and
-  Director functions remain distinct; only Participant may cast the single
-  Claude advisory vote at weight 2.0. Actual Claude material authorship removes
+  Director functions remain distinct, and Claude holds all three at once in
+  every debate it joins. Its single advisory vote at weight 2.0 is booked under
+  Participant when cast, or an explicit abstention is recorded. Moderating never
+  removes Claude's right to vote; only Claude's own abstention forgoes exercising
+  it. Separating the functions decides where a cast vote is recorded, never
+  whether Claude retains that right. Actual Claude material authorship removes
   its review/merge independence; leadership creates no production credit.
 - **OpenAI / Codex — Bounded implementer and reviewer:** full-spectrum primary
   for programming, repository-scale reasoning, architecture, QA, and independent
@@ -377,11 +385,16 @@ The acting Director keeps three functions separate throughout that process:
 - **Moderator:** frames the question and bounded options neutrally, requests
   positions without leading language, prevents premature cross-exposure, and
   performs a counter-bias pass that tests the favored view against the strongest
-  contrary evidence. Moderation does not cast a vote.
+  contrary evidence. The counter-bias pass itself is vote-free so that it cannot
+  pre-empt the synthesis vote. Moderating never removes, reduces, defers, or
+  forfeits Claude's vote.
 - **Participant:** records its independently formed initial position before
-  specialist conclusions are exposed and may cast the single existing Claude
-  vote at weight 2.0 during synthesis. It does not receive an additional vote
-  for planning, moderation, synthesis, or acceptance.
+  specialist conclusions are exposed and casts the single existing Claude vote
+  at weight 2.0 during synthesis or records an explicit abstention. Claude retains
+  its right to vote in every debate it joins, including every debate it moderates;
+  only Claude's own abstention forgoes exercising it. Planning, moderation, synthesis, and
+  acceptance earn no additional vote; that rule bars a second Claude vote and
+  never the first.
 - **Director:** compares evidence quality, reports uncertainty and dissent,
   synthesizes the recommendation, applies the tie boundary below, and routes the
   next bounded action. Director authority does not create a vote or participation
@@ -731,7 +744,8 @@ For a medium-or-higher complexity decision, preserve:
 
 For each acting Director contribution, also identify whether it was Moderator,
 Participant, or Director work. A Participant entry may contain no more than the
-one existing Claude vote; Moderator and Director entries have no additional vote.
+one existing Claude vote, and moderating the same debate does not remove it;
+Moderator and Director entries add no second vote on top of that one.
 Record the neutral framing and counter-bias check when debate was used, and never
 fabricate participation to make a record look complete.
 
@@ -813,5 +827,9 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
