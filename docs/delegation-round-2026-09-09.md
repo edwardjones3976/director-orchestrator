@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | BEGIN]] -->
@@ -43,7 +44,7 @@ correct for the scope it was written against.
 | **A-19** | Independent exact-SHA review of the A-06 n8n candidate | Cursor, or Codex if Cursor is loaded | A-06 landing |
 | **A-17** | Copilot Lite hygiene observation | GitHub Copilot | the frozen candidate, checks green |
 
-Implementation quota consumed this round: Claude 1 of 6 (A-06). Everything else
+Implementation quota consumed this round: Claude 1 of 5 (A-06). Everything else
 is analysis, triage or review, which consumes none.
 
 ## Independence
@@ -102,3 +103,4 @@ behind `main` fails on files it never touched.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 12:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->

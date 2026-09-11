@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | BEGIN]] -->
@@ -230,8 +231,10 @@ estimate, and that comparison is the only honest measure of whether R5 helped.
 A completed Stage A pass proves that the primary plane owns intake and runs its
 own lifecycle with the money switched off. It proves **nothing** about live
 provider execution, and its provider results are produced by in-process doubles.
-It supplies evidence for gates 2, 3 and 6 and leaves six outstanding, Gate 8
+It satisfies Gate 3 and supplies evidence toward gates 2 and 6 for the ledger
+to record, closes no other gate, and leaves eight of nine outstanding, Gate 8
 among them at `F`. Do not describe it as an activation.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 11:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->

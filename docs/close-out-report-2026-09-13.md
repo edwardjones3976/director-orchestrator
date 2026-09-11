@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | BEGIN]] -->
 # Close-out report — LangGraph-primary and n8n delivery
@@ -38,7 +39,7 @@ commits stale. Neither was used as authority.
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| Planning and decomposition | **Complete** | Seven documents, 1,492+ lines, nine commits |
+| Planning and decomposition | **Complete** | Eight documents, 1,492+ lines, nine commits |
 | Decision rules adopted and applied | **Complete** | R1–R7 governing; the plan's schedule and ledger are their output |
 | Lane eligibility established | **Complete** | From `allocation_profiles.py`, `workload_policy.py`, `primary_transports.py` and the readiness functions, not from profile prose |
 | Gate 8 determination | **Complete — `F`** | Canary registered, not run |
@@ -102,7 +103,7 @@ participation, and lane membership attests no enrolled or live route.
 | GitHub Copilot | A-17 hygiene | **PENDING** | Post-freeze, non-gating |
 | Microsoft 365 Copilot | None | Not assigned | Transport-blocked; correctly absent from the binding map |
 
-Implementation quota consumed: OpenAI 2 of 9, Claude 1 of 6, Cursor 1 of 4,
+Implementation quota consumed: OpenAI 2 of 8, Claude 1 of 5, Cursor 1 of 3,
 Grok 0 of 3, Antigravity 1 of 3 — five of twenty. No lane over its ceiling; no
 zero-target lane holds an implementation assignment.
 
@@ -150,7 +151,7 @@ would have idled a capable lane.
 
 | # | Error | Correction |
 | --- | --- | --- |
-| 1 | Zero allocation target read as ineligible for all work | Bars implementation only; research is accepted productive work for Perplexity, Firecrawl and M365 Copilot |
+| 1 | Zero allocation target read as ineligible for all work | A zero target refuses the lane in that profile, including for accepted non-code research; a profile with a non-zero target (public_research: Perplexity 25%, Firecrawl 15%) admits it. |
 | 2 | Analysis and review charged against direct-production quota | Quota counts implementation only; Grok's is unused |
 | 3 | Antigravity team mode described as needing a contract rewrite | Implemented behind a configuration switch with team DDL, guard trigger, grant writable paths, pinned SSH worker and qualification canary |
 
@@ -191,7 +192,7 @@ requires.
 | ID | Decision | Status |
 | --- | --- | --- |
 | D-01…D-05 | Windows, repository plan, topology, canary task, status channel | Recorded, delegated to the Director |
-| D-07 | Allocation profile change | **Withdrawn** — rested on correction 1 |
+| D-07 | Allocation profile change | **Prerequisite** for A-15/A-16 |
 | D-09 | Copilot Lite authenticated contact | Open |
 | D-10 | Perplexity query approval bound to digest | Open |
 | D-11 | Grok CLI contact via host-bridge preflight | Open, recommended |
@@ -212,3 +213,4 @@ requires.
 - This report is a self-produced document and has had no independent review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
