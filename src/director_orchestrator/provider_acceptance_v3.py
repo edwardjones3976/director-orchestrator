@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
@@ -123,7 +124,8 @@ def _observation(receipt, *, authority, context, policy, now):
             raise ProviderAcceptanceError("mandatory Codex Security product evidence required")
     elif (doc["product"] not in {"codex", "grok-bot"}
             or doc["transport"] != "native-product-capture"
-            or (doc["product"] == "codex" and authority.provider != "openai")):
+            or (doc["product"] == "codex" and authority.provider != "openai")
+            or (doc["product"] == "grok-bot" and authority.provider != "grok")):
         raise ProviderAcceptanceError("qualified Codex or actual Grok Bot review required")
     return doc
 
@@ -221,3 +223,4 @@ class TwoPartyAcceptanceJournal(AcceptanceJournal):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | END]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]

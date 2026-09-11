@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
@@ -2719,6 +2720,97 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             self.assertIn(_SIMULATION_LABEL, outcome.result)
             self.assertIn(_SIMULATION_LABEL, outcome.review_summary)
 
+    def fresh_witness(self, task_id: str) -> dict:
+        import psycopg
+        from psycopg import sql
+        # A new physical connection proves visibility beyond the insert transaction.
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as connection:
+            connection.execute("SET statement_timeout = '10s'")
+            row = connection.execute(sql.SQL(
+                "SELECT projection FROM {}.director_primary_task_projection WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (task_id,)).fetchall()
+            dedup = connection.execute(sql.SQL(
+                "SELECT task_id FROM {}.director_primary_intake_dedup WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (task_id,)).fetchall()
+        projected = row[0][0] if len(row) == 1 else {}
+        return {
+            "projection_rows": len(row), "dedup_rows": len(dedup),
+            "reason_code": projected.get("reason_code"),
+            "provider_dispatch_status": projected.get("provider_dispatch_status"),
+        }
+
+    def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
+        import psycopg
+        import httpx
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+
+        def deny_http(*_args, **_kwargs):
+            raise AssertionError("External HTTP is forbidden in this test")
+
+        with patch.object(httpx.HTTPTransport, "handle_request", side_effect=deny_http), \
+             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", side_effect=deny_http):
+            settings = replace(
+                self.settings, shared_secret="standalone-qa-synthetic-secret",
+                langgraph_primary_new_intake_enabled=True,
+                langgraph_primary_live_provider_dispatch_enabled=False,
+            )
+            activation = SimpleNamespace(application=self.application)
+            headers = {"Authorization": "Bearer standalone-qa-synthetic-secret"}
+            captured: dict = {}
+
+            def request(client, suffix):
+                payload = self.intake().model_copy(update={"source_event_id": "qa-" + suffix})
+                return client.post("/v1/intake", headers=headers, json=payload.model_dump(mode="json"))
+
+            def fail_after_reservation(command):
+                captured["task_id"] = command.task_id
+                before_failure = self.fresh_witness(command.task_id)
+                self.assertEqual(before_failure["projection_rows"], 1)
+                self.assertEqual(before_failure["dedup_rows"], 1)
+                captured["visible_before_failure"] = before_failure
+                captured["failure_reached"] = True
+                raise psycopg.OperationalError("QA injected failure after committed reservation")
+
+            with patch.object(main, "settings", settings), \
+                 patch.object(main, "primary_default_activation", activation):
+                # Deliberately no context manager: no ASGI lifespan or service startup.
+                client = TestClient(main.app)
+                try:
+                    with patch.object(self.coordinator._runtime, "start", side_effect=fail_after_reservation) as fault:
+                        response = request(client, "after-reservation")
+                    fault.assert_called_once()
+                    witness = self.fresh_witness(captured["task_id"])
+
+                    self.assertEqual(503, response.status_code)
+                    self.assertEqual(1, witness.get("projection_rows"))
+                    self.assertEqual(1, witness.get("dedup_rows"))
+                    self.assertTrue(captured.get("failure_reached", False))
+                    self.assertEqual("intake_reserved", witness.get("reason_code"))
+                    self.assertEqual("NOT_STARTED", witness.get("provider_dispatch_status"))
+                    self.assertEqual(response.json(), {"detail": "LangGraph primary intake is unavailable"})
+
+                    # Same outward 503 without a reservation MUST fail the evidence predicate.
+                    early = {}
+                    def fail_before_reservation(**kwargs):
+                        early["task_id"] = kwargs["task_id"]
+                        raise psycopg.OperationalError("QA injected failure before reservation")
+                    with patch.object(type(self.coordinator._store), "create_primary_task_projection", side_effect=fail_before_reservation) as early_fault:
+                        early_response = request(client, "before-reservation")
+                    early_fault.assert_called_once()
+                    early_witness = self.fresh_witness(early["task_id"])
+                    self.assertEqual(early_response.status_code, 503)
+                    self.assertEqual(0, early_witness.get("projection_rows"))
+
+                    # Removing the injected fault must take the existing paid-off success path.
+                    success = request(client, "without-fault")
+                    self.assertEqual(success.status_code, 202)
+                    successful_witness = self.fresh_witness(success.json()["task_id"])
+                    self.assertEqual(successful_witness["provider_dispatch_status"], "NOT_STARTED")
+                finally:
+                    client.close()
+
 
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
     @classmethod
@@ -2938,3 +3030,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]

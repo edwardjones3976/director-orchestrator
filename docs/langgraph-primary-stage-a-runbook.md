@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
@@ -119,7 +120,7 @@ Stage A's mode switch remains an operator edit. First use
 accepted lifecycle state:
 
 - Authenticated acceptance, migration, backup and matching restore proof recorded
-  through the sanctioned actions for the selected signed-provider mode (provider-v2 or provider-v3-two-party / two-party).
+  through the sanctioned actions for the selected signed-provider mode (`provider-v2` or the exact literal `provider-v3-two-party`).
   Runtime acceptance checks the bound legacy inventory before selecting offline
   doubles; a successful staging health check alone cannot satisfy it.
 - The initial generation-bound profile explicitly sets `ALLOW_PAID_RUNS=false`,
@@ -348,3 +349,4 @@ closed.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->

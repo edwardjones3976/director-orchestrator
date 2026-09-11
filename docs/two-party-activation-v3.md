@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]] -->
 # Two-party activation acceptance v3
 
@@ -95,6 +96,10 @@ issuer. Cursor Agent, Cursor's Grok model and direct xAI API are rejected as
 substitutes. Unknown/unavailable/default/auto model identities are rejected.
 Codex and Codex Security also require authenticated observation evidence.
 
+A `grok-bot` observation is accepted only from a receipt issuer enrolled in the
+canonical `grok` family, exactly as `codex` observations require the `openai`
+family; `provider_acceptance_v3.py` rejects any other pairing.
+
 There is presently no installed v3 native product issuer/observer established by
 this change. The existing v2 native issuer explicitly refuses selected v3 before
 identity, key/state changes or provider dispatch; unknown modes also refuse.
@@ -135,3 +140,4 @@ with actual temporary SQLite inventory. Docker and external CI key retrieval
 are substituted. This proves the disabled source path, not qualification or
 successful live deployment.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
