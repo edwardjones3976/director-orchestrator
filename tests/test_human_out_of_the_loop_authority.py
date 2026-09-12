@@ -286,7 +286,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         )
         self.assertIn("it never removes a\ngate named above", self.charter)
         handoff = self.charter.split("\n## Review-to-merge handoff", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("three\ndistinct identities", handoff)
+        self.assertIn("two distinct identities", handoff)
         self.assertIn("does not alter what a review must contain", handoff)
 
 
