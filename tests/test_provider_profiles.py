@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -183,6 +184,12 @@ class SchemaTests(unittest.TestCase):
                 model.model_validate_json(json.dumps(document))
                 signature = "meter_signature" if name.endswith("usage-v1") else "owner_signature"
                 self.assertEqual(document[signature], "0" * 64)
+
+    def test_usage_schema_matches_closed_runtime_meter_evidence(self):
+        from director_orchestrator.antigravity_team import ProviderUsageReceipt
+        schema = json.loads((SCHEMA_ROOT / "primary-provider-usage-v1.schema.json").read_text())
+        self.assertEqual(ProviderUsageReceipt.model_json_schema(), schema)
+        self.assertFalse(schema["$defs"]["MeteringEvidence"]["additionalProperties"])
 
     def test_enums_mirror_runtime(self):
         self.assertEqual(self.defs["lane"]["enum"], list(LANES))
@@ -935,3 +942,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]

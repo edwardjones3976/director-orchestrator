@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -168,6 +169,32 @@ class ProviderBudget(ClosedModel):
             raise TeamAuthorizationError("budget authority signature invalid")
 
 
+class MeteringEvidence(ClosedModel):
+    """Durable tariff provenance, excluding raw provider content and credentials."""
+    cost_basis: Literal["signed-tariff-metered-not-invoice"]
+    enrollment_document: Annotated[str, Field(min_length=1, max_length=16384)]
+    enrollment_digest: Digest
+    response_digest: Digest
+    response_id: Identifier
+    request_id: Identifier
+    input_tokens: Annotated[int, Field(ge=0)]
+    output_tokens: Annotated[int, Field(ge=0)]
+    cached_input_tokens: Annotated[int, Field(ge=0)]
+    reasoning_output_tokens: Annotated[int, Field(ge=0)]
+
+    @model_validator(mode="after")
+    def coherent_provenance(self):
+        from .response_meter import ResponseMeterEnrollment
+        enrollment = ResponseMeterEnrollment.model_validate_json(self.enrollment_document)
+        document = enrollment.model_dump(mode="json")
+        if (canonical_json_bytes(document).decode() != self.enrollment_document
+                or document_digest(document) != self.enrollment_digest
+                or self.cached_input_tokens > self.input_tokens
+                or self.reasoning_output_tokens > self.output_tokens):
+            raise ValueError("inconsistent response meter provenance")
+        return self
+
+
 class ProviderUsageReceipt(ClosedModel):
     schema_version: Literal["primary-provider-usage/v1"]
     attempt_digest: Annotated[str,Field(pattern=r"^sha256:[0-9a-f]{64}$")]
@@ -177,9 +204,24 @@ class ProviderUsageReceipt(ClosedModel):
     observed_tokens: Annotated[int,Field(ge=0)]
     complete: Literal[True]
     meter_signature: Digest
+    metering_evidence: MeteringEvidence | None = None
+
+    @model_validator(mode="after")
+    def meter_binding(self):
+        evidence = self.metering_evidence
+        if evidence is not None:
+            enrollment = json.loads(evidence.enrollment_document)
+            if (self.provider_id != "openai" or self.attempt_digest != enrollment["attempt_digest"]
+                    or self.authority_digest != enrollment["authority_digest"]
+                    or self.observed_tokens != evidence.input_tokens + evidence.output_tokens):
+                raise ValueError("usage receipt does not bind meter evidence")
+        return self
 
     def signing_document(self):
-        return self.model_dump(mode="json",exclude={"meter_signature"})
+        excluded = {"meter_signature"}
+        if self.metering_evidence is None:
+            excluded.add("metering_evidence")
+        return self.model_dump(mode="json",exclude=excluded)
 
 
 def team_ddl(schema: str) -> tuple[str, ...]:
@@ -366,6 +408,12 @@ class PrimaryProviderBudgetAuthority:
         if row is None or (row["grant_digest"],row["provider_id"])!=(receipt.authority_digest,receipt.provider_id):
             raise TeamAuthorizationError("usage receipt reservation mismatch")
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",("primary-provider-budget:"+row["project_id"],))
+        previous=connection.execute(f"SELECT document FROM {self.schema}.director_primary_provider_usage WHERE attempt_digest=%s",(receipt.attempt_digest,)).fetchone()
+        if previous is not None:
+            old=ProviderUsageReceipt.model_validate_json(json.dumps(previous["document"]))
+            if old != receipt:
+                raise TeamAuthorizationError("conflicting usage receipt replay")
+            return
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_usage(attempt_digest,document,actual_microusd,observed_tokens) VALUES(%s,%s::jsonb,%s,%s)",(receipt.attempt_digest,receipt.model_dump_json(),receipt.actual_microusd,receipt.observed_tokens))
 
 
@@ -534,3 +582,5 @@ class TeamAttemptAdmission:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
