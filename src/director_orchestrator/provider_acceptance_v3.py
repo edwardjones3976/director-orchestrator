@@ -1,6 +1,9 @@
+# [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
+# [[OpenAI Codex mechanical integration | GPT-6 | 2026-09-10 | 18:59 UTC | BEGIN]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]]
+# [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 """Explicit two-party acceptance; v2 receipts are never converted or reinterpreted.
 
@@ -36,9 +39,9 @@ ADOPTION_DOMAIN = (ADOPTION_VERSION + "\0").encode()
 ROLES = frozenset({"security", "independent_review", "ci"})
 # These modules exist in the image as well as the owner-reviewed source tree.
 POLICY_MODULES = ("provider_acceptance_v2.py", "provider_acceptance_v3.py",
-    "acceptance_journal.py", "ci_acceptance_issuer.py", "native_acceptance_issuer.py", "primary_activation_evidence.py",
+    "acceptance_journal.py", "ci_acceptance_issuer.py", "native_acceptance_issuer.py", "native_v3_review_issuer.py",
+    "primary_activation_evidence.py",
     "primary_generation.py", "config.py", "primary_default.py", "policy.py")
-
 
 def implementation_digest() -> str:
     """Digest actual installed policy bytes; a commit label is not installation proof."""
@@ -221,6 +224,9 @@ class TwoPartyAcceptanceJournal(AcceptanceJournal):
     def verify_package(raw, *, expected, authorities, now, policy):
         return verify_two_party_acceptance(raw, expected=expected, authorities=authorities, now=now, policy=policy)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Grok Bot | unreported | 2026-09-10 | 16:06 UTC | END]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | END]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]]
+# [[OpenAI Codex mechanical integration | GPT-6 | 2026-09-10 | 18:59 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]
+# [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | BEGIN]]
@@ -344,12 +345,14 @@ def _entitlement_ddl(schema: str) -> tuple[str, ...]:
     )
 
 
-def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str) -> None:
+def _bootstrap_schema(connection: Any, *, schema: str, storage_identity: str, allow_create: bool = True) -> None:
     manifest_table = connection.execute(
         "SELECT to_regclass(%s) AS manifest_table",
         (f"{schema}.entitlement_schema_manifest",),
     ).fetchone()["manifest_table"]
     if manifest_table is None:
+        if not allow_create:
+            raise EntitlementControlPlaneError("existing enrolled entitlement schema is required; runtime cannot initialize it")
         foreign_objects = connection.execute(
             """
             SELECT (
@@ -3183,3 +3186,4 @@ def entitlement_store_from_handle(handle: EntitlementStoreHandle) -> Entitlement
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

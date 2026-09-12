@@ -1,3 +1,6 @@
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -75,6 +78,7 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -2376,6 +2380,123 @@ class PostgresConditionalClaimStore:
                         "primary command proof refused; writer authority is stale or replayed"
                     )
         return False
+
+    def authorize_primary_cancellation(
+        self, *, task_id: str, command_id: str, command_digest: str,
+        nonce_digest: str, proof_version: str, actor_id: str,
+        expected_projection_digest: str, expected_generation: int,
+        owner_token: str, proof_expires_at: int,
+    ) -> TaskWriterLease:
+        """Claim an already authenticated cancellation and its writer atomically.
+
+        The signed request retains its original generation. The immutable proof
+        row binds its digest to the resulting fence, permitting exact crash
+        redelivery without rewriting the request or reacquiring a second time.
+        Other commands retain their live-writer admission rule.
+        """
+        for value, name in ((task_id, "task_id"), (command_id, "command_id"),
+                            (actor_id, "actor_id"), (owner_token, "owner_token")):
+            _require_id(value, name)
+        for value, name in ((command_digest, "command_digest"),
+                            (nonce_digest, "nonce_digest"),
+                            (expected_projection_digest, "projection_digest")):
+            _require_digest(value, name)
+        _require_code(proof_version, "proof_version")
+        expected_generation = _require_generation(expected_generation, "expected_generation", minimum=1)
+        if type(proof_expires_at) is not int or proof_expires_at < 0:
+            raise ValueError("invalid cancellation proof expiry")
+        schema = self._schema
+        parameters = dict(task_id=task_id, command_id=command_id,
+            command_digest=command_digest, nonce_digest=nonce_digest,
+            proof_version=proof_version, actor_id=actor_id, owner_token=owner_token,
+            expected=expected_generation, proof_expires_at=proof_expires_at,
+            lease=DEFAULT_LEASE_SECONDS)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(connection, "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("command-authorization", schema, task_id, "cancellation", command_id)})
+                existing = self._optional_row(connection, f"""
+                    SELECT * FROM {schema}.director_primary_command_authorization
+                    WHERE nonce_digest=%(nonce_digest)s OR
+                        (task_id=%(task_id)s AND operation='cancellation' AND command_id=%(command_id)s)
+                    FOR UPDATE""", parameters)
+                self._one_row(connection, f"""
+                    SELECT task_id FROM {schema}.director_primary_task_writer
+                    WHERE task_id=%(task_id)s FOR UPDATE""", parameters,
+                    missing="cancellation requires an existing task writer")
+                writer_query = f"""SELECT *,
+                    lease_expires_at > clock_timestamp() AS lease_live,
+                    to_timestamp(%(proof_expires_at)s) > clock_timestamp() AS proof_live
+                    FROM {schema}.director_primary_task_writer WHERE task_id=%(task_id)s"""
+                writer = self._one_row(connection, writer_query, parameters,
+                    missing="cancellation task writer is unavailable")
+                if writer["engine_owner"] != "langgraph" or not writer["proof_live"]:
+                    raise PostgresControlPlaneError("cancellation owner or proof expiry is invalid")
+                if existing is not None:
+                    fields = dict(task_id=task_id, operation="cancellation", command_id=command_id,
+                        command_digest=command_digest, nonce_digest=nonce_digest,
+                        proof_version=proof_version, actor_id=actor_id)
+                    if any(str(existing[k]) != str(v) for k, v in fields.items()):
+                        raise PostgresControlPlaneError("cancellation proof replay conflicts with durable authority")
+                    if (not writer["lease_live"] or not hmac.compare_digest(writer["owner_token"], owner_token) or
+                            writer["fencing_generation"] != existing["writer_fencing_generation"]):
+                        raise PostgresControlPlaneError("authorized cancellation writer has expired or moved")
+                    return _lease_from_row(writer)
+                if writer["fencing_generation"] != expected_generation:
+                    raise PostgresControlPlaneError("cancellation targets a stale writer generation")
+                if writer["lease_live"] and not hmac.compare_digest(writer["owner_token"], owner_token):
+                    raise PostgresControlPlaneError("another writer holds an unexpired lease on this task")
+                projected = self._one_row(connection, f"""
+                    SELECT projection_digest FROM {schema}.director_primary_task_projection
+                    WHERE task_id=%(task_id)s FOR UPDATE""", parameters,
+                    missing="cancellation task projection is unavailable")
+                if projected["projection_digest"] != expected_projection_digest:
+                    raise PostgresControlPlaneError("cancellation targets a stale task projection")
+                # Both required rows are now locked. Time spent waiting must
+                # not admit an expired proof or use a stale lease-live result.
+                writer = self._one_row(connection, writer_query, parameters,
+                    missing="cancellation task writer is unavailable")
+                if not writer["proof_live"]:
+                    raise PostgresControlPlaneError("cancellation proof expired during admission")
+                if not writer["lease_live"]:
+                    writer = self._one_row(connection, f"""
+                        UPDATE {schema}.director_primary_task_writer
+                        SET owner_token=%(owner_token)s, fencing_generation=fencing_generation+1,
+                            lease_expires_at=clock_timestamp()+make_interval(secs => %(lease)s),
+                            updated_at=clock_timestamp()
+                        WHERE task_id=%(task_id)s AND fencing_generation=%(expected)s
+                            AND lease_expires_at <= clock_timestamp()
+                        RETURNING *""", parameters,
+                        missing="cancellation writer acquisition lost its exact fence")
+                else:
+                    # Fresh authority needs a full lease before cancellation's
+                    # next transaction; a live same-owner renewal keeps its fence.
+                    writer = self._one_row(connection, f"""
+                        UPDATE {schema}.director_primary_task_writer
+                        SET lease_expires_at=clock_timestamp()+make_interval(secs => %(lease)s),
+                            updated_at=clock_timestamp()
+                        WHERE task_id=%(task_id)s AND fencing_generation=%(expected)s
+                            AND owner_token=%(owner_token)s
+                            AND lease_expires_at > clock_timestamp()
+                        RETURNING *""", parameters,
+                        missing="cancellation writer renewal lost its exact live fence")
+                parameters["generation"] = writer["fencing_generation"]
+                claimed = self._optional_row(connection, f"""
+                    INSERT INTO {schema}.director_primary_command_authorization (
+                        nonce_digest, task_id, operation, command_id, command_digest,
+                        proof_version, actor_id, writer_fencing_generation, proof_expires_at)
+                    SELECT %(nonce_digest)s, %(task_id)s, 'cancellation', %(command_id)s,
+                        %(command_digest)s, %(proof_version)s, %(actor_id)s,
+                        %(generation)s, to_timestamp(%(proof_expires_at)s)
+                    WHERE to_timestamp(%(proof_expires_at)s) > clock_timestamp()
+                    ON CONFLICT DO NOTHING RETURNING nonce_digest""", parameters)
+                if claimed is None:
+                    raise PostgresControlPlaneError("cancellation proof conflicts with durable authority")
+                self._optional_row(connection, f"""
+                    UPDATE {schema}.director_primary_parallel_batch
+                    SET kill_switch=true, updated_at=now() WHERE task_id=%(task_id)s
+                    RETURNING task_id""", parameters)
+                return _lease_from_row(writer)
 
     def record_primary_command_receipt(
         self,
@@ -5034,3 +5155,6 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]]
