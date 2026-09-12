@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | BEGIN]]
@@ -512,8 +513,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             {"returncode": 0, "stdout": b'{"isAuthenticated":true}', "stderr": b""},
         )()
         with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports.sys.platform", "linux"
+        ), patch(
             "director_orchestrator.primary_transports._which",
-            side_effect=lambda names: "cursor-agent.exe" if "cursor-agent.exe" in names else None,
+            side_effect=lambda names: "cursor-agent" if "cursor-agent" in names else None,
         ), patch("subprocess.run", return_value=status) as run:
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory, authenticated={}
@@ -643,3 +646,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]

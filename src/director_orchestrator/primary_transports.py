@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -23,6 +25,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import hashlib
 from dataclasses import dataclass
@@ -43,7 +46,7 @@ from .langgraph_runtime import (
     ProviderAdapterContext,
     RawProviderTransport,
 )
-from .packet_contracts import canonical_json_bytes
+from .packet_contracts import canonical_json_bytes, result_contract_properties
 from .packet_routing import ANTIGRAVITY_DIRECTIVE_OBJECTIVE_PREFIX
 
 
@@ -473,6 +476,111 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
     return dict(candidate) if isinstance(candidate, Mapping) else dict(native)
 
 
+def grok_terminal_success(native: Mapping[str, Any]) -> bool:
+    """Whether a grok envelope is terminally successful within its one turn.
+
+    ``stopReason`` must be exactly ``end_turn`` -- a truncated ``max_tokens``
+    run or an errored stop does not qualify -- and ``num_turns`` must be
+    exactly one, because the lane's command requests ``--max-turns 1`` and the
+    canary packet pins ``max_hops=1``.
+    """
+
+    turns = native.get("num_turns")
+    return (
+        native.get("stopReason") == "end_turn"
+        and isinstance(turns, int)
+        and not isinstance(turns, bool)
+        and turns == 1
+    )
+
+
+def _canonical_grok_native(native: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonicalize a grok envelope on the shared normalization path.
+
+    The live lane reaches ``normalize_native_provider_envelope`` directly
+    through ``NativeCommandPacketTransport.send``, so anything applied only in
+    ``provider_validation.normalize_capture`` never protects production
+    dispatch. Two consequences were real: the observed camel-case ``sessionId``
+    raised *"authenticated native result lacks a run reference"* on every real
+    dispatch, and a structured result carried inside ``text`` was stringified
+    into ``outcome``, discarding ``status``, blockers and side effects before
+    the packet defaulted to ``SUCCEEDED``.
+
+    Only naming is canonicalized here. Terminal qualification is applied by the
+    caller so an unqualified run becomes a FAILED packet rather than an
+    exception, which is what the lifecycle expects from a real failed run.
+    """
+
+    envelope = dict(native)
+    session = envelope.get("sessionId")
+    if "session_id" not in envelope and isinstance(session, str) and session:
+        envelope["session_id"] = session
+    if "structured_output" not in envelope and "result" not in envelope:
+        text = envelope.get("text")
+        if isinstance(text, str) and text.strip().startswith("{"):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, Mapping):
+                envelope["structured_output"] = dict(decoded)
+    return envelope
+
+
+def _project_onto_result_contract(field: str, value: Any) -> Any:
+    """Drop provider keys the result contract does not define for ``field``.
+
+    Several result fields close their objects with ``additionalProperties:
+    false``: ``usage``, ``artifacts``, ``checks``, ``acceptance`` and
+    ``side_effects``. Passing a native block straight through therefore rejects
+    the entire capture as soon as a provider reports one extra key -- grok ships
+    cache and reasoning token counts on ``usage``, which is how this surfaced,
+    but it is a general defect rather than a grok quirk.
+
+    Only undefined keys are dropped. Every property the contract does define is
+    preserved, so required evidence such as a side effect's kind, target, status
+    and idempotency key always survives; a genuinely incomplete item still fails
+    validation instead of being repaired here.
+    """
+
+    allowed = result_contract_properties().get(field)
+    if allowed is None:
+        return value
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if key in allowed}
+    if isinstance(value, list):
+        return [
+            {key: entry for key, entry in item.items() if key in allowed}
+            if isinstance(item, Mapping)
+            else item
+            for item in value
+        ]
+    return value
+
+
+def _projected_native_usage(
+    usage: Any, native: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Project a native usage block, carrying cost under its contract name.
+
+    ``total_cost_usd`` is accepted when a provider does not use ``cost_usd``.
+    Both name the same quantity, and dropping it would lose real cost telemetry
+    that budget accounting depends on. Nothing is estimated: absent cost stays
+    absent.
+    """
+
+    if not isinstance(usage, Mapping):
+        return None
+    projected = _project_onto_result_contract("usage", usage)
+    if "cost_usd" not in projected:
+        for source in (usage, native):
+            candidate = source.get("total_cost_usd")
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                projected["cost_usd"] = candidate
+                break
+    return projected
+
+
 def normalize_native_provider_envelope(
     provider_id: str, work: Mapping[str, Any], native: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -483,6 +591,8 @@ def normalize_native_provider_envelope(
     redacted outbound payload cannot weaken the result's bindings.
     """
 
+    if provider_id == "grok":
+        native = _canonical_grok_native(native)
     structured = _structured_native_output(native)
     run_reference = next(
         (
@@ -496,6 +606,13 @@ def normalize_native_provider_envelope(
         raise RuntimeError("authenticated native result lacks a run reference")
     outcome = structured.get("outcome", structured.get("result"))
     if not isinstance(outcome, str) or not outcome:
+        # Some native CLIs carry the terminal answer in "text" and ship no
+        # structured_output block at all; grok does this.  Fall back to it
+        # before failing, so a conforming envelope is not rejected for naming.
+        candidate = structured.get("text")
+        if isinstance(candidate, str) and candidate:
+            outcome = candidate
+    if not isinstance(outcome, str) or not outcome:
         raise RuntimeError("authenticated native result lacks an outcome")
     allowed_effects = tuple(str(item) for item in work["allowed_external_effects"])
     side_effects = structured.get("side_effects", [])
@@ -504,6 +621,11 @@ def normalize_native_provider_envelope(
     if allowed_effects and not side_effects:
         raise RuntimeError("native result lacks evidence for allowed external effects")
     status = str(structured.get("status", "SUCCEEDED"))
+    if provider_id == "grok" and not grok_terminal_success(native):
+        # A truncated or errored grok run supplies nonempty text and no status,
+        # which would otherwise default to SUCCEEDED on the live path.  Record
+        # the real terminal state instead of inventing a success.
+        status = "FAILED"
     if status not in {"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"}:
         raise RuntimeError("native provider returned an unsupported terminal status")
     acceptance = structured.get("acceptance")
@@ -518,8 +640,10 @@ def normalize_native_provider_envelope(
         ]
     def list_value(name: str) -> list[Any]:
         value = structured.get(name, [])
-        return list(value) if isinstance(value, list) else []
-    usage = native.get("usage", structured.get("usage"))
+        return _project_onto_result_contract(
+            name, list(value) if isinstance(value, list) else []
+        )
+    usage = _projected_native_usage(native.get("usage", structured.get("usage")), native)
     return {
         "schema_version": "1.0",
         "task_id": work["task_id"],
@@ -533,12 +657,17 @@ def normalize_native_provider_envelope(
         "outcome": outcome,
         "artifacts": list_value("artifacts"),
         "checks": list_value("checks"),
-        "acceptance": acceptance,
+        "acceptance": _project_onto_result_contract("acceptance", acceptance),
         "risks": list_value("risks"),
         "blockers": list_value("blockers"),
         "requested_decisions": list_value("requested_decisions"),
+        # Deliberately NOT projected.  Side-effect objects drive effect
+        # authorization and accounting, and packet_transports rejects extra
+        # members as malformed.  Sanitizing them here would convert
+        # schema-invalid provider evidence into an accepted result, so this
+        # field stays fail-closed even though its siblings are projected.
         "side_effects": side_effects,
-        "usage": dict(usage) if isinstance(usage, Mapping) else None,
+        "usage": usage,
         "revision_recommended": bool(structured.get("revision_recommended", False)),
     }
 
@@ -691,6 +820,41 @@ def _safe_cursor_agent_prefix(executable: str | None) -> tuple[str, ...] | None:
     return None
 
 
+CURSOR_SANDBOX_PLATFORMS = frozenset({"darwin", "linux"})
+
+
+def _cursor_host_lane_prefix(executable: str | None) -> tuple[str, ...] | None:
+    """Offer the cursor host lane only where its pinned containment works.
+
+    The lane pins ``--sandbox enabled``. An authenticated attempt on 2026-09-08
+    showed the Cursor CLI refuses that flag off macOS and Linux -- *"Sandbox mode
+    is enabled but not available on this system. Sandbox requires macOS or
+    Linux."* -- so on any other host the pinned invocation cannot execute and
+    fails at dispatch with an opaque flag error rather than a stated reason.
+
+    Downgrading to ``--sandbox disabled`` is deliberately not done here. That
+    removes the operating-system containment the lane requires, and
+    ``docs/provider-validation-harness.md`` is explicit that metadata declaring
+    no tools is not an operating-system containment proof. The lane therefore
+    fails closed on unsupported platforms, and qualifying it needs a macOS or
+    Linux host rather than a weaker flag.
+    """
+
+    prefix = _safe_cursor_agent_prefix(executable)
+    if prefix is None or sys.platform not in CURSOR_SANDBOX_PLATFORMS:
+        return None
+    # Under WSL ``sys.platform`` is "linux" while the interop PATH can resolve a
+    # Windows ``cursor-agent.exe``.  That process still executes on Windows and
+    # still rejects ``--sandbox enabled``, recreating the opaque dispatch
+    # failure this guard exists to prevent, so a Windows launcher is ineligible
+    # even when the host platform looks supported.
+    if any(
+        part.lower().endswith((".exe", ".cmd", ".bat", ".ps1")) for part in prefix
+    ):
+        return None
+    return prefix
+
+
 def _safe_firecrawl_prefix(executable: str | None) -> tuple[str, ...] | None:
     """Resolve the npm command shim to node plus Firecrawl's fixed entrypoint."""
 
@@ -816,7 +980,7 @@ def discover_local_primary_command_transports(
         }
     ) != 1:
         raise ValueError("host provider bridge endpoint, secret, and writer binding must be configured together")
-    cursor_agent = _safe_cursor_agent_prefix(
+    cursor_agent = _cursor_host_lane_prefix(
         _which(("cursor-agent.exe", "cursor-agent.cmd", "cursor-agent"))
     )
     pplx = _safe_pplx_prefix(_which(("pplx.exe", "pplx.cmd", "pplx")))
@@ -999,3 +1163,6 @@ def provider_lane_readiness(
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
