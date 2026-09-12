@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 > **Historical record restored on 2026-09-12.** The observations and corrections below
 > describe the author's 2026-09-09 session. They are not a current health check,
@@ -13,7 +14,7 @@
 # Historical review-handoff correction, 2026-09-09
 
 Preserved from PR #167, commit `4324744701c867791f7d9ea7bf0523273c8aaa5d`,
-Claude Cowork / Claude Opus 5 material. The excerpt is retained as history.
+Claude Cowork / Claude Opus 5 material. The excerpt is retained as history with editorial corrections for current merge authority.
 Its owner-only push/merge language and two-artifact request are superseded by
 owner-authorized execution and the current one-author/one-non-author-reviewer
 protocol (merged PRs #178 and #179). A Slack identity or relay post does not
@@ -26,8 +27,8 @@ acceptance artifacts remain distinct.
 
 **Correction, 2026-09-09.** Earlier revisions told the owner to "request the two
 ACCEPT artifacts." That was wrong: `docs/slack-collaboration-bus.md` and
-`review_handoff.py` assign review orchestration to the **Director**. The owner
-merges; the Director seeks the reviewer.
+`review_handoff.py` assign review orchestration to the **Director**. The Director seeks the reviewer. The accepting non-author reviewer performs an
+eligible authorized merge; otherwise the action stops for owner authorization.
 
 ### The ordinary flow
 
@@ -35,7 +36,7 @@ merges; the Director seeks the reviewer.
 producer authors  →  Director builds director_review_candidate/v1
                   →  Director binds a reviewer assignment and relays it on the bus
                   →  independent provider returns exactly one verdict
-                        ACCEPT              → merge eligibility evaluated → owner merges
+                        ACCEPT              → eligibility and authorization checked → accepting non-author reviewer merges
                         CHANGES_REQUIRED    → returns to author with correction notes → revise
                         SERIOUS_SAFETY_STOP → stops
 ```
@@ -85,3 +86,4 @@ Claude, sole material author, therefore ineligible to review or accept. Reviewer
 Cursor; ChatGPT/Codex alternate; Claude explicitly unassigned. Blocked on the
 pull request existing, which needs an owner push.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->

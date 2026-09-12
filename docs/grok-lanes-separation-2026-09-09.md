@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 > **Historical record restored on 2026-09-12.** The observations and corrections below
 > describe the author's 2026-09-09 session. They are not a current health check,
@@ -25,9 +26,9 @@ one setting name actively implies the opposite of what the code does.
 | **Cursor Grok** | A model offered inside Cursor, counted in Cursor's "Cursor Models" allowance | Cursor subscription | **No** |
 | **Grok Bot** | A separate Cursor product with its own weekly allowance, tracked separately from Cursor Models | Cursor subscription, **separate bucket** | **No** |
 
-`grep -ri 'grok[ _-]*bot'` over `src/` and `docs/` returns nothing. The project
-has never had a Grok Bot concept, so there is nothing to disentangle — there is
-something to *add*, if the owner wants that lane.
+The 2026-09-09 author reported that a search of that checkout found no Grok Bot
+references. This dated inventory is superseded: the current tree records Grok Bot
+as a distinct contact in the Grok profile and charter.
 
 ## The naming trap
 
@@ -61,11 +62,10 @@ the absent credential. The code reads a different name:
 grok_api_key: str = os.getenv("XAI_API_KEY", "")
 ```
 
-`GROK_API_KEY` is read nowhere. The lane is credentialed by **`XAI_API_KEY`**,
-which is present and non-empty, which is why `/health` now reports
-`providers.grok: true`. A remediation instruction naming `GROK_API_KEY` would
-have set a variable the code never reads and left the lane closed while
-appearing to fix it.
+`Settings.grok_api_key` reads **`XAI_API_KEY`** for xAI API readiness.
+`GROK_API_KEY` is also a recognized child-environment transport alias; it must
+not be described as unused throughout the code. The historical API-readiness
+observation is not proof of repository-review transport qualification.
 
 The audit's second named variable, `GROK_REPOSITORY_TRANSPORT`, is also not a
 real setting. Repository transport readiness is computed from the `GROK_CLI_*`
@@ -77,32 +77,22 @@ repository writes off, the lane is ready without any CLI at all.
 
 ## Routing consequence, 2026-09-09
 
-Cursor's allowance is exhausted: Cursor Models 100%, Other Models 100%, and
-on-demand at **$68.12 against a fixed $66 cap** — over the ceiling, not near it.
-Cursor Models reset 17 September. Grok Bot's weekly allowance is at **0%** and
-resets 15 September.
+The session reported provider availability constraints. Private account spend,
+quota and reset details are deliberately omitted from this repository record.
+Launch errors alone did not establish their cause, and they did not authorize a
+billing change or another attempt.
 
-Two things follow.
-
-**1. The Cursor agent-launch failures are explained.** Every Director mention
-produced `The agent failed to start. Please try again.` within seconds, three
-times out of three. A hard spend ceiling that has already been passed produces
-exactly that: instant, deterministic, identical. **Pressing Try Again will not
-help while the cap is exceeded** — an earlier recommendation to press it is
-withdrawn. The fix is to raise or unset the monthly limit, or wait for the
-reset.
-
-**2. Cursor is not a usable reviewer this week; Grok is.** `primary_roster.py`
-puts `grok` in `PRIMARY_TEAM`, `IMPLEMENTERS` **and** `REVIEWERS`, and its lane
-is ready and billed to a different account entirely. Moving the pending
-independent review to Grok is a routing decision the roster already permits, not
-a workaround.
+**Review eligibility was not proved.** General `providers.grok` readiness and
+membership in the reviewer roster do not qualify the repository review route.
+That route separately requires `GROK_ALLOW_REVIEW_VERDICT`, an enabled pinned
+CLI and an explicit repository mapping. The historical session did not provide
+that complete qualification evidence, so its proposed reroute remains unproved.
 
 ## What using Grok Bot would require
 
 It cannot simply be selected. There is no Grok Bot transport, and it is a Cursor
 surface rather than an API this orchestrator dispatches to. Standing it up needs
-three owner decisions, none of them delegable:
+three questions requiring scoped authority and verified capability:
 
 1. **How the orchestrator reaches it.** If it is only usable from inside Cursor's
    own agent surface, it belongs in the same category as an owner-launched
@@ -115,7 +105,7 @@ three owner decisions, none of them delegable:
 
 Until those are settled, "prioritize Grok Bot" is recorded as an owner
 preference, and the nearest thing the project can act on today is the **xAI Grok
-lane**, which is ready, separately billed, and eligible to review.
+lane**. Its repository-review qualification must be established separately.
 
 ## What is not claimed
 
@@ -126,3 +116,4 @@ screenshot of the Cursor spending page, not from any measurement this session
 made.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->

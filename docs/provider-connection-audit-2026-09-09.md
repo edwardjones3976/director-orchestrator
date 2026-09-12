@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 > **Historical record restored on 2026-09-12.** The observations and corrections below
 > describe the author's 2026-09-09 session. They are not a current health check,
@@ -59,19 +60,20 @@ XAI_API_KEY            = absent      <- present and non-empty as of 21:00 UTC
 (repository transport)               <- not required; see the correction below
 ```
 
-`grok_primary_readiness` therefore fails on `credential_configured` and
-`repository_transport_ready`, so `readiness()["grok"]` is false. The lane is
+`grok_primary_readiness` therefore fails on `credential_configured`; with repository transport not required,
+`repository_transport_ready` does not independently fail, so `readiness()["grok"]` is false. The lane is
 switched on and budgeted while being unable to execute. Failing closed is
 correct behaviour; the inconsistency is that the roster advertises a lane that
 cannot act.
 
 **Variable-name correction, 21:35 UTC.** This section originally named
-`GROK_API_KEY` and `GROK_REPOSITORY_TRANSPORT`. **Neither is read by the code.**
+`GROK_API_KEY` and `GROK_REPOSITORY_TRANSPORT`. **Neither is the API credential setting used by `Settings`.** The primary
+child-environment allowlist does recognize `GROK_API_KEY` as a transport alias.
 The credential is `XAI_API_KEY` (`config.py`: `grok_api_key = os.getenv("XAI_API_KEY", "")`),
 and repository transport is computed from the `GROK_CLI_*` group and is required
 only when `GROK_ALLOW_REPOSITORY_WRITE` or `GROK_ALLOW_REVIEW_VERDICT` is true —
 both default false. Acting on the original instruction would have set two
-variables nothing reads and left the lane closed while appearing to fix it.
+variables that do not configure API readiness and left the lane closed while appearing to fix it.
 See [the Grok lane separation note](grok-lanes-separation-2026-09-09.md).
 
 **Scope of this finding.** It governs *orchestrator-dispatched* Grok work. A Grok
@@ -140,3 +142,4 @@ No value was read into output. Every remediation above requires the owner.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:00 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
