@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
@@ -43,9 +46,11 @@ from director_orchestrator.antigravity import (
     AntigravityContractError,
     AntigravityInteractionKind,
     AntigravityRequest,
+    MergeAuthorityScope,
     antigravity_contract_labels,
     antigravity_request_for,
     antigravity_wire_input,
+    merge_authority_error,
 )
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
@@ -774,6 +779,37 @@ class TypedAuthorityTests(unittest.TestCase):
             antigravity_contract_labels(work_assignment(antigravity_directive=None)),
         )
 
+    def test_merge_and_branch_selection_stay_denied_on_the_wire(self):
+        """The owner grant is a non-protected-branch merge, exercised at the merge
+        gate. This sandboxed work packet carries no repository, so it denies both
+        merge scopes, and an unscoped `merge` is not in the vocabulary at all."""
+        self.assertIn(MergeAuthorityScope.NON_PROTECTED, DENIED_AUTHORITIES)
+        self.assertIn(MergeAuthorityScope.PROTECTED, DENIED_AUTHORITIES)
+        self.assertNotIn("merge", DENIED_AUTHORITIES)
+        self.assertIn("branch_selection", DENIED_AUTHORITIES)
+        self.assertIn("review_verdict", DENIED_AUTHORITIES)
+        self.assertIn("acceptance_verdict", DENIED_AUTHORITIES)
+
+    def test_only_the_non_protected_scope_is_an_admissible_merge_authority(self):
+        """Owner decision, 2026-09-08 UTC: the merge grant reaches a non-protected
+        branch only. Protected-branch merge is tier 0 and never delegable."""
+        self.assertIsNone(merge_authority_error("merge.non_protected"))
+
+        # Tier 0, docs/human-out-of-the-loop-operation.md. Never delegable.
+        self.assertEqual(
+            merge_authority_error("merge.protected"),
+            "merging into a protected branch is never delegable",
+        )
+
+        # Unscoped, and every other near miss, fails closed rather than being
+        # read as the narrower grant.
+        for unscoped in ("merge", "", "MERGE.NON_PROTECTED", "merge.non_protected.x"):
+            with self.subTest(authority=unscoped):
+                self.assertEqual(
+                    merge_authority_error(unscoped),
+                    "a merge authority must name the non-protected scope",
+                )
+
     def test_the_wire_model_refuses_hand_assembled_payloads(self):
         base = antigravity_request_for(work_assignment()).model_dump(mode="json")
         for field, value in (
@@ -1090,3 +1126,6 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-25 | 01:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

@@ -1,9 +1,14 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
@@ -602,7 +607,9 @@ class Settings:
     oracle_automerge_repository: str = os.getenv(
         "ORACLE_AUTOMERGE_REPOSITORY", "edwardjones3976/edge_engine"
     )
-    oracle_automerge_base_ref: str = os.getenv("ORACLE_AUTOMERGE_BASE_REF", "main")
+    # Require explicit project scope. The gateway separately verifies actual
+    # branch protection and active rules; a name alone cannot prove protection.
+    oracle_automerge_base_ref: str = os.getenv("ORACLE_AUTOMERGE_BASE_REF", "").strip()
     oracle_automerge_branch_prefix: str = os.getenv(
         "ORACLE_AUTOMERGE_BRANCH_PREFIX", "oracle/"
     )
@@ -626,6 +633,12 @@ class Settings:
     )
     oracle_automerge_gemini_actors: tuple[str, ...] = _csv(
         "ORACLE_AUTOMERGE_GEMINI_ACTORS", ""
+    )
+    oracle_automerge_openai_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_OPENAI_ACTORS", ""
+    )
+    oracle_automerge_antigravity_actors: tuple[str, ...] = _csv(
+        "ORACLE_AUTOMERGE_ANTIGRAVITY_ACTORS", ""
     )
 
     usage_check_enabled: bool = _bool("USAGE_CHECK_ENABLED", False)
@@ -2034,6 +2047,7 @@ class Settings:
             "required_checks_configured": bool(self.oracle_automerge_required_checks),
             "required_check_app_configured": bool(self.oracle_automerge_required_check_app),
             "allowed_paths_configured": bool(self.oracle_automerge_allowed_paths),
+            "base_ref_configured": bool(self.oracle_automerge_base_ref),
             "provider_actor_bindings_configured": bool(
                 self.oracle_automerge_claude_actors
                 and self.oracle_automerge_cursor_actors
@@ -2046,6 +2060,12 @@ class Settings:
             "cursor": frozenset(item.lower() for item in self.oracle_automerge_cursor_actors),
             "grok": frozenset(item.lower() for item in self.oracle_automerge_grok_actors),
             "gemini": frozenset(item.lower() for item in self.oracle_automerge_gemini_actors),
+            "openai": frozenset(item.lower() for item in self.oracle_automerge_openai_actors),
+            # Empty by default: the exact-SHA grant is admissible, but the actor
+            # gate still fails closed until the owner binds a real GitHub actor.
+            "antigravity": frozenset(
+                item.lower() for item in self.oracle_automerge_antigravity_actors
+            ),
         }
 
     def oracle_github_credential_configured(self) -> bool:
@@ -2114,7 +2134,7 @@ class Settings:
                 ],
                 "constraints": [
                     "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later Claude, Cursor, or Grok integration assignment",
+                    "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",
@@ -2216,9 +2236,14 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
