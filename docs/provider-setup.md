@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]] -->
@@ -67,12 +68,12 @@ by starting the process reveals them one process death at a time. Read them all
 at once instead:
 
 ```
-PYTHONPATH=src python scripts/live-dispatch-preflight.py
+PYTHONPATH=src python -B scripts/live-dispatch-preflight.py
 ```
 
 It reports and does nothing else: it sets no variable, writes no file, opens no
 socket, touches no database, and calls no provider. Every verdict it prints is
-the deterministic validator's own, reported verbatim; it removes, relaxes, and
+the deterministic validator's own, reported; it removes, relaxes, and
 defaults nothing. It prints variable names and booleans only, never a value —
 the same rule `/health` follows. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
@@ -84,7 +85,7 @@ prerequisite.
 
 ### The ordered prerequisite list
 
-Reported in the order startup reaches them.
+Reported following main.py's order, additionally running the runtime validator which startup reaches later through runtime activation.
 
 1. **The coupled switches.** `ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_ENABLED`,
    `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`, and
@@ -611,3 +612,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]] -->

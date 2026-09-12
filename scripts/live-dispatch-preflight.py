@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | BEGIN]]
@@ -12,7 +13,7 @@ their verdicts together in the order startup reaches them.
 Read-only by construction. It sets no environment variable, writes no file,
 opens no socket, touches no database, and calls no provider. It removes,
 relaxes and defaults nothing: every verdict here is the deterministic
-validator's own, reported verbatim. Enabling live dispatch remains an owner
+validator's own, reported. Enabling live dispatch remains an owner
 decision taken elsewhere.
 
 Usage:
@@ -249,6 +250,11 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
     target = replace(
         settings, **{attribute: True for _, attribute in TARGET_SWITCHES}
     )
+    runtime_target = replace(
+        target,
+        langgraph_parallel_external_dispatch_enabled=True,
+        langgraph_runtime_enabled=True,
+    )
     # main.py runs these three before it constructs anything.
     for stage, validate in (
         ("workload policy", target.validate_workload_policy_configuration),
@@ -274,8 +280,8 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
             )
         )
     for stage, validate in (
-        ("parallel dispatch", target.validate_parallel_dispatch_configuration),
-        ("langgraph runtime", target.validate_langgraph_runtime_configuration),
+        ("parallel dispatch", runtime_target.validate_parallel_dispatch_configuration),
+        ("langgraph runtime", runtime_target.validate_langgraph_runtime_configuration),
     ):
         problems.extend((stage, item) for item in validator_problems(validate))
     profile = settings.execution_profile_readiness()
@@ -363,3 +369,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]

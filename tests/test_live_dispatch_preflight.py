@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
@@ -82,7 +83,7 @@ def _complete(**overrides) -> Settings:
         langgraph_primary_enabled=True,
         langgraph_primary_new_intake_enabled=True,
         langgraph_primary_live_provider_dispatch_enabled=True,
-        trusted_provider_cost_ranks_json=json.dumps({"cursor": 1}),
+        trusted_provider_cost_ranks_json=json.dumps({"cursor": 1, "claude": 2, "openai": 3}),
         langgraph_primary_provider_activation_bindings_json=json.dumps(bindings),
         langgraph_primary_completion_evidence_actor_allowlist_json=json.dumps(
             allowlist
@@ -109,6 +110,9 @@ class UnsetEnvironmentTests(unittest.TestCase):
             self.assertIn(f"{name} must be enabled", reported)
         joined = "\n".join(f"{stage}: {problem}" for stage, problem in problems)
         for expected in (
+            "workload policy:",
+            "langgraph primary:",
+            "execution profile:",
             "TRUSTED_PROVIDER_COST_RANKS",
             "provider activation bindings",
             "LANGGRAPH_PRIMARY_ADAPTER_CALLBACK_SECRET",
@@ -123,6 +127,30 @@ class UnsetEnvironmentTests(unittest.TestCase):
             "CLAUDE_CALLBACK_SECRET",
         ):
             self.assertIn(expected, joined)
+
+    def test_workload_policy_prerequisite_is_reported(self):
+        settings = replace(_complete(), trusted_provider_cost_ranks_json=json.dumps({"cursor": 1}))
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "workload policy"]
+        self.assertTrue(any("TRUSTED_PROVIDER_COST_RANKS is missing a rank for selectable primary lane(s): claude, openai" in p for p in problems))
+
+    def test_langgraph_shadow_lane_prerequisite_is_reported(self):
+        settings = replace(_complete(), langgraph_shadow_enabled=True, langgraph_checkpoint_path="")
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "langgraph shadow lane"]
+        self.assertTrue(any("LANGGRAPH_CHECKPOINT_PATH must be configured" in p for p in problems))
+
+    def test_langgraph_primary_prerequisite_is_reported(self):
+        problems = [p for s, p in PREFLIGHT.unmet(_bare()) if s == "langgraph primary"]
+        self.assertTrue(any("LANGGRAPH_PRIMARY_OWNER_TOKEN must contain at least 32 characters" in p for p in problems))
+
+    def test_parallel_dispatch_prerequisite_is_reported(self):
+        settings = replace(_complete(), langgraph_parallel_external_dispatch_enabled=True, langgraph_parallel_initial_max_concurrency=1)
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "parallel dispatch"]
+        self.assertTrue(any("caps must start at 2" in p for p in problems))
+
+    def test_langgraph_runtime_prerequisite_is_reported(self):
+        settings = replace(_complete(), langgraph_runtime_enabled=True, langgraph_runtime_checkpoint_path="")
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "langgraph runtime"]
+        self.assertTrue(any("LANGGRAPH_RUNTIME_CHECKPOINT_PATH must be configured" in p for p in problems))
 
     def test_exit_status_is_nonzero(self):
         with patch.object(PREFLIGHT, "Settings", lambda: _bare()):
@@ -291,6 +319,10 @@ class ReadOnlyTests(unittest.TestCase):
                 for target in targets:
                     self.assertNotIsInstance(target, ast.Subscript)
                     self.assertNotIsInstance(target, ast.Attribute)
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                val = node.func.value
+                if isinstance(val, ast.Attribute) and val.attr == "environ" and getattr(val.value, "id", "") == "os":
+                    self.assertNotIn(node.func.attr, {"update", "setdefault", "pop", "clear"})
 
 
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:08 UTC | END]]
@@ -494,3 +526,4 @@ class CollectionIntegrityTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
