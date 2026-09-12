@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -360,20 +361,21 @@ class OpenAIResponsesPacketTransport:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        def remaining_seconds() -> float:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise RuntimeError("OpenAI transport timeout is exhausted")
+            return remaining
+
         meter = self.response_meter
         if meter is not None:
             from .response_meter import ResponseMeterRegistry
             if isinstance(meter, ResponseMeterRegistry):
                 meter = meter.for_context(context)
             headers.update(meter.prepare(context=context, packet=work_packet_json,
-                api_url=self.api_url, model=self.model, api_key=self._api_key))
+                api_url=self.api_url, model=self.model, api_key=self._api_key,
+                remaining_seconds=remaining_seconds))
             body["service_tier"] = meter.enrollment.service_tier
-
-        def remaining_seconds() -> float:
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                raise RuntimeError("OpenAI transport timeout is exhausted")
-            return remaining
 
         async def invoke():
             # HTTPX timeouts bound individual I/O operations, not total elapsed
@@ -417,7 +419,8 @@ class OpenAIResponsesPacketTransport:
         if meter is not None:
             # Complete measured usage remains chargeable even if a subsequent
             # result-contract or token-limit check rejects the generated output.
-            meter.settle(native, response_headers)
+            meter.settle(native, response_headers, remaining_seconds=remaining_seconds)
+            remaining_seconds()
         if (not isinstance(native, dict) or native.get("status") != "completed"
                 or native.get("error") is not None
                 or native.get("incomplete_details") is not None):
@@ -1262,3 +1265,4 @@ def provider_lane_readiness(
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]

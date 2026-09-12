@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 """Synthetic tariffs, real PostgreSQL authority; no external calls or enrollment."""
@@ -10,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import tempfile
+from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -245,5 +247,38 @@ class ResponseMeterTests(unittest.TestCase):
         with self.store._pool.connection() as c,c.transaction():self.authority.budgets.record_usage(c,receipt)
         self.assertEqual(1,self.count_rows())
 
+    def test_database_contention_obeys_attempt_deadline_and_retains_reservation(self):
+        for phase in ("prepare", "settle"):
+            with self.subTest(phase=phase):
+                requests=[]
+                def respond(request):
+                    requests.append(request)
+                    body={"object":"response.input_tokens","input_tokens":8} if request.url.path.endswith("input_tokens") else self.native()
+                    return httpx.Response(200,json=body,headers=self.headers)
+                context=SimpleNamespace(**vars(self.context));context.timeout_seconds=1
+                original=httpx.AsyncClient
+                with self.store._pool.connection() as blocker,blocker.transaction():
+                    if phase=="prepare":
+                        blocker.execute(f"LOCK TABLE {self.schema}.director_primary_provider_spend IN ACCESS EXCLUSIVE MODE")
+                    else:
+                        blocker.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                            ("primary-provider-budget:"+self.g.project_id,))
+                    with patch.object(self.store._pool,"connection",wraps=self.store._pool.connection) as acquisition, \
+                         patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                            side_effect=lambda **kw:original(transport=httpx.MockTransport(respond),**kw)):
+                        started=monotonic()
+                        with self.assertRaisesRegex(RuntimeError,"deadline|timeout"):
+                            OpenAIResponsesPacketTransport(api_key="test-key",model=self.enrollment.model,
+                                response_meter=self.meter).send(self.packet,context=context)
+                        elapsed=monotonic()-started
+                        self.assertLess(elapsed,2.5)
+                        self.assertTrue(all(0 < call.kwargs["timeout"] <= 1 for call in acquisition.call_args_list))
+                self.assertEqual(0 if phase=="prepare" else 2,len(requests))
+                self.assertEqual(0,self.count_rows())
+                with self.store._pool.connection() as c:
+                    reservation=c.execute(f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend WHERE attempt_digest=%s",(self.attempt,)).fetchone()
+                self.assertEqual(self.budget.attempt_reservation_microusd,reservation["reserved_microusd"])
+
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 """Opt-in Responses metering; signed tariffs are not invoice-charge evidence.
@@ -15,6 +16,9 @@ import os
 from pathlib import Path
 import stat
 from types import MappingProxyType
+from contextlib import contextmanager
+from time import monotonic
+from math import ceil
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -85,6 +89,33 @@ class EnrolledResponseMeter:
         if now.tzinfo is None or not e.valid_from <= now < e.expires_at:
             raise TeamAuthorizationError("response meter enrollment is not current")
 
+    @contextmanager
+    def _connection(self, remaining_seconds):
+        from psycopg import Error
+        if remaining_seconds is None:
+            deadline = monotonic() + min(180, (self.enrollment.expires_at-self.clock()).total_seconds())
+            remaining_seconds = lambda: deadline - monotonic()
+        def remaining():
+            seconds = remaining_seconds()
+            if seconds <= 0:
+                raise RuntimeError("response meter deadline exhausted; reservation remains held")
+            return seconds
+        try:
+            with self.pool.connection(timeout=remaining()) as connection, connection.transaction():
+                class BoundedConnection:
+                    def execute(self, statement, parameters=None):
+                        milliseconds = str(max(1, ceil(remaining()*1000)))
+                        connection.execute("SELECT set_config('statement_timeout',%s,true), "
+                            "set_config('lock_timeout',%s,true)", (milliseconds, milliseconds))
+                        result = connection.execute(statement, parameters)
+                        remaining()
+                        return result
+                yield BoundedConnection()
+                # Roll back rather than commit a settlement after its deadline.
+                remaining()
+        except Error as exc:
+            raise RuntimeError("response meter database unavailable or deadline exhausted; reservation remains held") from exc
+
     def _reservation(self, connection):
         e = self.enrollment
         row = connection.execute(f"SELECT grant_digest,provider_id,project_id,task_id "
@@ -104,7 +135,7 @@ class EnrolledResponseMeter:
                 e.authority_digest, "openai", e.project_id, e.task_id):
             raise TeamAuthorizationError("response meter budget binding mismatch")
 
-    def prepare(self, *, context, packet: bytes, api_url: str, model: str, api_key: str):
+    def prepare(self, *, context, packet: bytes, api_url: str, model: str, api_key: str, remaining_seconds=None):
         self._verify()
         e = self.enrollment
         if (api_url != e.origin + "/v1/responses" or model != e.model
@@ -114,11 +145,11 @@ class EnrolledResponseMeter:
                 or context.work_packet_digest != e.work_packet_digest
                 or "sha256:" + hashlib.sha256(packet).hexdigest() != e.work_packet_digest):
             raise TeamAuthorizationError("response meter request binding mismatch")
-        with self.pool.connection() as connection, connection.transaction():
+        with self._connection(remaining_seconds) as connection:
             self._reservation(connection)
         return {"OpenAI-Organization": e.organization_id, "OpenAI-Project": e.api_project_id}
 
-    def settle(self, native, response_headers):
+    def settle(self, native, response_headers, *, remaining_seconds=None):
         self._verify()
         e = self.enrollment
         headers = {str(k).lower(): v for k, v in response_headers.items()}
@@ -168,7 +199,7 @@ class EnrolledResponseMeter:
         signature = hmac.new(self.authority.entitlements._route_verifier_secret,
             canonical_json_bytes(receipt.signing_document()), hashlib.sha256).hexdigest()
         receipt = receipt.model_copy(update={"meter_signature": signature})
-        with self.pool.connection() as connection, connection.transaction():
+        with self._connection(remaining_seconds) as connection:
             connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                 ("primary-provider-budget:" + e.project_id,))
             self._verify()
@@ -236,3 +267,4 @@ def load_response_meter_registry(path, *, authority, pool):
     return registry
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
