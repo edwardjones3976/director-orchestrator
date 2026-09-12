@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:47 UTC | BEGIN]]
@@ -727,7 +728,7 @@ def main() -> None:
         return
     if arguments.command == "challenge":
         if store._journal is None:
-            parser.error("challenge requires owner-configured provider-v2 mode")
+            parser.error("challenge requires owner-configured signed provider mode")
         store.load()
         print(json.dumps(store._journal.challenge(identity), sort_keys=True, separators=(",", ":")))
         return
@@ -794,3 +795,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 """Closed owner-pinned activation-generation identity; no issuer authority."""
@@ -118,8 +119,8 @@ def require_generation(settings, identity, *, reserve=False):
     owner selects the manifest's exact bytes via a separately protected digest.
     """
     try:
-        if settings.langgraph_primary_acceptance_mode != "provider-v2":
-            raise ValueError("generation selection requires provider-v2 acceptance")
+        if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party"}:
+            raise ValueError("generation selection requires signed provider acceptance")
         source = Path(os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH"])
         pin = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
         raw = source.read_bytes()
@@ -234,3 +235,4 @@ if __name__ == "__main__":
     main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]

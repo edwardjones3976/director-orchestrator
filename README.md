@@ -1,7 +1,11 @@
+<!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
@@ -104,9 +108,12 @@ Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-se
 
 Claude keeps Moderator, Participant, and Director project functions separate. Moderation
 uses neutral framing, gathers independent positions before cross-exposure when
-practical, and performs a counter-bias check without voting. Claude may then
-contribute one participant position and its one existing advisory vote; Director
-synthesis and tie handling create no extra vote and never fabricate participation.
+practical, and performs a counter-bias check that holds the vote back so it cannot
+pre-empt synthesis. Claude then contributes one participant position and casts its one
+existing advisory vote at full weight or records an explicit abstention. Moderating
+a debate never costs Claude its right to vote; only Claude's own abstention forgoes
+exercising it. Director synthesis and tie handling create no extra vote and never fabricate
+participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
 next action rather than activity summaries.
 
@@ -455,7 +462,11 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]] -->
+<!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | END]] -->
