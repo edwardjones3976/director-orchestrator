@@ -81,7 +81,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
                 self.assertIs(output[0]["json"]["alarm"], True)
         self.assertIn("unreachable", result["outputs"][0][0]["json"]["text"])
         self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
-        self.assertIn("kill switch engaged while live dispatch is requested", result["outputs"][4][0]["json"]["text"])
+        self.assertIn("kill switch engaged while parallel dispatch is enabled", result["outputs"][4][0]["json"]["text"])
 
     def test_status_treats_engaged_kill_switch_as_expected_under_offline_simulation(self):
         healthy = self._status_response()
