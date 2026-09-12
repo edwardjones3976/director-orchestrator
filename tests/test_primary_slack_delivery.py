@@ -1,0 +1,325 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
+from __future__ import annotations
+
+import asyncio
+import importlib
+import json
+import os
+import tempfile
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import httpx
+from fastapi.testclient import TestClient
+
+from director_orchestrator.approvals import build_slack_intake_attestation
+from director_orchestrator.langgraph_primary import ApprovalDecision, ApprovalKind, ApprovalResume
+from director_orchestrator.models import IntakeAuthentication, TaskStatus
+from director_orchestrator.primary_default import build_offline_parallel_dispatcher
+from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+from director_orchestrator.primary_slack_delivery import render_notification
+from tests import test_primary_default as primary_fixtures
+from tests import test_slack_intake_receipts as slack_fixtures
+
+
+class PrimarySlackDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = primary_fixtures.DefaultPrimaryApplicationIntegrationTests()
+        self.fixture.setUpClass()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.tearDown)
+        self.fixture.use_parallel_graph_completion_services(None)
+        self.fixture.application._parallel_dispatcher = build_offline_parallel_dispatcher(
+            self.fixture.services, lambda: self.fixture.coordinator)
+        self.settings = replace(self.fixture.settings,
+            langgraph_primary_postgres_schema=self.fixture.schema,
+            langgraph_primary_new_intake_enabled=True,
+            slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER",
+            slack_bot_token="synthetic-slack-test-token",
+            slack_gateway_secret="synthetic-gateway-signing-secret-32-characters",
+            shared_secret="synthetic-shared-secret")
+        self.activation = SimpleNamespace(handle=self.fixture.handle,
+            coordinator=self.fixture.coordinator, application=self.fixture.application)
+        self.posts = []
+        self.messages = []
+        self.mode = "success"
+        self.delivery = PrimarySlackDelivery(self.activation, self.settings,
+            transport=httpx.MockTransport(self.slack))
+
+    def slack(self, request):
+        if request.url.path.endswith("auth.test"):
+            return httpx.Response(200, json={"ok": True, "user_id": "UBOT", "bot_id": "BBOT"})
+        if request.url.path.endswith("chat.postMessage"):
+            payload = json.loads(request.content)
+            self.posts.append(payload)
+            ts = f"1720000001.{len(self.posts):06d}"
+            message = {**payload, "ts": ts, "user": "UBOT"}
+            if self.mode in {"success", "ack_lost_but_posted"}:
+                self.messages.append(message)
+            if self.mode in {"timeout", "ack_lost_but_posted"}:
+                raise httpx.ReadTimeout("synthetic acknowledgement timeout")
+            if self.mode == "refused":
+                return httpx.Response(200, json={"ok": False, "error": "missing_scope"})
+            return httpx.Response(200, json={"ok": True, "ts": ts, "channel": payload["channel"]})
+        if request.url.path.endswith("conversations.replies"):
+            return httpx.Response(200, json={"ok": True, "messages": self.messages})
+        raise AssertionError("unexpected network route: " + str(request.url))
+
+    def intake(self, authenticated=True):
+        return self.fixture.application.create_intake(self.fixture.intake(),
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED if authenticated
+                else IntakeAuthentication.BEARER_DRY_RUN)
+
+    def drain(self):
+        self.fixture.coordinator.renew_new_intake()
+        return asyncio.run(self.delivery.run_once())
+
+    def approve(self, task):
+        pending = self.fixture.coordinator.get_projection(task.task_id).projection["pending_approval"]
+        return self.fixture.application.resume_approval(ApprovalResume(task_id=task.task_id,
+            kind=ApprovalKind(pending["kind"]), request_digest=pending["request_digest"],
+            approval_event_id="fixture-owner-approval", decision=ApprovalDecision.APPROVE))
+
+    def test_actual_intake_signed_button_and_final_result_through_fastapi(self):
+        # Load main safely, then route real requests to the actual test primary
+        # application. Only Slack/network and startup deployment are doubled.
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+            with (patch.object(main, "settings", self.settings),
+                  patch.object(main, "primary_default_activation", self.activation),
+                  patch.object(main, "primary_slack_delivery", self.delivery)):
+                api = TestClient(main.app)
+                payload = self.fixture.intake()
+                headers = {"Authorization": "Bearer " + self.settings.shared_secret,
+                    **build_slack_intake_attestation(self.settings.slack_gateway_secret,
+                                                    self.settings.shared_secret, payload)}
+                partial = {"Authorization": headers["Authorization"],
+                           "X-Director-Intake-Nonce": "partial-synthetic-attestation"}
+                self.assertEqual(403, api.post("/v1/intake", headers=partial,
+                    json=payload.model_dump(mode="json")).status_code)
+                invalid = dict(headers)
+                signature_name = next(name for name in headers if "signature" in name.lower())
+                invalid[signature_name] = "0" * 64
+                self.assertEqual(403, api.post("/v1/intake", headers=invalid,
+                    json=payload.model_dump(mode="json")).status_code)
+                first = api.post("/v1/intake", headers=headers, json=payload.model_dump(mode="json"))
+                self.assertEqual(202, first.status_code, first.text)
+                self.assertEqual("slack_gateway_attested", first.json()["intake_authentication"])
+                task_id = first.json()["task_id"]
+                replay = api.post("/v1/intake", headers=headers, json=payload.model_dump(mode="json"))
+                self.assertEqual(task_id, replay.json()["task_id"])
+                self.drain()
+                self.assertEqual(1, len(self.posts))
+                button = self.posts[0]["blocks"][1]["elements"][0]
+                gateway_fixture = slack_fixtures.SlackIntakeReceiptTests()
+                gateway_fixture.setUp()
+                gateway = gateway_fixture.slack_bot
+                gateway.settings = self.settings
+                client = Mock()
+                def submit(url, **kwargs):
+                    response = api.post(url.removeprefix(self.settings.orchestrator_base_url), **kwargs)
+                    self.assertEqual(200, response.status_code, response.text)
+                    return response
+                with (patch.object(gateway.httpx, "get", side_effect=lambda url, **kw:
+                        api.get(url.removeprefix(self.settings.orchestrator_base_url), **kw)),
+                      patch.object(gateway.httpx, "post", side_effect=submit)):
+                    gateway.primary_approval_button_handler(Mock(), {
+                        "user": {"id": "UOWNER"}, "channel": {"id": "CDEFAULT"},
+                        "actions": [{**button, "action_ts": "1720000002.000001"}]}, client)
+                current = api.get(f"/v1/tasks/{task_id}", headers=headers)
+                self.assertEqual("DONE", current.json()["status"], current.text)
+                self.drain()
+                self.drain()
+                self.assertEqual(2, len(self.posts))
+                self.assertIn("SUCCEEDED", self.posts[-1]["text"])
+                self.assertIn("SIMULATION", self.posts[-1]["text"])
+                self.assertNotIn("$0", self.posts[-1]["text"])
+                receipts = api.get(f"/v1/primary/tasks/{task_id}/deliveries", headers=headers)
+                self.assertEqual(200, receipts.status_code)
+                self.assertEqual(["DELIVERED", "DELIVERED"], [r["state"] for r in receipts.json()])
+                self.assertIsNotNone(receipts.json()[0]["owner_decision_at"])
+                self.assertEqual(401, api.get(f"/v1/primary/tasks/{task_id}/deliveries").status_code)
+                self.assertNotIn("payload", receipts.text)
+                # A displayed old request cannot approve a new/current decision.
+                with patch.object(gateway.httpx, "get", return_value=current), patch.object(gateway.httpx, "post") as post:
+                    gateway.primary_approval_button_handler(Mock(), {
+                        "user": {"id": "UOWNER"}, "channel": {"id": "CDEFAULT"},
+                        "actions": [{**button, "action_ts": "1720000002.000002"}]}, client)
+                    post.assert_not_called()
+
+    def test_unsigned_canary_and_wrong_channel_do_not_post(self):
+        record = self.intake(authenticated=False)
+        self.drain()
+        self.assertEqual([], self.posts)
+        self.assertEqual("SUPPRESSED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_ambiguous_post_is_not_retried_after_restart(self):
+        record = self.intake()
+        self.mode = "timeout"
+        self.drain()
+        self.delivery = PrimarySlackDelivery(self.activation, self.settings,
+            transport=httpx.MockTransport(self.slack))
+        self.mode = "success"
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("AMBIGUOUS", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_lost_ack_can_be_resolved_by_readback_without_reposting(self):
+        record = self.intake()
+        self.mode = "ack_lost_but_posted"
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("DELIVERED", self.delivery.receipts(record.task_id)[0]["state"])
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+
+    def test_claim_survives_restart_and_cancel_produces_one_terminal_reply(self):
+        record = self.intake()
+        self.delivery.enqueue()
+        self.delivery.bot_user_id = "UBOT"  # Synthetic auth boundary for crash injection.
+        claimed = self.delivery.claim()
+        self.assertIsNotNone(claimed)
+        self.delivery = PrimarySlackDelivery(self.activation, self.settings,
+            transport=httpx.MockTransport(self.slack))
+        self.drain()
+        self.assertEqual([], self.posts)
+        self.fixture.application.cancel(record.task_id)
+        self.drain()
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        self.assertIn("CANCELLED", self.posts[0]["text"])
+
+    def test_cancel_supersedes_unsent_approval(self):
+        record = self.intake()
+        self.delivery.enqueue()
+        self.fixture.application.cancel(record.task_id)
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        self.assertNotIn("actions", json.dumps(self.posts[0]["blocks"]))
+        self.assertEqual(["SUPERSEDED", "DELIVERED"], [r["state"] for r in self.delivery.receipts(record.task_id)])
+
+    def test_foreign_intake_owner_cannot_claim_a_post(self):
+        self.intake()
+        self.delivery.owner_token = "not-the-active-owner"
+        self.drain()
+        self.assertEqual([], self.posts)
+
+    def test_known_slack_refusal_is_recorded_without_retry(self):
+        record = self.intake()
+        self.mode = "refused"
+        self.drain()
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("REFUSED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_concurrent_workers_claim_one_attempt_and_database_prevents_rewind(self):
+        self.intake()
+        self.delivery.enqueue()
+        self.delivery.bot_user_id = "UBOT"  # Synthetic auth boundary for concurrent claims.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claims = list(executor.map(lambda _: self.delivery.claim(), range(2)))
+        self.assertEqual(1, sum(row is not None for row in claims))
+        with self.assertRaisesRegex(Exception, "cannot be retried or rewound"):
+            with self.fixture.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.fixture.schema}.director_primary_slack_delivery SET state='PENDING'")
+        with self.assertRaisesRegex(Exception, "identity is immutable"):
+            with self.fixture.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.fixture.schema}.director_primary_slack_delivery SET payload='{{}}'::jsonb")
+
+    def test_partial_remote_readback_cannot_verify_the_displayed_plan(self):
+        record = self.intake()
+        def altered_readback(request):
+            result = self.slack(request)
+            if request.url.path.endswith("conversations.replies"):
+                messages = [dict(message, blocks=[]) for message in self.messages]
+                return httpx.Response(200, json={"ok": True, "messages": messages})
+            return result
+        self.delivery.transport = httpx.MockTransport(altered_readback)
+        self.drain()
+        self.drain()
+        self.assertEqual(1, len(self.posts))
+        receipt = self.delivery.receipts(record.task_id)[0]
+        self.assertEqual("ACKNOWLEDGED", receipt["state"])
+        self.assertEqual(2, receipt["readback_attempts"])
+
+    def test_unsigned_http_canary_never_becomes_authenticated_slack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+            with (patch.object(main, "settings", self.settings),
+                  patch.object(main, "primary_default_activation", self.activation)):
+                response = TestClient(main.app).post("/v1/intake",
+                    headers={"Authorization": "Bearer " + self.settings.shared_secret},
+                    json=self.fixture.intake().model_dump(mode="json"))
+                self.assertEqual(202, response.status_code)
+                self.assertEqual("bearer_dry_run", response.json()["intake_authentication"])
+        self.drain()
+        self.assertEqual([], self.posts)
+
+    def test_full_external_grant_is_displayed_and_missing_grant_cannot_offer_approval(self):
+        record = self.intake()
+        projection = self.fixture.coordinator.get_projection(record.task_id)
+        payload = dict(projection.projection)
+        payload["pending_approval"] = {**payload["pending_approval"], "kind": "external_effect"}
+        row = {"projection": payload, "projection_digest": projection.projection_digest,
+               "created_at": record.created_at}
+        missing = render_notification(row, self.settings)
+        self.assertEqual(["director_primary_reject"],
+            [item["action_id"] for item in missing["blocks"][-1]["elements"]])
+        grant = {"action": "mark_ready", "repository": "owner/director", "pull_number": 7,
+                 "base_sha": "a" * 40, "head_sha": "b" * 40}
+        payload["application"] = {**payload["application"], "effect_grant": grant}
+        rendered = render_notification(row, self.settings)
+        self.assertIn("a" * 40, json.dumps(rendered))
+        self.assertIn("b" * 40, json.dumps(rendered))
+        self.assertEqual(2, len(rendered["blocks"][-1]["elements"]))
+
+    def test_oversized_approval_does_not_hide_scope_behind_a_button(self):
+        record = self.intake()
+        projection = self.fixture.coordinator.get_projection(record.task_id)
+        raw = projection.projection["application"]["task_record"]
+        raw["plan"]["normalized_outcome"] = "Objective " * 1000
+        for assignment in raw["plan"]["assignments"]:
+            assignment["task"] = "Task " * 1900
+        rendered = render_notification({"projection": projection.projection,
+            "projection_digest": projection.projection_digest, "created_at": record.created_at}, self.settings)
+        self.assertTrue(all(len(block.get("text", {}).get("text", "")) <= 2900
+                            for block in rendered["blocks"]))
+        self.assertEqual(["director_primary_reject"],
+            [item["action_id"] for item in rendered["blocks"][-1]["elements"]])
+
+    def test_recovery_preserves_execution_mode_and_rendering_ignores_new_flags(self):
+        record = self.intake()
+        projection = self.fixture.coordinator.get_projection(record.task_id)
+        self.assertEqual("offline_simulation", projection.projection["application"]["execution_mode"])
+        self.fixture.services.settings = replace(self.settings, langgraph_primary_offline_simulation_enabled=False)
+        self.fixture.services.hydrate(projection)
+        self.assertEqual("offline_simulation", self.fixture.services.application_projection(record.task_id)["execution_mode"])
+        projection.projection["application"]["execution_mode"] = "live"
+        rendered = render_notification({"projection": projection.projection,
+            "projection_digest": projection.projection_digest, "created_at": record.created_at}, self.settings)
+        self.assertNotIn("SIMULATION", rendered["text"])
+
+    def test_other_slack_sender_cannot_supply_delivery_readback(self):
+        record = self.intake()
+        def forged_readback(request):
+            response = self.slack(request)
+            if request.url.path.endswith("conversations.replies"):
+                return httpx.Response(200, json={"ok": True,
+                    "messages": [dict(message, user="UOTHER") for message in self.messages]})
+            return response
+        self.delivery.transport = httpx.MockTransport(forged_readback)
+        self.drain()
+        self.assertEqual("ACKNOWLEDGED", self.delivery.receipts(record.task_id)[0]["state"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]

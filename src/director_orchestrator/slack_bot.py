@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
@@ -14,6 +16,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -521,7 +524,10 @@ def _task_and_version(response) -> tuple[TaskRecord, int]:
     return TaskRecord.model_validate(response.json()), int(raw_version)
 
 
-def _primary_approval_payload(response, *, actor_id: str, event_id: str) -> dict | None:
+def _primary_approval_payload(response, *, actor_id: str, event_id: str,
+                              displayed_binding: dict | None = None,
+                              decision: str = "approve") -> dict | None:
+    response.raise_for_status()
     projection = response.headers.get("X-Primary-Projection-Digest")
     generation = response.headers.get("X-Primary-Writer-Generation")
     kind = response.headers.get("X-Primary-Approval-Kind")
@@ -531,6 +537,11 @@ def _primary_approval_payload(response, *, actor_id: str, event_id: str) -> dict
     if not generation or not generation.isdigit() or not kind or not request_digest:
         raise ValueError("Director primary task response omitted approval bindings")
     task_id = str(response.json()["task_id"])
+    if displayed_binding is not None and displayed_binding != {
+        "task_id": task_id, "projection_digest": projection,
+        "kind": kind, "request_digest": request_digest,
+    }:
+        raise ValueError("The displayed primary approval is stale; use the current request")
     path = f"/v1/primary/tasks/{task_id}/approvals/resume"
     placeholder = PrimaryIngressProof(
         issued_at=int(datetime.now(timezone.utc).timestamp()),
@@ -545,6 +556,7 @@ def _primary_approval_payload(response, *, actor_id: str, event_id: str) -> dict
         expected_fencing_generation=int(generation),
         kind=kind,
         request_digest=request_digest,
+        decision=decision,
         approval_event_id=event_id,
         slack_gateway_proof=placeholder,
     )
@@ -762,6 +774,48 @@ def command_handler(ack, command, client, respond):
     _forward(event, client, require_prefix=True)
 
 
+@app.action(re.compile(r"^director_primary_(approve|reject)$"))
+def primary_approval_button_handler(ack, body, client):
+    ack()
+    user_id = body.get("user", {}).get("id")
+    channel_id = body.get("channel", {}).get("id")
+    if user_id != settings.slack_owner_user_id or channel_id != settings.slack_channel_id:
+        return
+    try:
+        action = body.get("actions", [{}])[0]
+        binding = json.loads(action.get("value", ""))
+        if not isinstance(binding, dict) or set(binding) != {
+                "task_id", "projection_digest", "kind", "request_digest"}:
+            raise ValueError("Invalid primary approval binding")
+        task_id = binding["task_id"]
+        if not isinstance(task_id, str) or not re.fullmatch(r"DIR-LG-[A-F0-9]+", task_id):
+            raise ValueError("Invalid primary task identity")
+        event_id = action.get("action_ts") or body.get("action_ts")
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("Missing Slack action identity")
+        current = httpx.get(
+            f"{settings.orchestrator_base_url}/v1/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {settings.shared_secret}"}, timeout=20)
+        payload = _primary_approval_payload(current, actor_id=user_id, event_id=event_id,
+            displayed_binding=binding,
+            decision="deny" if action["action_id"] == "director_primary_reject" else "approve")
+        if payload is None:
+            raise ValueError("Task is no longer awaiting a primary decision")
+        response = httpx.post(
+            f"{settings.orchestrator_base_url}/v1/primary/tasks/{task_id}/approvals/resume",
+            headers={"Authorization": f"Bearer {settings.shared_secret}"},
+            json=payload, timeout=20)
+        response.raise_for_status()
+        # The primary ledger owns the durable lifecycle reply. An ephemeral
+        # acknowledgement cannot duplicate its terminal task result.
+        client.chat_postEphemeral(channel=channel_id, user=user_id,
+            text=_tag("Your decision was recorded. The Director will reply in the task thread."))
+    except Exception as exc:
+        _log_boundary_failure("primary_approval", exc)
+        client.chat_postEphemeral(channel=channel_id, user=user_id,
+            text=_tag("The decision was not confirmed. Check the current task before trying again; the displayed request may be stale."))
+
+
 @app.action("director_approve")
 def approval_button_handler(ack, body, client):
     ack()
@@ -853,3 +907,6 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -95,7 +97,10 @@ def _outcome_projection(outcome: PrimaryOutcome) -> dict[str, Any]:
         "reason_code": outcome.reason_code,
         "pending_approval": (
             None
-            if outcome.pending_approval is None
+            if outcome.pending_approval is None or (
+                outcome.terminal_classification is not None
+                and outcome.terminal_classification.value != "OWNER_DECISION_REQUIRED"
+            )
             else {
                 "kind": outcome.pending_approval.kind.value,
                 "request_digest": outcome.pending_approval.request_digest,
@@ -925,3 +930,6 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
