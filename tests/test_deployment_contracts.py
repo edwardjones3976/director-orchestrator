@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
@@ -47,8 +48,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
             "providers": {name: providers.get(name, True) for name in (
                 "slack", "openai_director", "cursor", "claude", "gemini", "grok", "perplexity"
             )},
-            "parallel_dispatch": {"kill_switch_open": True},
-            "langgraph_primary": {"ambiguous_effect_count": 0, "live_provider_dispatch_requested": False},
+            "parallel_dispatch": {"enabled": False, "kill_switch_open": True},
+            "langgraph_primary": {"ambiguous_effect_count": 0},
         }}
 
     def test_status_executes_provider_changes_and_suppresses_unchanged_health(self):
@@ -70,7 +71,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
         ambiguous["body"]["langgraph_primary"]["ambiguous_effect_count"] = 1
         stopped = self._status_response()
         stopped["body"]["parallel_dispatch"]["kill_switch_open"] = False
-        stopped["body"]["langgraph_primary"]["live_provider_dispatch_requested"] = True
+        stopped["body"]["parallel_dispatch"]["enabled"] = True
         responses = [{"error": "connection refused"}, {"statusCode": 503},
                      ambiguous, ambiguous, stopped]
         result = self._run_status_sequence(responses)
@@ -86,11 +87,11 @@ process.stdout.write(JSON.stringify({outputs, store}));
         healthy = self._status_response()
         engaged = self._status_response()
         engaged["body"]["parallel_dispatch"]["kill_switch_open"] = False
-        engaged_live = self._status_response()
-        engaged_live["body"]["parallel_dispatch"]["kill_switch_open"] = False
-        engaged_live["body"]["langgraph_primary"]["live_provider_dispatch_requested"] = True
+        engaged_enabled = self._status_response()
+        engaged_enabled["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        engaged_enabled["body"]["parallel_dispatch"]["enabled"] = True
 
-        result = self._run_status_sequence([healthy, engaged, engaged, engaged, engaged_live])
+        result = self._run_status_sequence([healthy, engaged, engaged, engaged, engaged_enabled])
         initial, changed, quiet1, quiet2, alarmed = result["outputs"]
 
         self.assertEqual(len(initial), 1)
@@ -101,7 +102,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertEqual(quiet2, [])
         self.assertEqual(len(alarmed), 1)
         self.assertIs(alarmed[0]["json"]["alarm"], True)
-        self.assertIn("kill switch engaged while live dispatch is requested", alarmed[0]["json"]["text"])
+        self.assertIn("kill switch engaged while parallel dispatch is enabled", alarmed[0]["json"]["text"])
 
     def test_status_only_emits_fixed_boolean_provider_fields(self):
         response = self._status_response(gemini="sensitive-test-value", grok={"key": "sensitive-test-value"})
@@ -467,3 +468,4 @@ if __name__ == "__main__":
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
