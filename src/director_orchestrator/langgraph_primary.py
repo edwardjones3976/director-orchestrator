@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | BEGIN]]
@@ -940,8 +941,75 @@ class PrimaryOutcome:
     parallel_ambiguous_slot_count: int = 0
 
 
+class PrimaryGraphInput(TypedDict, total=False):
+    """Request-only graph boundary; computed state is never caller input.
+
+    These are the existing bounded request fields plus its version and digest.
+    PrimaryRequest still validates values; TypedDict controls channel visibility.
+    """
+
+    schema_version: str
+    task_id: str
+    source_event_id: str
+    correlation_id: str
+    intake_digest: str
+    scope_digest: str
+    authority_snapshot_digest: str
+    work_packet_digest: str | None
+    idempotency_key_digest: str
+    input_digest: str
+    starting_sha: str
+    dedup_payload_digest: str | None
+    writer_owner_id: str
+    budget_limit_units: int
+    provider_cost_units: int
+    effect_cost_units: int
+    max_visits: int
+    max_revisions: int
+    execution_approval_required: bool
+    external_effect_required: bool
+    effect_key_digest: str | None
+    graph_writer_active: bool
+    legacy_writer_active: bool
+    cancel_requested: bool
+    timeout_expired: bool
+
+
+class PrimaryGraphOutput(TypedDict, total=False):
+    """Compact invocation report, not the internal checkpoint or authority.
+
+    The facade continues deriving PrimaryOutcome from the durable snapshot,
+    including its full-state digest. Audit callers explicitly use compact_state.
+    LangGraph may additionally return its reserved __interrupt__ metadata.
+    """
+
+    task_id: str
+    current_phase: str
+    transition_reason_code: str
+    terminal_classification: str | None
+    pending_approval_kind: str | None
+    pending_approval_request_digest: str | None
+    provider_dispatch_status: str
+    effect_status: str
+    visit_count: int
+    visited_nodes: list[str]
+    revision_count: int
+    budget_used_units: int
+    parallel_plan_digest: str | None
+    parallel_aggregate_digest: str | None
+    parallel_terminal: bool
+    parallel_succeeded: bool
+    parallel_ambiguous_slot_count: int
+
+
 class PrimaryGraphState(TypedDict, total=False):
-    """Checkpoint-safe state containing no secrets, prompts, or transcripts."""
+    """Unchanged v1 checkpoint channels, including private workflow state.
+
+    Every channel intentionally uses LangGraph's default LastValue reducer.
+    The parent is sequential: nodes emit replacement counters and an already
+    bounded visit list. Additive reducers would double-count on each update and
+    change persisted checkpoint semantics. Parallel workers aggregate separately.
+    """
 
     schema_version: str
     task_id: str
@@ -1099,7 +1167,11 @@ def _validate_initial_state(state: PrimaryGraphState) -> PrimaryGraphState:
     supplied_digest = _require_digest(str(state.get("input_digest") or ""), "input_digest")
     if not _secure_equal(supplied_digest, request.input_digest):
         raise ValueError("input_digest does not match the bounded request")
-    return _entered_update(state, PrimaryPhase.AUTHENTICATE_SCOPE)[0]
+    # The input schema filters caller-supplied internal channels. Materialize
+    # the same defaults formerly supplied by graph_input inside the graph.
+    # Existing checkpoint values win so recovery never resets visits or receipts.
+    initialized = {**request.graph_input(), **state}
+    return {**initialized, **_entered_update(initialized, PrimaryPhase.AUTHENTICATE_SCOPE)[0]}
 
 
 def _entered_update(
@@ -1262,7 +1334,7 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
         if update.get("terminal_classification"):
             return update
         return _call_phase_handler(
-            state,
+            {**state, **update},
             update,
             handlers.authenticate_scope,
             digest_field="authenticate_scope_digest",
@@ -2110,7 +2182,11 @@ def build_primary_graph(
     """Compile the bounded parent graph around caller-provided pure handlers."""
 
     nodes = _build_nodes(handlers)
-    graph = StateGraph(PrimaryGraphState)
+    graph = StateGraph(
+        PrimaryGraphState,
+        input_schema=PrimaryGraphInput,
+        output_schema=PrimaryGraphOutput,
+    )
     for name, node in nodes.items():
         graph.add_node(name, node)
 
@@ -3196,3 +3272,5 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:06 UTC | END]]
