@@ -1,3 +1,4 @@
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -77,6 +78,7 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -2436,13 +2438,13 @@ class PostgresConditionalClaimStore:
                         proof_version=proof_version, actor_id=actor_id)
                     if any(str(existing[k]) != str(v) for k, v in fields.items()):
                         raise PostgresControlPlaneError("cancellation proof replay conflicts with durable authority")
-                    if (not writer["lease_live"] or writer["owner_token"] != owner_token or
+                    if (not writer["lease_live"] or not hmac.compare_digest(writer["owner_token"], owner_token) or
                             writer["fencing_generation"] != existing["writer_fencing_generation"]):
                         raise PostgresControlPlaneError("authorized cancellation writer has expired or moved")
                     return _lease_from_row(writer)
                 if writer["fencing_generation"] != expected_generation:
                     raise PostgresControlPlaneError("cancellation targets a stale writer generation")
-                if writer["lease_live"] and writer["owner_token"] != owner_token:
+                if writer["lease_live"] and not hmac.compare_digest(writer["owner_token"], owner_token):
                     raise PostgresControlPlaneError("another writer holds an unexpired lease on this task")
                 projected = self._one_row(connection, f"""
                     SELECT projection_digest FROM {schema}.director_primary_task_projection
@@ -5155,3 +5157,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]]
