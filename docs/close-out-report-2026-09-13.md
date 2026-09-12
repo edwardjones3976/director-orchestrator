@@ -1,3 +1,7 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | BEGIN]] -->
 # Close-out report — LangGraph-primary and n8n delivery
 
@@ -14,6 +18,7 @@ never rounded to a pass.
 | Acting Director | Claude (Cowork session) |
 | Objective | Earliest completion; Sunday 2026-09-13 07:00 PDT an outer bound, not a due date |
 | Plan of record | `docs/activation-plan-2026-09-13.md` (v4) |
+| Delegation round | `docs/delegation-round-2026-09-09.md` supersedes the matrix assignment table for 2026-09-09 |
 | Governing rules | `docs/director-decision-rules.md` (R1–R7) |
 | Delegation | `docs/delegation-matrix-2026-09-13.md` (rev 2) |
 | Determinations | `docs/findings-2026-09-09-gate8-and-holds.md` |
@@ -28,7 +33,7 @@ never rounded to a pass.
 | Candidate tree | **PENDING** | |
 | Deployment snapshot at planning | `a05237776bf4aac0f8224947cf44dea356ed8f56`, tree `4e1d578ccbd2db1e92b81de1659884061a87d160` | snapshot checkout |
 | Deployment control-script version | `OpenAI Codex \| GPT-6 \| 2026-09-06 \| 20:37 UTC` | snapshot `scripts/` |
-| Delivery branch | `claude/activation-plan-2026-09-13` | nine commits, documentation only |
+| Delivery branch (merged) | `claude/activation-plan-2026-09-13`, merged via PR #159 at 2026-09-09 19:18 UTC | head `7f14e8b`; merge commit `4f1d9c3`; nine commits, documentation only |
 
 The deployment ran eleven merges behind `main`, and the local `main` ref was 313
 commits stale. Neither was used as authority.
@@ -37,7 +42,7 @@ commits stale. Neither was used as authority.
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| Planning and decomposition | **Complete** | Six documents, 1,492+ lines, nine commits |
+| Planning and decomposition | **Complete** | Eight documents, 1,492+ lines, nine commits |
 | Decision rules adopted and applied | **Complete** | R1–R7 governing; the plan's schedule and ledger are their output |
 | Lane eligibility established | **Complete** | From `allocation_profiles.py`, `workload_policy.py`, `primary_transports.py` and the readiness functions, not from profile prose |
 | Gate 8 determination | **Complete — `F`** | Canary registered, not run |
@@ -101,7 +106,7 @@ participation, and lane membership attests no enrolled or live route.
 | GitHub Copilot | A-17 hygiene | **PENDING** | Post-freeze, non-gating |
 | Microsoft 365 Copilot | None | Not assigned | Transport-blocked; correctly absent from the binding map |
 
-Implementation quota consumed: OpenAI 2 of 9, Claude 1 of 6, Cursor 1 of 4,
+Implementation quota consumed: OpenAI 2 of 8, Claude 1 of 5, Cursor 1 of 3,
 Grok 0 of 3, Antigravity 1 of 3 — five of twenty. No lane over its ceiling; no
 zero-target lane holds an implementation assignment.
 
@@ -149,8 +154,8 @@ would have idled a capable lane.
 
 | # | Error | Correction |
 | --- | --- | --- |
-| 1 | Zero allocation target read as ineligible for all work | Bars implementation only; research is accepted productive work for Perplexity, Firecrawl and M365 Copilot |
-| 2 | Analysis and review charged against direct-production quota | Quota counts implementation only; Grok's is unused |
+| 1 | Zero allocation target read as ineligible for all work | A zero target refuses the lane in that profile, including for accepted non-code research; a profile with a non-zero target (public_research: Perplexity 25%, Firecrawl 15%) admits it. |
+| 2 | Analysis and review charged against direct-production quota | The allocation check counts accepted productive work — implementation, plus accepted Perplexity/Firecrawl research — and ordinary analysis and review consume no production credit (Grok's analyses are unused quota) |
 | 3 | Antigravity team mode described as needing a contract rewrite | Implemented behind a configuration switch with team DDL, guard trigger, grant writable paths, pinned SSH worker and qualification canary |
 
 One attribution defect: two documents edited across multiple commits without a
@@ -190,7 +195,7 @@ requires.
 | ID | Decision | Status |
 | --- | --- | --- |
 | D-01…D-05 | Windows, repository plan, topology, canary task, status channel | Recorded, delegated to the Director |
-| D-07 | Allocation profile change | **Withdrawn** — rested on correction 1 |
+| D-07 | Allocation profile change | **Prerequisite** for A-15/A-16 |
 | D-09 | Copilot Lite authenticated contact | Open |
 | D-10 | Perplexity query approval bound to digest | Open |
 | D-11 | Grok CLI contact via host-bridge preflight | Open, recommended |
@@ -210,3 +215,7 @@ requires.
 - The Firecrawl repository lane and the Perplexity lane are unexercised.
 - This report is a self-produced document and has had no independent review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->

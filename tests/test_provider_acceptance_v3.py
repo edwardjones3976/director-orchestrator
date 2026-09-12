@@ -1,3 +1,6 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
+# [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]]
+# [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 """Synthetic signatures/CI keys only. Nothing here qualifies a real provider."""
 import base64
@@ -292,6 +295,83 @@ class TwoPartyTests(unittest.TestCase):
         self.package['receipts']['independent_review']['session_id']='changed-after-signing'
         with self.assertRaises(v2.ProviderAcceptanceError):self.verify()
 
+    def test_direct_verifier_revokes_every_authority_deployment(self):
+        # Positive unrevoked control: empty revoked list still verifies.
+        self.assertEqual(self.verify().challenge, self.context.challenge)
+        cases = (
+            ('owner', self.policy['owner_authority']['deployment']),
+            ('observer', self.policy['observation_authority']['deployment']),
+            ('security', self.authorities['security'].deployment),
+            ('independent_review', self.authorities['independent_review'].deployment),
+            ('ci', self.authorities['ci'].deployment),
+        )
+        saved = list(self.policy['revoked_deployments'])
+        for label, deployment in cases:
+            with self.subTest(authority=label):
+                self.policy['revoked_deployments'] = [deployment]
+                with self.assertRaisesRegex(v2.ProviderAcceptanceError, 'revoked'):
+                    self.verify()
+                self.policy['revoked_deployments'] = saved
+
+    def test_product_grok_bot_requires_canonical_grok_family(self):
+        # (a) independent_review enrolled as 'claude', product 'grok-bot' fails
+        family = 'claude'
+        self.context = replace(self.context, material_author_providers=frozenset({'openai'}))
+        self.authorities['independent_review'] = replace(
+            self.authorities['independent_review'], provider=family)
+        self.policy['material_author_providers'] = ['openai']
+        self.policy['authorities']['independent_review']['provider'] = family
+        self.adopt()
+        self.package['context'] = self.context.document()
+        for role in ('security', 'independent_review'):
+            receipt = self.package['receipts'][role]
+            observation = receipt['native_observation']['document']
+            observation['context'] = self.context.document()
+            if role == 'security':
+                receipt['analysis']['author_family_analysis'] = True
+            else:
+                receipt['provider'] = family
+                observation.update(product='grok-bot', provider_family=family)
+            receipt['native_observation'] = signed(
+                self.observer_key, v3.OBSERVATION_DOMAIN, observation)
+        self.sign()
+        with self.assertRaises(v2.ProviderAcceptanceError):
+            self.verify()
+
+        # (b) independent_review enrolled as 'grok', product 'grok-bot' succeeds
+        family = 'grok'
+        self.authorities['independent_review'] = replace(
+            self.authorities['independent_review'], provider=family)
+        self.policy['authorities']['independent_review']['provider'] = family
+        self.adopt()
+        for role in ('security', 'independent_review'):
+            receipt = self.package['receipts'][role]
+            observation = receipt['native_observation']['document']
+            if role != 'security':
+                receipt['provider'] = family
+                observation.update(product='grok-bot', provider_family=family)
+            receipt['native_observation'] = signed(
+                self.observer_key, v3.OBSERVATION_DOMAIN, observation)
+        self.sign()
+        self.assertEqual(self.verify().challenge, self.context.challenge)
+
+        # (c) enrolled 'grok' but observation provider_family 'openai' is rejected
+        saved = copy.deepcopy(self.package)
+        envelope = self.package['receipts']['independent_review']['native_observation']
+        envelope['document']['provider_family'] = 'openai'
+        self.package['receipts']['independent_review']['native_observation'] = signed(
+            self.observer_key, v3.OBSERVATION_DOMAIN, envelope['document'])
+        self.sign()
+        with self.assertRaises(v2.ProviderAcceptanceError):
+            self.verify()
+        self.package = saved
+        self.sign()
+
+        # Author-family independent review remains refused.
+        with self.assertRaisesRegex(v2.ProviderAcceptanceError, 'material author'):
+            self.verify(expected=replace(
+                self.context, material_author_providers=frozenset({family})))
+
     def test_v3_prepare_offline_handoff_executes_real_journal_cli_and_inventory(self):
         from tests import test_windows_cutover_regressions as cutover
         if not cutover.PWSH:self.skipTest('PowerShell required')
@@ -442,3 +522,6 @@ ConvertTo-Json -InputObject $results -Compress
         with self.assertRaises(InvalidSignature):
             key.verify(signature,v2.DOMAIN+v2.canonical(dict(version=v2.VERSION,context=ci.context.document(),receipt=receipt)))
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Grok Bot | serving model unreported | 2026-09-10 | END]]
+# [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]

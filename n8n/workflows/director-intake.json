@@ -15,7 +15,7 @@
       "typeVersion": 2,
       "position": [-560, 0],
       "webhookId": "director-intake",
-      "notes": "Deliberately unauthenticated and holding no credential. The caller's own Authorization header is forwarded downstream, so the orchestrator stays the single authenticator and n8n never stores the shared secret. Published on loopback only. Ignore Bots stays OFF: the caller is python-httpx and user-agent bot filters can classify HTTP-library agents as bots."
+      "notes": "Deliberately unauthenticated with no bound n8n credential. The gateway uses this relay only when N8N_DIRECTOR_WEBHOOK_URL is nonempty; otherwise it posts directly to the orchestrator. The caller's Authorization header is forwarded downstream, so the orchestrator remains the authenticator. That bearer contains the shared secret: n8n processes it and may persist it transiently in webhook or execution data. Execution-retention settings do not prove zero transient storage. Published on loopback only. Ignore Bots stays OFF: the caller is python-httpx and user-agent bot filters can classify HTTP-library agents as bots."
     },
     {
       "parameters": {

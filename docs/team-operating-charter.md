@@ -1,5 +1,18 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
@@ -158,8 +171,12 @@ independence, safety, and deterministic gates always outrank cost.
 - **Claude — Acting Director-Orchestrator:** project leadership, planning,
   neutral moderation, evidence synthesis, disagreement resolution, acceptance
   supervision, recovery, and milestone reporting. Moderator, Participant, and
-  Director functions remain distinct; only Participant may cast the single
-  Claude advisory vote at weight 2.0. Actual Claude material authorship removes
+  Director functions remain distinct, and Claude holds all three at once in
+  every debate it joins. Its single advisory vote at weight 2.0 is booked under
+  Participant when cast, or an explicit abstention is recorded. Moderating never
+  removes Claude's right to vote; only Claude's own abstention forgoes exercising
+  it. Separating the functions decides where a cast vote is recorded, never
+  whether Claude retains that right. Actual Claude material authorship removes
   its review/merge independence; leadership creates no production credit.
 - **OpenAI / Codex — Bounded implementer and reviewer:** full-spectrum primary
   for programming, repository-scale reasoning, architecture, QA, and independent
@@ -188,29 +205,26 @@ independence, safety, and deterministic gates always outrank cost.
 - **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
-  ideation, including the bounded sandbox execution those need. On that default
-  path its ideas and artifacts are non-authoritative evidence: it cannot perform
-  exact-SHA review, final acceptance, deterministic merge, or define
-  research-contract or methodology truth, and every work assignment must feed a
-  later Claude, Cursor, or Grok assignment that independently verifies and
-  integrates or rejects it. The one exception is the default-off team mode
-  described below, which is the only path on which Antigravity is admissible as
-  a reviewer at all; final acceptance and deterministic merge stay outside what
-  any mode grants it.
+  ideation, including the bounded sandbox execution those need. Its output is
+  authoritative under the owner authority decision recorded immediately below:
+  it may perform exact-SHA review, final acceptance, and deterministic merge
+  into a non-protected branch. It still may not define research-contract or
+  methodology truth, and every Antigravity output must feed a later OpenAI,
+  Claude, Cursor, or Grok assignment that independently verifies and integrates
+  or rejects it.
   A rights-ledger mechanism exists to record a `review_verdict` grant to
   Antigravity against an exact verified build, and any such grant is not
   self-service: it requires the configuration flag, a recorded grant, an
   owner notice raised at the moment of grant, and is revocable at any time — a
   revocation that no later rebuild undoes. See `docs/entitlement-control-plane.md`.
   Today that mechanism has no runtime consumer: no authorization gate reads a
-  granted `review_verdict` right, so no exception to the review restriction
-  above is currently live. Any future exception requires a separate,
-  owner-gated implementation — including live build-bound rights checking and
-  whatever admission or wire changes that requires — not merely a ledger
-  entry. Final acceptance, exact-SHA review, and deterministic merge remain
-  outside what any ledger entry can widen, and a provisioned verdict does not
-  enlarge the work kinds above: `CAPABILITY_BY_KIND` still admits only the
-  four subordinate kinds.
+  granted `review_verdict` right. The authority above comes from the owner's
+  charter decision, never from a ledger entry; a ledger entry widens nothing on
+  its own, and a provisioned verdict does not enlarge the work kinds above:
+  `CAPABILITY_BY_KIND` still admits only the four subordinate kinds. Carrying
+  the owner's grant into the runtime requires a separate, owner-gated
+  implementation — including live build-bound rights checking and whatever
+  admission or wire changes that requires — not merely a ledger entry.
   Antigravity may hold a debate seat, but only one the Director gave it: it
   cannot initiate, self-route, widen, or autonomously continue a conversation,
   and a seat grants it no review, acceptance, merge, deployment, publication,
@@ -218,6 +232,54 @@ independence, safety, and deterministic gates always outrank cost.
   weight is cast only for an invited turn and stays advisory inside the immutable
   denominator. Keep credentials and external-write paths out of disposable
   sandboxes unless a later work order explicitly and safely provides them.
+- **Antigravity review and acceptance authority — owner decision, 2026-09-08 UTC.**
+  The owner decided that Antigravity's output is authoritative: it may perform
+  exact-SHA review, final acceptance, and deterministic merge. This supersedes
+  the earlier charter wording that made Antigravity's output non-authoritative
+  outside team mode, and it is not conditioned on team mode. The owner holds
+  authority over this charter; the grant is recorded as decided.
+
+  *Scope boundary — protected branches.* The granted deterministic merge reaches
+  a **non-protected branch only**. Merging into a protected branch is a tier-0
+  class in `docs/human-out-of-the-loop-operation.md`, never delegable under any
+  configuration, and AGENTS.md rule 4 forbids model output from removing an
+  approval requirement. Protected-branch merge stays owner-only for every lane,
+  Antigravity included. This bounds the grant; it does not qualify it.
+
+  *Rules that already bind every lane, restated so this grant reads as no
+  exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
+  materially authored, so merge authority never lets Antigravity merge its own
+  work. And a delegated merge requires one author and one reviewer who are distinct
+  identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer,
+  who then performs the merge. Owner ruling, 2026-09-12, verbatim: "it's a
+  one-non-author-reviewer project-wide".
+  Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
+  Grok — neither more nor less.
+
+  *Mandatory independent proofread.* Every Antigravity output — work it produces
+  **and** any review, acceptance, or merge verdict it issues — is followed by an
+  independent assignment from OpenAI, Claude, Cursor, or Grok that verifies or
+  rejects it. This adds a requirement rather than removing one, so it lands
+  cleanly under rule 4. The owner's list **widens** the verifier set:
+  `src/director_orchestrator/primary_roster.py` currently constrains an
+  antigravity producer's reviewer to `lane in {"claude", "cursor", "grok"}`, and
+  the owner's decision adds `openai`. The proofreading assignment may not be
+  Antigravity and may not be a material author of what it checks.
+
+  *Authority granted; lane still not qualified and not live.* This decision
+  changes what Antigravity is **permitted** to do. It does not change whether
+  Antigravity runs, and nobody may read it as an activation.
+  `docs/provider-profiles/antigravity.yaml` still records
+  `operational_status: not_qualified_not_live`, and the profile schema still
+  freezes `execution_modes` as a constant. The runtime has not yet caught up
+  either: the closed default-path wire contract in
+  `src/director_orchestrator/antigravity.py` still lists `review_verdict`,
+  `acceptance_verdict`, and `merge` in `DENIED_AUTHORITIES`, and the primary
+  roster still admits Antigravity as a reviewer only under team mode. Those code
+  paths, and the mirrored profile and contract fields that must track them,
+  change only through a separate owner-gated assignment. Until that lands, this
+  section is the charter's authority record and not a description of live
+  behavior.
 - **Antigravity outbound contract (default path).** Ordinary Antigravity *work* is sent no
   model-authored prose of any kind. `src/director_orchestrator/antigravity.py`
   composes that request from three sources only: fixed strings that live in that
@@ -263,9 +325,11 @@ independence, safety, and deterministic gates always outrank cost.
   owner-signed manifest, base64-encoded into the worker prompt. It is granted
   `writable_paths`, and a validated proposal becomes real Git blob, tree, and
   commit objects held by a private `refs/director/team/` retention anchor. It is
-  also the only path on which the primary roster will plan Antigravity for
-  independent review: the lane is admitted as a reviewer when, and only when,
-  team mode is on. Documenting this route does not authorize it.
+  today the only path on which the primary roster will plan Antigravity for
+  independent review: the roster code admits the lane as a reviewer when, and
+  only when, team mode is on. That is a description of the current runtime, not
+  a ceiling on the owner grant recorded above, which the roster has not yet been
+  changed to reflect. Documenting this route does not authorize it.
 
   The route is off unless `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` is true,
   and the closed subordinate contract stays the default in every other case.
@@ -280,9 +344,9 @@ independence, safety, and deterministic gates always outrank cost.
   every time; a monetary reservation through the shared signed budget authority;
   and fresh, challenge-bound signed worker containment evidence produced before
   any packet or source byte is exported. A grant signature never substitutes for
-  the live query. Antigravity still may not self-accept, merge, deploy, or
-  publish in this mode, and review remains restricted to an exact target it did
-  not materially author.
+  the live query. Antigravity still may not self-accept, merge into a protected
+  branch, deploy, or publish in this mode, and review and acceptance remain
+  restricted to an exact target it did not materially author.
 
   No production assembly exists today. `PrimaryTeamRouting` is constructed
   nowhere in this repository — not in the service and not in the test suite — so
@@ -377,11 +441,16 @@ The acting Director keeps three functions separate throughout that process:
 - **Moderator:** frames the question and bounded options neutrally, requests
   positions without leading language, prevents premature cross-exposure, and
   performs a counter-bias pass that tests the favored view against the strongest
-  contrary evidence. Moderation does not cast a vote.
+  contrary evidence. The counter-bias pass itself is vote-free so that it cannot
+  pre-empt the synthesis vote. Moderating never removes, reduces, defers, or
+  forfeits Claude's vote.
 - **Participant:** records its independently formed initial position before
-  specialist conclusions are exposed and may cast the single existing Claude
-  vote at weight 2.0 during synthesis. It does not receive an additional vote
-  for planning, moderation, synthesis, or acceptance.
+  specialist conclusions are exposed and casts the single existing Claude vote
+  at weight 2.0 during synthesis or records an explicit abstention. Claude retains
+  its right to vote in every debate it joins, including every debate it moderates;
+  only Claude's own abstention forgoes exercising it. Planning, moderation, synthesis, and
+  acceptance earn no additional vote; that rule bars a second Claude vote and
+  never the first.
 - **Director:** compares evidence quality, reports uncertainty and dissent,
   synthesizes the recommendation, applies the tie boundary below, and routes the
   next bounded action. Director authority does not create a vote or participation
@@ -630,23 +699,62 @@ files, tests, known limitations, acceptance checks, and security context.
 The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
 `SERIOUS_SAFETY_STOP` for that exact candidate. The producer's planning vote
 does not make it an eligible reviewer. Independent acceptance is followed by
-Codex Security and trusted CI for the unchanged exact SHA; deterministic code
-alone may execute an eligible merge. Any new commit invalidates all prior
+Codex Security and trusted CI for the unchanged exact SHA; the accepting
+reviewer then executes the eligible merge through the deterministic merge path. Any new commit invalidates all prior
 review, security, CI, and merge evidence and requires a new handoff.
 
 Where the owner has delegated merge under
 `docs/human-out-of-the-loop-operation.md`, the handoff is unchanged: delegation
-supplies the reviewer identity and a second concurring verdict from a different
-provider, and requires the producer, reviewer, and acting agent to be three
-distinct identities. It does not alter what a review must contain, when evidence
+supplies the single reviewer identity, and requires the author and the reviewer
+to be two distinct identities. It does not alter what a review must contain, when evidence
 is invalidated, or which gates apply.
 
 The reviewer named above is a provider, not the owner, so a named provider's
 exact-SHA `ACCEPT` is how the independent review gate is satisfied in its
 ordinary form. It is not an authorization substituting for that gate, and the
 sentence forbidding such substitution is unaffected. A delegated merge requires
-two concurring verdicts from distinct providers where an attended merge requires
-one, so it clears a strictly higher review bar, never a lower one.
+the same one non-author verdict an attended merge requires (owner ruling
+ 2026-09-12: one non-author reviewer, project-wide), never a lower bar.
+
+### Approver carries the merge
+
+Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+
+> If they approve it, they should merge it as well.
+
+**One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+approver to carry that candidate towards a terminal result rather than return it
+to a queue; it does not authorise the merge and does not skip
+`OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
+requires a live grant under `docs/human-out-of-the-loop-operation.md`, **one**
+exact-SHA `ACCEPT` verdict from a non-author provider, and
+every other item of the evidence bar. In `ATTENDED` state, or with no live
+grant, the duty is to name that blocker on the pull request, not to merge.
+
+Where a merge is authorised, the reviewer that supplied the `ACCEPT` performs
+the merge itself; a rejection goes back to the author with notes. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
+This is how the Director discharges its eligible-merge-execution duty: it dispatches one reviewer and records the outcome, and merges itself only when it is that reviewer of a candidate it did not author. An
+approving reviewer is never a material author, because a material author is
+ineligible to review the candidate at all, so AGENTS.md rule 3's no-self-merge
+bar is unaffected and never lifts.
+
+The obligation reaches non-protected branches **only**. Merging into a protected
+branch stays owner-only for every lane and is never delegable, and no lane gains
+merge authority it does not already hold. Tier 1 enumerates the non-protected
+merge as a delegable class, and that class is delegable **only while a live
+grant names it**; appearing in the enumeration turns nothing on. This section
+assigns a duty to finish, not that class. An approver that cannot execute the
+merge states that on the pull request and names the blocker — no live grant or an
+`ATTENDED` deployment, ineligible lane, unbound or absent actor, refusing gate,
+missing non-author verdict, protected target, or a still-required owner
+decision — because an approved candidate left silently open is the failure this
+decision corrects. With the grant off, which is the default, naming the blocker
+is the expected outcome rather than an exception.
+
+This adds an obligation and removes no gate. Trusted CI, Codex Security,
+exact-SHA binding, the non-author verdict, budget, allowlist, actor binding,
+and every owner-decision boundary apply unchanged, and the accepting reviewer
+still performs the merge through the deterministic merge path.
 
 ## GitHub Copilot Lite hygiene review
 
@@ -731,7 +839,8 @@ For a medium-or-higher complexity decision, preserve:
 
 For each acting Director contribution, also identify whether it was Moderator,
 Participant, or Director work. A Participant entry may contain no more than the
-one existing Claude vote; Moderator and Director entries have no additional vote.
+one existing Claude vote, and moderating the same debate does not remove it;
+Moderator and Director entries add no second vote on top of that one.
 Record the neutral framing and counter-bias check when debate was used, and never
 fabricate participation to make a record look complete.
 
@@ -813,5 +922,18 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->

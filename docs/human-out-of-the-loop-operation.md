@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
@@ -88,10 +90,11 @@ weighting, no majority, and no discretion.
 2. Independent security evidence exists at that same head.
 3. An independent exact-SHA review returns `ACCEPT` from a provider that is
    neither the producer nor a material author of the candidate.
-4. A second concurring `ACCEPT` comes from a **different** provider that is also
-   neither the producer nor a material author.
-5. Producer, reviewer, and the agent executing the decision are three distinct
-   identities.
+4. That `ACCEPT` is the whole verdict requirement. Owner ruling 2026-09-12,
+   verbatim: "it's a one-non-author-reviewer project-wide". A second verdict
+   is never required and never substitutes for any other item.
+5. The author and the reviewer are two distinct identities, and the reviewer
+   that accepts is the identity that merges. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
 6. The change touches only paths inside the assignment's `owned_paths` and none
    of its `prohibited_paths`.
 7. No tier-0 class is implicated, directly or as a consequence.
@@ -106,17 +109,17 @@ the decision to `OWNER_DECISION_REQUIRED`. **Absence of evidence is never
 consent.** A provider that is out of quota, unauthenticated, or silent has not
 approved anything, and its silence may not be counted, inferred, or waited out.
 
-## Why two independent verdicts
+## Why one independent verdict
 
 A single agent verdict is a single point of failure, and this repository's own
 record shows it is a fragile one. Every delegation attempt recorded to date has
 failed to produce a verdict at all: providers have returned ambiguous results,
 failed authentication, hit usage limits, or been absent from the environment.
-A framework that treats one `ACCEPT` as sufficient would, in practice, most
-often be deciding on the one provider that happened to answer.
+The owner has ruled that one non-author `ACCEPT` is the bar, project-wide;
+what this section protects is that the one verdict is genuinely independent.
 
-Two verdicts from distinct providers is the minimum that makes a delegated
-`ACCEPT` more than one model's opinion. Two providers that share a backing
+The reviewer must be distinct from the producer and every material author.
+A reviewer and a producer that share a backing
 model are not distinct for this purpose, and neither are two runs of the same
 provider. Independence is a property of the failure mode, not of the label.
 
@@ -161,7 +164,7 @@ framework exists to prevent.
 Every delegated decision, and every refusal to make one, writes an immutable
 record containing the grant identifier, the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
-consulted, the acting agent identity, and timestamps. The record is written
+consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
 before the action, not after it.
 
 ## Relationship to the existing rules
@@ -175,7 +178,7 @@ before the action, not after it.
   authoritative.** Model output may add approval requirements and may never
   remove them. That includes output from a delegated reviewer.
 - **The charter's review-to-merge handoff is unchanged.** Delegation supplies
-  the reviewer identity and a second concurring verdict; it does not alter what
+  the single reviewer identity, who also merges; it does not alter what
   a review must contain or when evidence is invalidated.
 - **The charter's Director and provider authorship boundary supplies the
   identity terms used here.** "Producer" and "material author" mean whoever
@@ -211,9 +214,9 @@ What delegation changes is narrower than it first appears. Previously the gate
 could be satisfied while the *merge decision that follows it* still waited for
 the owner. Under a live grant, that following decision may proceed, and only
 then, and only when every other item on the evidence bar also holds. The
-framework requires two concurring provider verdicts where the charter requires
-one, so a delegated decision clears a strictly higher review bar than an
-attended one, never a lower one.
+framework requires the same one non-author provider verdict the charter
+requires, so a delegated decision clears the same review bar as an attended
+one, never a lower one.
 
 ### Rule 3's no-self-merge bar
 
@@ -221,8 +224,8 @@ AGENTS.md rule 3 forbids an agent from merging its own pull request. That bar
 never lifts, and this framework does not create an exception to it.
 
 "Your own" is a property of identity, not of species. Two agents are not one
-agent. Evidence-bar item 5 requires the producer, the reviewer, and the agent
-executing the decision to be three distinct identities, so a delegated merge is
+agent. Evidence-bar item 5 requires the author and the reviewer to be two
+distinct identities, so a delegated merge is
 by construction never a self-merge. An agent that produced or materially
 authored a candidate is permanently ineligible to review or merge it, and no
 grant can make it eligible: delegation names who *may* act, and never widens
@@ -230,7 +233,7 @@ grant can make it eligible: delegation names who *may* act, and never widens
 
 This has a consequence the owner should expect rather than be surprised by.
 When only one agent is available, a delegated merge cannot proceed at all,
-because three distinct identities cannot be found. That is the framework
+because two distinct identities cannot be found. That is the framework
 working, not failing. It is also the present condition of this repository.
 
 ## Implementation phases
@@ -253,7 +256,7 @@ These are stated plainly because a framework that hides them is worse than none.
 
 - An agent verdict is not equivalent to human judgment on novel risk. The
   evidence bar is good at catching what it models and blind to what it does not.
-- Providers that share a base model can fail in correlated ways. The two-verdict
+- Providers that share a base model can fail in correlated ways. The non-author
   rule reduces independent error, not common-mode error.
 - Reviews read untrusted material. A diff, an issue, or a CI log can carry
   instructions aimed at the reviewer, and a delegated reviewer has no owner
@@ -270,3 +273,5 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->

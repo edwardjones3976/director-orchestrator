@@ -1,3 +1,6 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
+# [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]]
+# [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 """Explicit two-party acceptance; v2 receipts are never converted or reinterpreted.
 
@@ -74,8 +77,9 @@ def validate_adoption(policy, authorities):
     if len(set(keys)) != len(keys) or any(len({a[f].casefold() for a in anchors}) != len(anchors)
                                         for f in ("principal", "deployment")):
         raise ProviderAcceptanceError("owner, observer and receipt authorities must be isolated")
-    if any(a["deployment"] in policy["revoked_deployments"] for a in (owner, observer)):
-        raise ProviderAcceptanceError("owner or observation authority revoked")
+    if any(a["deployment"] in policy["revoked_deployments"] for a in anchors):
+        raise ProviderAcceptanceError(
+            "owner, observation or receipt authority deployment revoked")
     envelope = _closed(policy["owner_adoption"], {"document", "signature"})
     doc = _closed(envelope["document"], {"version", "decision", "policy_commit", "policy_tree",
         "implementation_digest", "registry_digest", "activation", "repository", "pull_request_number", "packet_digest"})
@@ -120,7 +124,8 @@ def _observation(receipt, *, authority, context, policy, now):
             raise ProviderAcceptanceError("mandatory Codex Security product evidence required")
     elif (doc["product"] not in {"codex", "grok-bot"}
             or doc["transport"] != "native-product-capture"
-            or (doc["product"] == "codex" and authority.provider != "openai")):
+            or (doc["product"] == "codex" and authority.provider != "openai")
+            or (doc["product"] == "grok-bot" and authority.provider != "grok")):
         raise ProviderAcceptanceError("qualified Codex or actual Grok Bot review required")
     return doc
 
@@ -216,3 +221,6 @@ class TwoPartyAcceptanceJournal(AcceptanceJournal):
     def verify_package(raw, *, expected, authorities, now, policy):
         return verify_two_party_acceptance(raw, expected=expected, authorities=authorities, now=now, policy=policy)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Grok Bot | serving model unreported | 2026-09-10 | END]]
+# [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]
