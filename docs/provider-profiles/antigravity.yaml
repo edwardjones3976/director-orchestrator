@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -77,7 +78,7 @@ identifiers:
 roles:
   team: "supplemental"
   lane_class: "subordinate_specialist"
-  summary: "Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+  summary: "Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
   charter_workload_lane: "bounded_subordinate_specialist"
   strategy_key: "gemini"
   strategy_priority: "subordinate_boilerplate_and_alternate_ideation"
@@ -89,7 +90,7 @@ roles:
   elevated_work: []
   non_substitution_rules:
     - "Antigravity is never a primary-team substitute."
-    - "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+    - "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
   family: null
   transport_rule: null
   routing_rule: "Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing."
@@ -191,7 +192,8 @@ authority:
     - "contract_or_methodology_definition"
     - "deployment_or_publication"
     - "external_write"
-    - "merge"
+    - "merge.non_protected"
+    - "merge.protected"
     - "permission_or_credential_change"
     - "repository_access"
     - "repository_write"
@@ -208,14 +210,12 @@ authority:
     - "reviewer_revision_text"
     - "run_session_or_task_identifiers"
   charter_prohibited:
-    - "exact-SHA review"
-    - "final acceptance"
-    - "deterministic merge"
     - "defining research-contract or methodology truth"
-  review_requirement: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+    - "merging into a protected branch"
+  review_requirement: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
   strategy_constraints:
     - "supplemental only; never a primary-team substitute"
-    - "work assignments must feed a later Claude, Cursor, or Grok integration assignment"
+    - "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment"
     - "cannot issue review, acceptance, or merge verdicts"
     - "cannot define contract or methodology truth"
     - "cannot initiate, self-route, widen, or autonomously continue a conversation"
@@ -326,3 +326,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

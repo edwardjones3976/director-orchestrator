@@ -1,3 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -197,7 +202,7 @@ satisfied.
 - **Cursor and Grok are primary Cursor-family teammates.** Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.
 - **Gemini and Perplexity are supplemental specialists.** Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.
 
-Use the [approved nine-lane allocation profiles](provider-allocation-profiles.md),
+Use the [approved eight-lane allocation profiles](provider-allocation-profiles.md),
 with Engineering as the default. Freeze profile and digest before approval,
 preserve real history, exclude zero-target lanes, and enforce the prospective
 fixed twenty-slot target+5 ceiling. The ±3-point normal band guides preference;
@@ -452,7 +457,7 @@ Deterministic policy admits an Antigravity work assignment only when its
 `abstract_ideation`, its task names that subordinate scope explicitly, it
 requests no review, acceptance, merge, contract, or methodology authority, and
 it does not create a draft pull request. Every admitted work assignment also
-requires a later Claude, Cursor, or Grok assignment that directly depends on it and
+requires a later OpenAI, Claude, Cursor, or Grok assignment that directly depends on it and
 carries the runtime-bound wording to independently reproduce the artifact and
 integrate only the verified portions or reject it.
 
@@ -478,6 +483,25 @@ request. Antigravity cannot initiate, self-route, widen, or autonomously
 continue a discussion. Its configured advisory weight remains advisory, and a
 debate seat grants no review, acceptance, merge, deployment, publication,
 external-write, access, or methodology authority.
+
+## Oracle merge base ref is per project
+
+`ORACLE_AUTOMERGE_BASE_REF` has no default. When it is unset the Oracle merge
+gate refuses, and it also refuses the shared trunk names outright, naming tier 0
+and the variable. Each project configures its own base ref rather than inheriting
+one. GitHub branch protection and active repository/organization rules are read
+for the exact base, with missing or inaccessible evidence refused. The gateway
+rechecks before merging; concurrent administrator changes are not atomically locked. `/health` reports
+`oracle_merge.base_ref_configured` as a boolean; it never reports the value.
+`ORACLE_AUTOMERGE_ENABLED` and `ORACLE_AUTOMERGE_KILL_SWITCH` are unchanged and
+stay closed.
+
+The gate compares provider identities as canonical allocation lanes on both
+sides, so a lane alias resolves to its lane before the reviewer allowlist, the
+no-self-review comparison, and the `ORACLE_AUTOMERGE_*_ACTORS` lookups. An alias
+therefore cannot reach a different verdict than its lane, and cannot review its
+own lane's implementation. Admitting a lane to the reviewer allowlist remains a
+separate decision.
 
 ## Gemini Interactions API contract
 
@@ -625,3 +649,9 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
