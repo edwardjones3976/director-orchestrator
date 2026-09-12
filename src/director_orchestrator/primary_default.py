@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
@@ -2807,10 +2808,12 @@ class DefaultPrimaryActivation:
                     # The ledger committed a specific refusal; keep readiness
                     # false while allowing diagnostics and unrelated tasks up.
                     self._cancelled_plan_binding_hold_count += 1
-                    # Health is not a dispatch guard. Tolerate this refusal only
-                    # in explicitly paid-off, non-live diagnostic operation.
+                    # Health is not a dispatch guard. Tolerate this refusal only in
+                    # explicitly paid-off, non-live, intake-off diagnostic operation: a
+                    # process that owns new intake must not start over this ledger.
                     if (self.settings.allow_paid_runs
-                            or self.settings.langgraph_primary_live_provider_dispatch_enabled):
+                            or self.settings.langgraph_primary_live_provider_dispatch_enabled
+                            or self.settings.langgraph_primary_new_intake_enabled):
                         raise
                 continue
             if payload.get("terminal_classification") is not None:
@@ -2984,3 +2987,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 """Cancellation residue repairs use the sanctioned PostgreSQL test lane only."""
@@ -134,9 +135,9 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
         self.fixture.provider.assert_not_called()
         self.fixture.effect.assert_not_called()
 
-    def test_binding_hold_does_not_allow_live_or_paid_startup(self):
+    def test_binding_hold_does_not_allow_live_paid_or_intake_startup(self):
         self.copied_state_shape()
-        for field in ('allow_paid_runs','langgraph_primary_live_provider_dispatch_enabled'):
+        for field in ('allow_paid_runs','langgraph_primary_live_provider_dispatch_enabled','langgraph_primary_new_intake_enabled'):
             activation=self.activation()
             activation.settings=replace(activation.settings,**{field:True})
             with self.subTest(field=field),self.assertRaisesRegex(ParallelDispatchError,'owner reconciliation required'):
@@ -459,3 +460,4 @@ if __name__ == '__main__':
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
