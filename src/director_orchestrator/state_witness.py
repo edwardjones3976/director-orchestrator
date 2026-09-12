@@ -216,10 +216,17 @@ class StateWitnessLedger:
         with self._lock:
             archived = f"{self.path}.{stamp}"
             suffix = 0
-            # A second rotation in the same second must not overwrite the first.
-            while Path(archived).exists():
-                suffix += 1
-                archived = f"{self.path}.{stamp}.{suffix}"
+            # Reserve the archive name with an exclusive create, so two rotations
+            # in the same second, even from two processes, can never pick the
+            # same name; the reservation is ours, so replacing it is not a loss.
+            while True:
+                try:
+                    with open(archived, "x"):
+                        pass
+                    break
+                except FileExistsError:
+                    suffix += 1
+                    archived = f"{self.path}.{stamp}.{suffix}"
             Path(self.path).replace(archived)
             self.__init__(self.path, ttl=self.ttl, max_rows=self.max_rows)
         return archived

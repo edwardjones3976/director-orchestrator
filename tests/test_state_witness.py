@@ -241,9 +241,14 @@ class WitnessLedgerTests(unittest.TestCase):
         kept.close()
         self.assertIs(small.witnessed(ClaimKind.DOC_READ, "d"), WitnessStatus.UNOBSERVABLE)
         small._record(ClaimKind.DOC_READ, "d", agent="a", claimed={}, observed={}, status=WitnessStatus.MATCH, oracle="t")
-        # A second rotation in the same second keeps both archives.
+        # A second rotation in the same second keeps both archives, and a name
+        # another process reserved first is never taken.
+        stamp = "20260912T000000Z"
+        foreign = Path(f"{small.path}.{stamp}.1")
+        foreign.write_bytes(b"someone else's archive")
         again = small.rotate(now=datetime(2026, 9, 12, tzinfo=timezone.utc))
-        self.assertNotEqual(again, archived)
+        self.assertEqual(again, f"{small.path}.{stamp}.2")
+        self.assertEqual(foreign.read_bytes(), b"someone else's archive")
         self.assertTrue(Path(archived).exists() and Path(again).exists())
         kept = sqlite3.connect(archived)
         self.assertEqual(kept.execute("SELECT COUNT(*) FROM state_witness").fetchone()[0], 2)
@@ -342,7 +347,21 @@ class WitnessGateWiringTests(unittest.TestCase):
         other_sha = lambda repo, sha: gh_checks_green(
             self.ledger, repo, "b" * 40, agent="x", required=("ci", "security"), gh_json=_jobs_api(3)
         )
-        for oracle in (forged, wrong_kind, other_sha):
+        def reused_id(repo, sha):
+            # Persist a real MISMATCH (zero steps), then hand back a row that
+            # reuses its id but claims MATCH with invented observations.
+            real = gh_checks_green(
+                self.ledger, repo, sha, agent="x", required=("ci", "security"), gh_json=_jobs_api(0)
+            )
+            return WitnessRow(
+                real.witness_id, real.kind, real.subject, real.agent, real.claimed,
+                {"jobs": {"ci": {"steps": 9}}}, WitnessStatus.MATCH, real.oracle, real.observed_at,
+            )
+
+        for oracle in (forged, wrong_kind, other_sha, reused_id):
+            # A fresh merge store per case: the store de-duplicates artifact
+            # deliveries, so a reused one would replay the first verdict.
+            fixtures, FakeGitHub = self._merge_fixture()
             github = FakeGitHub(fixtures.snapshot())
             result = self._service(
                 fixtures, github, state_witness=self.ledger, checks_green_oracle=oracle,
@@ -352,7 +371,7 @@ class WitnessGateWiringTests(unittest.TestCase):
             self.assertIn("not the persisted observation", result.reasons[0])
         self.assertIs(
             self.ledger.witnessed(ClaimKind.GH_CHECKS_GREEN, f"edwardjones3976/edge_engine@{head}"),
-            WitnessStatus.UNOBSERVABLE,
+            WitnessStatus.MISMATCH,  # the only persisted row is the real zero-step one
         )
 
     def test_merge_gate_denies_when_no_checks_oracle_can_observe_steps(self):

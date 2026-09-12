@@ -1632,22 +1632,22 @@ class OracleMergeService:
             green = self._checks_green_oracle(self.policy.repository, artifact.head_sha)
         except WitnessLedgerFull as exc:
             return f"witness ledger unavailable: {exc}"
-        # The row must be the row this gate asked for: right class, right
-        # repository and SHA, and actually persisted. Anything else is a forged
-        # or misrouted observation and is refused.
+        # The gate decides from the persisted row, never from the object the
+        # oracle handed back: the returned row must be the latest persisted
+        # GH_CHECKS_GREEN row for this repository and SHA, field for field.
+        # Anything else is a forged or misrouted observation and is refused.
         expected_subject = f"{self.policy.repository}@{artifact.head_sha}"
+        persisted = self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject)
         if (
             not isinstance(green, WitnessRow)
-            or green.kind is not ClaimKind.GH_CHECKS_GREEN
-            or green.subject != expected_subject
-            or self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject) is None
-            or self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject).witness_id
-            != green.witness_id
+            or persisted is None
+            or persisted != green
         ):
             return (
                 "witness refused gh_checks_green: the checks oracle returned a row"
                 f" that is not the persisted observation for {expected_subject}"
             )
+        green = persisted
         for row in (not_merged, green):
             if not row.matched:
                 return (
