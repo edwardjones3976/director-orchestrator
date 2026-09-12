@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -65,10 +69,10 @@ roles:
     vote_grants_authority: false
   allocation:
     profiles:
-      mixed: 30
+      mixed: 33
       engineering: 25
       public_research: 25
-      enterprise: 30
+      enterprise: 38
     default_profile: "engineering"
     overall_effort_policy: "telemetry_only_no_separate_allocation"
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
@@ -85,7 +89,8 @@ roles:
     - request positions without leading language
     - prevent premature cross-exposure
     - run the counter-bias pass against the favored view
-    boundary: Moderation does not cast a vote.
+    boundary: Moderating never removes, reduces, or defers Claude's vote. The counter-bias pass is vote-free only so that it cannot
+      pre-empt synthesis, where Participant casts its one vote or records an explicit abstention.
     vote_count: null
     vote_weight: null
   - id: participant
@@ -94,9 +99,11 @@ roles:
     vote_weight: 2.0
     duties:
     - record an independently formed initial position before specialist conclusions are exposed
-    - cast the single existing Claude advisory vote during synthesis
-    boundary: Participant is the one authenticated Claude position and vote. It receives no additional vote for planning, moderation,
-      synthesis, or acceptance.
+    - cast the single existing Claude advisory vote during synthesis or record an explicit abstention
+    boundary: Participant records the one authenticated Claude position and, at synthesis, its single advisory vote at full weight
+      or an explicit abstention. Claude retains its right to vote in every debate it joins, including every debate it moderates;
+      only Claude's own abstention forgoes exercising it. The votes, vote_count, and vote_weight fields describe entitlement, not
+      mandatory participation. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second Claude vote and never the first.
   - id: director
     votes: false
     duties:
@@ -333,3 +340,7 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]

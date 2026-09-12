@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -63,11 +64,6 @@ foreach ($otherSecret in @(
 }
 
 $commands = $values["DIRECTOR_HOST_PROVIDER_COMMANDS_JSON"] | ConvertFrom-Json -AsHashtable
-foreach ($unsupported in @("microsoft-365-copilot")) {
-    if ($commands.ContainsKey($unsupported)) {
-        throw "$unsupported cannot be enabled through the Windows host bridge."
-    }
-}
 foreach ($provider in $commands.Keys) {
     if ($provider -notin @("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")) {
         throw "The host bridge command map contains an unallowlisted provider."
@@ -109,3 +105,4 @@ finally {
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | BEGIN]]
@@ -325,7 +327,7 @@ class Settings:
     langgraph_primary_required_providers: tuple[str, ...] = field(
         default_factory=lambda: _csv(
             "LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS",
-            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot,microsoft-365-copilot",
+            "openai,claude,cursor,grok,antigravity,perplexity,firecrawl,github-copilot",
         )
     )
     langgraph_primary_provider_activation_bindings_json: str = field(
@@ -335,6 +337,7 @@ class Settings:
     )
     # Optional immutable canary authority. Both values are required together;
     # ordinary deployments retain origin-tracking branch verification.
+    # Explicit provider-v3-two-party selection also requires signed owner adoption; default unchanged.
     langgraph_primary_acceptance_mode: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1"))
     langgraph_primary_acceptance_registry_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", ""))
     langgraph_primary_acceptance_registry_sha256: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", ""))
@@ -806,18 +809,6 @@ class Settings:
     perplexity_daily_request_limit: int = _int(
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
     )
-    microsoft_365_copilot_delegated_token_file: str = os.getenv(
-        "MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE", ""
-    ).strip()
-    microsoft_365_copilot_tenant_id: str = os.getenv(
-        "MICROSOFT_365_COPILOT_TENANT_ID", ""
-    ).strip().lower()
-    microsoft_365_copilot_expected_subject: str = os.getenv(
-        "MICROSOFT_365_COPILOT_EXPECTED_SUBJECT", ""
-    ).strip()
-    microsoft_365_copilot_expected_object_id: str = os.getenv(
-        "MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID", ""
-    ).strip().lower()
 
     def completion_evidence_actor_allowlist(
         self,
@@ -1027,7 +1018,7 @@ class Settings:
         Rank coverage for the lanes a roster can actually select is a separate
         question, over the activation-bound pool rather than this set. That is
         the right axis for the lanes missing here: ``github-copilot``,
-        ``microsoft-365-copilot``, ``firecrawl`` and ``antigravity`` reach a
+        ``firecrawl`` and ``antigravity`` reach a
         roster through ``primary_provider_activation_bindings`` and have no
         entry in ``readiness`` to report at all, and ``openai`` is the roster's
         mandatory floor rather than a specialist -- ``core_inventory_ready``
@@ -1110,7 +1101,7 @@ class Settings:
             raise ValueError(
                 "TRUSTED_PROVIDER_COST_RANKS must be a non-empty JSON object"
             )
-        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"}
+        allowed = {"openai", "claude", "cursor", "gemini", "antigravity", "grok", "perplexity", "firecrawl", "github-copilot"}
         parsed: dict[str, int] = {}
         for raw_provider, raw_rank in payload.items():
             if not isinstance(raw_provider, str):
@@ -1655,23 +1646,6 @@ class Settings:
                 problems.append(
                     "live provider dispatch requires exact provider activation bindings"
                 )
-            if readiness["provider_activation_bindings_configured"] and "microsoft-365-copilot" in self.primary_provider_activation_bindings():
-                if not self.microsoft_365_copilot_delegated_token_file:
-                    problems.append(
-                        "Microsoft 365 Copilot requires a protected delegated token file"
-                    )
-                if not re.fullmatch(
-                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-                    self.microsoft_365_copilot_tenant_id,
-                ):
-                    problems.append("Microsoft 365 Copilot tenant id is invalid")
-                if not self.microsoft_365_copilot_expected_subject:
-                    problems.append("Microsoft 365 Copilot expected subject is required")
-                if not re.fullmatch(
-                    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-                    self.microsoft_365_copilot_expected_object_id,
-                ):
-                    problems.append("Microsoft 365 Copilot expected object id is invalid")
             if len(self.langgraph_primary_adapter_callback_secret) < 32:
                 problems.append(
                     "live provider dispatch requires a 32-character "
@@ -1780,7 +1754,10 @@ class Settings:
             "binding_version",
         }
         bindings = {}
+        from .primary_roster import KNOWN_LANES
         for provider_id, raw in payload.items():
+            if provider_id not in KNOWN_LANES:
+                raise ValueError("provider activation binding names an unsupported provider")
             if not isinstance(provider_id, str) or not isinstance(raw, dict):
                 raise ValueError("provider activation binding is malformed")
             if set(raw) != expected_fields:
@@ -2243,3 +2220,5 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]

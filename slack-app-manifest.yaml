@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 06:50 UTC | BEGIN]]
 _metadata:
   major_version: 1
   minor_version: 1
@@ -22,6 +23,13 @@ oauth_config:
       - chat:write
       - commands
       - groups:history
+      # Read-only. Lets the Director verify its own channel: resolve the
+      # configured private channel, confirm it is actually a member, and
+      # enumerate which provider apps are connected. Without these,
+      # conversations.info/members return missing_scope and channel setup
+      # can only be audited by hand in the Slack UI.
+      - groups:read
+      - users:read
 settings:
   event_subscriptions:
     bot_events:
@@ -33,4 +41,4 @@ settings:
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false
-
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 06:50 UTC | END]]

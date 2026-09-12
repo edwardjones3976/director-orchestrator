@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | BEGIN]]
@@ -125,8 +126,11 @@ def _is_chatgpt_alias_message(event: dict) -> bool:
     if not settings.chatgpt_bridge_enabled:
         return False
     mention = f"<@{settings.chatgpt_bridge_slack_user_id}>"
+    # Only the opening address list is a command; quoted mentions and connector
+    # attribution footers are content, even when Slack reports the owner as author.
+    addresses = re.match(r"^\s*(?:<@[A-Z0-9]+>(?=\s|$)\s*)+", event.get("text", ""))
     return (
-        mention in event.get("text", "")
+        addresses is not None and mention in addresses.group(0)
         and event.get("user") == settings.slack_owner_user_id
         and event.get("channel") in settings.chatgpt_bridge_channel_ids
     )
@@ -261,6 +265,8 @@ def _signed_delivery_ambiguity(
 
 
 def _forward_chatgpt_alias(event: dict, client) -> None:
+    if not _is_chatgpt_alias_message(event):
+        return
     if event.get("bot_id") or event.get("subtype") in {
         "bot_message",
         "message_changed",
@@ -334,11 +340,23 @@ def _forward_chatgpt_alias(event: dict, client) -> None:
             return
     except Exception as exc:
         _log_boundary_failure("ChatGPT alias bridge request failed", exc)
+        paused = False
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 403:
+            # Recognize only the exact, bounded server contract; never display
+            # response-controlled text or infer a paid pause from other refusals.
+            if len(exc.response.content) <= 256:
+                try:
+                    paused = exc.response.json() == {"detail": "paid provider execution is disabled"}
+                except ValueError:
+                    pass
         _post_bridge_message(
             client,
             channel=event["channel"],
             thread_ts=thread_ts,
             text=(
+                "*Aesop Director \u2014 ChatGPT bridge \u2014 PAUSED*\n"
+                "Paid provider execution is disabled. No provider was dispatched."
+                if paused else
                 "*Aesop Director — ChatGPT bridge — FAILED*\n"
                 "The authenticated bridge request failed closed. No automatic provider "
                 "re-dispatch will occur."
@@ -822,3 +840,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]]

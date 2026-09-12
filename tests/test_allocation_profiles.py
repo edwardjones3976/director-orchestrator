@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -8,8 +9,8 @@ from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, alloc
 from director_orchestrator.workload_policy import WorkloadPolicy, DirectProductionProvider, direct_assignment_capacity_violation
 
 class AllocationProfilesTests(unittest.TestCase):
-    def test_all_nine_lanes_and_approved_targets(self):
-        expected = {"engineering": (40,25,15,10,10,0,0,0,0), "mixed":(25,30,10,10,5,5,5,5,5), "public_research":(20,25,5,5,5,25,15,0,0), "enterprise":(25,30,5,5,5,0,5,10,15)}
+    def test_all_eight_lanes_and_approved_targets(self):
+        expected = {"engineering": (40,25,15,10,10,0,0,0), "mixed":(27,33,10,10,5,5,5,5), "public_research":(20,25,5,5,5,25,15,0), "enterprise":(32,38,5,5,5,0,5,10)}
         for profile, weights in expected.items():
             self.assertEqual(tuple(allocation_targets(profile).values()), weights)
             self.assertEqual(sum(weights), 100)
@@ -37,7 +38,7 @@ class AllocationProfilesTests(unittest.TestCase):
             allocation_targets("automatic-renormalization")
     def test_research_credit_preserves_specialist_identity(self):
         from director_orchestrator.workload_policy import Provider, WorkKind, is_accepted_productive_kind
-        for provider in (Provider.PERPLEXITY, Provider.FIRECRAWL, Provider.MICROSOFT_365_COPILOT):
+        for provider in (Provider.PERPLEXITY, Provider.FIRECRAWL):
             self.assertTrue(is_accepted_productive_kind(provider, WorkKind.RESEARCH))
             self.assertFalse(is_accepted_productive_kind(provider, WorkKind.COORDINATION))
 
@@ -46,3 +47,4 @@ class AllocationProfilesTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

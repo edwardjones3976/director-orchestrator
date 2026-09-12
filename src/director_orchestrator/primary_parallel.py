@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -66,7 +67,6 @@ PROVIDER_ATTEMPT_BUDGET_EXHAUSTED = "provider_attempt_budget_exhausted"
 _TRANSPORT_BY_ID = {
     "api": Transport.PROVIDER_API,
     "responses-api": Transport.PROVIDER_API,
-    "work-iq-rest-production": Transport.PROVIDER_API,
     "cli": Transport.LOCAL_CLI,
     "native-cli": Transport.LOCAL_CLI,
     "public-search-cli": Transport.LOCAL_CLI,
@@ -1480,3 +1480,4 @@ class PostgresParallelDispatch:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

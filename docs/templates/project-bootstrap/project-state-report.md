@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -21,7 +24,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -115,7 +118,7 @@ report or submission envelope.
 - **Trusted CI:** <run IDs, exact candidate, job conclusions, or unverified>
 - **Security:** <scan ID, exact range/candidate, coverage, findings, or unverified>
 - **Independent review:** <provider, exact SHA/digest, verdict, threads, or pending/unverified>
-- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote>
+- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote, and moderating the same debate does not forfeit it>
 - **Debate integrity:** <neutral framing, independent positions, appropriate alternative or none, counter-bias check, actual participants/abstentions/unavailable members, and retained dissent, or not applicable>
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
@@ -167,3 +170,6 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
