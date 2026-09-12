@@ -13,12 +13,15 @@ their verdicts together in the order startup reaches them.
 Read-only by construction. It sets no environment variable, writes no file,
 opens no socket, touches no database, and calls no provider. It removes,
 relaxes and defaults nothing: every verdict here is the deterministic
-validator's own, reported. Enabling live dispatch remains an owner
+validator's own EXCEPT the paid/live coupling line, which is the preflight's
+own paraphrase of the startup constructor's refusal, because a read-only
+preflight must not construct the activation (it opens a Postgres control plane).
+Enabling live dispatch remains an owner
 decision taken elsewhere.
 
 Usage:
 
-    PYTHONPATH=src python scripts/live-dispatch-preflight.py
+    PYTHONPATH=src python -B scripts/live-dispatch-preflight.py
 
 Exit status is 0 when nothing is outstanding and 1 when anything is.
 """

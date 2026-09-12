@@ -73,15 +73,23 @@ PYTHONPATH=src python -B scripts/live-dispatch-preflight.py
 
 It reports and does nothing else: it sets no variable, writes no file, opens no
 socket, touches no database, and calls no provider. Every verdict it prints is
-the deterministic validator's own, reported; it removes, relaxes, and
-defaults nothing. It prints variable names and booleans only, never a value —
+the deterministic validator's own EXCEPT the paid/live coupling line, which is
+the preflight's own paraphrase of the startup constructor's refusal, because a
+read-only preflight must not construct the activation (it opens a Postgres
+control plane). It removes, relaxes, and defaults nothing. It prints variable
+names and booleans only, never a value —
 the same rule `/health` follows. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
 not acceptance, not provider activation evidence, and not owner approval.
 
 The script evaluates the rest of the configuration as though the four coupled
-switches were already set, which is what lets one pass name every remaining
-prerequisite.
+switches (`ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_ENABLED`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`, and
+`LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED`) were already set for the
+first three validators, and as though two additional switches
+(`LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED` and `LANGGRAPH_RUNTIME_ENABLED`)
+were also set for the last two validators. This is what lets one pass name every
+remaining prerequisite.
 
 ### The ordered prerequisite list
 
@@ -131,13 +139,17 @@ Reported following main.py's order, additionally running the runtime validator w
    `MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID`.
 5. **The paid/live coupling**, checked next, at the point where startup builds
    the primary activation. See below.
-6. **Parallel dispatch**, when `LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED`
-   is on: `LANGGRAPH_PARALLEL_INITIAL_MAX_CONCURRENCY`,
+6. **Parallel dispatch**, evaluated by the preflight with
+   `LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED` forced on so its prerequisites
+   are reported even before the operator enables it:
+   `LANGGRAPH_PARALLEL_INITIAL_MAX_CONCURRENCY`,
    `LANGGRAPH_PARALLEL_AUTO_SCALE_MAX_CONCURRENCY`,
    `LANGGRAPH_PARALLEL_CLEAN_BATCHES_TO_SCALE`,
    `LANGGRAPH_PARALLEL_RECOVERY_CLEAN_BATCHES`, and the per-provider caps. The
    fixed values are not tunable and a different one is a startup refusal.
-7. **Runtime lane**, when `LANGGRAPH_RUNTIME_ENABLED` is on:
+7. **Runtime lane**, evaluated by the preflight with
+   `LANGGRAPH_RUNTIME_ENABLED` forced on so its prerequisites are reported even
+   before the operator enables it:
    `LANGGRAPH_RUNTIME_CHECKPOINT_PATH`, `LANGGRAPH_RUNTIME_LEDGER_PATH`,
    `LANGGRAPH_RUNTIME_CHECKPOINT_NAMESPACE`,
    `LANGGRAPH_RUNTIME_WRITER_OWNER_ID`, `LANGGRAPH_RUNTIME_WRITER_SECRET`,
