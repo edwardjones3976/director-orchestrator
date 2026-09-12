@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -729,7 +730,7 @@ every other item of the evidence bar. In `ATTENDED` state, or with no live
 grant, the duty is to name that blocker on the pull request, not to merge.
 
 Where a merge is authorised, the provider that supplied the first `ACCEPT` is
-the reviewer and does not execute; the second concurring provider executes. With
+the reviewer and does not execute; the second concurring provider executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to the second concurring provider, and executes itself only when it is that provider and not an author of the candidate. With
 the producer that is the three distinct identities this handoff requires, and the
 executing approver fills the acting-agent slot rather than the reviewer's. An
 approving reviewer is never a material author, because a material author is
@@ -932,3 +933,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->

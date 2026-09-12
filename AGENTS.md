@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
@@ -92,7 +93,7 @@ here is to say so on the pull request and name the blocker — not to merge.
 
 Where a merge is authorised, the two-identity split is mandatory: the provider
 that supplied the first `ACCEPT` is the reviewer and does **not** execute, and
-the second concurring provider executes. With the producer that is three
+the second concurring provider executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to the second concurring provider, and executes itself only when it is that provider and not an author of the candidate. With the producer that is three
 distinct identities, which is what the requirement asks for; one provider
 holding both the only verdict and the merge is the collapse it forbids.
 `docs/human-out-of-the-loop-operation.md` evidence-bar item 5 names the
@@ -212,3 +213,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
