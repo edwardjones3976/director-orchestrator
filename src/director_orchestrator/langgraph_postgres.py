@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -75,6 +80,7 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -474,6 +480,7 @@ _APPEND_ONLY_TABLES = (
 )
 
 _RATCHET_TABLES = (
+    ("director_primary_slack_delivery", "director_primary_slack_delivery_guard"),
     ("director_primary_task_writer", "director_primary_writer_guard_fn"),
     ("director_primary_intake_authority", "director_primary_intake_guard_fn"),
     ("director_primary_task_projection", "director_primary_projection_guard_fn"),
@@ -570,6 +577,32 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_slack_delivery (
+            task_id text NOT NULL REFERENCES {schema}.director_primary_task_projection(task_id),
+            notification_key text NOT NULL,
+            projection_digest text NOT NULL,
+            payload jsonb NOT NULL,
+            client_msg_id text NOT NULL UNIQUE,
+            bot_user_id text,
+            state text NOT NULL CHECK (state IN ('PENDING','POSTING','ACKNOWLEDGED',
+                'DELIVERED','AMBIGUOUS','REFUSED','SUPPRESSED','SUPERSEDED')),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            claimed_at timestamptz,
+            acknowledged_at timestamptz,
+            delivered_at timestamptz,
+            slack_ts text,
+            readback_attempts integer NOT NULL DEFAULT 0 CHECK (readback_attempts BETWEEN 0 AND 2),
+            last_error text,
+            owner_decision_at timestamptz,
+            owner_command_id text,
+            PRIMARY KEY (task_id, notification_key)
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_slack_delivery_pending_idx
+        ON {schema}.director_primary_slack_delivery (state, created_at, task_id)
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_dedup (
@@ -1245,6 +1278,39 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 RAISE EXCEPTION
                     'director primary budget reservations never decrease'
                     USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$
+        """,
+        f"""
+        CREATE OR REPLACE FUNCTION {schema}.director_primary_slack_delivery_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                RAISE EXCEPTION 'primary Slack delivery records are never deleted';
+            END IF;
+            IF (NEW.task_id, NEW.notification_key, NEW.projection_digest,
+                NEW.payload, NEW.client_msg_id, NEW.created_at) IS DISTINCT FROM
+               (OLD.task_id, OLD.notification_key, OLD.projection_digest,
+                OLD.payload, OLD.client_msg_id, OLD.created_at)
+               OR NEW.readback_attempts < OLD.readback_attempts THEN
+                RAISE EXCEPTION 'primary Slack delivery identity is immutable';
+            END IF;
+            IF NEW.state <> OLD.state AND NOT (
+                (OLD.state='PENDING' AND NEW.state IN ('POSTING','SUPPRESSED','SUPERSEDED')) OR
+                (OLD.state='POSTING' AND NEW.state IN ('ACKNOWLEDGED','AMBIGUOUS','REFUSED')) OR
+                (OLD.state IN ('ACKNOWLEDGED','AMBIGUOUS') AND NEW.state='DELIVERED')) THEN
+                RAISE EXCEPTION 'primary Slack delivery cannot be retried or rewound';
+            END IF;
+            IF (OLD.claimed_at IS NOT NULL AND NEW.claimed_at IS DISTINCT FROM OLD.claimed_at)
+                OR (OLD.acknowledged_at IS NOT NULL AND NEW.acknowledged_at IS DISTINCT FROM OLD.acknowledged_at)
+                OR (OLD.delivered_at IS NOT NULL AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
+                OR (OLD.slack_ts IS NOT NULL AND NEW.slack_ts IS DISTINCT FROM OLD.slack_ts)
+                OR (OLD.bot_user_id IS NOT NULL AND NEW.bot_user_id IS DISTINCT FROM OLD.bot_user_id)
+                OR (OLD.owner_command_id IS NOT NULL AND NEW.owner_command_id IS DISTINCT FROM OLD.owner_command_id)
+                OR (OLD.owner_decision_at IS NOT NULL AND NEW.owner_decision_at IS DISTINCT FROM OLD.owner_decision_at) THEN
+                RAISE EXCEPTION 'primary Slack delivery evidence is immutable';
             END IF;
             RETURN NEW;
         END;
@@ -2376,6 +2442,123 @@ class PostgresConditionalClaimStore:
                         "primary command proof refused; writer authority is stale or replayed"
                     )
         return False
+
+    def authorize_primary_cancellation(
+        self, *, task_id: str, command_id: str, command_digest: str,
+        nonce_digest: str, proof_version: str, actor_id: str,
+        expected_projection_digest: str, expected_generation: int,
+        owner_token: str, proof_expires_at: int,
+    ) -> TaskWriterLease:
+        """Claim an already authenticated cancellation and its writer atomically.
+
+        The signed request retains its original generation. The immutable proof
+        row binds its digest to the resulting fence, permitting exact crash
+        redelivery without rewriting the request or reacquiring a second time.
+        Other commands retain their live-writer admission rule.
+        """
+        for value, name in ((task_id, "task_id"), (command_id, "command_id"),
+                            (actor_id, "actor_id"), (owner_token, "owner_token")):
+            _require_id(value, name)
+        for value, name in ((command_digest, "command_digest"),
+                            (nonce_digest, "nonce_digest"),
+                            (expected_projection_digest, "projection_digest")):
+            _require_digest(value, name)
+        _require_code(proof_version, "proof_version")
+        expected_generation = _require_generation(expected_generation, "expected_generation", minimum=1)
+        if type(proof_expires_at) is not int or proof_expires_at < 0:
+            raise ValueError("invalid cancellation proof expiry")
+        schema = self._schema
+        parameters = dict(task_id=task_id, command_id=command_id,
+            command_digest=command_digest, nonce_digest=nonce_digest,
+            proof_version=proof_version, actor_id=actor_id, owner_token=owner_token,
+            expected=expected_generation, proof_expires_at=proof_expires_at,
+            lease=DEFAULT_LEASE_SECONDS)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(connection, "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {"key": _advisory_key("command-authorization", schema, task_id, "cancellation", command_id)})
+                existing = self._optional_row(connection, f"""
+                    SELECT * FROM {schema}.director_primary_command_authorization
+                    WHERE nonce_digest=%(nonce_digest)s OR
+                        (task_id=%(task_id)s AND operation='cancellation' AND command_id=%(command_id)s)
+                    FOR UPDATE""", parameters)
+                self._one_row(connection, f"""
+                    SELECT task_id FROM {schema}.director_primary_task_writer
+                    WHERE task_id=%(task_id)s FOR UPDATE""", parameters,
+                    missing="cancellation requires an existing task writer")
+                writer_query = f"""SELECT *,
+                    lease_expires_at > clock_timestamp() AS lease_live,
+                    to_timestamp(%(proof_expires_at)s) > clock_timestamp() AS proof_live
+                    FROM {schema}.director_primary_task_writer WHERE task_id=%(task_id)s"""
+                writer = self._one_row(connection, writer_query, parameters,
+                    missing="cancellation task writer is unavailable")
+                if writer["engine_owner"] != "langgraph" or not writer["proof_live"]:
+                    raise PostgresControlPlaneError("cancellation owner or proof expiry is invalid")
+                if existing is not None:
+                    fields = dict(task_id=task_id, operation="cancellation", command_id=command_id,
+                        command_digest=command_digest, nonce_digest=nonce_digest,
+                        proof_version=proof_version, actor_id=actor_id)
+                    if any(str(existing[k]) != str(v) for k, v in fields.items()):
+                        raise PostgresControlPlaneError("cancellation proof replay conflicts with durable authority")
+                    if (not writer["lease_live"] or not hmac.compare_digest(writer["owner_token"], owner_token) or
+                            writer["fencing_generation"] != existing["writer_fencing_generation"]):
+                        raise PostgresControlPlaneError("authorized cancellation writer has expired or moved")
+                    return _lease_from_row(writer)
+                if writer["fencing_generation"] != expected_generation:
+                    raise PostgresControlPlaneError("cancellation targets a stale writer generation")
+                if writer["lease_live"] and not hmac.compare_digest(writer["owner_token"], owner_token):
+                    raise PostgresControlPlaneError("another writer holds an unexpired lease on this task")
+                projected = self._one_row(connection, f"""
+                    SELECT projection_digest FROM {schema}.director_primary_task_projection
+                    WHERE task_id=%(task_id)s FOR UPDATE""", parameters,
+                    missing="cancellation task projection is unavailable")
+                if projected["projection_digest"] != expected_projection_digest:
+                    raise PostgresControlPlaneError("cancellation targets a stale task projection")
+                # Both required rows are now locked. Time spent waiting must
+                # not admit an expired proof or use a stale lease-live result.
+                writer = self._one_row(connection, writer_query, parameters,
+                    missing="cancellation task writer is unavailable")
+                if not writer["proof_live"]:
+                    raise PostgresControlPlaneError("cancellation proof expired during admission")
+                if not writer["lease_live"]:
+                    writer = self._one_row(connection, f"""
+                        UPDATE {schema}.director_primary_task_writer
+                        SET owner_token=%(owner_token)s, fencing_generation=fencing_generation+1,
+                            lease_expires_at=clock_timestamp()+make_interval(secs => %(lease)s),
+                            updated_at=clock_timestamp()
+                        WHERE task_id=%(task_id)s AND fencing_generation=%(expected)s
+                            AND lease_expires_at <= clock_timestamp()
+                        RETURNING *""", parameters,
+                        missing="cancellation writer acquisition lost its exact fence")
+                else:
+                    # Fresh authority needs a full lease before cancellation's
+                    # next transaction; a live same-owner renewal keeps its fence.
+                    writer = self._one_row(connection, f"""
+                        UPDATE {schema}.director_primary_task_writer
+                        SET lease_expires_at=clock_timestamp()+make_interval(secs => %(lease)s),
+                            updated_at=clock_timestamp()
+                        WHERE task_id=%(task_id)s AND fencing_generation=%(expected)s
+                            AND owner_token=%(owner_token)s
+                            AND lease_expires_at > clock_timestamp()
+                        RETURNING *""", parameters,
+                        missing="cancellation writer renewal lost its exact live fence")
+                parameters["generation"] = writer["fencing_generation"]
+                claimed = self._optional_row(connection, f"""
+                    INSERT INTO {schema}.director_primary_command_authorization (
+                        nonce_digest, task_id, operation, command_id, command_digest,
+                        proof_version, actor_id, writer_fencing_generation, proof_expires_at)
+                    SELECT %(nonce_digest)s, %(task_id)s, 'cancellation', %(command_id)s,
+                        %(command_digest)s, %(proof_version)s, %(actor_id)s,
+                        %(generation)s, to_timestamp(%(proof_expires_at)s)
+                    WHERE to_timestamp(%(proof_expires_at)s) > clock_timestamp()
+                    ON CONFLICT DO NOTHING RETURNING nonce_digest""", parameters)
+                if claimed is None:
+                    raise PostgresControlPlaneError("cancellation proof conflicts with durable authority")
+                self._optional_row(connection, f"""
+                    UPDATE {schema}.director_primary_parallel_batch
+                    SET kill_switch=true, updated_at=now() WHERE task_id=%(task_id)s
+                    RETURNING task_id""", parameters)
+                return _lease_from_row(writer)
 
     def record_primary_command_receipt(
         self,
@@ -5034,3 +5217,9 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
+# [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]

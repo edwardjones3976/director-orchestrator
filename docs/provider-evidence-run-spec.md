@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
@@ -107,31 +109,28 @@ ChatGPT login) and then qualified against the strict capture checks. Neither
 configuration nor an authenticated host is qualification, and dispatch working
 over the Responses API is not evidence that the native capture path works.
 
-**3. The bridge contradicts itself about cursor.**
-`host_provider_bridge.py:41-44` allowlists `cursor` in `SUPPORTED_HOST_LANES`.
-`scripts/windows-host-provider-bridge.ps1:65-67` throws
-*"cursor cannot be enabled through the Windows host bridge"* if the command map
-contains it, and its allowlist omits the lane. The Python half admits the lane
-the PowerShell launcher refuses to start. Both checks have to agree, and the
-parity correction is assigned to a separate worktree; it is not made here.
-Resolving the contradiction in either direction only makes the lane launchable —
-it does not qualify the installed route.
+**3. Cursor launcher parity is resolved; Windows containment remains unavailable.**
+The Python and PowerShell allowlists were aligned by `eb2d1b7` and remain
+covered by the Windows cutover regression tests. That does not establish
+launchability or qualification. The September 8 inspection found a resolvable,
+authenticated CLI and supported flags, but the subsequent canary below showed
+that its required `--sandbox enabled` invocation cannot execute on Windows.
+Discovery now withholds this native lane on unsupported platforms and rejects
+Windows launchers reached through WSL. It never downgrades containment.
+Qualification requires a supported, independently verified host route.
 
-**4. grok has direct CLI paths; the installed envelope is unproved.**
-The repository does contain finite, single-shot direct paths for grok:
-`primary_transports.py:1186` pins `--output-format json --max-turns 1
---permission-mode plan` and passes the packet through `--prompt-file`
-(`:979-997`), and `providers.py:1317-1345` carries the matching direct
-invocation. Saying no wrapper exists was wrong.
+**4. Native Grok's observed envelope needs the corrected shared normalizer.**
+The September 8 observation below established an actual `sessionId` / `text` /
+`stopReason` shape, rather than an unknown envelope. The integrated normalizer
+decodes structured text, requires terminal `end_turn` and exactly one native
+turn, and retains side-effect evidence for strict downstream validation.
+The capture and dispatch paths share this terminal check. Fixture conformance
+does not qualify an installed runtime or authorize another paid probe.
+This is the native Grok CLI lane, not Grok Bot and not a Cursor-hosted Grok model.
 
-The unproved part is compatibility, on two separate surfaces. Strict capture
-validation (`provider_validation.py:301-328`) requires a raw native terminal
-envelope with a successful terminal status, a string session or conversation
-identifier, no `schema_version` key, and no tool or effect keys; the host bridge
-instead feeds raw stdin (`:449-458`) and demands terminal JSON (`:466-474`).
-Whether the *installed* Grok CLI emits an envelope that satisfies those checks
-has not been demonstrated. The exhausted native probe must not be repeated for
-this document; its existing owner retains any reviewed correction.
+Capability inspection is distinct from an exhausted paid probe. Reusing the
+dated capture avoids repurchasing the same evidence; any further paid action
+still needs its own admitted authority, bounds and new information gain.
 
 **5. antigravity has an installed CLI; its capture route is unbound.**
 It is not IDE-only. An Antigravity CLI is installed on this host, reports
@@ -148,13 +147,55 @@ antigravity to a pinned-SSH team route (`provider_validation.py:303-306`) and
 raises *"Antigravity team SSH capture verifier is unbound"* when that route is
 absent, which is the state on this deployment.
 
-Taken together: the floor needs openai plus two of {claude, cursor, grok}. No
-lane is currently qualified. openai needs the native Codex route configured and
-qualified (2); cursor needs the launcher/bridge parity resolved and then
-qualified (3); grok needs its installed envelope proved against the capture
-checks, without repeating the exhausted probe (4). claude is the closest, but
-"unconfigured" is not the same as "ready": it too must be configured and then
-produce a real capture. Nothing here establishes that any lane will pass.
+The original qualification floor required OpenAI plus two of {Claude, Cursor,
+native Grok}. This document does not establish current enrollment or LIVE_OK.
+Cursor needs a supported host; native Grok's recorded dialect is now covered by
+shared normalization tests; OpenAI and the other lanes retain their separate
+binding and acceptance requirements. No new provider call was made for this change.
+
+## Capture conformance is testable without another provider call
+
+`tests/test_provider_validation.py` tests the recorded Grok dialect, malformed
+and over-turn results, supported Cursor success envelopes, and prohibited effect
+evidence. Native Grok must meet its own terminal criteria even if it also carries
+a generic success marker. Unknown side-effect keys are not projected away.
+Passing these fixtures proves code behavior, not runtime qualification.
+
+## Canary results, 2026-09-08
+
+Two canaries were run under owner authorization, one attempt each, using the
+exact pinned invocations. Neither is repeated here.
+
+**cursor — blocked before any model call, no spend.** The lane pins
+`--sandbox enabled` (`primary_transports.py:1185`). The installed CLI rejects it:
+*"Sandbox mode is enabled but not available on this system. Sandbox requires
+macOS or Linux."* The only other accepted value is `disabled`, which drops the
+operating-system containment the lane deliberately requires, and which the
+harness notes metadata cannot substitute for. **As pinned, this lane cannot
+execute on the Windows deployment target at all.** Resolving it is an owner
+decision between a non-Windows host for this lane, an approved change to the
+pinned containment, or a different containment mechanism. Note also that the
+first attempt hit a workspace-trust prompt; any automated capture must expect it.
+
+**grok — ran, and answered the open question. Cost USD 0.0065.** The pinned
+invocation executed cleanly and returned an authenticated envelope. At that date it was **not**
+capture-conformant, for three concrete reasons rather than an ambiguous failure:
+
+| Capture rule | Observed |
+| --- | --- |
+| JSON object, no `schema_version` | passes |
+| no truthy `tool_calls`/`tool_uses`/`side_effects` | passes |
+| `status == "SUCCESS"` or `type`/`subtype`/`is_error` | fails — grok emits `stopReason: "end_turn"` |
+| string `session_id` or `conversation_id` | fails — grok emits `sessionId` |
+| (then) an `outcome` via `_structured_native_output` | would fail — the answer is in `text`, with no `structured_output` or `result` |
+
+The then-current `normalize_capture("grok", ...)` rejected it with *"native unique successful
+terminal/session is missing"*. The observed shape is pinned in
+`tests/test_provider_validation.py` so this does not have to be repurchased.
+
+The integrated normalizer addresses those dated naming and terminal-shape
+failures with fixtures. The observation remains historical and has not been
+repeated or promoted to a current installed-route acceptance record.
 
 ## A topology problem the variable names hide
 
@@ -296,8 +337,8 @@ written.
 
 ## Recommended order
 
-1. Resolve blocker (3). It is a contradiction inside one component and is
-   answerable from the repository alone, without touching the deployment.
+1. For blocker (3), establish a supported Cursor host route with the required
+   containment. The old launcher/bridge contradiction is already resolved.
 2. Decide the topology question, since it constrains every DSN that follows.
 3. Establish the generation manifest, which blocker (1) depends on.
 4. Prove one lane end to end — claude, as the nearest candidate rather than a
@@ -305,11 +346,13 @@ written.
    possibly metered invocation and needs a reservation under the campaign
    ceiling below.
 5. Treat (2), (4) and (5) as separate scoped decisions. Each changes what the
-   roster can contain. (4) needs the installed envelope proved without repeating
-   the exhausted probe, and (5) needs the team capture route bound plus host
+   roster can contain. (4) needs current installed-route qualification using the
+   reviewed normalizer, without replaying an ambiguous paid probe; (5) needs the team capture route bound plus host
    authentication and enrollment settled; either may still require a code
    change.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:20 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]] -->

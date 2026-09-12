@@ -1,3 +1,7 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]] -->
 # Edge Oracle isolated operations
 
@@ -53,7 +57,7 @@ and HMAC-sign the final artifact only after matching the stored task, assignment
 provider, repository, base ref, review run, and the exact base/head SHAs embedded in the
 assignment. Provider JSON must use `artifact_type=edge_oracle_exact_sha_review/v1`, set
 `reviewer_provider` to the actual provider, and omit `signature`; model-authored JSON alone
-has no merge authority. The reviewer may be Claude, Cursor, or Grok, but it must not be the
+has no merge authority. The reviewer may be OpenAI, Claude, Cursor, Grok, or Antigravity, but it must not be the
 implementation provider. OpenAI acceptance runs before the deterministic merge service.
 The review assignment must depend on exactly one accepted implementation outcome; the
 stored transitive dependency closure, rather than a model assertion, establishes every
@@ -64,12 +68,40 @@ GitHub-actor allowlist and must not belong to the reviewer. Configure lowercase 
 `ORACLE_AUTOMERGE_CLAUDE_ACTORS`, `ORACLE_AUTOMERGE_CURSOR_ACTORS`, and, when used as an
 implementation provider, `ORACLE_AUTOMERGE_GEMINI_ACTORS`.
 
+The gate requires an explicitly configured base ref and independently reads the
+exact branch name, base commit, protection flag, and active branch rules from GitHub.
+Protected branches and branches with active repository or organization rules are
+refused regardless of their name. Missing, inaccessible, unsupported, malformed, or
+stale evidence is never treated as unprotected. The gateway repeats these reads
+immediately before the merge request. GitHub does not offer an atomic expected
+protection-state condition for that request, so an administrator changing protection
+between the final read and write remains a platform race; this is not a protection
+configuration lock. The server's own protections still apply.
+
+[GitHub branch rules documentation](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch)
+defines the active rules endpoint, including organization rules. Read-only branch
+and rules access is required; this change grants no access or configuration itself.
+
+Antigravity's engineering/review capability authorization is separate from mode
+enrollment. The legacy closed-fixture mode retains its review/acceptance denial;
+the primary roster permits Antigravity review only in enrolled team mode. OpenAI
+joins the eligible downstream verifiers. The Oracle gate admits actor-bound OpenAI
+and Antigravity/Gemini review evidence under the same no-self-review requirements.
+Alias canonicalization does not loosen authentication of the stored provider run.
+Neither this capability list nor a model verdict authorizes a merge by itself.
+
 The committed profile keeps both controls closed:
 
 ```dotenv
 ORACLE_AUTOMERGE_ENABLED=false
 ORACLE_AUTOMERGE_KILL_SWITCH=true
 ```
+
+`ORACLE_AUTOMERGE_BASE_REF` has no default and must name this project's own base
+ref. An unset variable refuses, and the shared trunk names refuse outright,
+because tier 0 never permits merging into a protected branch and no
+branch-protection registry exists in this runtime to tell the difference.
+`/health` reports `oracle_merge.base_ref_configured` as a boolean only.
 
 Use a GitHub App installed only on `edwardjones3976/edge_engine`. Grant exactly:
 
@@ -110,7 +142,7 @@ same rule, preventing ambiguous paid work from being duplicated by recovery or g
 Owner-supplied manual recovery text remains operational evidence only and cannot authorize an
 exact-SHA review handoff or merge.
 
-An immutable Claude, Cursor, or Grok review artifact must validate as
+An immutable OpenAI, Claude, Cursor, Grok, or Antigravity review artifact must validate as
 `OracleReviewArtifact`. A secret-free shape is available in
 `docs/oracle-review-artifact.example.json`. When rollout gates are separately accepted:
 
@@ -290,3 +322,7 @@ not overridable by a model. Existing Director rules still prohibit an agent from
 its own PR; production deployment, credential installation, permission expansion, and
 live merge activation require their separately recorded owner gate.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->

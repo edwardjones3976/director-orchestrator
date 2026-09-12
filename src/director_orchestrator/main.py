@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -156,12 +159,17 @@ settings.validate_langgraph_primary_configuration()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 store = TaskStore(settings.sqlite_path)
 primary_default_activation = None
+primary_slack_delivery = None
 if settings.langgraph_primary_enabled:
     # Lazy import preserves the default-off startup boundary. Enabling primary
     # mode must construct its real Postgres application router or fail startup.
     from .primary_default import DefaultPrimaryActivation
 
     primary_default_activation = DefaultPrimaryActivation(settings)
+    if primary_default_activation.enabled:
+        from .primary_slack_delivery import PrimarySlackDelivery
+
+        primary_slack_delivery = PrimarySlackDelivery(primary_default_activation, settings)
 settings.validate_parallel_dispatch_configuration()
 providers = provider_registry(settings)
 packet_task_router = None
@@ -382,6 +390,18 @@ async def _primary_reconciliation_loop() -> None:
             continue
 
 
+async def _primary_slack_delivery_loop() -> None:
+    while True:
+        if primary_slack_delivery is not None:
+            try:
+                await primary_slack_delivery.run_once()
+            except Exception:
+                # Durable claims survive errors. The next scan may retry local
+                # discovery/readback, never an unknown external post.
+                pass
+        await asyncio.sleep(2.0)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if primary_default_activation is not None:
@@ -414,6 +434,7 @@ async def lifespan(_: FastAPI):
     primary_reconciliation_task = asyncio.create_task(
         _primary_reconciliation_loop()
     )
+    primary_slack_delivery_task = asyncio.create_task(_primary_slack_delivery_loop())
     tasks = [
         *recovery_tasks,
         monitor_task,
@@ -422,6 +443,7 @@ async def lifespan(_: FastAPI):
         chatgpt_bridge_expiry_task,
         primary_intake_lease_task,
         primary_reconciliation_task,
+        primary_slack_delivery_task,
     ]
     try:
         yield
@@ -467,6 +489,8 @@ def health() -> dict:
         "providers": settings.readiness(),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
+        "primary_slack_delivery": (primary_slack_delivery.health()
+            if primary_slack_delivery is not None else {"configured": False, "worker_recent": False}),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
         "delegation": settings.delegation_readiness(),
@@ -620,7 +644,9 @@ def intake(
 ) -> TaskRecord:
     intake_authentication = IntakeAuthentication.BEARER_DRY_RUN
     replay_identity: tuple[str, str] | None = None
-    if settings.allow_paid_runs:
+    if settings.allow_paid_runs or any(isinstance(value, str) for value in (
+        intake_issued_at, intake_nonce, intake_signature
+    )):
         try:
             replay_identity = verify_slack_intake_attestation(
                 settings.slack_gateway_secret,
@@ -736,6 +762,15 @@ def get_task(task_id: str, response: Response) -> TaskRecord:
     return record
 
 
+@app.get("/v1/primary/tasks/{task_id}/deliveries", dependencies=[Depends(require_auth)])
+def primary_task_deliveries(task_id: str) -> list[dict]:
+    if primary_slack_delivery is None:
+        raise HTTPException(status_code=503, detail="Primary Slack delivery is unavailable")
+    if primary_default_activation.application.get_task(task_id) is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return primary_slack_delivery.receipts(task_id)
+
+
 def _primary_command_projection(
     task_id: str,
     request: object,
@@ -787,11 +822,11 @@ def _require_primary_owner_actor(actor_id: str) -> None:
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
 
 
-def _verify_primary_owner_command_proof(
+def _verify_primary_owner_command_signature(
     task_id: str,
     request: CancellationRequest | RecoveryRequest,
     operation: PrimaryCommandOperation,
-) -> None:
+) -> str:
     proof = request.gateway_proof
     if (
         proof is None
@@ -813,6 +848,17 @@ def _verify_primary_owner_command_proof(
     except PrimaryCommandBindingError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     _require_primary_owner_actor(request.actor_id)
+    return nonce_digest
+
+
+def _verify_primary_owner_command_proof(
+    task_id: str,
+    request: CancellationRequest | RecoveryRequest,
+    operation: PrimaryCommandOperation,
+) -> None:
+    nonce_digest = _verify_primary_owner_command_signature(task_id, request, operation)
+    proof = request.gateway_proof
+    assert proof is not None
     coordinator, _, writer, replay = _primary_command_projection(
         task_id, request, operation
     )
@@ -900,6 +946,7 @@ def _primary_command_response(
 def _record_primary_command(
     request: object,
     operation: PrimaryCommandOperation,
+    *, expected_fencing_generation: int | None = None,
 ) -> PrimaryCommandResponse:
     assert primary_default_activation is not None
     coordinator = primary_default_activation.coordinator
@@ -913,7 +960,11 @@ def _record_primary_command(
         command_id=request.command_id,
         command_digest=request.command_digest,
         projection=projection,
+        **({"expected_fencing_generation": expected_fencing_generation}
+           if expected_fencing_generation is not None else {}),
     )
+    if operation == PrimaryCommandOperation.APPROVAL_RESUME and primary_slack_delivery is not None:
+        primary_slack_delivery.record_owner_decision(request)
     return _primary_command_response(request, operation)
 
 
@@ -949,6 +1000,8 @@ def primary_resume_approval(
         task_id, request, PrimaryCommandOperation.APPROVAL_RESUME
     )
     if replay is not None:
+        if primary_slack_delivery is not None:
+            primary_slack_delivery.record_owner_decision(request)
         return replay
     assert writer is not None
     try:
@@ -1222,19 +1275,32 @@ def primary_completion_evidence(
 def primary_cancel(
     task_id: str, request: CancellationRequest
 ) -> PrimaryCommandResponse:
-    _verify_primary_owner_command_proof(
-        task_id, request, PrimaryCommandOperation.CANCELLATION
-    )
-    _, _, _, replay = _primary_command_projection(
-        task_id, request, PrimaryCommandOperation.CANCELLATION
-    )
-    if replay is not None:
-        return replay
-    assert primary_default_activation is not None
-    assert primary_default_activation.application is not None
+    operation = PrimaryCommandOperation.CANCELLATION
+    nonce_digest = _verify_primary_owner_command_signature(task_id, request, operation)
+    if primary_default_activation is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    coordinator = primary_default_activation.coordinator
+    if coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
     try:
-        primary_default_activation.application.cancel(task_id)
-        return _record_primary_command(request, PrimaryCommandOperation.CANCELLATION)
+        request.validate_path(task_id)
+        receipt = coordinator.read_command_receipt(
+            task_id=task_id, operation=operation.value, command_id=request.command_id)
+        if receipt is not None:
+            return PrimaryCommandResponse.from_receipt(request=request, operation=operation, receipt=receipt)
+        proof = request.gateway_proof
+        assert proof is not None
+        writer = coordinator.authorize_cancellation(
+            task_id=task_id, command_id=request.command_id, command_digest=request.command_digest,
+            nonce_digest=nonce_digest, proof_version=proof.version, actor_id=request.actor_id,
+            expected_projection_digest=request.expected_projection_digest,
+            expected_generation=request.expected_fencing_generation,
+            proof_expires_at=proof.issued_at + 300)
+        assert primary_default_activation.application is not None
+        primary_default_activation.application.cancel(
+            task_id, expected_fencing_generation=writer.fencing_generation)
+        return _record_primary_command(request, operation,
+                                       expected_fencing_generation=writer.fencing_generation)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1590,3 +1656,7 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]

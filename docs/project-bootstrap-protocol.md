@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -360,10 +361,11 @@ abstaining members cast zero without changing the immutable denominator or any
 configured weight. Voting is still not acceptance: the producing provider
 cannot be its own independent reviewer, and no vote overrides deterministic
 policy, approval, budget, allowlist, exact-SHA, CI, security, or serious-safety
-requirements. An ordinary tie is an OpenAI evidence judgment; when the tied
+requirements. An ordinary tie is an evidence judgment attributed to the actual executing Director
+(OpenAI by default, or Claude when its Director transport is activated); when the tied
 choices materially differ in cost,
 authority, safety, privacy, repository scope, runtime behavior, or project
-direction, OpenAI asks the owner one focused question.
+direction, the executing Director asks the owner one focused question.
 
 ## Completion and review-to-merge relay
 
@@ -516,3 +518,4 @@ project-specific control.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->

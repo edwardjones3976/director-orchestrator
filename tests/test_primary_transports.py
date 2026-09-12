@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | BEGIN]]
@@ -14,10 +17,16 @@ import json
 import os
 import sys
 import unittest
+import asyncio
+import time
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import httpx
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.host_provider_bridge import (
@@ -75,6 +84,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             allowed_tools=(),
             allowed_external_effects=(),
             fencing_generation=generation,
+            total_token_limit=1000,
         )
 
 
@@ -327,28 +337,172 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                     "antigravity", ("agy.exe",), cwd=directory
                 )
 
-    def test_openai_is_one_tool_free_bound_responses_call(self):
-        work = self._work()
-        response = Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"id": "resp_authenticated", "output_text": "done"}
-        client = Mock()
-        client.__enter__ = Mock(return_value=client)
-        client.__exit__ = Mock(return_value=False)
-        client.post.return_value = response
-        transport = OpenAIResponsesPacketTransport(
-            api_key="test-secret", model="gpt-test"
-        )
-        with patch("director_orchestrator.primary_transports.httpx.Client", return_value=client):
-            result = transport.send(json.dumps(work).encode(), context=self._context())
+    def _openai_response(self):
+        return {
+            "id": "resp_authenticated", "status": "completed",
+            "output": [{"type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": "done"}]}],
+            "usage": {"input_tokens": 250, "output_tokens": 400, "total_tokens": 650},
+        }
 
+    def _openai_send(self, replies, *, context=None, requests=None, clock=None):
+        seen = requests if requests is not None else []
+
+        def handle(request):
+            seen.append(request)
+            reply = replies[len(seen) - 1]
+            if isinstance(reply, Exception):
+                raise reply
+            if isinstance(reply, httpx.Response):
+                return reply
+            return httpx.Response(200, json=reply)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        transport = OpenAIResponsesPacketTransport(api_key="test-secret", model="configured-model")
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient", return_value=client), \
+             patch("director_orchestrator.primary_transports.httpx.Client", side_effect=AssertionError("no unmocked synchronous I/O")):
+            if clock is not None:
+                with patch("director_orchestrator.primary_transports.monotonic", side_effect=clock):
+                    return transport.send(json.dumps(self._work()).encode(), context=context or self._context())
+            return transport.send(json.dumps(self._work()).encode(), context=context or self._context())
+
+    def test_openai_counts_exact_input_then_makes_one_tool_free_bounded_generation(self):
+        work = self._work()
+        requests = []
+        result = self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()], requests=requests)
         self.assertEqual("openai", result["provider"])
         self.assertEqual("resp_authenticated", result["run_reference"])
-        self.assertEqual(1, client.post.call_count)
-        body = client.post.call_args.kwargs["json"]
+        self.assertEqual(["/v1/responses/input_tokens", "/v1/responses"], [r.url.path for r in requests])
+        count, body = [json.loads(r.content) for r in requests]
+        self.assertEqual({key: value for key, value in body.items() if key not in {"store", "max_output_tokens"}}, count)
+        self.assertEqual({"effort": "medium"}, count["reasoning"])
+        self.assertEqual("configured-model", body["model"])
+        self.assertEqual(json.dumps(work), body["input"])
+        self.assertEqual(750, body["max_output_tokens"])
         self.assertEqual([], body["tools"])
         self.assertFalse(body["store"])
+        self.assertTrue(all(r.headers["Authorization"] == "Bearer test-secret" for r in requests))
         self.assertNotIn("test-secret", json.dumps(body))
+        self.assertEqual({"model": "configured-model", "input_tokens": 250, "output_tokens": 400,
+                          "total_tokens": 650, "cost_usd": None}, result["usage"])
+
+    def test_openai_missing_or_invalid_authority_never_counts_or_generates(self):
+        for limit in (None, True, 0, -1, 1.5, "1000"):
+            with self.subTest(limit=limit):
+                requests = []
+                with self.assertRaisesRegex(RuntimeError, "authoritative total token"):
+                    self._openai_send([], context=replace(self._context(), total_token_limit=limit), requests=requests)
+                self.assertEqual([], requests)
+
+    def test_openai_malformed_or_exhausted_count_never_generates(self):
+        counts = [{}, [], {"input_tokens": 250}, {"object": "other", "input_tokens": 250}]
+        counts.extend({"object": "response.input_tokens", "input_tokens": value}
+                      for value in (True, "250", -1, 250.0, 1000, 1001))
+        for count in counts:
+            with self.subTest(count=count):
+                requests = []
+                with self.assertRaisesRegex(RuntimeError, "count is malformed|exhausts"):
+                    self._openai_send([count], requests=requests)
+                self.assertEqual(1, len(requests))
+
+    def test_openai_count_and_generation_share_the_remaining_deadline(self):
+        requests = []
+        self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()], requests=requests,
+                          clock=[100.0, 100.0, 100.0, 112.0, 113.0])
+        self.assertEqual(30, requests[0].extensions["timeout"]["read"])
+        self.assertEqual(18, requests[1].extensions["timeout"]["read"])
+        for ticks, call_count in (([100.0, 100.0, 100.0, 130.0], 1),
+                                  ([100.0, 100.0, 100.0, 110.0, 130.0], 2)):
+            requests = []
+            with self.subTest(ticks=ticks), self.assertRaisesRegex(RuntimeError, "timeout is exhausted"):
+                self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()], requests=requests, clock=ticks)
+            self.assertEqual(call_count, len(requests))
+
+    def test_openai_never_retries_count_or_generation_failure(self):
+        for replies in ([httpx.ReadTimeout("count failed")],
+                        [{"object": "response.input_tokens", "input_tokens": 250}, httpx.ReadTimeout("generation ambiguous")]):
+            requests = []
+            with self.subTest(stage=len(replies)), self.assertRaisesRegex(RuntimeError, "outcome is ambiguous"):
+                self._openai_send(replies, requests=requests)
+            self.assertEqual(len(replies), len(requests))
+
+    def test_openai_deadline_cancels_trickling_count_or_generation_and_closes_response(self):
+        class Trickle(httpx.AsyncByteStream):
+            chunks = 0
+            closed = False
+
+            async def __aiter__(self):
+                for _ in range(100):
+                    await asyncio.sleep(0.05)
+                    self.chunks += 1
+                    yield b" "
+
+            async def aclose(self):
+                self.closed = True
+
+        for stage in ("count", "generation"):
+            stream = Trickle()
+            replies = [] if stage == "count" else [{"object": "response.input_tokens", "input_tokens": 250}]
+            replies.append(httpx.Response(200, stream=stream))
+            requests = []
+            started = time.monotonic()
+            with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, "timeout is exhausted"):
+                self._openai_send(replies, context=replace(self._context(), timeout_seconds=1), requests=requests)
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertLess(stream.chunks, 100)
+            self.assertTrue(stream.closed)
+            self.assertEqual(len(replies), len(requests))
+
+    def test_openai_count_and_output_response_bodies_are_bounded_without_retry(self):
+        count = {"object": "response.input_tokens", "input_tokens": 250}
+        for replies in ([{**count, "padding": "x" * 4096}],
+                        [count, {**self._openai_response(), "padding": "x" * 1_048_576}]):
+            requests = []
+            with self.subTest(stage=len(replies)), self.assertRaisesRegex(RuntimeError, "byte bound"):
+                self._openai_send(replies, requests=requests)
+            self.assertEqual(len(replies), len(requests))
+
+    def test_openai_rejects_noncompleted_and_malformed_native_results(self):
+        valid = self._openai_response()
+        invalid = [[], None, {}] + [{**valid, "status": status} for status in
+                   (None, "incomplete", "failed", "cancelled", "queued", "in_progress", True)]
+        invalid += [{**valid, "error": {"message": "failed"}},
+                    {**valid, "incomplete_details": {"reason": "max_output_tokens"}},
+                    {**valid, "id": ""}, {**valid, "output": None},
+                    {**valid, "output": []}, {**valid, "output": ["done"]}]
+        for field, value in (("status", "incomplete"), ("role", "user"),
+                             ("type", "function_call"), ("content", None)):
+            response = deepcopy(valid)
+            response["output"][0][field] = value
+            invalid.append(response)
+        response = deepcopy(valid)
+        response["output"][0]["content"][0]["type"] = "refusal"
+        invalid.append(response)
+        for response in invalid:
+            with self.subTest(response=response), self.assertRaises(RuntimeError):
+                self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, response])
+
+    def test_openai_rejects_unverifiable_or_over_limit_usage(self):
+        valid = self._openai_response()
+        cases = [None, {}, {**valid["usage"], "input_tokens": 251},
+                 {**valid["usage"], "total_tokens": 1},
+                 {"input_tokens": 250, "output_tokens": 751, "total_tokens": 1001}]
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            for value in (True, "250", -1, 250.0):
+                cases.append({**valid["usage"], key: value})
+        for usage in cases:
+            with self.subTest(usage=usage), self.assertRaisesRegex(RuntimeError, "response usage"):
+                self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, {**valid, "usage": usage}])
+
+    def test_openai_accepts_completed_reasoning_and_visible_output_at_total_limit(self):
+        response = self._openai_response()
+        response["output"].insert(0, {"type": "reasoning", "summary": []})
+        response["usage"] = {"input_tokens": 250, "output_tokens": 750, "total_tokens": 1000,
+                             "output_tokens_details": {"reasoning_tokens": 350}}
+        result = self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, response])
+        self.assertEqual("SUCCEEDED", result["status"])
+        self.assertEqual(1000, result["usage"]["total_tokens"])
+
 
     def test_public_search_sends_only_approved_query_once_without_shell(self):
         work = self._work(objective="current public documentation")
@@ -512,8 +666,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             {"returncode": 0, "stdout": b'{"isAuthenticated":true}', "stderr": b""},
         )()
         with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports.sys.platform", "linux"
+        ), patch(
             "director_orchestrator.primary_transports._which",
-            side_effect=lambda names: "cursor-agent.exe" if "cursor-agent.exe" in names else None,
+            side_effect=lambda names: "cursor-agent" if "cursor-agent" in names else None,
         ), patch("subprocess.run", return_value=status) as run:
             transports, observed = discover_local_primary_command_transports(
                 cwd=directory, authenticated={}
@@ -643,3 +799,8 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 01:59 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]

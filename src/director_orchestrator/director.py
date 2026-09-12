@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -20,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from .allocation_profiles import allocation_targets
 from .config import Settings
 from .interactions import ProviderTransport
 from .models import (
@@ -125,6 +130,8 @@ class OpenAIDirector:
         return model.model_validate(json.loads(_output_text(response.json())))
 
     async def plan(self, record: TaskRecord) -> DirectorPlan:
+        profile = record.intake.allocation_profile
+        profile_weights = ", ".join(f"{lane} {weight}%" for lane, weight in allocation_targets(profile).items())
         readiness = self.settings.readiness()
         available_specialists = [
             name
@@ -160,6 +167,8 @@ class OpenAIDirector:
             "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
             "team_operating_charter": team_operating_charter(),
+            "allocation_profile": profile,
+            "allocation_targets": dict(allocation_targets(profile)),
             "routing_rules": [
                 (
                     "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases."
@@ -169,12 +178,12 @@ class OpenAIDirector:
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic task-budget gate only. estimated_cost_usd is model-authored and is never trusted relative-cost evidence for provider selection. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, Cursor, and Grok as the primary team. Grok is the Cursor-family peer and shares Cursor's full task-eligibility profile.",
-                "Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, direct-production allocation at 25/25/20/15/11/4 with plus-or-minus 3 point soft preference bands, and finally trusted cheapest cost rank. Direct-production assignment counts above target plus 5 percentage points block routing in the prospective last-20 window; startup uses the full 20-slot denominator with real assignments only. Total-effort share remains a soft preference and cannot override that cap. Model-authored cost, capability, readiness, scope, provider requirements, or allocation claims are not routing authority.",
+                f"Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, direct-production allocation for {profile}: {profile_weights} with plus-or-minus 3 point soft preference bands, then total-effort soft-preference rank, and finally trusted cheapest cost rank. Direct-production assignment counts above target plus 5 percentage points block routing in the prospective last-20 window; startup uses the full 20-slot denominator with real assignments only. Total-effort share supplies a soft ranking preference before cost, never a share-based eligibility blocker or accepted-production credit. Model-authored cost, capability, readiness, scope, provider requirements, or allocation claims are not routing authority.",
                 "Never silently rewrite a bound provider assignment. If neither an authenticated exact provider requirement nor a trusted deterministic selection is supplied, assign the owner and ask one narrow routing question instead of guessing a cost order or defaulting to Claude.",
                 "Treat Cursor as a full-spectrum primary repository partner with 100 percent task-capability parity relative to Claude and OpenAI Codex. Route low through critical work to Cursor by fit, independence, capacity, and evidence needs; do not reserve it only for overflow or second passes.",
                 f"Cursor may handle research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership. It still cannot replace {self.provider.value} runtime acceptance, mandatory Codex Security, or an independent reviewer for its own work.",
                 "Use Gemini Antigravity only as a subordinate supplemental specialist for explicit boilerplate, scaffolding, low-level mechanical implementation, or alternate ideation. Its output is non-authoritative evidence: it cannot create a draft pull request, perform exact-SHA review, final acceptance, or deterministic merge, or define contract or methodology truth. Never route generic prototype, browser, visual, core methodology, temporal eligibility, evaluation, provenance, or acceptance work to it by keyword alone.",
-                "Every Antigravity work assignment must be followed by a Claude, Cursor, or Grok work assignment that directly depends on it and independently verifies and integrates or rejects the artifact. The runtime binds that integration wording deterministically.",
+                "Every Antigravity work assignment must be followed by an OpenAI, Claude, Cursor, or Grok work assignment that directly depends on it and independently verifies and integrates or rejects the artifact. The runtime binds that integration wording deterministically.",
                 "For ordinary Antigravity work no prose is transmitted. Its task and acceptance stay in the plan for your own review and the owner's Slack thread and are never transmitted, so the dispatch is driven entirely by antigravity_directive: a lane from the closed fixture-lane enum, an optional language, and bounded variant_count and max_lines_per_artifact. Set antigravity_directive on every Antigravity work assignment, choosing a lane whose fixed public specification actually matches the subordinate work you want; the runtime substitutes that specification. Leave repository, starting_ref, allow_draft_pr, and public_research_query unset. Set antigravity_directive to null for every other provider and every debate assignment.",
                 "Antigravity cannot initiate, self-route, widen, or autonomously continue a conversation. Once you invite it through a persisted debate assignment it is equally eligible to receive the bounded question, the vote options, the accepted declared-dependency contributions, and one bounded revision request, and to respond, rebut, ask a focused follow-up, or abstain at its configured advisory weight. Its debate assignments must use kind general, discussion_round 0 for a position and 1 for a rebuttal, and must leave repository, starting_ref, allow_draft_pr, public_research_query, and antigravity_directive unset. A debate seat grants no review, acceptance, merge, deployment, publication, external-write, access, or methodology authority.",
                 "Set kind on every assignment. Gemini work assignments permit only boilerplate, scaffolding, low_level_implementation, or abstract_ideation; Perplexity uses research; exact-SHA reviewers use exact_sha_review; use implementation or general otherwise.",
@@ -420,3 +429,8 @@ def build_director(settings: Settings, *, claude_transport=None):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -13,6 +14,8 @@ import hashlib
 import hmac
 import json
 import re
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
@@ -316,16 +319,27 @@ class PrimaryProviderBudgetAuthority:
                 raise TeamAuthorizationError("persisted budget ceiling cannot change")
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) VALUES(%s,%s::jsonb)",(budget.grant_digest,budget.model_dump_json()))
 
-    def reserve(self, connection, *, authority_digest, provider, task_id, attempt_digest):
+    def reserve(self, connection, *, authority_digest, provider, task_id, attempt_digest, limits=None):
         row=connection.execute(f"SELECT document FROM {self.schema}.director_primary_provider_budget WHERE authority_digest=%s",(authority_digest,)).fetchone()
         if row is None:
             raise TeamAuthorizationError("authoritative provider budget missing")
         budget=ProviderBudget.model_validate_json(json.dumps(row["document"]))
         budget.verify(self.entitlements._owner_authority_secret)
-        if (budget.grant_digest!=authority_digest or budget.provider_id!=provider or budget.task_id!=task_id
-                or budget.day!=self.entitlements._clock().astimezone(timezone.utc).date().isoformat()):
+        if (budget.grant_digest!=authority_digest or budget.provider_id!=provider or budget.task_id!=task_id):
             raise TeamAuthorizationError("provider budget binding expired or changed")
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",("primary-provider-budget:"+budget.project_id,))
+        # The lock may straddle midnight. The v1 signed day expires at the next
+        # UTC midnight; check after acquiring admission authority, not in SQL's
+        # session timezone or at resolver lookup time.
+        if budget.day != self.entitlements._clock().astimezone(timezone.utc).date().isoformat():
+            raise TeamAuthorizationError("provider budget binding expired or changed")
+        task_ceiling, daily_ceiling = budget.task_limit_microusd, budget.daily_limit_microusd
+        if limits is not None:
+            if not isinstance(limits, ProviderAttemptBudget):
+                raise TeamAuthorizationError("typed provider attempt budget required")
+            limits.validate(budget)
+            task_ceiling = min(task_ceiling, limits.task_ceiling_microusd)
+            daily_ceiling = min(daily_ceiling, limits.daily_ceiling_microusd)
         unknown=connection.execute(f"""SELECT 1 FROM {self.schema}.director_primary_provider_attempt a
             LEFT JOIN {self.schema}.director_primary_provider_spend s USING(attempt_digest)
             WHERE s.attempt_digest IS NULL LIMIT 1""").fetchone()
@@ -339,7 +353,7 @@ class PrimaryProviderBudgetAuthority:
             FROM {self.schema}.director_primary_provider_spend s LEFT JOIN {self.schema}.director_primary_provider_usage u USING(attempt_digest)
             WHERE s.project_id=%s""",(task_id,budget.day,budget.project_id)).fetchone()
         amount=budget.attempt_reservation_microusd
-        if totals["task_spend"]+amount>budget.task_limit_microusd or totals["daily_spend"]+amount>budget.daily_limit_microusd:
+        if totals["task_spend"]+amount>task_ceiling or totals["daily_spend"]+amount>daily_ceiling:
             raise TeamAuthorizationError("authoritative provider budget exhausted")
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_spend(attempt_digest,grant_digest,provider_id,project_id,task_id,budget_day,reserved_microusd,token_limit) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",(attempt_digest,authority_digest,provider,budget.project_id,task_id,budget.day,amount,budget.token_limit))
         return budget
@@ -355,13 +369,47 @@ class PrimaryProviderBudgetAuthority:
         connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_usage(attempt_digest,document,actual_microusd,observed_tokens) VALUES(%s,%s::jsonb,%s,%s)",(receipt.attempt_digest,receipt.model_dump_json(),receipt.actual_microusd,receipt.observed_tokens))
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptBudget:
+    """Trusted adapter ceiling and configured aggregate ceilings, in micro-USD."""
+
+    project_id: str
+    attempt_microusd: int
+    task_ceiling_microusd: int
+    daily_ceiling_microusd: int
+
+    def __post_init__(self):
+        if not self.project_id or any(type(value) is not int or value <= 0 for value in (
+            self.attempt_microusd, self.task_ceiling_microusd, self.daily_ceiling_microusd
+        )):
+            raise TeamAuthorizationError("positive finite provider budget ceilings required")
+        if self.attempt_microusd > self.task_ceiling_microusd:
+            raise TeamAuthorizationError("attempt exceeds configured task budget")
+
+    @classmethod
+    def from_usd(cls, *, project_id, attempt_usd, task_usd, daily_usd):
+        def convert(value, rounding):
+            amount = Decimal(str(value))
+            if not amount.is_finite() or amount <= 0:
+                raise TeamAuthorizationError("positive finite provider budget ceilings required")
+            return int((amount * 1_000_000).to_integral_value(rounding=rounding))
+        return cls(project_id, convert(attempt_usd, ROUND_CEILING),
+            convert(task_usd, ROUND_FLOOR), convert(daily_usd, ROUND_FLOOR))
+
+    def validate(self, budget: ProviderBudget):
+        if budget.project_id != self.project_id:
+            raise TeamAuthorizationError("provider budget project binding changed")
+        if budget.attempt_reservation_microusd < self.attempt_microusd:
+            raise TeamAuthorizationError("signed reservation is smaller than the actual attempt ceiling")
+
+
 class ProviderBudgetAdmission:
     def __init__(self, authority: PrimaryProviderBudgetAuthority, authority_digest: str):
         self.authority,self.authority_digest=authority,authority_digest
 
-    def admit(self, connection, *, task_id, provider, attempt_digest):
+    def admit(self, connection, *, task_id, provider, attempt_digest, limits=None):
         return self.authority.reserve(connection,authority_digest=self.authority_digest,
-            task_id=task_id,provider=provider,attempt_digest=attempt_digest)
+            task_id=task_id,provider=provider,attempt_digest=attempt_digest,limits=limits)
 
 
 class TeamAuthority:
@@ -409,7 +457,8 @@ class TeamAuthority:
         return grant, budget
 
     def authorize(self, connection, *, grant_digest: str, query, stage: str,
-                  attempt_digest: str | None = None, command: tuple[str, ...] | None = None):
+                  attempt_digest: str | None = None, command: tuple[str, ...] | None = None,
+                  budget_limits=None):
         """Caller owns one transaction encompassing authorization and its action claim."""
         grant, budget = self._load(connection, grant_digest)
         if (query.project_profile_id != grant.project_id or query.repository != grant.repository
@@ -443,7 +492,8 @@ class TeamAuthority:
         if stage == "dispatch":
             if attempt_digest is None:
                 raise TeamAuthorizationError("durable attempt required")
-            self._reserve(connection, grant, budget, attempt_digest)
+            self._reserve(connection, grant, budget, attempt_digest, limits=budget_limits)
+            grant.verify(self.entitlements._owner_authority_secret, self.entitlements._clock())
         elif stage in {"execution", "command", "result"}:
             held = connection.execute(f"SELECT 1 FROM {self.schema}.director_primary_provider_spend WHERE attempt_digest=%s AND grant_digest=%s", (attempt_digest, grant.digest)).fetchone()
             if held is None:
@@ -457,9 +507,9 @@ class TeamAuthority:
         connection.execute(f"INSERT INTO {self.schema}.director_primary_team_boundary(nonce,grant_digest,stage,attempt_digest,evidence_digest) VALUES(%s,%s,%s,%s,%s)", (query.runtime_proof.nonce_digest,grant.digest,stage,attempt_digest,document_digest({"command":command,"authorization":result.authorization_binding_digest})))
         return grant
 
-    def _reserve(self, connection, grant, budget, attempt_digest):
+    def _reserve(self, connection, grant, budget, attempt_digest, *, limits=None):
         self.budgets.reserve(connection,authority_digest=grant.digest,provider="antigravity",
-            task_id=grant.task_id,attempt_digest=attempt_digest)
+            task_id=grant.task_id,attempt_digest=attempt_digest,limits=limits)
 
     def revoke(self, connection, *, grant_digest: str, owner_signature: str):
         payload = canonical_json_bytes({"operation":"revoke-team-grant","grant_digest":grant_digest})
@@ -474,11 +524,13 @@ class TeamAttemptAdmission:
     def __init__(self, authority: TeamAuthority, grant_digest: str, query):
         self.authority, self.grant_digest, self.query = authority, grant_digest, query
 
-    def admit(self, connection, *, task_id, assignment_id, provider, attempt_digest):
+    def admit(self, connection, *, task_id, assignment_id, provider, attempt_digest, limits=None):
         grant = self.authority.authorize(connection, grant_digest=self.grant_digest,
-            query=self.query, stage="dispatch", attempt_digest=attempt_digest)
+            query=self.query, stage="dispatch", attempt_digest=attempt_digest, budget_limits=limits)
         if (grant.task_id,grant.assignment_id,provider) != (task_id,assignment_id,"antigravity"):
             raise TeamAuthorizationError("parallel attempt/task grant mismatch")
+        return grant
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

@@ -1,3 +1,8 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
@@ -88,10 +93,11 @@ weighting, no majority, and no discretion.
 2. Independent security evidence exists at that same head.
 3. An independent exact-SHA review returns `ACCEPT` from a provider that is
    neither the producer nor a material author of the candidate.
-4. A second concurring `ACCEPT` comes from a **different** provider that is also
-   neither the producer nor a material author.
-5. Producer, reviewer, and the agent executing the decision are three distinct
-   identities.
+4. That `ACCEPT` is the whole verdict requirement. Owner ruling 2026-09-12,
+   verbatim: "it's a one-non-author-reviewer project-wide". A second verdict
+   is never required and never substitutes for any other item.
+5. The author and the reviewer are two distinct identities, and the reviewer
+   that accepts is the identity that merges. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
 6. The change touches only paths inside the assignment's `owned_paths` and none
    of its `prohibited_paths`.
 7. No tier-0 class is implicated, directly or as a consequence.
@@ -106,17 +112,17 @@ the decision to `OWNER_DECISION_REQUIRED`. **Absence of evidence is never
 consent.** A provider that is out of quota, unauthenticated, or silent has not
 approved anything, and its silence may not be counted, inferred, or waited out.
 
-## Why two independent verdicts
+## Why one independent verdict
 
 A single agent verdict is a single point of failure, and this repository's own
-record shows it is a fragile one. Every delegation attempt recorded to date has
-failed to produce a verdict at all: providers have returned ambiguous results,
-failed authentication, hit usage limits, or been absent from the environment.
-A framework that treats one `ACCEPT` as sufficient would, in practice, most
-often be deciding on the one provider that happened to answer.
+record shows it is a fragile one. Historical delegation failures included
+ambiguous results, authentication and usage limits, and CLI permission denials
+misreported as provider outages; the limitations below preserve that correction.
+The owner has ruled that one non-author `ACCEPT` is the bar, project-wide;
+what this section protects is that the one verdict is genuinely independent.
 
-Two verdicts from distinct providers is the minimum that makes a delegated
-`ACCEPT` more than one model's opinion. Two providers that share a backing
+The reviewer must be distinct from the producer and every material author.
+A reviewer and a producer that share a backing
 model are not distinct for this purpose, and neither are two runs of the same
 provider. Independence is a property of the failure mode, not of the label.
 
@@ -161,7 +167,7 @@ framework exists to prevent.
 Every delegated decision, and every refusal to make one, writes an immutable
 record containing the grant identifier, the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
-consulted, the acting agent identity, and timestamps. The record is written
+consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
 before the action, not after it.
 
 ## Relationship to the existing rules
@@ -175,7 +181,7 @@ before the action, not after it.
   authoritative.** Model output may add approval requirements and may never
   remove them. That includes output from a delegated reviewer.
 - **The charter's review-to-merge handoff is unchanged.** Delegation supplies
-  the reviewer identity and a second concurring verdict; it does not alter what
+  the single reviewer identity, who also merges; it does not alter what
   a review must contain or when evidence is invalidated.
 - **The charter's Director and provider authorship boundary supplies the
   identity terms used here.** "Producer" and "material author" mean whoever
@@ -211,9 +217,9 @@ What delegation changes is narrower than it first appears. Previously the gate
 could be satisfied while the *merge decision that follows it* still waited for
 the owner. Under a live grant, that following decision may proceed, and only
 then, and only when every other item on the evidence bar also holds. The
-framework requires two concurring provider verdicts where the charter requires
-one, so a delegated decision clears a strictly higher review bar than an
-attended one, never a lower one.
+framework requires the same one non-author provider verdict the charter
+requires, so a delegated decision clears the same review bar as an attended
+one, never a lower one.
 
 ### Rule 3's no-self-merge bar
 
@@ -221,8 +227,8 @@ AGENTS.md rule 3 forbids an agent from merging its own pull request. That bar
 never lifts, and this framework does not create an exception to it.
 
 "Your own" is a property of identity, not of species. Two agents are not one
-agent. Evidence-bar item 5 requires the producer, the reviewer, and the agent
-executing the decision to be three distinct identities, so a delegated merge is
+agent. Evidence-bar item 5 requires the author and the reviewer to be two
+distinct identities, so a delegated merge is
 by construction never a self-merge. An agent that produced or materially
 authored a candidate is permanently ineligible to review or merge it, and no
 grant can make it eligible: delegation names who *may* act, and never widens
@@ -230,7 +236,7 @@ grant can make it eligible: delegation names who *may* act, and never widens
 
 This has a consequence the owner should expect rather than be surprised by.
 When only one agent is available, a delegated merge cannot proceed at all,
-because three distinct identities cannot be found. That is the framework
+because two distinct identities cannot be found. That is the framework
 working, not failing. It is also the present condition of this repository.
 
 ## Implementation phases
@@ -247,20 +253,88 @@ its predecessor is accepted, and acceptance of one grants nothing to the next.
 | 4 | Enable tier-1 merge only, one repository, owner observing. | Yes |
 | 5 | Broaden tier-1 classes only after a clean shadow record and a clean live record. | Yes |
 
+## The evaluated form
+
+Phase 0 now has an executable form in `src/director_orchestrator/hotl_execution.py`,
+described in [`hotl-execution-predicate.md`](hotl-execution-predicate.md). It
+implements the rules above and adds none. Where the two disagree, this document
+wins and the code is wrong.
+
+An action runs without returning to the owner only when every term holds:
+
+```
+H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
+```
+
+authorization, gates, bounds, verification, independence, safe stopping, path
+scope, durable audit. It is a conjunction, not a score; one unmet term is
+decisive.
+
+`P` and `D` were absent from this formula while items 6 and 10 of the evidence
+bar above were not. An implementation following the six-letter form returned
+`execute` for a change reaching a prohibited path with no audit record, and an
+independent review found the omission here rather than only in the code. This
+page is authoritative, so leaving the short form would have recreated the same
+gap in the next implementation to read it.
+
+Two properties carry the weight, and both are pinned by tests that assert the
+negative:
+
+- **The tier check runs before the conjunction, and fails closed.** No
+  combination of satisfied terms can carry a tier-0 act. Evaluating the terms
+  first would let eight green terms authorise a production deployment.
+- **A hold names its blocker and is never a permission question.** Missing
+  evidence routes to verification; a temporary failure routes to its authorised
+  recovery; only a blocker needing authority outside the standing grant reaches
+  a person. A system that renames an interruption has not removed one.
+
+The measure is the autonomous completion rate over a denominator fixed before
+execution, so blocked or failed work cannot leave it by later reclassification.
+An empty population reports no rate rather than a flattering one.
+
+## Provider activation evidence does not stop expiring at LIVE_OK
+
+There is no expiry-window constant. `expires_at` is supplied per record.
+
+`ProviderActivationRegistry._surface_readiness` scans **every** record in the
+five-stage chain and reports the surface not ready if any one has expired. Two
+consequences follow, and both differ from the intuitive reading:
+
+- Reaching `LIVE_OK` does not settle the question. The earliest record,
+  `INSTALLED`, keeps the surface live only while it is unexpired; when it
+  lapses, `live_ready` goes false and live dispatch stops however recent
+  `LIVE_OK` is. The condition is continuing, not a race to activation.
+- Letting the prior stage lapse mid-chain does not cost a retry. Advancing then
+  raises *the prior activation stage expired; use a new binding version*, which
+  discards the whole chain for that binding.
+
+So advances belong immediately before activation, and the expiry chosen at
+advance time must cover the lane's intended operating life rather than the gap
+to `Activate`.
+
 ## Known limitations
 
 These are stated plainly because a framework that hides them is worse than none.
 
 - An agent verdict is not equivalent to human judgment on novel risk. The
   evidence bar is good at catching what it models and blind to what it does not.
-- Providers that share a base model can fail in correlated ways. The two-verdict
+- Providers that share a base model can fail in correlated ways. The non-author
   rule reduces independent error, not common-mode error.
 - Reviews read untrusted material. A diff, an issue, or a CI log can carry
   instructions aimed at the reviewer, and a delegated reviewer has no owner
   looking over its shoulder.
-- Delegation has not yet produced a verdict in this project. Every attempt so
-  far ended in quota, authentication, or availability failure, which is why
-  phases 3 and 4 exist before any broadening.
+- Delegation had not produced a verdict when this was written, and the failures
+  were attributed to quota, authentication, or availability. That diagnosis was
+  wrong for most of them. Provider CLIs read permissions from a shared settings
+  file with no `gh` rule, and a denied command surfaces as a cancelled session,
+  which reads exactly like a broken provider. Measured on 2026-09-08:
+  `git rev-parse` returned `end_turn`, `gh pr view` returned `cancelled`, and
+  the same prompt with `--allow 'Bash(gh pr view:*)'` returned the answer. Four
+  dispatches were abandoned on the misreading, and the delegation pool was
+  reported to the owner as empty on the strength of it. Cursor's CLI is
+  separately blocked by usage quota, which is a real availability failure.
+  Phases 3 and 4 still exist before any broadening; the reason is caution, not
+  this evidence.
 - This document was drafted by an agent. An agent writing the rules that govern
   agents is a conflict of interest, and the owner should read it as a proposal
   to be checked rather than as settled policy.
@@ -270,3 +344,10 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | END]] -->
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->

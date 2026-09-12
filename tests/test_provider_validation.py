@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -73,6 +75,287 @@ class NativeCaptureTests(unittest.TestCase):
             raw=json.loads(raw_native());raw.update(changes)
             with self.assertRaises(ValidationError):
                 normalize_capture("claude",work_packet(),canonical_json_bytes(raw))
+
+    # Recorded verbatim from ONE authenticated grok canary on 2026-09-08 using
+    # the exact pinned invocation, cost USD 0.0065.  Keeping the real shape here
+    # means the dialect below is justified by an observation rather than a guess.
+    GROK_OBSERVED_ENVELOPE = {
+        "text": "OK",
+        "stopReason": "end_turn",
+        "sessionId": "01a081e6-a616-7fd3-9908-dd63513227ba",
+        "requestId": "59fef4a5-1492-4891-899e-fbefeb147dfa",
+        "num_turns": 1,
+        "total_cost_usd": 0.0064991,
+        "usage": {
+            "input_tokens": 18268,
+            "cache_read_input_tokens": 2944,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 37,
+            "reasoning_tokens": 32,
+            "total_tokens": 21249,
+        },
+    }
+
+    def test_observed_grok_envelope_now_normalizes(self):
+        """The real grok capture must pass end to end, not just the checks."""
+
+        result = normalize_capture(
+            "grok", work_packet(), canonical_json_bytes(self.GROK_OBSERVED_ENVELOPE)
+        )
+
+        self.assertEqual(result["provider"], "grok")
+        self.assertEqual(
+            result["run_reference"], self.GROK_OBSERVED_ENVELOPE["sessionId"]
+        )
+        self.assertEqual(result["outcome"], "OK")
+        # usage is projected onto the packet contract: unknown native keys are
+        # dropped and total_cost_usd is carried as cost_usd.
+        self.assertEqual(
+            set(result["usage"]),
+            {"input_tokens", "output_tokens", "total_tokens", "cost_usd"},
+        )
+        self.assertEqual(result["usage"]["cost_usd"], 0.0064991)
+        self.assertEqual(result["usage"]["total_tokens"], 21249)
+
+    def test_every_closed_result_field_is_projected_not_passed_through(self):
+        """The usage defect was general, not a grok quirk.
+
+        The schema helper exposes every closed object. The live normalizer
+        deliberately does not use this projection on side-effect evidence;
+        the end-to-end rejection test below protects that distinction.
+        """
+
+        from director_orchestrator.packet_contracts import result_contract_properties
+        from director_orchestrator.primary_transports import (
+            _project_onto_result_contract,
+        )
+
+        closed = result_contract_properties()
+        self.assertLessEqual(
+            {"usage", "artifacts", "checks", "acceptance", "side_effects"},
+            set(closed),
+        )
+
+        for field in ("artifacts", "checks", "acceptance", "side_effects"):
+            with self.subTest(field=field):
+                allowed = closed[field]
+                item = {name: "value" for name in allowed}
+                item["vendor_only_extra"] = "dropped"
+                projected = _project_onto_result_contract(field, [item])
+                self.assertEqual([{name: "value" for name in allowed}], projected)
+                self.assertNotIn("vendor_only_extra", projected[0])
+
+        # A field the contract does not close is returned untouched.
+        self.assertEqual(
+            [{"anything": 1}], _project_onto_result_contract("risks", [{"anything": 1}])
+        )
+
+    def test_native_envelope_with_vendor_extras_still_normalizes(self):
+        """End to end: extras no longer reject an otherwise valid capture."""
+
+        envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+        envelope["structured_output"] = {
+            "status": "SUCCEEDED",
+            "outcome": "Canary analyzed",
+            "artifacts": [
+                {"kind": "log", "location": "run://1", "vendor_trace": "x"}
+            ],
+            "checks": [
+                {"command": "true", "result": "PASS", "vendor_duration_ms": 12}
+            ],
+        }
+
+        result = normalize_capture(
+            "grok", work_packet(), canonical_json_bytes(envelope)
+        )
+
+        self.assertEqual(
+            [{"kind": "log", "location": "run://1"}], result["artifacts"]
+        )
+        self.assertEqual([{"command": "true", "result": "PASS"}], result["checks"])
+
+    def test_grok_legacy_success_marker_cannot_bypass_one_turn_bound(self):
+        for changes in ({"num_turns": 2, "status": "SUCCESS"},
+                        {"stopReason": "max_tokens", "type": "result", "subtype": "success", "is_error": False}):
+            envelope = {**self.GROK_OBSERVED_ENVELOPE, **changes}
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                normalize_capture("grok", work_packet(), canonical_json_bytes(envelope))
+
+    def test_cursor_capture_accepts_supported_shapes_and_rejects_failed_evidence(self):
+        for envelope in (json.loads(raw_native()),
+                         {"status": "SUCCESS", "conversation_id": "cursor-session",
+                          "structured_output": {"status": "SUCCEEDED", "outcome": "done"}}):
+            result = normalize_capture("cursor", work_packet(), canonical_json_bytes(envelope))
+            self.assertEqual("SUCCEEDED", result["status"])
+            for changes in ({"schema_version": "1.0"}, {"tool_calls": [{}]},
+                            {"tool_uses": [{}]}, {"side_effects": [{}]}):
+                with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                    normalize_capture("cursor", work_packet(), canonical_json_bytes({**envelope, **changes}))
+
+    def test_normalization_never_sanitizes_unknown_side_effect_evidence(self):
+        from director_orchestrator.primary_transports import normalize_native_provider_envelope
+        from director_orchestrator.packet_contracts import validate_packet
+        envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+        effects = [{"kind": "slack", "target": "channel", "status": "COMPLETED",
+                    "idempotency_key": "effect-key", "unrecognized_authority": "unsafe"}]
+        envelope["text"] = json.dumps({"status": "SUCCEEDED", "outcome": "done", "side_effects": effects})
+        result = normalize_native_provider_envelope("grok", work_packet(), envelope)
+        self.assertEqual(effects, result["side_effects"])
+        with self.assertRaises(ValueError):
+            validate_packet("result", result)
+        del result["side_effects"][0]["unrecognized_authority"]
+        validate_packet("result", result)
+
+    def test_cursor_host_lane_fails_closed_where_its_sandbox_is_unavailable(self):
+        """The lane pins --sandbox enabled, which only macOS and Linux support.
+
+        An authenticated attempt on 2026-09-08 showed the Cursor CLI refuses the
+        flag elsewhere, so the pinned invocation cannot execute and previously
+        failed at dispatch with an opaque flag error.  The lane must instead be
+        withheld on unsupported platforms, and must never be silently downgraded
+        to --sandbox disabled, which removes the containment it requires.
+        """
+
+        from director_orchestrator.primary_transports import (
+            CURSOR_SANDBOX_PLATFORMS,
+            _cursor_host_lane_prefix,
+            _safe_cursor_agent_prefix,
+        )
+
+        self.assertEqual({"darwin", "linux"}, set(CURSOR_SANDBOX_PLATFORMS))
+
+        with tempfile.TemporaryDirectory() as directory:
+            shim = Path(directory) / "cursor-agent"
+            shim.write_text("#!/bin/sh\n", encoding="utf-8")
+            # A suffix-less executable resolves directly, isolating the platform
+            # decision from the Windows .cmd shim resolution path.
+            self.assertIsNotNone(_safe_cursor_agent_prefix(str(shim)))
+
+            for platform, supported in (
+                ("darwin", True),
+                ("linux", True),
+                ("win32", False),
+                ("cygwin", False),
+            ):
+                with self.subTest(platform=platform):
+                    with patch(
+                        "director_orchestrator.primary_transports.sys.platform",
+                        platform,
+                    ):
+                        prefix = _cursor_host_lane_prefix(str(shim))
+                    self.assertEqual(supported, prefix is not None)
+
+    def test_end_turn_cannot_rehabilitate_another_provider_dialect(self):
+        """Raised as a MEDIUM security finding and a P1.
+
+        Left provider-agnostic, ``stopReason: end_turn`` rescued an envelope
+        that its own dialect had already failed. Only grok's envelope was
+        observed and qualified, and a payload must never select the dialect it
+        is judged by.
+        """
+
+        failed_claude = {
+            "type": "result",
+            "subtype": "error",
+            "is_error": True,
+            "session_id": "claude-session",
+            "sessionId": "claude-session",
+            "stopReason": "end_turn",
+            "num_turns": 1,
+            "text": "rescued",
+        }
+
+        for provider in ("claude", "cursor", "github-copilot"):
+            with self.subTest(provider=provider):
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        provider, work_packet(), canonical_json_bytes(failed_claude)
+                    )
+
+    def test_grok_capture_requires_exactly_one_turn(self):
+        """The canary pins max_hops=1 and the command requests --max-turns 1."""
+
+        for turns in (2, 0, "1", True, None):
+            with self.subTest(num_turns=turns):
+                envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+                envelope["num_turns"] = turns
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        "grok", work_packet(), canonical_json_bytes(envelope)
+                    )
+
+    def test_live_grok_path_is_protected_not_only_the_capture_path(self):
+        """The live lane bypasses normalize_capture entirely.
+
+        ``NativeCommandPacketTransport.send`` calls
+        ``normalize_native_provider_envelope`` directly, so checks living only
+        in ``normalize_capture`` never reached production dispatch.
+        """
+
+        from director_orchestrator.primary_transports import (
+            normalize_native_provider_envelope,
+        )
+
+        # The camel-case session must resolve, or every real dispatch raised.
+        ok = normalize_native_provider_envelope(
+            "grok", work_packet(), dict(self.GROK_OBSERVED_ENVELOPE)
+        )
+        self.assertEqual(ok["run_reference"], self.GROK_OBSERVED_ENVELOPE["sessionId"])
+        self.assertEqual(ok["status"], "SUCCEEDED")
+
+        # A truncated run must not be persisted as a success.
+        truncated = dict(self.GROK_OBSERVED_ENVELOPE)
+        truncated["stopReason"] = "max_tokens"
+        self.assertEqual(
+            "FAILED",
+            normalize_native_provider_envelope("grok", work_packet(), truncated)[
+                "status"
+            ],
+        )
+
+    def test_structured_result_inside_text_is_decoded_not_stringified(self):
+        """A FAILED status carried in text must not become a SUCCEEDED packet."""
+
+        from director_orchestrator.primary_transports import (
+            normalize_native_provider_envelope,
+        )
+
+        envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+        envelope["text"] = json.dumps(
+            {"status": "FAILED", "outcome": "Canary could not complete"}
+        )
+
+        result = normalize_native_provider_envelope(
+            "grok", work_packet(), envelope
+        )
+
+        self.assertEqual("FAILED", result["status"])
+        self.assertEqual("Canary could not complete", result["outcome"])
+
+    def test_grok_dialect_still_rejects_every_unsuccessful_terminal(self):
+        """Only the exact stopReason "end_turn" qualifies.
+
+        A truncated or errored run must not slip through because the envelope
+        happens to carry a stopReason at all.
+        """
+
+        for changes in (
+            {"stopReason": "max_tokens"},
+            {"stopReason": "error"},
+            {"stopReason": "tool_use"},
+            {"stopReason": None},
+            {"sessionId": None},
+            {"schema_version": "1.0"},
+            {"tool_calls": [{}]},
+            {"side_effects": [{}]},
+        ):
+            with self.subTest(changes=changes):
+                envelope = dict(self.GROK_OBSERVED_ENVELOPE)
+                envelope.update(changes)
+                with self.assertRaises(ValidationError):
+                    normalize_capture(
+                        "grok", work_packet(), canonical_json_bytes(envelope)
+                    )
 
     def test_closed_request_rejects_caller_namespace_commands_and_cost(self):
         for field in ("commands","namespace","cost_units","work_packet"):
@@ -297,3 +580,5 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]

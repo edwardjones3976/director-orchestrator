@@ -1,3 +1,9 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | BEGIN]]
@@ -208,6 +214,65 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Slack identifier", re.compile(r"\b[CUW](?=[A-Z0-9]{8,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{8,}\b", re.I)),
 )
 
+def _max_approval_reasons() -> int:
+    """Read the plan's own cap so this cannot drift away from the model."""
+
+    for constraint in DirectorPlan.model_fields["approval_reasons"].metadata:
+        limit = getattr(constraint, "max_length", None)
+        if isinstance(limit, int):
+            return limit
+    raise RuntimeError("DirectorPlan.approval_reasons has no declared maximum")
+
+
+_MAX_APPROVAL_REASONS = _max_approval_reasons()
+
+
+def _generated_plan_gate_strings(plan: DirectorPlan) -> list[str]:
+    """Model-generated, action-bearing plan text the deterministic gate must scan.
+
+    ``deterministic_approval_reasons`` historically saw only the owner's intake
+    text.  A planner that introduces a deployment, deletion or other sensitive
+    action the intake never mentioned therefore produced no deterministic
+    reason, and the plan could reach execution without OWNER_DECISION_REQUIRED.
+
+    Each string is returned separately and scanned on its own.  A joined corpus
+    creates matches that no single field supports: the external-representation
+    gate uses ``re.S`` with a fifty-character window, so a task reading "Send
+    events through the local queue" beside an acceptance criterion reading
+    "Customer-facing layout remains unchanged" would match across the boundary
+    even though neither asks to contact an outsider.
+
+    ``plan.final_acceptance`` is included.  Those criteria reach the Director on
+    the final assignment, and a CHANGES_REQUIRED response can turn an unmet
+    criterion into a revision prompt that is dispatched without another
+    deterministic scan, so a gated action stated only there would otherwise
+    reach a provider first.
+
+    ``assignment.repository`` is deliberately excluded.  It is an identifier,
+    not an action, and a slug such as ``org/release``, ``org/identity`` or
+    ``org/admin-tools`` matches these prose gates by name alone.  Repository
+    access is governed by the repository allowlist, not by this scanner.
+
+    Research queries, the owner question and the debate question are prose
+    that can carry generated action requests, so they are included independently.
+
+    This is escalation-only: results are unioned with the intake reasons, so it
+    can add an approval requirement and can never remove one.
+    """
+
+    parts: list[str] = [plan.normalized_outcome, *plan.final_acceptance]
+    if plan.owner_question:
+        parts.append(plan.owner_question)
+    if plan.debate is not None:
+        parts.append(plan.debate.question)
+    for assignment in plan.assignments:
+        parts.append(assignment.task)
+        parts.extend(assignment.acceptance)
+        if assignment.public_research_query:
+            parts.append(assignment.public_research_query)
+    return [part for part in parts if part]
+
+
 def deterministic_approval_reasons(text: str) -> list[str]:
     return [label for label, pattern in _GATES if pattern.search(text)]
 
@@ -270,6 +335,13 @@ def _antigravity_work_sequences(plan: DirectorPlan) -> set[int]:
         if item.agent == ProviderName.GEMINI
         and item.discussion_phase == DiscussionPhase.WORK
     }
+
+
+#: Owner decision, 2026-09-08 UTC: the lanes that may independently verify and
+#: integrate or reject an Antigravity artifact. Widened from Claude/Cursor/Grok.
+ANTIGRAVITY_CONSUMER_PROVIDERS = frozenset(
+    {ProviderName.OPENAI, ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK}
+)
 
 
 def _is_antigravity_consumer(assignment: Assignment) -> bool:
@@ -842,7 +914,22 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     }
     allowed_refs = set(settings.allowed_starting_refs)
     for assignment in plan.assignments:
-        if assignment.agent == ProviderName.OPENAI and assignment.kind not in {AssignmentKind.GENERAL, AssignmentKind.INDEPENDENT_REVIEW}:
+        # IMPLEMENTATION is admitted so OpenAI can hold the integrator role the
+        # Antigravity consumer gate requires (owner decision, 2026-09-08 UTC:
+        # every Antigravity output is proofread by OpenAI, Claude, Cursor, or
+        # Grok, and `_is_antigravity_consumer` types that assignment
+        # IMPLEMENTATION). This gate is the residue of a blanket "OpenAI is the
+        # Director runtime and cannot be an assignment target" ban, already
+        # relaxed once when OpenAI became an allocated primary lane; it is a
+        # role-typing rule, not the no-self-review bar. Self-review stays barred
+        # by `_independent_review_binding_errors`, the roster's non-author
+        # reviewer rule, and `productive_work._INDEPENDENT_REVIEWERS`, none of
+        # which this touches.
+        if assignment.agent == ProviderName.OPENAI and assignment.kind not in {
+            AssignmentKind.GENERAL,
+            AssignmentKind.IMPLEMENTATION,
+            AssignmentKind.INDEPENDENT_REVIEW,
+        }:
             errors.add(f"assignment {assignment.sequence}: OpenAI production requires an explicit work or review role")
         if assignment.agent == ProviderName.CURSOR and not assignment.repository:
             errors.add(f"assignment {assignment.sequence}: Cursor requires an explicit repository")
@@ -874,23 +961,19 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
                 later
                 for later in plan.assignments
                 if later.sequence > assignment.sequence
-                and later.agent in {
-                    ProviderName.CLAUDE,
-                    ProviderName.CURSOR,
-                    ProviderName.GROK,
-                }
+                and later.agent in ANTIGRAVITY_CONSUMER_PROVIDERS
                 and later.discussion_phase == DiscussionPhase.WORK
                 and assignment.sequence in later.depends_on
             ]
             if not consumers:
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude, Cursor, or Grok integration assignment with a direct dependency"
+                    "OpenAI, Claude, Cursor, or Grok integration assignment with a direct dependency"
                 )
             elif not any(_is_antigravity_consumer(item) for item in consumers):
                 errors.add(
                     f"assignment {assignment.sequence}: Antigravity output requires a later "
-                    "Claude, Cursor, or Grok implementation assignment that explicitly independently "
+                    "OpenAI, Claude, Cursor, or Grok implementation assignment that explicitly independently "
                     "verifies and integrates or rejects the artifact"
                 )
         if (
@@ -1102,18 +1185,36 @@ def enforce_plan(
             }
         )
 
-    reasons = set(safe.approval_reasons)
-    reasons.update(deterministic_approval_reasons(source_text))
+    # Deterministic labels are the safety floor and are tracked apart from the
+    # model's own reasons so the cap below can never discard one of them.
+    deterministic = set(deterministic_approval_reasons(source_text))
+    # The floor must also see what the planner generated, not only what the
+    # owner wrote.  Union only: this never removes an approval requirement.
+    for generated in _generated_plan_gate_strings(safe):
+        deterministic.update(deterministic_approval_reasons(generated))
     if safe.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
-        reasons.add(f"{safe.risk_level.value}-risk plan")
+        deterministic.add(f"{safe.risk_level.value}-risk plan")
     estimated_cost = estimated_plan_cost_usd(
         safe,
         openai_review_cost_usd=settings.openai_review_estimated_cost_usd,
     )
     if estimated_cost > settings.max_task_budget_usd:
-        reasons.add("estimated cost exceeds task budget")
+        deterministic.add("estimated cost exceeds task budget")
 
-    safe.approval_reasons = sorted(reasons)
+    reasons = deterministic | set(safe.approval_reasons)
+    if len(reasons) <= _MAX_APPROVAL_REASONS:
+        safe.approval_reasons = sorted(reasons)
+    else:
+        # DirectorPlan.approval_reasons is capped, and a verbose planner must
+        # not be able to crowd a deterministic label out of the persisted plan:
+        # the store would then reject the record on its next read, leaving an
+        # approval-required task unreadable.  Deterministic labels are kept
+        # first and model-supplied reasons take the remaining capacity.
+        kept = sorted(deterministic)[:_MAX_APPROVAL_REASONS]
+        spare = _MAX_APPROVAL_REASONS - len(kept)
+        if spare > 0:
+            kept.extend(sorted(set(safe.approval_reasons) - deterministic)[:spare])
+        safe.approval_reasons = sorted(kept)
     safe.approval_required = bool(reasons) or safe.approval_required
     if safe.approval_required:
         safe.assignments = [
@@ -1448,3 +1549,10 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]]

@@ -1,3 +1,8 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | BEGIN]]
@@ -131,7 +136,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "required CI check is green",
             "Independent security evidence",
             "neither the producer nor a material author",
-            "three distinct\n   identities",
+            "two distinct identities",
             "`owned_paths`",
             "`prohibited_paths`",
             "durably written before",
@@ -140,8 +145,8 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("Absence of evidence is never\nconsent", bar)
         self.assertIn("out of quota, unauthenticated, or silent has not\napproved anything", bar)
 
-    def test_two_verdicts_must_come_from_genuinely_distinct_providers(self) -> None:
-        quorum = self.section("Why two independent verdicts")
+    def test_the_one_verdict_must_come_from_a_genuinely_distinct_provider(self) -> None:
+        quorum = self.section("Why one independent verdict")
         self.assertIn("single point of failure", quorum)
         self.assertIn("share a backing\nmodel are not distinct", quorum)
         self.assertIn("two runs of the same\nprovider", quorum)
@@ -182,7 +187,9 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("not equivalent to human judgment", limits)
         self.assertIn("correlated ways", limits)
         self.assertIn("untrusted material", limits)
-        self.assertIn("has not yet produced a verdict", limits)
+        self.assertIn("cancelled session", limits)
+        self.assertIn("reported to the owner as empty", limits)
+        self.assertNotIn("has not yet produced a verdict", limits)
         # An agent wrote the rules that govern agents; the document must say so.
         self.assertIn("conflict of interest", limits)
         self.assertIn("drafted by an agent", limits)
@@ -202,7 +209,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "grants nothing",
             "never changes whether a gate runs",
             "never delegable under any configuration",
-            "three distinct identities",
+            "distinct identities",
             "Absence of evidence is never consent",
         ):
             self.assertIn(required, section)
@@ -213,7 +220,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("never consumed an owner verdict", section)
         self.assertIn("least-recent eligible non-author", section)
         self.assertIn("satisfied in its ordinary\nform", section)
-        self.assertIn("strictly higher review bar", section)
+        self.assertIn("the same review bar", section)
         # The charter sentence it defers to must still exist verbatim.
         self.assertIn(
             "never substitutes for applicable deterministic\napproval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.",
@@ -234,7 +241,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("merge your own pull request", rule_three)
         self.assertIn("per acting identity", rule_three)
         self.assertIn("that bar never lifts", rule_three)
-        self.assertIn("three distinct identities", rule_three)
+        self.assertIn("two distinct identities", rule_three)
         self.assertIn("an author cannot become eligible by being delegated to", rule_three)
 
     def test_identity_terms_follow_the_landed_authorship_boundary(self) -> None:
@@ -282,12 +289,10 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         )
         self.assertIn("it never removes a\ngate named above", self.charter)
         handoff = self.charter.split("\n## Review-to-merge handoff", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("three\ndistinct identities", handoff)
+        self.assertIn("two distinct identities", handoff)
         self.assertIn("does not alter what a review must contain", handoff)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 02:11 UTC | END]]
@@ -295,3 +300,150 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 04:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]]
+
+
+class ApproverCarriesTheMergeTests(unittest.TestCase):
+    """The section no existing test read.
+
+    The suite above slices the HOTL section at the next `##`, so "Approver
+    carries the merge" was never inspected by anything. An independent review of
+    #151 constructed the consequence: its operative first sentence read as one
+    exact-SHA ACCEPT carrying a candidate to a terminal result, with the
+    two-provider clause reading as who executes rather than as a precondition.
+    An agent following that sentence alone could merge on one verdict, which is
+    weaker than AGENTS.md rule 10 and than the evidence bar. Both files are
+    pinned here so a later section cannot weaken them untested again.
+    """
+
+    FILES = ("AGENTS.md", "docs/team-operating-charter.md")
+
+    def _section(self, name: str) -> str:
+        """The section body, whitespace-collapsed and stripped of emphasis.
+
+        Matching raw markdown is unreliable for prose: `**One\\n`ACCEPT` is not
+        merge authority.**` wraps mid-phrase and carries inline emphasis, so a
+        plain substring test fails on a sentence that is plainly present. That
+        already cost a round on a different document. Normalise, then match.
+        """
+
+        text = (ROOT / name).read_text(encoding="utf-8")
+        marker = "Approver carries the merge"
+        self.assertIn(marker, text, name)
+        body = text.split(marker, 1)[1]
+        # Stop at the next heading of any depth, so the section cannot be
+        # extended past its own boundary to satisfy these assertions.
+        for boundary in ("\n## ", "\n### "):
+            body = body.split(boundary, 1)[0]
+        return " ".join(body.replace("**", "").split())
+
+    def _operative(self, name: str) -> str:
+        """Only the operative paragraphs, not the whole section.
+
+        Asserting against the section as a whole was itself too weak: "live
+        grant" and "ATTENDED" also appear in the blocker list further down, so
+        deleting them from the operative sentence left both assertions passing.
+        The finding this section exists to fix was precisely that a walk-back
+        elsewhere does not repair an operative sentence, so the operative
+        sentence is what gets pinned.
+        """
+
+        body = self._section(name)
+        # End on a marker both files carry, immediately after the identity
+        # paragraph. Ending on an AGENTS.md-only phrase made the WHOLE charter
+        # section operative, so moving the live grant, the one verdict and
+        # ATTENDED into its closing walk-back still satisfied every assertion.
+        # A walk-back is exactly what does not repair an operative sentence.
+        end = body.find("no-self-merge bar")
+        self.assertGreater(end, 0, f"{name}: no shared end marker")
+        return body[:end]
+
+    def test_the_first_operative_sentence_is_the_disclaimer(self):
+        """Restoring the old sentence as the opening kept all five tests green.
+
+        Asserting the disclaimer appears SOMEWHERE in the operative text let
+        "an eligible reviewer that returns an exact-SHA ACCEPT carries that
+        candidate to a terminal result" go back in front of it, which is the
+        exact sentence a review of #151 showed an agent could merge on. What
+        matters is which sentence is read first.
+        """
+
+        for name in self.FILES:
+            operative = self._operative(name)
+            disclaimer = operative.index("One `ACCEPT` is not merge authority")
+            carries = operative.find("carries that candidate to a terminal result")
+            self.assertEqual(
+                carries, -1,
+                f"{name}: the superseded operative sentence is back",
+            )
+            # Nothing but a lead-in may precede it.
+            self.assertLess(disclaimer, 200, f"{name}: the disclaimer is buried")
+
+    def test_one_accept_is_never_stated_as_merge_authority(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("One `ACCEPT` is not merge authority", operative, name)
+            self.assertIn("does not authorise the merge", operative, name)
+            self.assertIn("OWNER_DECISION_REQUIRED", operative, name)
+            # The preconditions belong in the operative sentence itself.
+            # "a live grant under" rather than "live grant": the latter also
+            # occurs in the ATTENDED sentence a few lines down, so deleting the
+            # precondition entirely still satisfied it.
+            self.assertIn("a live grant under", operative, name)
+            self.assertIn("one exact-SHA `ACCEPT`", operative, name)
+            self.assertIn("every other item of the evidence bar", operative, name)
+
+    def test_the_reviewer_that_accepts_is_the_one_that_merges(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("performs", operative, name)
+            self.assertIn("accepts and merges the PR", operative, name)
+            self.assertIn("returns it to the author with notes", operative, name)
+
+    def test_the_attended_default_names_the_blocker_instead_of_merging(self):
+        for name in self.FILES:
+            operative = self._operative(name)
+            self.assertIn("ATTENDED", operative, name)
+            self.assertIn("not to merge", operative, name)
+            # And the blocker list further down must offer it as a reason.
+            self.assertIn("no live grant", self._section(name), name)
+
+    def test_scope_is_stated_as_non_protected_branches_only(self):
+        """The combined phrase. "only" alone also matches "owner-only".
+
+        Softening the charter to "The obligation reaches non-protected
+        branches." kept this green, because the word "only" survived elsewhere
+        in the paragraph.
+        """
+
+        for name in self.FILES:
+            self.assertIn("non-protected branches only", self._section(name), name)
+
+    def test_the_tier_one_class_is_not_described_as_already_assigned(self):
+        """Equating the tier-1 entry with this duty reads as turning it on.
+
+        Banning one exact string is not enough: "exactly the act this section
+        assigns" says the same thing and passed. Every paraphrase that equates
+        them is rejected, and the section must state the grant condition
+        instead.
+        """
+
+        for name in self.FILES:
+            body = self._section(name)
+            for equating in (
+                "exactly the act assigned here",
+                "exactly the act this section assigns",
+                "the act assigned here",
+                "the act this section assigns",
+            ):
+                self.assertNotIn(equating, body, f"{name}: {equating}")
+            # And the condition that actually governs it is stated.
+            self.assertIn("only while a live grant names it", body, name)
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]]
+
+
+if __name__ == "__main__":
+    unittest.main()
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]

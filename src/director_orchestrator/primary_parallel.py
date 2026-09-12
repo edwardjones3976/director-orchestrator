@@ -1,3 +1,7 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -50,6 +54,10 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 class ParallelDispatchError(RuntimeError):
     """The plan or durable dispatch state failed closed."""
+
+
+class CancelledPlanBindingHold(ParallelDispatchError):
+    """A durably recorded task-scoped refusal; neither plan was rewritten."""
 
 
 class ProviderTransientDispatchError(RuntimeError):
@@ -350,6 +358,7 @@ class ProviderAttemptReservation:
     idempotency_key_digest: str
     attempt_digest: str
     budget_evidence_digest: str
+    total_token_limit: int | None = None
 
 
 def deterministic_format_roster(formats: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
@@ -586,6 +595,117 @@ class PostgresParallelDispatch:
                     {"task_id": task_id},
                 )
 
+    def has_pending_assignments(self, task_id: str) -> bool:
+        # Aggregate presentation can label dependency-blocked PENDING rows as
+        # BLOCKED; quiescence and reconciliation must inspect the stored status.
+        with self._pool.connection() as connection:
+            return connection.execute(f"""SELECT EXISTS (SELECT 1 FROM
+                {self._schema}.director_primary_parallel_assignment
+                WHERE task_id=%s AND status='PENDING') AS pending""", (task_id,)).fetchone()["pending"]
+
+    def reconcile_cancelled_pending(self, *, task_id: str, writer: TaskWriterLease) -> int:
+        outcome = self._reconcile_cancelled_pending(task_id=task_id, writer=writer)
+        if isinstance(outcome, CancelledPlanBindingHold):
+            # Raise after the refusal's audit transaction commits. Raising inside
+            # that transaction would discard the only durable refusal evidence.
+            raise outcome
+        return outcome
+
+    def _reconcile_cancelled_pending(self, *, task_id: str, writer: TaskWriterLease) -> int | CancelledPlanBindingHold:
+        """Close only demonstrably unstarted rows of a durably cancelled task.
+
+        This does not cancel a task or grant command authority. The task's
+        cancellation and killed batch must already exist. Ambiguous or charged
+        history stays visible, even where it cannot be attributed to one row.
+        """
+        if writer.task_id != task_id or writer.engine_owner != "langgraph":
+            raise ParallelDispatchError("writer does not authorize this cancelled task")
+        schema = self._schema
+        with self._pool.connection() as connection, connection.transaction():
+            self._writer(connection, task_id=task_id, owner_token=writer.owner_token,
+                         fencing_generation=writer.fencing_generation)
+            self._row(connection, "SELECT pg_advisory_xact_lock(hashtextextended(%(key)s, 0))",
+                      {"key": f"director-primary-parallel:{schema}:{task_id}"})
+            held = self._row(connection, f"""
+                SELECT p.projection, p.projection_digest, b.plan_digest, b.kill_switch
+                FROM {schema}.director_primary_task_projection p
+                JOIN {schema}.director_primary_parallel_batch b USING(task_id)
+                WHERE p.task_id=%(task_id)s AND p.engine_owner='langgraph'
+                FOR UPDATE OF p,b""", {"task_id": task_id})
+            if held is None:
+                return 0
+            projection = held["projection"]
+            if (projection.get("run_status") != "TERMINAL"
+                    or projection.get("terminal_classification") != "CANCELLED"
+                    or not held["kill_switch"]):
+                return 0
+            if projection.get("parallel_plan_digest") != held["plan_digest"]:
+                if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
+                    WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
+                    AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
+                    (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
+                    raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
+                evidence = _digest({"task_id": task_id, "projection_digest": held["projection_digest"],
+                    "projection_plan_digest": projection.get("parallel_plan_digest"),
+                    "batch_plan_digest": held["plan_digest"],
+                    "reason_code": "cancelled_parallel_plan_requires_owner_reconciliation"})
+                connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
+                    (task_id, owner_token, fencing_generation, event_code, payload_digest)
+                    SELECT %s,%s,%s,'cancelled_plan_binding_hold',%s
+                    WHERE NOT EXISTS (SELECT 1 FROM {schema}.director_primary_audit_event
+                        WHERE task_id=%s AND event_code='cancelled_plan_binding_hold' AND payload_digest=%s)""",
+                    (task_id, writer.owner_token, writer.fencing_generation, evidence, task_id, evidence))
+                return CancelledPlanBindingHold("cancelled task parallel plan binding changed; owner reconciliation required")
+            # CLAIMED and graph budget_used_units are planning bookkeeping.
+            # The real reservation/attempt/spend records below decide whether
+            # execution began; neither graph field is reset by this repair.
+            if (projection.get("provider_dispatch_status") not in {"NOT_STARTED", "CLAIMED"}
+                    or projection.get("effect_status") not in {"NOT_REQUIRED", "NOT_STARTED"}
+                    or projection.get("parallel_ambiguous_slot_count") != 0
+                    or projection.get("application", {}).get("task_record", {}).get("assignment_outcomes")):
+                return 0
+            # Claims and monetary spend are task-scoped. Without a trustworthy
+            # assignment mapping, retaining the task's pending rows is safer
+            # than declaring any of them unstarted.
+            if connection.execute(f"""SELECT 1 WHERE
+                EXISTS (SELECT 1 FROM {schema}.director_primary_claim WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_effect_reservation WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_provider_spend WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_budget
+                           WHERE task_id=%s AND budget_reserved_units>0)""", (task_id,) * 4).fetchone():
+                return 0
+            # Lock all assignment rows before the final real-clock fence check;
+            # waiting on a row must not turn an expired lease into authority.
+            connection.execute(f"""SELECT assignment_id FROM {schema}.director_primary_parallel_assignment
+                WHERE task_id=%s FOR UPDATE""", (task_id,)).fetchall()
+            if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
+                WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
+                AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
+                (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
+                raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
+            repaired = connection.execute(f"""
+                UPDATE {schema}.director_primary_parallel_assignment a
+                SET status='FAILED', reason_code='task_cancelled_before_dispatch', completed_at=clock_timestamp()
+                WHERE a.task_id=%s AND a.status='PENDING'
+                  AND a.reservation_digest IS NULL AND a.reserved_at IS NULL
+                  AND a.result_digest IS NULL AND a.completed_at IS NULL AND a.reason_code IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_provider_attempt e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_result_packet_artifact e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_workload_assignment e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                RETURNING assignment_id""", (task_id,)).fetchall()
+            if repaired:
+                evidence = _digest({"task_id": task_id, "projection_digest": held["projection_digest"],
+                    "plan_digest": held["plan_digest"], "assignment_ids": sorted(row["assignment_id"] for row in repaired),
+                    "reason_code": "task_cancelled_before_dispatch"})
+                connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
+                    (task_id, owner_token, fencing_generation, event_code, payload_digest)
+                    VALUES (%s,%s,%s,'cancelled_pending_reconciled',%s)""",
+                    (task_id, writer.owner_token, writer.fencing_generation, evidence))
+            return len(repaired)
+
     def reserve_ready(
         self,
         *,
@@ -735,10 +855,17 @@ class PostgresParallelDispatch:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        budget_limits=None,
     ) -> ProviderAttemptReservation:
         """Append one STARTED child event before I/O; never reuse an open attempt."""
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        if budget_limits is not None:
+            from .antigravity_team import ProviderAttemptBudget
+            if not isinstance(budget_limits, ProviderAttemptBudget):
+                raise ParallelDispatchError("invalid provider attempt budget ceilings")
+            if team_admission is None and budget_admission is None:
+                raise ParallelDispatchError("paid provider attempt requires authoritative monetary admission")
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
         if team_admission is not None:
@@ -841,21 +968,30 @@ class PostgresParallelDispatch:
                         or binding["provider_id"] != reservation.provider_id
                         or binding["reservation_digest"] != reservation.reservation_digest):
                     raise ParallelDispatchError("workload parallel reservation binding changed")
+                monetary_clock = None
+                admitted_grant = None
+                admitted_budget = None
                 if team_admission is not None:
                     from .antigravity_team import TeamAttemptAdmission
                     if not isinstance(team_admission, TeamAttemptAdmission):
                         raise ParallelDispatchError("invalid team admission authority")
-                    team_admission.admit(connection, task_id=reservation.task_id,
+                    monetary_clock = team_admission.authority.entitlements._clock
+                    from datetime import timezone
+                    admission_day = monetary_clock().astimezone(timezone.utc).date()
+                    admitted_grant = team_admission.admit(connection, task_id=reservation.task_id,
                         assignment_id=reservation.assignment_id, provider=reservation.provider_id,
-                        attempt_digest=attempt_digest)
+                        attempt_digest=attempt_digest, limits=budget_limits)
                 elif format_id == "antigravity-team-engineering-v1":
                     raise ParallelDispatchError("team contract requires atomic entitlement admission")
                 if budget_admission is not None:
                     from .antigravity_team import ProviderBudgetAdmission
                     if not isinstance(budget_admission,ProviderBudgetAdmission):
                         raise ParallelDispatchError("invalid provider budget authority")
-                    budget_admission.admit(connection,task_id=reservation.task_id,
-                        provider=reservation.provider_id,attempt_digest=attempt_digest)
+                    monetary_clock = budget_admission.authority.entitlements._clock
+                    from datetime import timezone
+                    admission_day = monetary_clock().astimezone(timezone.utc).date()
+                    admitted_budget = budget_admission.admit(connection,task_id=reservation.task_id,
+                        provider=reservation.provider_id,attempt_digest=attempt_digest,limits=budget_limits)
                 admit_assignment(
                     connection, schema=schema, task_id=reservation.task_id,
                     assignment_id=reservation.assignment_id,
@@ -864,6 +1000,16 @@ class PostgresParallelDispatch:
                     fencing_generation=writer.fencing_generation,
                     allocation_profile=binding["allocation_profile"],
                 )
+                # Monetary and workload locks can each wait across UTC midnight.
+                # Expired authority must roll back even if its spend insert ran
+                # before a later lock wait. Never leave a STARTED attempt behind.
+                if monetary_clock is not None:
+                    from .antigravity_team import TeamAuthorizationError
+                    admitted_at = monetary_clock()
+                    if admitted_at.astimezone(timezone.utc).date() != admission_day:
+                        raise TeamAuthorizationError("provider budget expired during atomic admission")
+                    if admitted_grant is not None:
+                        admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
                 row = self._row(
                     connection,
                     f"""
@@ -903,6 +1049,7 @@ class PostgresParallelDispatch:
             idempotency_key_digest,
             attempt_digest,
             budget_evidence_digest,
+            total_token_limit=(admitted_budget.token_limit if admitted_budget is not None else None),
         )
 
     def record_provider_attempt(
@@ -1481,3 +1628,8 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]

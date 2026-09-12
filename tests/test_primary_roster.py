@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -15,6 +17,7 @@ from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, alloc
 from director_orchestrator.config import Settings
 from director_orchestrator.primary_roster import (
     IMPLEMENTERS,
+    PRIMARY_TEAM,
     KNOWN_LANES,
     RESEARCH_LANES,
     PrimaryRosterHold,
@@ -106,13 +109,20 @@ class PrimaryRosterTests(unittest.TestCase):
             required_capabilities=("bounded_scaffolding",),
             trusted_cost_ranks={"openai": 3, "claude": 2, "grok": 4, "antigravity": 0})
         self.assertEqual(roster.producer, "antigravity")
-        self.assertIn(roster.reviewer, {"claude", "cursor", "grok"})
+        self.assertIn(roster.reviewer, PRIMARY_TEAM)
+        self.assertNotEqual(roster.reviewer, "antigravity")
 
     def test_explicit_team_mode_plans_engineering_without_scaffolding_permission(self):
         roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
             trusted_cost_ranks={"openai":3,"claude":2,"grok":4,"antigravity":0})
         self.assertEqual(roster.producer,"antigravity")
         self.assertNotEqual(roster.reviewer,"antigravity")
+
+    def test_legacy_mode_does_not_select_antigravity_as_reviewer(self):
+        roster = self.select(available=("openai", "claude", "grok", "antigravity"), team_mode=False,
+            trusted_cost_ranks={"openai": 0, "claude": 3, "grok": 4, "antigravity": 1})
+        self.assertEqual(roster.producer, "openai")
+        self.assertNotEqual(roster.reviewer, "antigravity")
 
     def test_explicit_team_mode_can_plan_independent_antigravity_review(self):
         roster=self.select(available=("openai","claude","grok","antigravity"),team_mode=True,
@@ -292,3 +302,5 @@ class SelectableLaneCostRankTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

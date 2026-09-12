@@ -1,3 +1,11 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
@@ -53,6 +61,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .config import Settings
+from .antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
 from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
 from .langgraph_postgres import PostgresCheckpointHandle, open_postgres_control_plane
 from .langgraph_runtime import (
@@ -129,6 +138,7 @@ from .host_provider_bridge import (
 )
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
 from .primary_parallel import (
+    CancelledPlanBindingHold,
     ParallelAggregate,
     ParallelAssignment,
     ParallelAssignmentStatus,
@@ -648,6 +658,7 @@ class DefaultPrimaryLiveDependencies:
         str, Mapping[tuple[str, str], PacketBoundaryAdapter]
     ] = field(default_factory=dict)
     team_routing: Any | None = None
+    budget_routing: PrimaryProviderBudgetRouting | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -671,6 +682,9 @@ class DefaultPrimaryLiveDependencies:
         return self.adapters[provider]
 
     def validate(self, required_providers: tuple[str, ...]) -> None:
+        from .antigravity_team_routing import PrimaryProviderBudgetRouting
+        if not isinstance(self.budget_routing, PrimaryProviderBudgetRouting):
+            raise ValueError("live primary requires typed enrolled daily provider budget routing")
         expected = set(required_providers)
         actual = set(self.adapters)
         from .primary_roster import core_inventory_ready
@@ -1036,6 +1050,8 @@ def build_automatic_primary_live_dependencies(
             return None
         return artifact.evidence
 
+    from .antigravity_team_routing import configured_provider_budget_routing
+    budget_routing = configured_provider_budget_routing(settings, handle)
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         attempt_formats={
@@ -1051,6 +1067,7 @@ def build_automatic_primary_live_dependencies(
         },
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
+        budget_routing=budget_routing,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -1176,15 +1193,24 @@ class DefaultDryRunServices:
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
+        self._effect_grants: dict[str, dict | None] = {}
+        self._execution_modes: dict[str, str] = {}
         self._lock = threading.RLock()
 
-    def register(self, record: TaskRecord) -> None:
+    def register(self, record: TaskRecord, *, effect_grant: dict | None = None,
+                 execution_mode: str | None = None) -> None:
         with self._lock:
             self._records[record.task_id] = record.model_copy(deep=True)
+            self._effect_grants[record.task_id] = None if effect_grant is None else dict(effect_grant)
+            self._execution_modes[record.task_id] = execution_mode or (
+                "offline_simulation" if self.settings.langgraph_primary_offline_simulation_enabled
+                else "live" if self._live_composition else "paid_off")
 
     def discard(self, task_id: str) -> None:
         with self._lock:
             self._records.pop(task_id, None)
+            self._effect_grants.pop(task_id, None)
+            self._execution_modes.pop(task_id, None)
 
     def hydrate(self, projection: PrimaryTaskProjection) -> None:
         """Rehydrate bounded service input from the graph-owned task projection."""
@@ -1195,7 +1221,8 @@ class DefaultDryRunServices:
         raw = application.get("task_record")
         if not isinstance(raw, Mapping):
             raise RuntimeError("primary recovery projection lacks its task record")
-        self.register(TaskRecord.model_validate(dict(raw)))
+        self.register(TaskRecord.model_validate(dict(raw)), effect_grant=application.get("effect_grant"),
+                      execution_mode=application.get("execution_mode", "unknown"))
 
     def _record(self, task_id: str) -> TaskRecord:
         with self._lock:
@@ -1212,6 +1239,8 @@ class DefaultDryRunServices:
             return {
                 "schema_version": "director-default-task-view/v1",
                 "task_record": record.model_dump(mode="json"),
+                "effect_grant": self._effect_grants.get(task_id),
+                "execution_mode": self._execution_modes[task_id],
             }
 
     def authenticate_scope(self, context: HandlerContext) -> PhaseResult:
@@ -1949,7 +1978,8 @@ class DefaultPrimaryApplication:
                     return self._record_from_projection(repaired)
             record.task_id = task_id
             request = self._request(record)
-        self.services.register(record)
+        self.services.register(record, effect_grant=(
+            None if self.effect_grant is None else self.effect_grant.as_dict()))
         try:
             projection = self.coordinator.create_intake(request)
             planned = self._record_from_projection(projection)
@@ -1997,13 +2027,16 @@ class DefaultPrimaryApplication:
             self.services.discard(command.task_id)
         return self._record_from_projection(updated)
 
-    def cancel(self, task_id: str) -> TaskRecord:
+    def cancel(self, task_id: str, *, expected_fencing_generation: int | None = None) -> TaskRecord:
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
         self.services.hydrate(projection)
         try:
-            updated = self.coordinator.cancel(task_id)
+            updated = self.coordinator.cancel(task_id, **(
+                {"expected_fencing_generation": expected_fencing_generation}
+                if expected_fencing_generation is not None else {}
+            ))
         finally:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
@@ -2248,6 +2281,13 @@ class DefaultPrimaryActivation:
                 elif getattr(live_dependencies,"team_routing",None) is not None:
                     raise ValueError("team routing cannot bypass the default-off setting")
                 live_dependencies.validate(settings.langgraph_primary_required_providers)
+                if (live_dependencies.budget_routing.pool is not handle.pool
+                        or live_dependencies.budget_routing.authority.schema != handle.schema):
+                    raise ValueError("daily provider budget routing must use the active primary ledger")
+                if (live_dependencies.team_routing is not None
+                        and (live_dependencies.team_routing.pool is not handle.pool
+                             or live_dependencies.team_routing.authority.schema != handle.schema)):
+                    raise ValueError("team routing must use the active primary ledger")
                 services.available_provider_lanes = tuple(live_dependencies.adapters)
                 services.provider_lane_ready = lambda provider: provider_activation.provider_ready(provider, live=True)
                 if effect_executor is None:
@@ -2583,7 +2623,10 @@ class DefaultPrimaryActivation:
                             format_roster=format_roster,
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=budget_evidence_digest,
-                            **({} if team_routing is None else team_routing.admissions(provider,packet)),
+                            **live_provider_admissions(settings=settings,
+                                budget_routing=live_dependencies.budget_routing,
+                                team_routing=team_routing, provider=provider, packet=packet,
+                                attempt_usd=attempt_budget_usd),
                         )
                     def record_attempt(
                         attempt: ProviderAttemptReservation,
@@ -2616,6 +2659,7 @@ class DefaultPrimaryActivation:
                                 ),
                                 timeout_seconds=attempt_timeout_seconds,
                                 budget_usd=attempt_budget_usd,
+                                total_token_limit=attempt.total_token_limit,
                                 max_hops=int(limits["max_hops"]),
                                 max_revisions=int(limits["max_revisions"]),
                                 allowed_tools=tuple(packet["allowed_tools"]),
@@ -2751,9 +2795,27 @@ class DefaultPrimaryActivation:
         # Readiness describes this bounded pass, never a sticky historical win.
         self._reconciliation_worker_ready = False
         self._historical_parallel_hold_count = 0
+        self._cancelled_plan_binding_hold_count = 0
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
+            if payload.get("terminal_classification") == "CANCELLED":
+                # Reconcile ledger-only cancellation residue, never reconstruct
+                # or drive a terminal task's historical graph/provider plan.
+                try:
+                    self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                except CancelledPlanBindingHold:
+                    # The ledger committed a specific refusal; keep readiness
+                    # false while allowing diagnostics and unrelated tasks up.
+                    self._cancelled_plan_binding_hold_count += 1
+                    # Health is not a dispatch guard. Tolerate this refusal only in
+                    # explicitly paid-off, non-live, intake-off diagnostic operation: a
+                    # process that owns new intake must not start over this ledger.
+                    if (self.settings.allow_paid_runs
+                            or self.settings.langgraph_primary_live_provider_dispatch_enabled
+                            or self.settings.langgraph_primary_new_intake_enabled):
+                        raise
+                continue
             if payload.get("terminal_classification") is not None:
                 continue
             if _historical_parallel_binding(payload) is not None:
@@ -2780,7 +2842,9 @@ class DefaultPrimaryActivation:
                 recovered.append(self.application.recover(projection.task_id))
             except HistoricalParallelPlanHold:
                 self._historical_parallel_hold_count += 1
-        self._reconciliation_worker_ready = self._historical_parallel_hold_count == 0
+        self._reconciliation_worker_ready = (
+            self._historical_parallel_hold_count == 0 and self._cancelled_plan_binding_hold_count == 0
+        )
         return len(recovered)
 
     def health(self) -> dict[str, Any]:
@@ -2821,7 +2885,10 @@ class DefaultPrimaryActivation:
         observed["historical_parallel_plan_hold_count"] = getattr(
             self, "_historical_parallel_hold_count", 0
         )
+        observed["cancelled_plan_binding_hold_count"] = getattr(self, "_cancelled_plan_binding_hold_count", 0)
         observed["reconciliation_hold_reason"] = (
+            "cancelled_parallel_plan_requires_owner_reconciliation"
+            if observed["cancelled_plan_binding_hold_count"] else
             "historical_parallel_plan_requires_reconciliation"
             if observed["historical_parallel_plan_hold_count"] else None
         )
@@ -2912,3 +2979,12 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]

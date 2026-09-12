@@ -1,4 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
+# [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
@@ -383,9 +386,15 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             repository_snapshot_root=str(Path.cwd()),
         )
         handle = SimpleNamespace(
-            claim_store=SimpleNamespace(), pool=SimpleNamespace(), close=lambda: None
+            claim_store=SimpleNamespace(), pool=SimpleNamespace(), close=lambda: None,
+            schema="test_budget_v1",
         )
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
         dependencies = SimpleNamespace(
+            team_routing=None,
+            budget_routing=PrimaryProviderBudgetRouting(
+                authority=PrimaryProviderBudgetAuthority(object(), primary_schema=handle.schema), pool=handle.pool),
             validate=lambda _required: None,
             adapters={provider: PacketBoundaryAdapter(
                     provider, SimpleNamespace(dispatch=lambda *_args, **_kwargs: {}))
@@ -442,6 +451,41 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
 
         self.assertTrue(captured["effect_executor"].ready)
         self.assertIsNotNone(activation.application)
+
+        # Exercise the constructed live dispatch closure: its authority is the
+        # admitted attempt, not an optional field or model label in a packet.
+        record = TaskRecord(task_id="DIR-TOKEN-BOUND", status=TaskStatus.QUEUED,
+            intake=SlackIntake(source_event_id="token-bound", channel_id="C123",
+                              user_id="U123", text="Review a bounded change", thread_ts="1.0"))
+        plan = preview_plan(record.intake.text, settings)
+        assignment = plan.assignments[0].model_copy(update={"agent": ProviderName.OPENAI,
+            "primary_provider_lane": "openai", "estimated_cost_usd": 1.0})
+        record.plan = plan.model_copy(update={"assignments": [assignment]})
+        activation.services._packet_router = packet_router(settings)
+        activation.services.register(record)
+        assignment_id = activation.services._packet_router._assignment_id(record, assignment)
+        reservation = ParallelReservation(record.task_id, assignment_id, assignment.sequence,
+                                          "openai", "test-deployment", digest("reservation"))
+        writer = SimpleNamespace(engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
+                                 lease_live=True, fencing_generation=4)
+        handle.claim_store.current_task_writer = lambda _task: writer
+        handle.claim_store.record_work_packet_artifact = lambda **kwargs: SimpleNamespace(
+            document_digest=document_digest(kwargs["packet"]))
+        attempt = ProviderAttemptReservation(record.task_id, assignment_id, 1, "openai", "api", "api",
+                                             digest("key"), digest("attempt"), digest("budget"),
+                                             total_token_limit=731)
+        activation.coordinator.reserve_provider_attempt = lambda **_kwargs: attempt
+        activation.coordinator.record_provider_attempt = lambda **_kwargs: None
+        contexts = []
+        dependencies.adapter_for_format = lambda *_args: SimpleNamespace(
+            dispatch=lambda _packet, *, context: (contexts.append(context) or {"status": "FAILED"}))
+        with patch("director_orchestrator.primary_default.live_provider_admissions", return_value={}):
+            outcome = activation.application._parallel_dispatcher(reservation)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual(1, len(contexts))
+        self.assertEqual(731, contexts[0].total_token_limit)
+        self.assertEqual(attempt.attempt_digest, contexts[0].idempotency_key)
+        self.assertEqual(4, contexts[0].fencing_generation)
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -584,6 +628,35 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 handle=None,  # type: ignore[arg-type]
                 services=None,  # type: ignore[arg-type]
             )
+
+    def test_automatic_live_factory_requires_budget_enrollment_with_team_disabled(self):
+        from director_orchestrator.antigravity_team import TeamAuthorizationError
+        settings = replace(Settings(), langgraph_primary_antigravity_team_enabled=False,
+            entitlement_control_plane_enabled=False)
+        adapters = {provider: object() for provider in ("openai", "claude", "cursor")}
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, {})), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None):
+            with self.assertRaisesRegex(TeamAuthorizationError, "enrolled daily provider budget"):
+                build_automatic_primary_live_dependencies(settings, None, None)
+
+    def test_automatic_live_factory_keeps_independent_typed_budget_resolver(self):
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
+        settings = replace(Settings(), langgraph_primary_antigravity_team_enabled=False)
+        routing = PrimaryProviderBudgetRouting(
+            authority=PrimaryProviderBudgetAuthority(object(), primary_schema="test_budget_v1"), pool=object())
+        providers = ("openai", "claude", "cursor")
+        adapters = {provider: object() for provider in providers}
+        capabilities = {provider: SimpleNamespace(transport_kind="test") for provider in providers}
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing) as construct:
+            dependencies = build_automatic_primary_live_dependencies(settings, None, None)
+        construct.assert_called_once_with(settings, None)
+        self.assertIs(dependencies.budget_routing, routing)
+        self.assertIsNone(dependencies.team_routing)
 
 
 
@@ -3030,4 +3103,8 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]
+# [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
