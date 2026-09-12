@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:44 UTC | BEGIN]]
 from __future__ import annotations
 
 import base64
@@ -104,6 +105,10 @@ class GitHubAppAuthenticationTests(unittest.TestCase):
             api_requests.append(request)
             self.assertEqual(request.headers["Authorization"], "Bearer installation-token")
             path = request.url.path
+            if request.method == "GET" and path.endswith("/branches/main"):
+                if "/rules/" in path:
+                    return httpx.Response(200, json=[])
+                return httpx.Response(200, json={"name": "main", "commit": {"sha": BASE_SHA}, "protected": False})
             if request.method == "GET" and path.endswith("/pulls/23"):
                 return httpx.Response(200, json=pull)
             if request.method == "GET" and path.endswith("/pulls/23/files"):
@@ -178,6 +183,10 @@ class GitHubAppAuthenticationTests(unittest.TestCase):
         self.assertTrue(merged.merged)
         self.assertEqual(merged.actor, "github-app-installation:5678")
         self.assertEqual(auth_calls, 1)
+        # Protection is checked at snapshot time and immediately before merge,
+        # using the same installation-token authenticated request path.
+        self.assertEqual(sum(request.url.path.endswith("/branches/main") and "/rules/" not in request.url.path for request in api_requests), 2)
+        self.assertEqual(sum(request.url.path.endswith("/rules/branches/main") for request in api_requests), 2)
         self.assertFalse(any(request.url.path == "/user" for request in api_requests))
 
     def test_partial_or_ambiguous_app_configuration_fails_closed(self):
@@ -249,3 +258,5 @@ class GitHubAppAuthenticationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:44 UTC | END]]
