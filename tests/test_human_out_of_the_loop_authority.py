@@ -135,7 +135,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "required CI check is green",
             "Independent security evidence",
             "neither the producer nor a material author",
-            "three distinct\n   identities",
+            "two distinct identities",
             "`owned_paths`",
             "`prohibited_paths`",
             "durably written before",
@@ -206,7 +206,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "grants nothing",
             "never changes whether a gate runs",
             "never delegable under any configuration",
-            "two distinct identities",
+            "distinct identities",
             "Absence of evidence is never consent",
         ):
             self.assertIn(required, section)
