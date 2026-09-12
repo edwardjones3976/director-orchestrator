@@ -58,6 +58,7 @@ from .oracle_diff import (
 from .policy import canonical_repository
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
 from .state_witness import (
+    ClaimKind,
     StateWitnessLedger,
     WitnessLedgerFull,
     WitnessRow,
@@ -1631,6 +1632,22 @@ class OracleMergeService:
             green = self._checks_green_oracle(self.policy.repository, artifact.head_sha)
         except WitnessLedgerFull as exc:
             return f"witness ledger unavailable: {exc}"
+        # The row must be the row this gate asked for: right class, right
+        # repository and SHA, and actually persisted. Anything else is a forged
+        # or misrouted observation and is refused.
+        expected_subject = f"{self.policy.repository}@{artifact.head_sha}"
+        if (
+            not isinstance(green, WitnessRow)
+            or green.kind is not ClaimKind.GH_CHECKS_GREEN
+            or green.subject != expected_subject
+            or self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject) is None
+            or self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject).witness_id
+            != green.witness_id
+        ):
+            return (
+                "witness refused gh_checks_green: the checks oracle returned a row"
+                f" that is not the persisted observation for {expected_subject}"
+            )
         for row in (not_merged, green):
             if not row.matched:
                 return (

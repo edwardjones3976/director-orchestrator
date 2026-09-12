@@ -24,6 +24,7 @@ from director_orchestrator.state_witness import (
     WitnessStatus,
     doc_read,
     gh_checks_green,
+    no_oracle,
     gh_pr_merged,
     owner_authorization,
     require,
@@ -126,6 +127,10 @@ class WitnessLedgerTests(unittest.TestCase):
             self.ledger, [Claim(ClaimKind.PROVIDER_REACHABLE, "grok", False)], agent="a", oracles={}
         )
         self.assertIs(refusals[0].status, WitnessStatus.UNOBSERVABLE)
+        self.assertEqual(refusals[0].observed, {"error": "LookupError"})
+        row = self.ledger.latest(ClaimKind.PROVIDER_REACHABLE, "grok")
+        self.assertEqual(row.oracle, "none#gate")  # written by the no_oracle wrapper
+        self.assertIs(no_oracle(self.ledger, Claim(ClaimKind.PROVIDER_REACHABLE, "x", True), agent="a").status, WitnessStatus.UNOBSERVABLE)
 
         then = datetime(2026, 9, 12, tzinfo=timezone.utc)
         self._synthetic(ClaimKind.DOC_READ, "docs/x.md", WitnessStatus.MATCH, now=then)
@@ -236,6 +241,13 @@ class WitnessLedgerTests(unittest.TestCase):
         kept.close()
         self.assertIs(small.witnessed(ClaimKind.DOC_READ, "d"), WitnessStatus.UNOBSERVABLE)
         small._record(ClaimKind.DOC_READ, "d", agent="a", claimed={}, observed={}, status=WitnessStatus.MATCH, oracle="t")
+        # A second rotation in the same second keeps both archives.
+        again = small.rotate(now=datetime(2026, 9, 12, tzinfo=timezone.utc))
+        self.assertNotEqual(again, archived)
+        self.assertTrue(Path(archived).exists() and Path(again).exists())
+        kept = sqlite3.connect(archived)
+        self.assertEqual(kept.execute("SELECT COUNT(*) FROM state_witness").fetchone()[0], 2)
+        kept.close()
 
     # --- the outbound stamp ----------------------------------------------------
 
@@ -312,6 +324,36 @@ class WitnessGateWiringTests(unittest.TestCase):
         self.assertIn("witness refused gh_checks_green", result.reasons[0])
         self.assertIn('"steps": 0', result.reasons[0])
         self.assertIn("witness:", result.reasons[0])
+
+    def test_merge_gate_refuses_a_forged_or_misrouted_checks_row(self):
+        from director_orchestrator.oracle_merge import OracleMergeStatus
+        from director_orchestrator.state_witness import WitnessRow
+
+        fixtures, FakeGitHub = self._merge_fixture()
+        head = fixtures.artifact().head_sha
+        forged = lambda repo, sha: WitnessRow(
+            999, ClaimKind.GH_CHECKS_GREEN, f"{repo}@{sha}", "x", True, {}, WitnessStatus.MATCH,
+            "forged", datetime.now(timezone.utc),
+        )  # never persisted
+        wrong_kind = lambda repo, sha: self.ledger._record(
+            ClaimKind.DOC_READ, f"{repo}@{sha}", agent="x", claimed=True, observed={},
+            status=WitnessStatus.MATCH, oracle="t",
+        )
+        other_sha = lambda repo, sha: gh_checks_green(
+            self.ledger, repo, "b" * 40, agent="x", required=("ci", "security"), gh_json=_jobs_api(3)
+        )
+        for oracle in (forged, wrong_kind, other_sha):
+            github = FakeGitHub(fixtures.snapshot())
+            result = self._service(
+                fixtures, github, state_witness=self.ledger, checks_green_oracle=oracle,
+            ).process(fixtures.artifact())
+            self.assertEqual(result.status, OracleMergeStatus.REJECTED)
+            self.assertEqual(github.merge_calls, 0)
+            self.assertIn("not the persisted observation", result.reasons[0])
+        self.assertIs(
+            self.ledger.witnessed(ClaimKind.GH_CHECKS_GREEN, f"edwardjones3976/edge_engine@{head}"),
+            WitnessStatus.UNOBSERVABLE,
+        )
 
     def test_merge_gate_denies_when_no_checks_oracle_can_observe_steps(self):
         from director_orchestrator.oracle_merge import OracleMergeStatus

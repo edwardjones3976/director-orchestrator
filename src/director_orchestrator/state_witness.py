@@ -213,8 +213,13 @@ class StateWitnessLedger:
         Nothing is deleted; the old file stays readable as evidence."""
 
         stamp = (now or _utcnow()).strftime("%Y%m%dT%H%M%SZ")
-        archived = f"{self.path}.{stamp}"
         with self._lock:
+            archived = f"{self.path}.{stamp}"
+            suffix = 0
+            # A second rotation in the same second must not overwrite the first.
+            while Path(archived).exists():
+                suffix += 1
+                archived = f"{self.path}.{stamp}.{suffix}"
             Path(self.path).replace(archived)
             self.__init__(self.path, ttl=self.ttl, max_rows=self.max_rows)
         return archived
@@ -519,6 +524,18 @@ def snapshot_not_merged(
     )
 
 
+def no_oracle(ledger: StateWitnessLedger, claim: "Claim", *, agent: str) -> WitnessRow:
+    """Wrapper for the one thing a gate observes without an oracle: that it has
+    none. The row says the class could not be observed."""
+
+    return _row(
+        ledger, claim.kind, claim.subject, agent=agent, claimed=claim.claimed,
+        oracle="none#gate",
+        observe=lambda: (_ for _ in ()).throw(LookupError("no oracle for claim class")),
+        matches=lambda _: False,
+    )
+
+
 # --- the gate -----------------------------------------------------------------
 
 
@@ -540,12 +557,8 @@ def verify(
     wrapper call for this claim; ``None`` means the class has no oracle."""
 
     if oracle is None:
-        ledger._record(
-            claim.kind, claim.subject, agent=agent, claimed=claim.claimed,
-            observed={"error": "no oracle for claim class"},
-            status=WitnessStatus.UNOBSERVABLE, oracle="none#gate",
-        )
-        return Refusal(claim.kind, claim.subject, claim.claimed, None, WitnessStatus.UNOBSERVABLE)
+        row = no_oracle(ledger, claim, agent=agent)
+        return Refusal(claim.kind, claim.subject, claim.claimed, row.observed, row.status)
     row = oracle()
     if row.matched:
         return row
