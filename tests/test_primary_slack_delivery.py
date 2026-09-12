@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 11:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 from __future__ import annotations
@@ -46,9 +48,26 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
             coordinator=self.fixture.coordinator, application=self.fixture.application)
         self.posts = []
         self.messages = []
+        self.readbacks = []
         self.mode = "success"
         self.delivery = PrimarySlackDelivery(self.activation, self.settings,
             transport=httpx.MockTransport(self.slack))
+
+    @staticmethod
+    def native(message):
+        """What conversations.replies returns for a stored post: Slack flattens
+        every newline in the fallback text to one space and adds block IDs and
+        plain_text emoji defaults, while block text and actions stay verbatim."""
+        blocks = []
+        for index, block in enumerate(message["blocks"]):
+            block = {**block, "block_id": f"synthetic{index}"}
+            if "text" in block:
+                block["text"] = {**block["text"], "emoji": True}
+            if "elements" in block:
+                block["elements"] = [{**item, "text": {**item["text"], "emoji": True}}
+                                     for item in block["elements"]]
+            blocks.append(block)
+        return {**message, "text": message["text"].replace("\n", " "), "blocks": blocks}
 
     def slack(self, request):
         if request.url.path.endswith("auth.test"):
@@ -66,6 +85,7 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                 return httpx.Response(200, json={"ok": False, "error": "missing_scope"})
             return httpx.Response(200, json={"ok": True, "ts": ts, "channel": payload["channel"]})
         if request.url.path.endswith("conversations.replies"):
+            self.readbacks.append(request)
             return httpx.Response(200, json={"ok": True, "messages": self.messages})
         raise AssertionError("unexpected network route: " + str(request.url))
 
@@ -157,6 +177,96 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
         self.drain()
         self.assertEqual([], self.posts)
         self.assertEqual("SUPPRESSED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def use_native_readback(self, alter=None):
+        def native_response(request):
+            response = self.slack(request)
+            if request.url.path.endswith("conversations.replies"):
+                messages = [self.native(message) for message in self.messages]
+                if alter:
+                    for message in messages:
+                        alter(message)
+                return httpx.Response(200, json={"ok": True, "messages": messages})
+            return response
+        self.delivery.transport = httpx.MockTransport(native_response)
+
+    def test_native_newline_normalization_verifies_approval_and_terminal_once(self):
+        self.use_native_readback()
+        record = self.intake()
+        self.drain()
+        self.assertEqual("DELIVERED", self.delivery.receipts(record.task_id)[0]["state"])
+        self.approve(record)
+        self.drain()
+        self.drain()
+        receipts = self.delivery.receipts(record.task_id)
+        self.assertEqual(["DELIVERED", "DELIVERED"], [row["state"] for row in receipts])
+        self.assertEqual([1, 1], [row["readback_attempts"] for row in receipts])
+        self.assertEqual(2, len(self.posts))
+        self.assertEqual(2, len(self.readbacks))
+        self.assertIn("SUCCEEDED", self.posts[-1]["text"])
+        self.assertTrue(all("\n" in post["text"] for post in self.posts))
+        self.assertTrue(all(self.native(post)["text"] != post["text"] for post in self.posts))
+
+    def test_native_readback_resolves_lost_ack_without_reposting(self):
+        self.use_native_readback()
+        self.mode = "ack_lost_but_posted"
+        record = self.intake()
+        self.drain()
+        self.drain()
+        self.assertEqual("DELIVERED", self.delivery.receipts(record.task_id)[0]["state"])
+        self.assertEqual(1, len(self.posts))
+
+    def assert_native_readback_rejected(self, alter):
+        self.use_native_readback(alter)
+        record = self.intake()
+        self.drain()
+        self.drain()
+        self.drain()
+        receipt = self.delivery.receipts(record.task_id)[0]
+        self.assertEqual("ACKNOWLEDGED", receipt["state"])
+        self.assertEqual("readback_unverified", receipt["last_error"])
+        self.assertEqual(2, receipt["readback_attempts"])
+        self.assertEqual(2, len(self.readbacks))
+        self.assertEqual(1, len(self.posts))
+
+    def test_native_readback_rejects_added_fallback_words(self):
+        self.assert_native_readback_rejected(lambda item: item.update(text=item["text"] + " unexpected"))
+
+    def test_native_readback_rejects_missing_fallback_words(self):
+        self.assert_native_readback_rejected(lambda item: item.update(text=item["text"].replace("OWNER DECISION REQUIRED", "OWNER DECISION")))
+
+    def test_native_readback_does_not_normalize_other_whitespace(self):
+        self.assert_native_readback_rejected(lambda item: item.update(text=item["text"].replace(" ", "\t", 1)))
+
+    def test_native_readback_rejects_changed_block_text(self):
+        self.assert_native_readback_rejected(lambda item: item["blocks"][0]["text"].update(text="different visible plan"))
+
+    def test_native_readback_rejects_changed_block_type(self):
+        self.assert_native_readback_rejected(lambda item: item["blocks"][0].update(type="context"))
+
+    def test_native_readback_rejects_changed_button_label(self):
+        self.assert_native_readback_rejected(lambda item: item["blocks"][-1]["elements"][0]["text"].update(text="Approve another request"))
+
+    def test_native_readback_rejects_changed_button_value(self):
+        self.assert_native_readback_rejected(lambda item: item["blocks"][-1]["elements"][0].update(value="different-scope"))
+
+    def test_native_readback_rejects_changed_button_action(self):
+        self.assert_native_readback_rejected(lambda item: item["blocks"][-1]["elements"][0].update(action_id="director_primary_reject"))
+
+    def test_native_readback_rejects_other_bot(self):
+        self.assert_native_readback_rejected(lambda item: item.update(user="UOTHER"))
+
+    def test_native_readback_rejects_other_client_id(self):
+        self.assert_native_readback_rejected(lambda item: item.update(client_msg_id="different-message"))
+
+    def test_native_readback_rejects_other_thread(self):
+        self.assert_native_readback_rejected(lambda item: item.update(thread_ts="1720000000.999999"))
+
+    def test_native_readback_rejects_missing_thread(self):
+        self.assert_native_readback_rejected(lambda item: item.pop("thread_ts"))
+
+    def test_native_readback_rejects_other_timestamp(self):
+        self.assert_native_readback_rejected(lambda item: item.update(ts="1720000999.000001"))
 
     def test_ambiguous_post_is_not_retried_after_restart(self):
         record = self.intake()
@@ -323,3 +433,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 11:53 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | END]]
