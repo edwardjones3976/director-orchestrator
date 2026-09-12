@@ -24,9 +24,11 @@ class, and a claim class is true only as a row in the insert-only
 1. **Gates consume rows and re-execute when they act.** `witnessed(kind, subject)`
    answers only from rows within their ttl (10 minutes). `verify_packet()` runs
    the oracle again and writes a fresh row before answering. Wired gates in this
-   version: the exact-SHA merge (`OracleMergeService` writes `gh_pr_merged` and
-   `gh_checks_green` rows from its final snapshot and refuses on anything but
-   MATCH) and the durable authorization write (`TaskStore.record_external_openai_production_authorization`
+   version: the exact-SHA merge (`OracleMergeService(state_witness=…,
+   checks_green_oracle=…)` writes a `gh_pr_merged` row from its final snapshot
+   and consumes a `gh_checks_green` row from a real checks oracle that sees job
+   step counts — without that oracle the green claim is UNOBSERVABLE and the
+   gate denies) and the durable authorization write (`TaskStore.record_external_openai_production_authorization`
    requires a fresh `owner_authorization` MATCH row for the exact digest).
 2. **Unobservable means deny.** No row, no oracle, a probe that raised or timed
    out, a stale row: all `UNOBSERVABLE`, and every gate refuses. `MATCH` is
@@ -45,6 +47,13 @@ class, and a claim class is true only as a row in the insert-only
 No model calls. Oracles are `gh`, Slack, and file reads; a full packet check is
 under three seconds. Rows are append-only at the engine level (UPDATE and
 DELETE triggers abort), the same discipline as the delegation audit ledger.
+Growth is bounded: past `max_rows` (default 1,000,000) every write raises
+`WitnessLedgerFull`, so every gate denies until `rotate()` moves the full file
+aside under a dated name and starts an empty one; nothing is deleted. Only
+oracle wrappers write rows (`_record` is module-private); any exception inside
+an observation is recorded as UNOBSERVABLE; a persisted class or status this
+version does not know is not evidence; repository and pull-number inputs are
+validated before any `gh` endpoint is built.
 
 ## Not in this version
 

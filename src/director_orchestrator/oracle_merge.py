@@ -57,7 +57,12 @@ from .oracle_diff import (
 )
 from .policy import canonical_repository
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
-from .state_witness import ClaimKind, StateWitnessLedger, WitnessStatus
+from .state_witness import (
+    StateWitnessLedger,
+    WitnessLedgerFull,
+    WitnessRow,
+    snapshot_not_merged,
+)
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
 
@@ -1414,6 +1419,7 @@ class OracleMergeService:
         sleep: Callable[[float], None] = time.sleep,
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
         state_witness: StateWitnessLedger | None = None,
+        checks_green_oracle: Callable[[str, str], WitnessRow] | None = None,
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     ):
         if mergeable_poll_attempts < 1:
@@ -1442,6 +1448,10 @@ class OracleMergeService:
         self._sleep = sleep
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
         self._witness = state_witness
+        # A real checks oracle (see state_witness.gh_checks_green) that sees job
+        # step counts; the forge snapshot carries none, so without one the
+        # green claim is UNOBSERVABLE and the gate denies.
+        self._checks_green_oracle = checks_green_oracle
         # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
@@ -1606,35 +1616,25 @@ class OracleMergeService:
         if self._witness is None:
             return None
         agent = artifact.reviewer_provider
-        subject = f"{self.policy.repository}#{artifact.pull_number}@{artifact.head_sha}"
-        not_merged = self._witness.record(
-            ClaimKind.GH_PR_MERGED, subject, agent=agent, claimed=False,
-            observed={"merged": snapshot.merged, "state": snapshot.state,
-                      "head_sha": snapshot.head_sha},
-            status=WitnessStatus.MATCH
-            if not snapshot.merged and snapshot.head_sha == artifact.head_sha
-            else WitnessStatus.MISMATCH,
-            oracle="oracle_merge final snapshot#gate",
-        )
-        checks = {
-            check.name: check.conclusion
-            for check in snapshot.checks
-            if check.head_sha == artifact.head_sha
-        }
-        required = set(self.policy.required_checks)
-        green = self._witness.record(
-            ClaimKind.GH_CHECKS_GREEN, f"{self.policy.repository}@{artifact.head_sha}",
-            agent=agent, claimed=True, observed={"checks": checks},
-            status=WitnessStatus.MATCH
-            if required and required <= set(checks)
-            and all(checks[name] == "success" for name in required)
-            else WitnessStatus.MISMATCH,
-            oracle="oracle_merge final snapshot#gate",
-        )
+        try:
+            not_merged = snapshot_not_merged(
+                self._witness, self.policy.repository, artifact.pull_number,
+                artifact.head_sha, agent=agent, merged=snapshot.merged,
+                state=snapshot.state, head_sha=snapshot.head_sha,
+            )
+            if self._checks_green_oracle is None:
+                # No oracle that can see step counts: unobservable, so deny.
+                return (
+                    "witness refused gh_checks_green: no checks oracle configured;"
+                    " job step counts are UNOBSERVABLE from the forge snapshot"
+                )
+            green = self._checks_green_oracle(self.policy.repository, artifact.head_sha)
+        except WitnessLedgerFull as exc:
+            return f"witness ledger unavailable: {exc}"
         for row in (not_merged, green):
             if not row.matched:
                 return (
-                    f"witness refused {row.kind}: claimed {row.claimed!r},"
+                    f"witness refused {row.kind} ({row.status}): claimed {row.claimed!r},"
                     f" observed {json.dumps(row.observed, sort_keys=True)}"
                     f" (witness:{row.witness_id})"
                 )

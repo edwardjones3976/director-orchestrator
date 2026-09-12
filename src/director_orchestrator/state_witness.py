@@ -69,7 +69,28 @@ class WitnessStatus(StrEnum):
 DEFAULT_TTL = timedelta(minutes=10)
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
+# One owner segment and one name segment; neither may start with a dot, so
+# path-like values such as "../x" never reach an endpoint.
+_REPOSITORY = re.compile(r"^(?!\.)[A-Za-z0-9_.-]{1,100}/(?!\.)[A-Za-z0-9_.-]{1,100}$")
 _MAX_OBSERVED_BYTES = 16_384
+_MAX_PULL_NUMBER = 10_000_000
+# Bounded growth: an insert-only ledger that can never be trimmed needs a
+# ceiling. Past it every write fails and therefore every gate denies; the
+# operator rotates the file with ``rotate()``, which keeps the old ledger
+# intact under a dated name.
+DEFAULT_MAX_ROWS = 1_000_000
+
+
+def _require_repository(repository: str) -> None:
+    if not _REPOSITORY.match(repository):
+        raise ValueError("repository must be an exact owner/name")
+
+
+def _require_pull_number(pull_number: int) -> None:
+    if isinstance(pull_number, bool) or not isinstance(pull_number, int):
+        raise TypeError("pull_number must be an integer")
+    if not 1 <= pull_number <= _MAX_PULL_NUMBER:
+        raise ValueError("pull_number is out of bounds")
 
 
 def _utcnow() -> datetime:
@@ -121,6 +142,10 @@ class Refusal:
         }
 
 
+class WitnessLedgerFull(RuntimeError):
+    """The bounded ledger is full; every gate denies until it is rotated."""
+
+
 class WitnessRefused(RuntimeError):
     def __init__(self, refusal: Refusal):
         super().__init__(
@@ -134,9 +159,14 @@ class StateWitnessLedger:
     """Insert-only table of oracle observations. Same engine-level triggers as the
     delegation audit ledger: a mutation fails even from outside this class."""
 
-    def __init__(self, path: str, *, ttl: timedelta = DEFAULT_TTL):
+    def __init__(
+        self, path: str, *, ttl: timedelta = DEFAULT_TTL, max_rows: int = DEFAULT_MAX_ROWS
+    ):
+        if max_rows < 1:
+            raise ValueError("max_rows must be positive")
         self.path = path
         self.ttl = ttl
+        self.max_rows = max_rows
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         with self._connect() as connection:
@@ -178,7 +208,18 @@ class StateWitnessLedger:
         finally:
             connection.close()
 
-    def record(
+    def rotate(self, *, now: datetime | None = None) -> str:
+        """Move the full ledger aside under a dated name and start an empty one.
+        Nothing is deleted; the old file stays readable as evidence."""
+
+        stamp = (now or _utcnow()).strftime("%Y%m%dT%H%M%SZ")
+        archived = f"{self.path}.{stamp}"
+        with self._lock:
+            Path(self.path).replace(archived)
+            self.__init__(self.path, ttl=self.ttl, max_rows=self.max_rows)
+        return archived
+
+    def _record(
         self,
         kind: ClaimKind,
         subject: str,
@@ -195,6 +236,11 @@ class StateWitnessLedger:
             raise ValueError("observed payload exceeds its bound")
         at = now or _utcnow()
         with self._lock, self._connect() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM state_witness").fetchone()[0]
+            if count >= self.max_rows:
+                raise WitnessLedgerFull(
+                    f"state_witness holds {count} rows; rotate() before writing more"
+                )
             cursor = connection.execute(
                 "INSERT INTO state_witness (kind, subject, agent, claimed_json,"
                 " observed_json, status, oracle, observed_at)"
@@ -224,14 +270,20 @@ class StateWitnessLedger:
             ).fetchone()
         if row is None:
             return None
+        try:
+            kind_value = ClaimKind(row["kind"])
+            status_value = WitnessStatus(row["status"])
+        except ValueError:
+            # A class or status this version does not know is not evidence.
+            return None
         return WitnessRow(
             int(row["witness_id"]),
-            ClaimKind(row["kind"]),
+            kind_value,
             str(row["subject"]),
             str(row["agent"]),
             json.loads(row["claimed_json"]),
             json.loads(row["observed_json"]),
-            WitnessStatus(row["status"]),
+            status_value,
             str(row["oracle"]),
             datetime.fromisoformat(row["observed_at"]),
         )
@@ -275,9 +327,6 @@ class StateWitnessLedger:
 # fake; the default is the real thing. An exception inside the observation is
 # recorded as UNOBSERVABLE, never as a match.
 
-ObservationError = (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError)
-
-
 def _gh_json(args: list[str]) -> Any:
     completed = subprocess.run(
         ["gh", *args], capture_output=True, text=True, check=True, timeout=60
@@ -298,14 +347,14 @@ def _row(
 ) -> WitnessRow:
     try:
         observed = observe()
-    except ObservationError as exc:
-        return ledger.record(
+    except Exception as exc:  # any failure to observe is UNOBSERVABLE, never MATCH
+        return ledger._record(
             kind, subject, agent=agent, claimed=claimed,
             observed={"error": type(exc).__name__}, status=WitnessStatus.UNOBSERVABLE,
             oracle=oracle,
         )
     status = WitnessStatus.MATCH if matches(observed) else WitnessStatus.MISMATCH
-    return ledger.record(
+    return ledger._record(
         kind, subject, agent=agent, claimed=claimed, observed=observed,
         status=status, oracle=oracle,
     )
@@ -323,6 +372,8 @@ def gh_pr_merged(
 ) -> WitnessRow:
     """Is pull ``pull_number`` merged, with ``sha`` as the head that merged?"""
 
+    _require_repository(repository)
+    _require_pull_number(pull_number)
     if not _SHA1.match(sha):
         raise ValueError("sha must be a full 40-hex commit")
     subject = f"{repository}#{pull_number}@{sha}"
@@ -355,6 +406,7 @@ def gh_checks_green(
     """Every job at ``sha`` concluded ``success`` and executed at least one step.
     A zero-step job is a billing stub and can never be green."""
 
+    _require_repository(repository)
     if not _SHA1.match(sha):
         raise ValueError("sha must be a full 40-hex commit")
     subject = f"{repository}@{sha}"
@@ -443,6 +495,30 @@ def doc_read(
     )
 
 
+def snapshot_not_merged(
+    ledger: StateWitnessLedger,
+    repository: str,
+    pull_number: int,
+    sha: str,
+    *,
+    agent: str,
+    merged: bool,
+    state: str,
+    head_sha: str,
+) -> WitnessRow:
+    """Wrapper for a gate that already holds a fresh forge snapshot: the pull
+    is open at ``sha`` and not merged. The gate is the oracle; the row says so."""
+
+    _require_repository(repository)
+    _require_pull_number(pull_number)
+    return _row(
+        ledger, ClaimKind.GH_PR_MERGED, f"{repository}#{pull_number}@{sha}", agent=agent,
+        claimed=False, oracle="forge snapshot#gate",
+        observe=lambda: {"merged": merged, "state": state, "head_sha": head_sha},
+        matches=lambda o: o["merged"] is False and o["head_sha"] == sha,
+    )
+
+
 # --- the gate -----------------------------------------------------------------
 
 
@@ -464,7 +540,7 @@ def verify(
     wrapper call for this claim; ``None`` means the class has no oracle."""
 
     if oracle is None:
-        ledger.record(
+        ledger._record(
             claim.kind, claim.subject, agent=agent, claimed=claim.claimed,
             observed={"error": "no oracle for claim class"},
             status=WitnessStatus.UNOBSERVABLE, oracle="none#gate",
@@ -518,7 +594,9 @@ _STATE_CLAIM = re.compile(
     re.IGNORECASE,
 )
 _WITNESS_CITE = re.compile(r"\bwitness:\d+\b")
-_SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+# A sentence ends at . ! or ? only when followed by whitespace or the end of
+# the text, so dots inside URLs, versions and file names do not split it.
+_SENTENCE = re.compile(r".+?(?:[.!?](?=\s|$)|(?=\n)|$)", re.DOTALL)
 
 
 def stamp_unwitnessed(text: str) -> str:
