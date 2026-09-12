@@ -81,7 +81,7 @@
           "conditions": [
             {
               "id": "c0000000-0000-4000-9000-000000000002",
-              "leftValue": "={{ typeof $json.error?.statusCode === 'number' && ($json.error.statusCode === 401 || $json.error.statusCode === 422) && $json.error.statusCode <= 499 }}",
+              "leftValue": "={{ typeof $json.error?.statusCode === 'number' && ($json.error.statusCode === 401 || $json.error.statusCode === 403 || $json.error.statusCode === 422) && $json.error.statusCode <= 499 }}",
               "rightValue": true,
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [-80, 160],
-      "notes": "The distinction this whole workflow turns on. Only 401 or 422 means the orchestrator refused before reserving intake, so no task was created and the caller can be told plainly. A 409 from SlackIntakeReplayConflict means a conflicting task may already exist, so it takes the ambiguity branch with other non-401/422 4xx. A 5xx is NOT a definite refusal either: primary intake is reserved before later operations can fail, and main.py wraps those as 503, so a task may already exist behind one. 5xx therefore takes the same unproven path as a missing status code. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
+      "notes": "The distinction this whole workflow turns on. Only 401, 403 or 422 means the orchestrator refused before reserving intake, so no task was created and the caller can be told plainly. A 409 from SlackIntakeReplayConflict means a conflicting task may already exist, so it takes the ambiguity branch with other non-401/422 4xx. A 5xx is NOT a definite refusal either: primary intake is reserved before later operations can fail, and main.py wraps those as 503, so a task may already exist behind one. 5xx therefore takes the same unproven path as a missing status code. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
     },
     {
       "parameters": {
@@ -134,7 +134,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [180, 80],
-      "notes": "A definite upstream refusal — 401 or 422 only. Other 4xx (including 409 SlackIntakeReplayConflict) and 5xx are excluded: a task may already exist. Only the status code is echoed; no response body, provider output or secret-shaped value is relayed."
+      "notes": "A definite upstream refusal — 401, 403 or 422 only. Other 4xx (including 409 SlackIntakeReplayConflict) and 5xx are excluded: a task may already exist. Only the status code is echoed; no response body, provider output or secret-shaped value is relayed."
     },
     {
       "parameters": {},

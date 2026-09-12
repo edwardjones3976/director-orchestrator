@@ -119,8 +119,8 @@ renamed response body makes the bot post `DIRECTOR — BLOCKED` on an intake tha
 actually succeeded.
 
 **Failure.** `Create Director Task` uses `onError: continueErrorOutput`, so an
-error takes the second output. Only a numeric **401** or **422** reaches
-`Intake Failed`, which responds **502**. A **409**, other non-401/422 **4xx**, a
+error takes the second output. Only a numeric **401**, **403** or **422** reaches
+`Intake Failed`, which responds **502**. A **409**, other non-401/403/422 **4xx**, a
 **5xx**, or a transport error with no status goes to the ambiguity branch for
 reconciliation instead.
 Only the upstream status code is echoed; no response body, provider output or
@@ -129,7 +129,7 @@ secret-shaped value is relayed back through the webhook.
 **Definite refusal and ambiguous delivery are not the same thing, and the whole
 design turns on the difference.**
 
-Only an upstream **401** or **422** is treated as a definite refusal before intake
+Only an upstream **401**, **403** or **422** is treated as a definite refusal before intake
 is reserved, so the gateway can be told plainly and the error branch responds
 **502**. Other **4xx** values are not that proof: a **409** from
 `SlackIntakeReplayConflict` (`main.py`, `store.py`) means a conflicting task may
@@ -270,11 +270,11 @@ below can pass.
 `{"detail":"Unauthorized"}`. This creates nothing, so it is the safe first probe.
 
 **3. The relay surfaces that rejection rather than swallowing it.** Post the same
-unauthenticated request to `/webhook/director-intake`. A 401 is one of the two
-definite-refusal statuses (with 422), so expect **502**. **Any 200 here is a
+unauthenticated request to `/webhook/director-intake`. A 401 is one of the three
+definite-refusal statuses (with 403 and 422), so expect **502**. **Any 200 here is a
 failure of this check** — it means the execution ended without reaching a
 `Respond to Webhook` node, which is correct for 5xx, a transport error, or a
-non-401/422 4xx such as 409, and wrong for a 401 or 422 the orchestrator
+non-401/403/422 4xx such as 409, and wrong for a 401, 403 or 422 the orchestrator
 actually returned. Assert the status code, not the body.
 
 **Confirm you are on the Director instance first.** More than one n8n runs on
