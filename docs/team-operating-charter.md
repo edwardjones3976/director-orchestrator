@@ -1,9 +1,14 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
@@ -709,6 +714,47 @@ sentence forbidding such substitution is unaffected. A delegated merge requires
 two concurring verdicts from distinct providers where an attended merge requires
 one, so it clears a strictly higher review bar, never a lower one.
 
+### Approver carries the merge
+
+Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+
+> If they approve it, they should merge it as well.
+
+**One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+approver to carry that candidate towards a terminal result rather than return it
+to a queue; it does not authorise the merge and does not skip
+`OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
+requires a live grant under `docs/human-out-of-the-loop-operation.md`, **two**
+concurring exact-SHA `ACCEPT` verdicts from different non-author providers, and
+every other item of the evidence bar. In `ATTENDED` state, or with no live
+grant, the duty is to name that blocker on the pull request, not to merge.
+
+Where a merge is authorised, the provider that supplied the first `ACCEPT` is
+the reviewer and does not execute; the second concurring provider executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to the second concurring provider, and executes itself only when it is that provider and not an author of the candidate. With
+the producer that is the three distinct identities this handoff requires, and the
+executing approver fills the acting-agent slot rather than the reviewer's. An
+approving reviewer is never a material author, because a material author is
+ineligible to review the candidate at all, so AGENTS.md rule 3's no-self-merge
+bar is unaffected and never lifts.
+
+The obligation reaches non-protected branches **only**. Merging into a protected
+branch stays owner-only for every lane and is never delegable, and no lane gains
+merge authority it does not already hold. Tier 1 enumerates the non-protected
+merge as a delegable class, and that class is delegable **only while a live
+grant names it**; appearing in the enumeration turns nothing on. This section
+assigns a duty to finish, not that class. An approver that cannot execute the
+merge states that on the pull request and names the blocker — no live grant or an
+`ATTENDED` deployment, ineligible lane, unbound or absent actor, refusing gate,
+missing second concurring verdict, protected target, or a still-required owner
+decision — because an approved candidate left silently open is the failure this
+decision corrects. With the grant off, which is the default, naming the blocker
+is the expected outcome rather than an exception.
+
+This adds an obligation and removes no gate. Trusted CI, Codex Security,
+exact-SHA binding, the concurring verdicts, budget, allowlist, actor binding,
+and every owner-decision boundary apply unchanged, and deterministic code alone
+still performs the merge.
+
 ## GitHub Copilot Lite hygiene review
 
 GitHub Copilot Lite is an optional supplemental hygiene reviewer with no
@@ -877,9 +923,14 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
