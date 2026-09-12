@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]]
@@ -54,7 +55,7 @@ endpoints:
   - id: "acceptance_registry"
     description: "The owner-pinned provider-v2 acceptance registry and SQLite journal."
   - id: "all_providers"
-    description: "Every provider lane at once; used only by the prohibited peer rule."
+    description: "Wildcard endpoint; explicit providers_involved takes precedence. Only an empty provider list expands it to every lane."
 
 routes:
   - route_id: "claude-director-injected-native-packet"
@@ -990,3 +991,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]

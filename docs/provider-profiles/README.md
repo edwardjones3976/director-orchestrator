@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]] -->
@@ -97,7 +98,7 @@ Endpoints:
 - `host_bridge`: The Windows host provider bridge that runs native provider commands.
 - `browser_ui`: An already authenticated provider UI driven under the browser transport policy.
 - `acceptance_registry`: The owner-pinned provider-v2 acceptance registry and SQLite journal.
-- `all_providers`: Every provider lane at once; used only by the prohibited peer rule.
+- `all_providers`: Wildcard endpoint; explicit providers_involved takes precedence. Only an empty provider list expands it to every lane.
 
 ## Route-by-lane matrix
 
@@ -180,3 +181,4 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->

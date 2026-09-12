@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | BEGIN]]
@@ -315,6 +316,9 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
             for lane, weight in targets.items():
                 self.assertIn(f"{lane} {weight}%", rules)
             self.assertNotIn("25/25/20/15/11/4", rules)
+            self.assertLess(rules.index("total-effort soft-preference rank"), rules.index("finally trusted cheapest cost rank"))
+            self.assertIn("allocation_profile and allocation_targets", director.instructions)
+            self.assertNotIn("Engineering is OpenAI 40%", director.instructions)
 
         charter = director.captured["team_operating_charter"]
         self.assertEqual(charter["schema_version"], "director-team-charter/v1")
@@ -1601,3 +1605,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]

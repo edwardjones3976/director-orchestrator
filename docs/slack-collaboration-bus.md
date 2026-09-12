@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
@@ -24,7 +25,8 @@ review handoffs, disagreement, synthesis, owner questions, and completion.
    dissent. Deterministic code applies the fixed
    weights: Antigravity 1, Cursor 1.5, Grok 1.5, OpenAI 2.5, Claude 2. A producer's advisory vote counts;
    that producer still cannot independently accept its own work.
-7. Ordinary ties receive a documented Claude evidence judgment. A material tie stops with one
+7. Ordinary ties receive a documented evidence judgment attributed to the actual executing Director
+   (OpenAI by default; Claude only when its Director transport is activated). A material tie stops with one
    focused owner question.
 8. Accepted implementation artifacts continue through the existing different-provider
    exact-SHA review, Codex Security, trusted CI, and deterministic merge gates.
@@ -54,3 +56,4 @@ conversation loops.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
