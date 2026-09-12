@@ -25,7 +25,7 @@ owner-reserved.
 
 ## Result
 
-`readiness()` is the repository's own definition of "connected". Six of seven
+`readiness()` is the repository's own definition of "connected". Six of seven listed readiness keys
 keys were true at 17:40 UTC.
 
 | Key | State | Basis |
@@ -39,7 +39,7 @@ keys were true at 17:40 UTC.
 | ~~`grok`~~ | **SUPERSEDED — now READY** | See the correction below |
 
 **Grok correction, 21:00 UTC.** `/health` on the running deployment reports
-`providers.grok: true`. **All seven providers are ready.** The Grok defect
+`providers.grok: true`. **All six listed provider lanes and Slack were reported ready.** The Grok defect
 recorded below was real when measured and has since been remediated by the
 owner; it is retained for the record, not as a live finding.
 
