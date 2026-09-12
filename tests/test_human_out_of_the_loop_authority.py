@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]]
@@ -142,8 +143,8 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("Absence of evidence is never\nconsent", bar)
         self.assertIn("out of quota, unauthenticated, or silent has not\napproved anything", bar)
 
-    def test_two_verdicts_must_come_from_genuinely_distinct_providers(self) -> None:
-        quorum = self.section("Why two independent verdicts")
+    def test_the_one_verdict_must_come_from_a_genuinely_distinct_provider(self) -> None:
+        quorum = self.section("Why one independent verdict")
         self.assertIn("single point of failure", quorum)
         self.assertIn("share a backing\nmodel are not distinct", quorum)
         self.assertIn("two runs of the same\nprovider", quorum)
@@ -345,7 +346,7 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
         body = self._section(name)
         # End on a marker both files carry, immediately after the identity
         # paragraph. Ending on an AGENTS.md-only phrase made the WHOLE charter
-        # section operative, so moving the live grant, the two verdicts and
+        # section operative, so moving the live grant, the one verdict and
         # ATTENDED into its closing walk-back still satisfied every assertion.
         # A walk-back is exactly what does not repair an operative sentence.
         end = body.find("no-self-merge bar")
@@ -384,14 +385,14 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
             # occurs in the ATTENDED sentence a few lines down, so deleting the
             # precondition entirely still satisfied it.
             self.assertIn("a live grant under", operative, name)
-            self.assertIn("two concurring exact-SHA `ACCEPT`", operative, name)
+            self.assertIn("one exact-SHA `ACCEPT`", operative, name)
             self.assertIn("every other item of the evidence bar", operative, name)
 
     def test_the_reviewer_and_the_executing_agent_are_required_to_differ(self):
         for name in self.FILES:
             operative = self._operative(name)
             self.assertIn("does not execute", operative, name)
-            self.assertIn("second concurring provider executes", operative, name)
+            self.assertIn("a different non-author identity executes", operative, name)
             self.assertIn("three distinct identities", operative, name)
 
     def test_the_attended_default_names_the_blocker_instead_of_merging(self):
@@ -439,3 +440,4 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]

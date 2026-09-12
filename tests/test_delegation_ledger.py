@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
@@ -836,7 +837,7 @@ class MalformedRecordTests(unittest.TestCase):
                 self.assertIsNone(verdict(outcome=outcome, run_id=None).run_id)
 
     def test_a_provider_may_appear_only_once(self):
-        # Two runs of one provider are not two verdicts.
+        # Two runs of one provider are not distinct verdicts.
         with self.assertRaises(DelegationAuditError):
             record(verdicts=(verdict(run_id="run-1"), verdict(run_id="run-2")))
 
@@ -1146,3 +1147,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
@@ -71,7 +72,7 @@ this repository. Read `docs/project-leadership.md` before assigning work.
 - It is **default off**. A deployment operates in `ATTENDED` state unless the owner has configured a live grant, and it returns to `ATTENDED` whenever configuration is absent, invalid, expired, or unreadable. The document's presence grants nothing, and no phase past documented authority is built yet.
 - Delegation changes who supplies a verdict. It never changes whether a gate runs. No deterministic gate in `src/director_orchestrator/policy.py` is removed, relaxed, or made advisory by any grant, and rule 4 still forbids model output from removing an approval requirement.
 - Deployment, publication, deletion, history rewrite, purchases, billing, credential or access changes, merges into a protected branch, and edits to the framework itself are never delegable under any configuration. A decision that is not plainly an enumerated delegable class is treated as non-delegable.
-- Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires the producer, the reviewer, and the acting agent to be three distinct identities, plus two concurring exact-SHA `ACCEPT` verdicts from different providers, neither of them a material author.
+- Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires the producer, the reviewer, and the acting agent to be three distinct identities, plus one exact-SHA `ACCEPT` verdict from a non-author provider. Owner ruling, 2026-09-12, verbatim: "it's a one-non-author-reviewer project-wide".
 - Absence of evidence is never consent. A provider that is out of quota, unauthenticated, silent, or absent has not approved anything, and its silence may not be counted, inferred, or waited out.
 
 ## Approver carries the merge
@@ -86,19 +87,19 @@ approver to carry the candidate towards a terminal result rather than hand it
 back to a queue; it does not authorise the merge and does not skip
 `OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
 requires, without exception, a live grant under
-`docs/human-out-of-the-loop-operation.md`, **two** concurring exact-SHA `ACCEPT`
-verdicts from different non-author providers, and every other item of the
+`docs/human-out-of-the-loop-operation.md`, **one** exact-SHA `ACCEPT`
+verdict from a non-author provider, and every other item of the
 evidence bar. In `ATTENDED` state, or with no live grant, the duty discharged
 here is to say so on the pull request and name the blocker — not to merge.
 
 Where a merge is authorised, the two-identity split is mandatory: the provider
-that supplied the first `ACCEPT` is the reviewer and does **not** execute, and
-the second concurring provider executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to the second concurring provider, and executes itself only when it is that provider and not an author of the candidate. With the producer that is three
+that supplied the `ACCEPT` is the reviewer and does **not** execute, and
+a different non-author identity executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to a non-author identity other than the reviewer, and executes itself only when it is not an author of the candidate. With the producer that is three
 distinct identities, which is what the requirement asks for; one provider
 holding both the only verdict and the merge is the collapse it forbids.
 `docs/human-out-of-the-loop-operation.md` evidence-bar item 5 names the
 producer, the reviewer, and the agent executing the decision, and its item 4
-names the second concurring provider separately from item 3's reviewer, so the
+names the executing identity separately from item 3's reviewer, so the
 executing approver fills the third slot and does not occupy the reviewer's.
 
 An earlier draft of this section stated the first sentence as an approver
@@ -120,15 +121,15 @@ Tier 1 enumerates "Executing an eligible merge of a pull request into a
 non-protected branch" as a delegable class, and that class is delegable **only
 while a live grant names it**; its presence in the enumeration turns nothing on.
 This section assigns a duty to finish, not that class: it adds no decision
-class, widens no tier, changes no two-verdict requirement, and gives merge
+class, widens no tier, changes no reviewer requirement, and gives merge
 authority to no lane that does not already hold it. An earlier draft equated
 that enumeration entry with this section's own duty, which read as switching the
 class on without a grant.
 
 An approver that cannot execute the merge says so on the pull request and names
 the blocker: **no live grant, or a deployment in `ATTENDED` state**, an
-ineligible lane, an unbound or absent actor, a refusing gate, a missing second
-concurring verdict, a protected target, or a still-required owner decision. In
+ineligible lane, an unbound or absent actor, a refusing gate, a missing non-author
+verdict, a protected target, or a still-required owner decision. In
 the default configuration this is the normal outcome, not an edge case: the
 grant is off unless the owner has configured one. The failure being corrected is
 silence. Leaving an approved candidate open without stating why is a reporting
@@ -136,7 +137,7 @@ failure, not a neutral outcome.
 
 This adds an obligation and removes no gate. Every deterministic check still
 runs: approving bypasses no trusted CI, security evidence, exact-SHA binding,
-concurring-verdict, budget, allowlist, actor-binding, or
+non-author-verdict, budget, allowlist, actor-binding, or
 `OWNER_DECISION_REQUIRED` requirement, and deterministic code still performs the
 merge.
 
@@ -214,3 +215,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
