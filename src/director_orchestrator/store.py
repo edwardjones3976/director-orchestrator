@@ -68,6 +68,9 @@ from .models import (
 )
 from .allocation_profiles import DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, allocation_targets, canonical_allocation_lane
 from .policy import trusted_work_kind
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+from .state_witness import ClaimKind, StateWitnessLedger, require as require_witness
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 from .productive_work import (
     ExternalOpenAIProductionAuthorization,
     ExternalOpenAIProductionEvidence,
@@ -217,10 +220,19 @@ class PrivacyCleanupResume:
 
 class TaskStore:
     def __init__(
-        self, path: str, *, delegation_audit_anchor: DelegationAuditAnchor | None = None
+        self,
+        path: str,
+        *,
+        delegation_audit_anchor: DelegationAuditAnchor | None = None,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        state_witness: StateWitnessLedger | None = None,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     ):
         self.path = path
         self._audit_anchor = delegation_audit_anchor
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        self._witness = state_witness
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._initialize()
@@ -1634,6 +1646,16 @@ class TaskStore:
             raise TypeError(
                 "external OpenAI authorization must use its typed evidence contract"
         )
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        # No receipt, no state: a durable authorization write consumes a fresh
+        # owner_authorization witness row for this exact digest, or refuses.
+        if self._witness is not None:
+            require_witness(
+                self._witness,
+                ClaimKind.OWNER_AUTHORIZATION,
+                authorization.owner_authorization_digest,
+            )
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(

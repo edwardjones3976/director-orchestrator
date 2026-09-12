@@ -55,6 +55,9 @@ from .oracle_diff import (
     require_rest_text,
 )
 from .policy import canonical_repository
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+from .state_witness import ClaimKind, StateWitnessLedger, WitnessStatus
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
 
 class OracleReviewVerdict(StrEnum):
@@ -1408,6 +1411,9 @@ class OracleMergeService:
         mergeable_poll_max_delay_seconds: float = 8.0,
         evaluation_lease_seconds: int = 7_200,
         sleep: Callable[[float], None] = time.sleep,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        state_witness: StateWitnessLedger | None = None,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     ):
         if mergeable_poll_attempts < 1:
             raise ValueError("mergeability polling requires at least one attempt")
@@ -1433,6 +1439,9 @@ class OracleMergeService:
         self._evaluation_lease_seconds = evaluation_lease_seconds
         self._claim_context = threading.local()
         self._sleep = sleep
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        self._witness = state_witness
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
         if not artifact.signature_is_valid(self.policy.review_secret):
@@ -1549,6 +1558,15 @@ class OracleMergeService:
         decision = self.policy.evaluate(artifact, final_snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self._complete(decision)
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        # No receipt, no state. The final snapshot is the oracle; write the
+        # rows the merge consumes, and refuse on anything but MATCH.
+        refusal = self._witness_final_snapshot(artifact, final_snapshot)
+        if refusal is not None:
+            decision.status = OracleMergeStatus.REJECTED
+            decision.reasons = [refusal]
+            return self._complete(decision)
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
         try:
             self._renew_claim(artifact)
@@ -1576,6 +1594,51 @@ class OracleMergeService:
         decision.merge_commit_sha = merged.merge_commit_sha
         decision.actor = merged.actor
         return self._complete(decision)
+
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+    def _witness_final_snapshot(
+        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+    ) -> str | None:
+        """Record what the gate observed at consumption time; return a refusal
+        reason, or None when both witnessed claims match."""
+
+        if self._witness is None:
+            return None
+        agent = artifact.reviewer_provider
+        subject = f"{self.policy.repository}#{artifact.pull_number}@{artifact.head_sha}"
+        not_merged = self._witness.record(
+            ClaimKind.GH_PR_MERGED, subject, agent=agent, claimed=False,
+            observed={"merged": snapshot.merged, "state": snapshot.state,
+                      "head_sha": snapshot.head_sha},
+            status=WitnessStatus.MATCH
+            if not snapshot.merged and snapshot.head_sha == artifact.head_sha
+            else WitnessStatus.MISMATCH,
+            oracle="oracle_merge final snapshot#gate",
+        )
+        checks = {
+            check.name: check.conclusion
+            for check in snapshot.checks
+            if check.head_sha == artifact.head_sha
+        }
+        required = set(self.policy.required_checks)
+        green = self._witness.record(
+            ClaimKind.GH_CHECKS_GREEN, f"{self.policy.repository}@{artifact.head_sha}",
+            agent=agent, claimed=True, observed={"checks": checks},
+            status=WitnessStatus.MATCH
+            if required and required <= set(checks)
+            and all(checks[name] == "success" for name in required)
+            else WitnessStatus.MISMATCH,
+            oracle="oracle_merge final snapshot#gate",
+        )
+        for row in (not_merged, green):
+            if not row.matched:
+                return (
+                    f"witness refused {row.kind}: claimed {row.claimed!r},"
+                    f" observed {json.dumps(row.observed, sort_keys=True)}"
+                    f" (witness:{row.witness_id})"
+                )
+        return None
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def _claim_token(self) -> str:
         token = getattr(self._claim_context, "token", None)

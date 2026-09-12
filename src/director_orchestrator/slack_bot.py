@@ -44,6 +44,9 @@ from .chatgpt_bridge import (
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .models import OwnerApproval, SlackIntake, TaskRecord, TaskStatus
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+from .state_witness import stamp_unwitnessed
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 from .primary_commands import (
     ApprovalResumeRequest,
     PrimaryIngressProof,
@@ -89,6 +92,12 @@ def _log_boundary_failure(operation: str, exc: Exception) -> None:
 
 
 def _tag(text: str, *, at: datetime | None = None) -> str:
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+    # No receipt, no state: outbound prose that asserts merged/green/reviewed/
+    # authorized/the-doc-says/provider-down without citing a witness row is
+    # stamped UNWITNESSED. Cosmetic; nothing transitions on prose.
+    text = stamp_unwitnessed(text)
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     return wrap_human_submission(
         text,
         "Aesop Director",
