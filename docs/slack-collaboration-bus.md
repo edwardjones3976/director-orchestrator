@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 # Slack collaboration bus
@@ -9,21 +11,22 @@ review handoffs, disagreement, synthesis, owner questions, and completion.
 
 ## Runtime contract
 
-1. OpenAI posts the objective, provider roles, hop/revision/budget limits, and debate limits.
-2. Before each paid provider call, OpenAI posts a correlated delegation with the assignment ID.
+1. The acting Director posts the objective, provider roles, hop/revision/budget limits, and debate limits.
+2. Before each paid provider call, the acting Director posts a correlated delegation with the assignment ID.
 3. Providers work through authenticated adapters. They do not post directly or converse forever.
-4. OpenAI accepts or rejects the result against the stored checks, then relays only a concise,
+4. The acting Director accepts or rejects the result against the stored checks, then relays only a concise,
    structured summary. Raw provider output, credentials, secret-shaped values, and raw private
    source are excluded from the Slack relay.
 5. When a debate is planned, participants first work independently. One rebuttal round may see
    only declared dependency outcomes. Perplexity may supply approved public evidence but cannot
    debate, vote, write code, review a repository, or request a merge. Cursor remains a live debate
    participant through its repository-bound code-agent transport; it has no separate chat credential.
-6. OpenAI synthesizes the evidence within the plan's explicit synthesis-cost estimate and records
+6. The acting Director synthesizes the evidence within the plan's explicit synthesis-cost estimate and records
    dissent. Deterministic code applies the fixed
-   weights: Antigravity 1, Cursor 1.5, OpenAI 2, Claude 2.5. A producer's advisory vote counts;
+   weights: Antigravity 1, Cursor 1.5, Grok 1.5, OpenAI 2.5, Claude 2. A producer's advisory vote counts;
    that producer still cannot independently accept its own work.
-7. Ordinary ties receive a documented OpenAI evidence judgment. A material tie stops with one
+7. Ordinary ties receive a documented evidence judgment attributed to the actual executing Director
+   (OpenAI by default; Claude only when its Director transport is activated). A material tie stops with one
    focused owner question.
 8. Accepted implementation artifacts continue through the existing different-provider
    exact-SHA review, Codex Security, trusted CI, and deterministic merge gates.
@@ -52,3 +55,5 @@ three persisted safe attempts, and records unavailable providers rather than cre
 conversation loops.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->

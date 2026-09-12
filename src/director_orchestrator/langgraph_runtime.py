@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 21:16 UTC | BEGIN]]
@@ -114,6 +115,9 @@ class ProviderAdapterContext:
     fencing_generation: int = 0
     # Trusted transport observer; never supplied by the model work packet.
     execution_observer: Callable[[str, bytes, Mapping[str, Any]], None] | None = None
+    # Populated from the owner-signed budget admitted for this exact attempt,
+    # never from the work packet. None means no authoritative token allowance.
+    total_token_limit: int | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1232,3 +1236,5 @@ class LangGraphPacketRuntime:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]

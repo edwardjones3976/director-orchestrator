@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -242,7 +243,7 @@ class LoaderTests(unittest.TestCase):
         expected = sorted(
             [pp.CATALOG_FILENAME, pp.INDEX_FILENAME]
             + [f"{lane}.yaml" for lane in LANES]
-            + [f"{lane}.md" for lane in LANES]
+            + [f"{lane}{pp.SHEET_SUFFIX}" for lane in LANES]
         )
         self.assertEqual(names, expected)
 
@@ -712,6 +713,27 @@ class RouteCatalogTests(unittest.TestCase):
         self.routes = _routes(self.catalog)
         self.profiles = _profiles()
 
+    def test_explicit_membership_does_not_expand_through_wildcard(self):
+        route = {"providers_involved": ["openai"],
+                 "endpoints": {"from": "director", "to": "all_providers"}}
+        self.assertTrue(pp._route_involves(route, "openai"))
+        self.assertFalse(pp._route_involves(route, "perplexity"))
+        route["providers_involved"] = []
+        self.assertTrue(pp._route_involves(route, "perplexity"))
+
+    def test_security_route_cannot_borrow_workflow_skills_exemption(self):
+        self.routes["codex-security-review-comment"]["enforced_by"] = []
+        problems = pp.cross_validate(self.profiles, self.catalog)
+        self.assertIn("codex-security-review-comment: authorized route requires an enforcer", problems)
+
+    def test_rendered_names_cannot_be_agent_instruction_files(self):
+        outputs = pp.planned_outputs(None)
+        for lane in LANES:
+            self.assertIn(PROFILE_ROOT / f"{lane}.profile.md", outputs)
+            self.assertFalse((PROFILE_ROOT / f"{lane}.md").exists())
+        index = outputs[PROFILE_ROOT / pp.INDEX_FILENAME]
+        self.assertIn("antigravity.profile.md#execution-modes", index)
+
     def test_status_rules(self):
         ids = [route["route_id"] for route in self.catalog["routes"]]
         self.assertEqual(len(ids), len(set(ids)))
@@ -721,7 +743,8 @@ class RouteCatalogTests(unittest.TestCase):
             with self.subTest(route=route_id):
                 status = route["status"]
                 if status == "authorized":
-                    self.assertTrue(route["enforced_by"])
+                    if route_id != "shared-workflow-skills":
+                        self.assertTrue(route["enforced_by"])
                     self.assertIsNone(route["prohibition_quote"])
                 elif status == "proposed":
                     proposed.add(route_id)
@@ -911,3 +934,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]

@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 07:20 UTC | BEGIN]] -->
@@ -71,7 +74,7 @@ does.** Every plan I produce passes through the gates in
 *add* an approval requirement. It can never remove one. Paid execution remains disabled by
 default and requires the existing activation gates. When intake source text touches deployment,
 publication, merge, deletion, purchases, credentials, or expanded access, I stop in
-`OWNER_DECISION_REQUIRED` and hand it back (plan-body scanning is landing with PR #129).
+`OWNER_DECISION_REQUIRED` and hand it back (generated-plan scanning is proposed in [PR #184](https://github.com/edwardjones3976/director-orchestrator/pull/184)).
 
 That is the design, not a limitation I am working around. No model approves its own work,
 and that includes me: I may write a change or I may accept one, never both.
@@ -517,3 +520,6 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 07:20 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | END]] -->

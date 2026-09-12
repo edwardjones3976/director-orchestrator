@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | BEGIN]] -->
@@ -130,7 +132,7 @@ serious-safety signal. Any changed candidate invalidates prior review evidence.
   producer votes and an invited Antigravity turn; unavailable or abstaining
   members cast zero without changing the immutable denominator>
 - **Dissent/unknowns:** <material dissent>
-- **Tie handling:** OpenAI evidence judgment, or one owner question when the
+- **Tie handling:** Evidence judgment attributed to the actual executing Director, or one owner question when the
   tied options materially differ in cost, authority, safety, privacy, scope,
   runtime behavior, or direction.
 
@@ -152,3 +154,5 @@ use the commit, pull-request, or `REVIEW_READY` envelope instead.
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:31 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 08:14 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->

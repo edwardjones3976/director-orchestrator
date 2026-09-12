@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -44,6 +45,7 @@ EXAMPLE_PATH = _ROOT / "docs" / "schemas" / "director-provider-profile-v1.exampl
 EXAMPLE_PROVIDER = "grok"
 CATALOG_FILENAME = "routes.yaml"
 INDEX_FILENAME = "README.md"
+SHEET_SUFFIX = ".profile.md"
 MAX_YAML_BYTES = 262_144
 PROFILE_SCHEMA_VERSION = "director-provider-profile/v1"
 CATALOG_SCHEMA_VERSION = "director-provider-routes/v1"
@@ -229,8 +231,8 @@ def load_profiles(root: Path | None = None) -> dict[str, JsonObject]:
 
 def _route_involves(route: Mapping[str, Any], lane: str) -> bool:
     endpoints = route["endpoints"]
-    if lane in route["providers_involved"]:
-        return True
+    if route["providers_involved"]:
+        return lane in route["providers_involved"]
     return endpoints["from"] == "all_providers" or endpoints["to"] == "all_providers"
 
 
@@ -263,6 +265,9 @@ def cross_validate(
         problems.append(f"catalog must define the {PEER_RULE_ROUTE_ID} route")
 
     for route in catalog["routes"]:
+        if (route["status"] == "authorized" and not route["enforced_by"]
+                and route["route_id"] != "shared-workflow-skills"):
+            problems.append(f"{route['route_id']}: authorized route requires an enforcer")
         for reference in route["charter_basis"]:
             document = repo_root / reference["document"]
             try:
@@ -866,7 +871,7 @@ def render_index_markdown(
         ]
     )
     lines.append("")
-    lines += ["Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.md#execution-modes).", ""]
+    lines += ["Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.profile.md#execution-modes).", ""]
     lines.append("## Roster")
     lines.append("")
     roster_rows: list[list[Any]] = []
@@ -880,7 +885,7 @@ def render_index_markdown(
         roster_rows.append(
             [
                 _code(lane),
-                f"[{lane}.md]({lane}.md)",
+                f"[{lane}{SHEET_SUFFIX}]({lane}{SHEET_SUFFIX})",
                 _code(identifiers["provider_name_enum"]),
                 _code(identifiers["backend_identity"]),
                 _code(identifiers["legacy_accounting_agent"]),
@@ -1036,7 +1041,7 @@ def planned_outputs(
         raise ProviderProfileError("; ".join(problems))
     outputs: dict[Path, str] = {}
     for lane, profile in profiles.items():
-        outputs[profile_root / f"{lane}.md"] = render_profile_markdown(profile, catalog)
+        outputs[profile_root / f"{lane}{SHEET_SUFFIX}"] = render_profile_markdown(profile, catalog)
     outputs[profile_root / INDEX_FILENAME] = render_index_markdown(profiles, catalog)
     if EXAMPLE_PROVIDER in profiles:
         outputs[EXAMPLE_PATH] = render_example_json(profiles[EXAMPLE_PROVIDER])
@@ -1089,3 +1094,4 @@ def write_outputs(identity: TagIdentity, *, root: Path | None = None) -> list[Pa
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
