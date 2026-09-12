@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """A read-only, evidence-derived product scorecard; never an activation gate.
 
@@ -155,9 +157,17 @@ def _runtime_observations(at: datetime) -> list[Observation]:
     result.append(_observation("05", owner, "Observed database-derived intake owner and fencing health.",
                                HEALTH_URL, {key: primary.get(key) for key in
                                ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation")}, at, **binding))
-    clear = _all_fields(primary, {"ambiguous_effect_count": 0, "historical_parallel_plan_hold_count": 0,
-                                  "reconciliation_hold_reason": None})
-    result.append(_observation("07", clear, "Primary hold and ambiguous-effect counts are clear; worker readiness is scored separately in 19. This does not cover Slack posts.",
+    blocked = (any(type(primary.get(key)) is int and primary[key] > 0
+                   for key in ("ambiguous_effect_count", "historical_parallel_plan_hold_count"))
+               or isinstance(primary.get("reconciliation_hold_reason"), str)
+               and bool(primary["reconciliation_hold_reason"].strip()))
+    # Zero counters and a null hold reason are not consistency proof: release 879
+    # reported exactly these while preserved authoritative task/batch plan digests
+    # conflicted. Health can only report a blocker; clearance needs the missing
+    # generation-bound authoritative consistency collector.
+    result.append(_observation("07", False if blocked else None,
+                               "Health reports a historical hold, hold reason or ambiguous primary effect." if blocked else
+                               "Health hold counters cannot prove reconciliation. Missing collector: generation-bound authoritative consistency of durable projections, batches, assignments and unresolved effects. Worker readiness is scored in 19.",
                                HEALTH_URL, {key: primary.get(key) for key in
                                ("ambiguous_effect_count", "historical_parallel_plan_hold_count", "reconciliation_hold_reason")}, at, **binding))
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
@@ -202,7 +212,20 @@ def _port(container: dict[str, Any], port: int) -> bool:
                for row in container.get("NetworkSettings", {}).get("Ports", {}).get(f"{port}/tcp", []) or [])
 
 
-def _topology_observations(at: datetime, binding: dict[str, str]) -> list[Observation]:
+def _container_name(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value):
+        raise ValueError("expected gateway must be an exact Docker container name")
+    return value
+
+
+def _gateway_launch(container: dict[str, Any]) -> bool:
+    command = (container.get("Config", {}).get("Entrypoint") or []) + (container.get("Config", {}).get("Cmd") or [])
+    return ("director_orchestrator.slack_bot" in command
+            or any(str(arg).replace("\\", "/").endswith("/slack_bot.py") for arg in command))
+
+
+def _topology_observations(at: datetime, binding: dict[str, str], expected_gateway: str) -> list[Observation]:
+    """Inspect every running container; the gateway is the caller's exact name, never a guess."""
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("running container inventory unavailable or exceeds 128")
@@ -212,10 +235,20 @@ def _topology_observations(at: datetime, binding: dict[str, str]) -> list[Observ
         raise ValueError("container inventory changed during observation")
     by_name = {row.get("Name", "").lstrip("/"): row for row in containers}
     director = by_name["director-orchestrator-orchestrator-1"]
-    gateway = by_name["director-orchestrator-slackbot-explicit-alias"]
     n8n = by_name["director-orchestrator-n8n-1"]
     if director.get("Image") != binding["image_id"]:
         raise ValueError("Director image changed during topology collection")
+    gateway = by_name.get(expected_gateway)
+    if gateway is None or gateway.get("State", {}).get("Running") is not True or not _gateway_launch(gateway):
+        facts = {"expected_gateway": expected_gateway, "running": bool(gateway) and gateway.get("State", {}).get("Running") is True,
+                 "gateway_launch": bool(gateway) and _gateway_launch(gateway)}
+        return [_observation(key, None, "The expected gateway is not a running gateway container; no other container was substituted.",
+                             "Docker running inventory", facts, at, **binding) for key in ("01", "02")]
+    gateway_image = gateway.get("Image", "")
+    if not isinstance(gateway_image, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", gateway_image):
+        raise ValueError("expected gateway image identity unavailable")
+    gateway_identity = {"expected_gateway": expected_gateway, "gateway_container_id": gateway["Id"],
+                        "gateway_image_id": gateway_image}
     gateway_env = _environment(gateway)
     workflow = None
     upstream = {}
@@ -232,7 +265,7 @@ def _topology_observations(at: datetime, binding: dict[str, str]) -> list[Observ
     route_ok = (relay.scheme == "http" and relay.hostname in {"n8n", "director-orchestrator-n8n-1"}
                 and relay.port == 5678 and relay.path == "/webhook/director-intake"
                 and not relay.username and not relay.password and not relay.query and not relay.fragment)
-    facts = {"director_port_8080": _port(director, 8080), "n8n_port_5678": _port(n8n, 5678),
+    facts = {**gateway_identity, "director_port_8080": _port(director, 8080), "n8n_port_5678": _port(n8n, 5678),
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
              "n8n_upstream_environment": upstream.get("environment"),
              "active_intake": workflow,
@@ -260,7 +293,7 @@ def _topology_observations(at: datetime, binding: dict[str, str]) -> list[Observ
         if not token or hashlib.sha256(token.encode()).digest() != fingerprint:
             continue
         command = (row.get("Config", {}).get("Entrypoint") or []) + (row.get("Config", {}).get("Cmd") or [])
-        if "director_orchestrator.slack_bot" in command or any(str(arg).replace("\\", "/").endswith("/slack_bot.py") for arg in command):
+        if _gateway_launch(row):
             matches.append(row.get("Id"))
         elif "director_orchestrator.main:app" not in command:
             unknown += 1
@@ -273,8 +306,8 @@ def _topology_observations(at: datetime, binding: dict[str, str]) -> list[Observ
     if len(matches) == 1 and unknown == 0 and isinstance(host, dict):
         if type(host.get("unreadable")) is int and type(host.get("gateway_process_count")) is int and host["unreadable"] == 0 and host["gateway_process_count"] == 0:
             passed = True
-    inventory = {"running_containers_inspected": len(containers), "matching_docker_gateways": len(matches),
-                 "unclassified_same_app_containers": unknown, "host_inventory": host}
+    inventory = {**gateway_identity, "running_containers_inspected": len(containers),
+                 "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
     result.append(_observation("02", passed, "Compared app-token fingerprints in memory across all running containers and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
                                "Docker running inventory and Windows Win32_Process", inventory, at, **binding))
     return result
@@ -419,10 +452,15 @@ def _workload_observation(path: Path, at: datetime) -> Observation:
 
 
 def collect(candidate_sha: str, *, now: datetime | None = None, github: bool = False,
-            ledger_path: Path | None = None, topology: bool = True,
+            ledger_path: Path | None = None, gateway: str | None = None, topology: bool = True,
             security_scan_id: str | None = None) -> list[Observation]:
-    """One bounded local collection and, only when selected, one GitHub collection."""
+    """One bounded local collection and, only when selected, one GitHub collection.
+
+    Topology (01, 02) is inspected only for an explicitly named running gateway.
+    """
     _sha(candidate_sha)
+    if gateway is not None:
+        _container_name(gateway)
     at = now or datetime.now(timezone.utc)
     result: list[Observation] = []
     try:
@@ -432,13 +470,18 @@ def collect(candidate_sha: str, *, now: datetime | None = None, github: bool = F
         result.append(_observation("19", None, "Director identity/health could not be verified; no retry was made.",
                                    HEALTH_URL, {}, at))
     runtime = next((item for item in result if item.runtime_sha and item.image_id), None)
-    if topology and runtime:
+    if runtime and topology:
         binding = {"runtime_sha": runtime.runtime_sha, "image_id": runtime.image_id}
+        reason = "No expected gateway identity was supplied (--gateway); topology was not inspected."
         try:
-            result.extend(_topology_observations(at, binding))
+            if gateway is not None:
+                result.extend(_topology_observations(at, binding, gateway))
+                reason = ""
         except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.SubprocessError):
-            result.extend(_observation(key, None, "Deployment topology could not be verified; no retry was made.",
-                                       "Docker / Windows process inventory", {}, at, **binding) for key in ("01", "02"))
+            reason = "Deployment topology could not be verified; no retry was made."
+        if reason:
+            result.extend(_observation(key, None, reason, "Docker / Windows process inventory", {}, at, **binding)
+                          for key in ("01", "02"))
     if github:
         try:
             result.append(_ci_observation(candidate_sha, at))
@@ -569,7 +612,7 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "limitations": ["This report cannot activate, authorize spending or replace existing policy gates.",
                             "Local collectors trust the named host and service; hashes prove bytes, not authorship.",
                             "Saved JSON/Markdown receipts are references only; they never earn points.",
-                            "Collectors currently cover checks 01, 02, 05, 07, 13, 16, 18 and 19, plus negative evidence for 12; other checks require source-verifier integration.",
+                            "Collectors currently cover checks 01, 02, 05, 13, 16, 18 and 19, plus negative evidence for 07 and 12; other checks, including authoritative reconciliation consistency for 07, require source-verifier integration.",
                             "Runtime and candidate versions are separate. A candidate review never transfers to another image."],
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
@@ -598,3 +641,5 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines += ["", "## Limits", "", *("- " + item for item in report["limitations"]), ""]
     return "\n".join(lines)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
