@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:28 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -85,7 +88,7 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | --- | --- |
 | Team | supplemental |
 | Lane class | subordinate_specialist |
-| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
+| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
 | Charter workload lane | `bounded_subordinate_specialist` |
 | Strategy key | `gemini` |
 | Strategy priority | `subordinate_boilerplate_and_alternate_ideation` |
@@ -127,7 +130,7 @@ Elevated work:
 Non-substitution rules:
 
 - Antigravity is never a primary-team substitute.
-- Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+- Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it.
 
 ## Capabilities
 
@@ -226,10 +229,10 @@ Strengths:
 | Field | Value |
 | --- | --- |
 | Universal prohibited actions | `MERGE_PULL_REQUEST`, `DEPLOY`, `PUBLISH`, `DELETE_PROTECTED_REF` |
-| Denied authorities | `acceptance_verdict`, `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge`, `permission_or_credential_change`, `repository_access`, `repository_write`, `review_verdict` |
+| Denied authorities | `acceptance_verdict`, `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge.non_protected`, `merge.protected`, `permission_or_credential_change`, `repository_access`, `repository_write`, `review_verdict` |
 | Withheld context | `acceptance_criteria`, `assignment_task_text`, `dependency_outcomes`, `owner_objective`, `owner_or_slack_identifiers`, `primary_team_handoff_context`, `private_project_data`, `repository_paths_diffs_or_source`, `reviewer_revision_text`, `run_session_or_task_identifiers` |
-| Charter prohibited | `exact-SHA review`, `final acceptance`, `deterministic merge`, `defining research-contract or methodology truth` |
-| Review requirement | Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
+| Charter prohibited | `defining research-contract or methodology truth`, `merging into a protected branch` |
+| Review requirement | Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
 | Production authority permitted | yes |
 | External effects that may be granted | - |
 | Public research lane rejects all effects | no |
@@ -242,7 +245,7 @@ Strengths:
 Strategy constraints:
 
 - supplemental only; never a primary-team substitute
-- work assignments must feed a later Claude, Cursor, or Grok integration assignment
+- work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment
 - cannot issue review, acceptance, or merge verdicts
 - cannot define contract or methodology truth
 - cannot initiate, self-route, widen, or autonomously continue a conversation
@@ -350,5 +353,9 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:28 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]] -->

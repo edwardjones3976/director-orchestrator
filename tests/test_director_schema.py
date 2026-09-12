@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | BEGIN]]
@@ -1252,7 +1256,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
             if line.strip().startswith('- "')
         )
         self.assertEqual(mirrored, DENIED_AUTHORITIES)
-        self.assertEqual(len(mirrored), 11)
+        self.assertEqual(len(mirrored), 12)
 
         tail = contract.split("withheld_context:", 1)[1].split("\n    debate:", 1)[0]
         withheld = tuple(
@@ -1268,17 +1272,15 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn('artifact_status: "non_authoritative_evidence"', contract)
         self.assertIn("mandatory_downstream_verification:", contract)
         self.assertIn("required: true", contract)
-        self.assertIn('assignee: "claude_cursor_or_grok"', contract)
+        self.assertIn('assignee: "openai_claude_cursor_or_grok"', contract)
         self.assertIn(
-            "must feed a later Claude, Cursor, or Grok assignment that independently "
+            "must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently "
             "verifies and integrates or rejects it",
             contract,
         )
         for denied in (
-            "exact-SHA review",
-            "final acceptance",
-            "deterministic merge",
             "defining research-contract or methodology truth",
+            "merging into a protected branch",
         ):
             with self.subTest(denied=denied):
                 self.assertIn(f'- "{denied}"', contract)
@@ -1604,5 +1606,10 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:59 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]]

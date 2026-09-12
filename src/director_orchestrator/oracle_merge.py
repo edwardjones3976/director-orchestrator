@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
@@ -23,11 +27,13 @@ from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Iterator, Literal, Protocol
+from urllib.parse import quote
 
 import httpx
 import jwt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .allocation_profiles import canonical_allocation_lane
 from .config import Settings
 from .models import Assignment, ClaudeCallback, ProviderName, ProviderRun, TaskRecord
 from .interactions import (
@@ -65,6 +71,12 @@ from .state_witness import (
     snapshot_not_merged,
 )
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
+
+
+def _is_shared_trunk_ref(ref: str) -> bool:
+    """True for the default trunk names this project treats as protected."""
+
+    return ref.strip().lower().removeprefix("refs/heads/") in {"main", "master"}
 
 
 class OracleReviewVerdict(StrEnum):
@@ -415,6 +427,7 @@ class OraclePullRequestSnapshot(BaseModel):
     draft: bool
     mergeable: bool | None
     merged: bool = False
+    base_protected: bool | None = Field(default=None, strict=True)
     base_ref: str
     base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     head_ref: str
@@ -480,6 +493,13 @@ class OracleMergePolicy:
         "pull request is conflicting or mergeability is unresolved"
     )
     DRAFT_NOT_MERGEABLE_REASON = "draft pull requests cannot be merged automatically"
+    UNCONFIGURED_BASE_REF_REASON = (
+        "ORACLE_AUTOMERGE_BASE_REF is not configured"
+    )
+    PROTECTED_BASE_REF_REASON = (
+        "tier 0 forbids merging into a protected branch: ORACLE_AUTOMERGE_BASE_REF "
+        "must name this project's own base ref, not a shared trunk"
+    )
     _SERIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         (
             "funded wagering or sportsbook operation",
@@ -539,7 +559,14 @@ class OracleMergePolicy:
         self.required_checks = settings.oracle_automerge_required_checks
         self.required_check_app = settings.oracle_automerge_required_check_app
         self.review_secret = settings.oracle_automerge_review_secret
-        self.provider_actor_map = settings.oracle_provider_actor_map()
+        # Actor bindings are keyed by canonical allocation lane so an alias such
+        # as `gemini` and its lane name resolve to the same trusted actor set
+        # instead of silently missing each other on either side of a comparison.
+        actor_map: dict[str, frozenset[str]] = {}
+        for lane, actors in settings.oracle_provider_actor_map().items():
+            canonical = canonical_allocation_lane(lane)
+            actor_map[canonical] = actor_map.get(canonical, frozenset()) | actors
+        self.provider_actor_map = actor_map
 
     @staticmethod
     def _added_patch_text(snapshot: OraclePullRequestSnapshot) -> str:
@@ -566,20 +593,29 @@ class OracleMergePolicy:
             errors.append("Oracle automatic merge kill switch is active")
         if not self.required_checks:
             errors.append("required exact-head checks are not configured")
+        if snapshot.base_protected is not False:
+            errors.append("base branch protection is protected or unverified")
+        if not self.base_ref:
+            errors.append(self.UNCONFIGURED_BASE_REF_REASON)
+        elif _is_shared_trunk_ref(self.base_ref):
+            errors.append(self.PROTECTED_BASE_REF_REASON)
         if artifact.verdict == OracleReviewVerdict.SERIOUS_SAFETY_STOP:
             serious.append("reviewer returned SERIOUS_SAFETY_STOP")
         elif artifact.verdict != OracleReviewVerdict.ACCEPT:
             errors.append("reviewer did not accept the reviewed commit")
-        if artifact.reviewer_provider.lower() not in {"claude", "cursor", "grok"}:
-            errors.append("the exact-SHA reviewer must be Claude, Cursor, or Grok")
-        if artifact.reviewer_provider.lower() == artifact.implementation_provider.lower():
+        # Both sides of every provider-identity comparison below are folded to
+        # the canonical allocation lane, so an alias can neither slip past the
+        # reviewer allowlist nor split a lane in two and defeat self-review.
+        reviewer_lane = canonical_allocation_lane(artifact.reviewer_provider.strip().lower())
+        implementation_lane = canonical_allocation_lane(
+            artifact.implementation_provider.strip().lower()
+        )
+        if reviewer_lane not in {"openai", "claude", "cursor", "grok", "antigravity"}:
+            errors.append("the exact-SHA reviewer must be OpenAI, Claude, Cursor, Grok, or Antigravity")
+        if reviewer_lane == implementation_lane:
             errors.append("the implementation author cannot accept its own work")
-        producer_actors = self.provider_actor_map.get(
-            artifact.implementation_provider.lower(), frozenset()
-        )
-        reviewer_actors = self.provider_actor_map.get(
-            artifact.reviewer_provider.lower(), frozenset()
-        )
+        producer_actors = self.provider_actor_map.get(implementation_lane, frozenset())
+        reviewer_actors = self.provider_actor_map.get(reviewer_lane, frozenset())
         implementation_actor = artifact.implementation_actor.lower()
         if not producer_actors:
             errors.append("implementation provider has no trusted GitHub actor binding")
@@ -2685,6 +2721,29 @@ class GitHubOracleGateway:
                 "compare file evidence is incomplete or disagrees with structured hunk evidence"
             ) from exc
 
+    def _base_protected(self, repository: str, ref: str, expected_sha: str) -> bool:
+        """Bind observed protection and active rules to the exact base branch.
+
+        Missing/private/unsupported API responses are unknown, never unprotected.
+        The rules endpoint includes active repository and organization rulesets.
+        """
+        encoded = quote(ref, safe="")
+        branch = self._request("GET", f"/repos/{repository}/branches/{encoded}").json()
+        if (not isinstance(branch, dict) or branch.get("name") != ref
+                or not isinstance(branch.get("commit"), dict)
+                or branch["commit"].get("sha") != expected_sha
+                or type(branch.get("protected")) is not bool):
+            raise OracleDiffError("base branch protection evidence is malformed or stale")
+        if branch["protected"]:
+            return True
+        rules = self._request("GET", f"/repos/{repository}/rules/branches/{encoded}",
+                              params={"per_page": 100}).json()
+        if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+            raise OracleDiffError("base branch rules evidence is malformed")
+        # Any active rule is sufficient to refuse; no pagination is needed to
+        # establish emptiness or the presence of at least one rule.
+        return bool(rules)
+
     def snapshot(self, repository: str, pull_number: int) -> OraclePullRequestSnapshot:
         repository = canonical_repository(repository)
         # A repository that does not canonicalize to owner/name is durable too: it
@@ -2739,6 +2798,7 @@ class GitHubOracleGateway:
             json={"query": query, "variables": {"owner": owner, "name": name, "number": pull_number}},
         )
         threads = self._review_thread_evidence(graph_response)
+        base_protected = self._base_protected(repository, pull["base"]["ref"], pull["base"]["sha"])
 
         # Assembling the snapshot is the last place untrusted GitHub fields are
         # read, so it carries the same terminal-evidence boundary: a missing or
@@ -2778,6 +2838,7 @@ class GitHubOracleGateway:
                 ),
                 changed_files=changed_files,
                 checks=checks,
+                base_protected=base_protected,
                 blocking_review_threads=threads.blocking,
                 review_threads_complete=not threads.has_next_page,
                 review_decision=threads.review_decision,
@@ -2801,6 +2862,8 @@ class GitHubOracleGateway:
         pull = self._request("GET", f"/repos/{repository}/pulls/{pull_number}").json()
         if pull["head"]["sha"] != expected_sha or pull["base"]["sha"] != expected_base_sha:
             raise RuntimeError("GitHub pull request changed during final merge validation")
+        if self._base_protected(repository, pull["base"]["ref"], expected_base_sha):
+            raise RuntimeError("protected base branch cannot be merged automatically")
         actor = (
             self._token_provider.actor
             if self._token_provider is not None
@@ -2858,3 +2921,7 @@ class GitHubOracleGateway:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

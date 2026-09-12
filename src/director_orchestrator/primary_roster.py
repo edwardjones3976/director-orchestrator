@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -30,7 +32,7 @@ from .allocation_profiles import ALLOCATION_PROFILES, allocation_targets, DEFAUL
 PRIMARY_TEAM = frozenset({"openai", "claude", "cursor", "grok"})
 IMPLEMENTERS = ("openai", "claude", "cursor", "grok", "antigravity", "github-copilot")
 RESEARCH_LANES = ("perplexity", "firecrawl")
-REVIEWERS = frozenset({"openai", "claude", "cursor", "grok"})
+REVIEWERS = PRIMARY_TEAM
 KNOWN_LANES = PRIMARY_TEAM | {"antigravity", "perplexity", "firecrawl", "github-copilot"}
 
 class PrimaryRosterHold(ValueError):
@@ -132,8 +134,8 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
         return sorted(candidates, key=rank)
     for producer in eligible_for(projected):
         reviewers = [lane for lane in eligible_for((*projected[-19:], producer), exclude=producer)
-                     if (lane in REVIEWERS or (team_mode and lane=="antigravity"))
-                     and (team_mode or producer != "antigravity" or lane in {"claude", "cursor", "grok"})]
+                     if (lane in REVIEWERS or (team_mode and lane == "antigravity"))
+                     and (team_mode or producer != "antigravity" or lane in PRIMARY_TEAM)]
         if reviewers:
             return PrimaryRoster(producer, reviewers[0], research)
     raise PrimaryRosterHold("primary_independent_review_allocation_unavailable")
@@ -148,3 +150,5 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

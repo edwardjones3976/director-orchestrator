@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]]
@@ -185,15 +188,13 @@ providers:
       - "the bounded sandbox execution those need"
     artifact_status: "non_authoritative_evidence"
     cannot_perform:
-      - "exact-SHA review"
-      - "final acceptance"
-      - "deterministic merge"
       - "defining research-contract or methodology truth"
+      - "merging into a protected branch"
     # Sandbox output is never complete on its own.
     mandatory_downstream_verification:
       required: true
-      assignee: "claude_cursor_or_grok"
-      rule: "Every Antigravity work assignment must feed a later Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+      assignee: "openai_claude_cursor_or_grok"
+      rule: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
       planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:
@@ -210,6 +211,8 @@ providers:
     # src/director_orchestrator/antigravity.py. Every request denies all of
     # these regardless of its capability. A drift test asserts equality with the
     # runtime constant, so a broad paraphrase cannot replace the typed boundary.
+    # Closed fixture payloads retain no review, acceptance, or merge authority.
+    # Qualified team reviews use the separately authenticated Oracle gateway.
     denied_authorities:
       - "acceptance_verdict"
       - "billing_or_spend"
@@ -217,7 +220,8 @@ providers:
       - "contract_or_methodology_definition"
       - "deployment_or_publication"
       - "external_write"
-      - "merge"
+      - "merge.non_protected"
+      - "merge.protected"
       - "permission_or_credential_change"
       - "repository_access"
       - "repository_write"
@@ -377,3 +381,6 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]

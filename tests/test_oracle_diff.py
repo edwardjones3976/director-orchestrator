@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]]
 from __future__ import annotations
 
 import json
@@ -808,7 +810,7 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
             "mergeable": True,
             "merged": False,
             "changed_files": 1,
-            "base": {"ref": "main", "sha": BASE_SHA},
+            "base": {"ref": "edge-oracle/base", "sha": BASE_SHA},
             "head": {
                 "ref": "oracle/test",
                 "sha": HEAD_SHA,
@@ -834,6 +836,11 @@ class GitHubCompleteDiffGatewayTests(unittest.TestCase):
         self.requests.append(request)
         path = request.url.path
         accept = request.headers.get("accept", "")
+        if "/rules/branches/" in path:
+            return httpx.Response(200, json=[])
+        if "/branches/" in path:
+            return httpx.Response(200, json={"name": self.pull["base"]["ref"],
+                "commit": {"sha": self.pull["base"]["sha"]}, "protected": False})
         if request.method == "GET" and path.endswith("/pulls/23") and "diff" in accept:
             return httpx.Response(200, text=self.wrong_head_diff)
         if request.method == "GET" and path.endswith("/pulls/23"):
@@ -1886,7 +1893,7 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -1905,7 +1912,7 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
             "project": "edge-oracle",
             "repository": "edwardjones3976/edge_engine",
             "pull_number": 101,
-            "base_ref": "main",
+            "base_ref": "edge-oracle/base",
             "base_sha": BASE_SHA,
             "head_ref": "oracle/revival-phase-1",
             "head_sha": HEAD_SHA,
@@ -1937,7 +1944,8 @@ class PolicyCompleteDiffScanTests(unittest.TestCase):
             "draft": False,
             "mergeable": True,
             "merged": False,
-            "base_ref": "main",
+            "base_ref": "edge-oracle/base",
+            "base_protected": False,
             "base_sha": BASE_SHA,
             "head_ref": "oracle/revival-phase-1",
             "head_sha": HEAD_SHA,
@@ -2117,7 +2125,7 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -2135,7 +2143,7 @@ class DeterministicEvidenceFailureTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 101,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/revival-phase-1",
                 "head_sha": HEAD_SHA,
@@ -2327,7 +2335,7 @@ class CompareRateLimitServiceTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -2347,7 +2355,7 @@ class CompareRateLimitServiceTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -2680,7 +2688,7 @@ class GraphQLReviewThreadRateLimitTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -2700,7 +2708,7 @@ class GraphQLReviewThreadRateLimitTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -2880,7 +2888,7 @@ class WriteMutationRateLimitTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("test",),
@@ -2900,7 +2908,7 @@ class WriteMutationRateLimitTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -3024,7 +3032,7 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -3042,7 +3050,7 @@ class OracleMergeStoreSchemaTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -3278,7 +3286,7 @@ class MalformedEvidenceProcessTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -3298,7 +3306,7 @@ class MalformedEvidenceProcessTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -3444,7 +3452,7 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -3464,7 +3472,7 @@ class MalformedRetryDeadlineTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -4342,7 +4350,7 @@ class MalformedEvidenceTerminalDeliveryTests(unittest.TestCase):
             oracle_automerge_kill_switch=False,
             oracle_automerge_project="edge-oracle",
             oracle_automerge_repository="edwardjones3976/edge_engine",
-            oracle_automerge_base_ref="main",
+            oracle_automerge_base_ref="edge-oracle/base",
             oracle_automerge_branch_prefix="oracle/",
             oracle_automerge_allowed_paths=("oracle/**", "docs/oracle/**", "tests/oracle/**"),
             oracle_automerge_required_checks=("ci", "security"),
@@ -4362,7 +4370,7 @@ class MalformedEvidenceTerminalDeliveryTests(unittest.TestCase):
                 "project": "edge-oracle",
                 "repository": "edwardjones3976/edge_engine",
                 "pull_number": 23,
-                "base_ref": "main",
+                "base_ref": "edge-oracle/base",
                 "base_sha": BASE_SHA,
                 "head_ref": "oracle/test",
                 "head_sha": HEAD_SHA,
@@ -4702,3 +4710,5 @@ class MalformedEvidenceTerminalDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
