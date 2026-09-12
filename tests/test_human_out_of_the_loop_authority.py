@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]]
@@ -134,7 +135,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "required CI check is green",
             "Independent security evidence",
             "neither the producer nor a material author",
-            "three distinct\n   identities",
+            "two distinct identities",
             "`owned_paths`",
             "`prohibited_paths`",
             "durably written before",
@@ -205,7 +206,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "grants nothing",
             "never changes whether a gate runs",
             "never delegable under any configuration",
-            "three distinct identities",
+            "distinct identities",
             "Absence of evidence is never consent",
         ):
             self.assertIn(required, section)
@@ -237,7 +238,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("merge your own pull request", rule_three)
         self.assertIn("per acting identity", rule_three)
         self.assertIn("that bar never lifts", rule_three)
-        self.assertIn("three distinct identities", rule_three)
+        self.assertIn("two distinct identities", rule_three)
         self.assertIn("an author cannot become eligible by being delegated to", rule_three)
 
     def test_identity_terms_follow_the_landed_authorship_boundary(self) -> None:
@@ -285,7 +286,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         )
         self.assertIn("it never removes a\ngate named above", self.charter)
         handoff = self.charter.split("\n## Review-to-merge handoff", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("three\ndistinct identities", handoff)
+        self.assertIn("two distinct identities", handoff)
         self.assertIn("does not alter what a review must contain", handoff)
 
 
@@ -388,12 +389,12 @@ class ApproverCarriesTheMergeTests(unittest.TestCase):
             self.assertIn("one exact-SHA `ACCEPT`", operative, name)
             self.assertIn("every other item of the evidence bar", operative, name)
 
-    def test_the_reviewer_and_the_executing_agent_are_required_to_differ(self):
+    def test_the_reviewer_that_accepts_is_the_one_that_merges(self):
         for name in self.FILES:
             operative = self._operative(name)
-            self.assertIn("does not execute", operative, name)
-            self.assertIn("a different non-author identity executes", operative, name)
-            self.assertIn("three distinct identities", operative, name)
+            self.assertIn("performs", operative, name)
+            self.assertIn("accepts and merges the PR", operative, name)
+            self.assertIn("returns it to the author with notes", operative, name)
 
     def test_the_attended_default_names_the_blocker_instead_of_merging(self):
         for name in self.FILES:
@@ -441,3 +442,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
