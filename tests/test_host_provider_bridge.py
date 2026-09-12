@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -146,6 +147,40 @@ class HostProviderBridgeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_writer_digest_requires_lowercase_sha256_at_both_boundaries(self) -> None:
+        endpoint = "http://127.0.0.1:18765/v1/provider/dispatch"
+        for digest in (
+            "sha256:" + "z" * 64,
+            "sha256:" + "A" * 64,
+            "sha256:" + "a" * 63,
+            "sha256:" + "a" * 65,
+            "sha256:" + "a" * 63 + "\n",
+            "SHA256:" + "a" * 64,
+        ):
+            with self.subTest(digest=digest):
+                candidate = replace(request(), writer_owner_token_digest=digest)
+                # Sign the malformed value so rejection proves shape validation,
+                # not merely a mismatched authentication signature.
+                bindings = {name: getattr(candidate, name) for name in (
+                    "timestamp", "nonce", "provider", "task_id", "assignment_id",
+                    "idempotency_digest", "writer_generation", "packet_digest",
+                    "writer_owner_token_digest",
+                )}
+                candidate = replace(candidate, signature=bridge_signature(SECRET, **bindings))
+                executor = _Executor()
+                with self.assertRaisesRegex(HostProviderBridgeError, "writer owner token digest"):
+                    dispatch_bridge_request(candidate, secret=SECRET, store=self.store,
+                                            executor=executor, now=1_000)
+                self.assertEqual(executor.calls, 0)
+                with self.assertRaisesRegex(ValueError, "writer owner token digest"):
+                    HostBridgePacketTransport("claude", endpoint, SECRET,
+                                              writer_owner_token_digest=digest)
+        valid = request()
+        valid.validate(SECRET, now=1_000)
+        transport = HostBridgePacketTransport("claude", endpoint, SECRET,
+                                              writer_owner_token_digest=valid.writer_owner_token_digest)
+        self.assertEqual(transport.writer_owner_token_digest, valid.writer_owner_token_digest)
 
     def test_success_is_replayed_without_another_provider_attempt(self) -> None:
         executor = _Executor()
@@ -646,3 +681,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
