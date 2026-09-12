@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -136,6 +137,7 @@ from .host_provider_bridge import (
 )
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
 from .primary_parallel import (
+    CancelledPlanBindingHold,
     ParallelAggregate,
     ParallelAssignment,
     ParallelAssignmentStatus,
@@ -2792,13 +2794,24 @@ class DefaultPrimaryActivation:
         # Readiness describes this bounded pass, never a sticky historical win.
         self._reconciliation_worker_ready = False
         self._historical_parallel_hold_count = 0
+        self._cancelled_plan_binding_hold_count = 0
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
             if payload.get("terminal_classification") == "CANCELLED":
                 # Reconcile ledger-only cancellation residue, never reconstruct
                 # or drive a terminal task's historical graph/provider plan.
-                self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                try:
+                    self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                except CancelledPlanBindingHold:
+                    # The ledger committed a specific refusal; keep readiness
+                    # false while allowing diagnostics and unrelated tasks up.
+                    self._cancelled_plan_binding_hold_count += 1
+                    # Health is not a dispatch guard. Tolerate this refusal only
+                    # in explicitly paid-off, non-live diagnostic operation.
+                    if (self.settings.allow_paid_runs
+                            or self.settings.langgraph_primary_live_provider_dispatch_enabled):
+                        raise
                 continue
             if payload.get("terminal_classification") is not None:
                 continue
@@ -2826,7 +2839,9 @@ class DefaultPrimaryActivation:
                 recovered.append(self.application.recover(projection.task_id))
             except HistoricalParallelPlanHold:
                 self._historical_parallel_hold_count += 1
-        self._reconciliation_worker_ready = self._historical_parallel_hold_count == 0
+        self._reconciliation_worker_ready = (
+            self._historical_parallel_hold_count == 0 and self._cancelled_plan_binding_hold_count == 0
+        )
         return len(recovered)
 
     def health(self) -> dict[str, Any]:
@@ -2867,7 +2882,10 @@ class DefaultPrimaryActivation:
         observed["historical_parallel_plan_hold_count"] = getattr(
             self, "_historical_parallel_hold_count", 0
         )
+        observed["cancelled_plan_binding_hold_count"] = getattr(self, "_cancelled_plan_binding_hold_count", 0)
         observed["reconciliation_hold_reason"] = (
+            "cancelled_parallel_plan_requires_owner_reconciliation"
+            if observed["cancelled_plan_binding_hold_count"] else
             "historical_parallel_plan_requires_reconciliation"
             if observed["historical_parallel_plan_hold_count"] else None
         )
@@ -2965,3 +2983,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]

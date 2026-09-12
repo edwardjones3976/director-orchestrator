@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
@@ -53,6 +54,10 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 class ParallelDispatchError(RuntimeError):
     """The plan or durable dispatch state failed closed."""
+
+
+class CancelledPlanBindingHold(ParallelDispatchError):
+    """A durably recorded task-scoped refusal; neither plan was rewritten."""
 
 
 class ProviderTransientDispatchError(RuntimeError):
@@ -599,6 +604,14 @@ class PostgresParallelDispatch:
                 WHERE task_id=%s AND status='PENDING') AS pending""", (task_id,)).fetchone()["pending"]
 
     def reconcile_cancelled_pending(self, *, task_id: str, writer: TaskWriterLease) -> int:
+        outcome = self._reconcile_cancelled_pending(task_id=task_id, writer=writer)
+        if isinstance(outcome, CancelledPlanBindingHold):
+            # Raise after the refusal's audit transaction commits. Raising inside
+            # that transaction would discard the only durable refusal evidence.
+            raise outcome
+        return outcome
+
+    def _reconcile_cancelled_pending(self, *, task_id: str, writer: TaskWriterLease) -> int | CancelledPlanBindingHold:
         """Close only demonstrably unstarted rows of a durably cancelled task.
 
         This does not cancel a task or grant command authority. The task's
@@ -627,7 +640,22 @@ class PostgresParallelDispatch:
                     or not held["kill_switch"]):
                 return 0
             if projection.get("parallel_plan_digest") != held["plan_digest"]:
-                raise ParallelDispatchError("cancelled task parallel plan binding changed")
+                if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
+                    WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
+                    AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
+                    (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
+                    raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
+                evidence = _digest({"task_id": task_id, "projection_digest": held["projection_digest"],
+                    "projection_plan_digest": projection.get("parallel_plan_digest"),
+                    "batch_plan_digest": held["plan_digest"],
+                    "reason_code": "cancelled_parallel_plan_requires_owner_reconciliation"})
+                connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
+                    (task_id, owner_token, fencing_generation, event_code, payload_digest)
+                    SELECT %s,%s,%s,'cancelled_plan_binding_hold',%s
+                    WHERE NOT EXISTS (SELECT 1 FROM {schema}.director_primary_audit_event
+                        WHERE task_id=%s AND event_code='cancelled_plan_binding_hold' AND payload_digest=%s)""",
+                    (task_id, writer.owner_token, writer.fencing_generation, evidence, task_id, evidence))
+                return CancelledPlanBindingHold("cancelled task parallel plan binding changed; owner reconciliation required")
             # CLAIMED and graph budget_used_units are planning bookkeeping.
             # The real reservation/attempt/spend records below decide whether
             # execution began; neither graph field is reset by this repair.
@@ -1604,3 +1632,4 @@ class PostgresParallelDispatch:
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]

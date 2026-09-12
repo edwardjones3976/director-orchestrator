@@ -1,16 +1,21 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 """Cancellation residue repairs use the sanctioned PostgreSQL test lane only."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import replace, fields
+from contextlib import ExitStack
+import asyncio
+import json
 import threading
 import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from director_orchestrator.primary_default import DefaultPrimaryActivation
+from director_orchestrator.primary_default import DefaultPrimaryActivation, _digest
+from director_orchestrator.config import Settings
 from director_orchestrator.primary_parallel import ParallelAssignment, ParallelDispatchError, ParallelDispatchPolicy
 from tests import test_primary_cancellation as cancellation_fixtures
 from tests import test_primary_coordinator as coordinator_fixtures
@@ -62,6 +67,126 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
     def repair(self):
         return self.parallel.reconcile_cancelled_pending(task_id=self.task,
             writer=self.coordinator.get_task_writer(self.task))
+
+    def copied_state_shape(self):
+        """Sanitize the verified 2026-09-12 copied-state relationship, not its content.
+
+        Two tasks/four PENDING unreserved rows: one CANCELLED+killed with unequal
+        projection/batch bindings, one owner-PAUSED with equal bindings. The
+        historical cause of the unequal digests is not present in the summary.
+        """
+        self.historical()
+        cancelled=self.task
+        with self.pool.connection() as c,c.transaction():
+            row=c.execute(f"SELECT projection FROM {self.schema}.director_primary_task_projection WHERE task_id=%s",(cancelled,)).fetchone()
+            payload=row['projection']
+            payload['parallel_plan_digest']=coordinator_fixtures.digest('sanitized-surviving-projection-plan')
+            c.execute(f"UPDATE {self.schema}.director_primary_task_projection SET projection=%s::jsonb,projection_digest=%s,projection_version=projection_version+1 WHERE task_id=%s",
+                (json.dumps(payload),_digest(payload),cancelled))
+        self.another_task()
+        paused=self.task
+        self.task=cancelled
+        self.fixture.task=cancelled
+        return paused
+
+    def activation(self):
+        activation=object.__new__(DefaultPrimaryActivation)
+        activation.coordinator=self.coordinator
+        activation.services=SimpleNamespace(available_provider_lanes=())
+        activation.application=SimpleNamespace(recover=self.coordinator.recover)
+        settings=Settings()
+        cleared={field.name:'' for field in fields(settings)
+            if isinstance(getattr(settings,field.name),str) and any(word in field.name for word in ('api_key','token','secret','password'))}
+        activation.settings=replace(settings,**cleared,allow_paid_runs=False,
+            langgraph_primary_live_provider_dispatch_enabled=False,langgraph_primary_new_intake_enabled=False)
+        activation.provider_activation=None
+        activation._live_dependencies_ready=False
+        activation.handle=None  # Fixture owns its isolated database lifecycle.
+        return activation
+
+    def hold_audits(self):
+        with self.pool.connection() as c:
+            return c.execute(f"SELECT * FROM {self.schema}.director_primary_audit_event WHERE task_id=%s AND event_code='cancelled_plan_binding_hold'",(self.task,)).fetchall()
+
+    def test_observed_copied_state_mismatch_is_durable_not_successful_cleanup(self):
+        paused=self.copied_state_shape()
+        cancelled_before=self.coordinator.get_projection(self.task).projection
+        paused_before=self.coordinator.get_projection(paused).projection
+        rows,receipts=self.rows(),self.receipts()
+        activation=self.activation()
+        activation.reconcile_once()
+        self.assertFalse(activation._reconciliation_worker_ready)
+        health=activation.health()
+        self.assertEqual(1,health['cancelled_plan_binding_hold_count'])
+        self.assertEqual('cancelled_parallel_plan_requires_owner_reconciliation',health['reconciliation_hold_reason'])
+        self.assertFalse(health['primary_runtime_active'])
+        self.assertFalse(health['paid_off_primary_intake_active'])
+        self.assertEqual(cancelled_before,self.coordinator.get_projection(self.task).projection)
+        self.assertEqual(paused_before,self.coordinator.get_projection(paused).projection)
+        self.assertEqual('PAUSED',self.coordinator.get_projection(paused).projection['run_status'])
+        self.assertEqual(rows,self.rows())
+        self.assertEqual(receipts,self.receipts())
+        audit=self.hold_audits()
+        self.assertEqual(1,len(audit))
+        activation.reconcile_once()
+        self.assertEqual(audit,self.hold_audits())
+        self.assertFalse(activation._reconciliation_worker_ready)
+        self.fixture.provider.assert_not_called()
+        self.fixture.effect.assert_not_called()
+
+    def test_binding_hold_does_not_allow_live_or_paid_startup(self):
+        self.copied_state_shape()
+        for field in ('allow_paid_runs','langgraph_primary_live_provider_dispatch_enabled'):
+            activation=self.activation()
+            activation.settings=replace(activation.settings,**{field:True})
+            with self.subTest(field=field),self.assertRaisesRegex(ParallelDispatchError,'owner reconciliation required'):
+                activation.reconcile_once()
+            self.assertFalse(activation._reconciliation_worker_ready)
+        self.assertEqual(1,len(self.hold_audits()))
+        self.assertEqual({'PENDING'},{row['status'] for row in self.rows()})
+        self.fixture.provider.assert_not_called()
+        self.fixture.effect.assert_not_called()
+
+    def test_unexpected_reconciliation_errors_still_abort(self):
+        self.historical()
+        activation=self.activation()
+        with patch.object(self.coordinator,'reconcile_cancelled_pending',side_effect=ParallelDispatchError('unexpected fence/storage refusal')):
+            with self.assertRaisesRegex(ParallelDispatchError,'unexpected fence/storage refusal'):
+                activation.reconcile_once()
+        self.assertFalse(activation._reconciliation_worker_ready)
+
+    def test_whole_fastapi_lifespan_serves_diagnostics_with_copied_shape_hold(self):
+        from fastapi.testclient import TestClient
+        import httpx
+        self.copied_state_shape()
+        activation=self.activation()
+        main=self.fixture.main
+        async def parked():
+            await asyncio.Future()
+        # Real app and lifespan, preinitialized isolated PostgreSQL coordinator.
+        # Non-graph external/background services are inert; no host listener,
+        # provider credentials, copied private records or external HTTP is used.
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(main,'primary_default_activation',activation))
+            stack.enter_context(patch.object(main,'settings',activation.settings))
+            stack.enter_context(patch.object(main,'store',SimpleNamespace(
+                claim_privacy_cleanup_resumes=lambda:(),list_recoverable=lambda:())))
+            stack.enter_context(patch.object(main.chatgpt_bridge.store,'sweep_expired_answers',return_value=None))
+            stack.enter_context(patch.object(main.usage_monitor,'run_forever',side_effect=parked))
+            stack.enter_context(patch.object(main.runtime_activation,'close',return_value=None))
+            for name in ('_privacy_cleanup_recovery_loop','_recoverable_task_loop','_chatgpt_bridge_expiry_loop',
+                    '_primary_intake_lease_loop','_primary_reconciliation_loop','_primary_slack_delivery_loop'):
+                stack.enter_context(patch.object(main,name,side_effect=parked))
+            stack.enter_context(patch.object(httpx.HTTPTransport,'handle_request',side_effect=AssertionError('external HTTP forbidden')))
+            stack.enter_context(patch.object(httpx.AsyncHTTPTransport,'handle_async_request',side_effect=AssertionError('external HTTP forbidden')))
+            started=time.monotonic()
+            with TestClient(main.app) as client:
+                self.assertEqual(200,client.get('/openapi.json').status_code)
+                self.assertFalse(activation.health()['reconciliation_worker_ready'])
+                self.assertEqual(1,len(self.hold_audits()))
+            self.assertLess(time.monotonic()-started,10)
+        self.fixture.provider.assert_not_called()
+        self.fixture.effect.assert_not_called()
 
     def another_task(self, *, claimed=False, dependent=False):
         self.task += '-other'
@@ -333,3 +458,4 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
