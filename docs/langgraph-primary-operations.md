@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | BEGIN]] -->
@@ -23,20 +25,16 @@
 <!-- [[Cursor Agent | Composer | 2026-08-31 | 09:50 UTC | BEGIN]] -->
 # LangGraph-primary operations authority
 
-**Status:** implementation candidate — not active until merged, deployed, and activation evidence passes
+**Status:** merged source architecture; deployment and paid activation require fresh,
+release-bound evidence. This page is not a live health report.
 **Owner:** Aesop / Ed
 **Orchestration authority:** deterministic policy and code (`policy.py`), never model output
 **Repository:** `edwardjones3976/director-orchestrator`
-**Candidate branch:** `codex/langgraph-primary-runtime`
 
-**Director documentation metadata (not Long Table canary authority):**
-**Director docs base commit:** `cc791364e2f1ff1ac4c72e01c7122296e4ff7362`
-
-This document is the intended canonical operations authority for LangGraph-primary
-orchestration. It does not activate runtime behavior merely because it exists in a
-worktree or branch. Until this candidate is merged, deployed, and its activation
-evidence passes owner acceptance, legacy ownership and current production runtime
-state remain unchanged.
+Source reconciliation baseline: `2f21b793cc7b10586948e1b3f3c2c6fc0eab16ec`.
+The canonical operations procedures below apply to a selected release. Record that
+release's exact source, image and generation in its acceptance package; the
+source baseline above is not Long Table canary authority or a deployment receipt.
 
 Archived pre-primary sources (historical, non-authoritative):
 
@@ -45,19 +43,17 @@ Archived pre-primary sources (historical, non-authoritative):
 
 ## Current truth
 
-Until activation evidence passes:
+Read current deployment ownership from authenticated health and its authoritative
+writer ledger at the selected generation. Neither a merged PR nor a configured
+switch establishes ownership, provider qualification or paid execution. Offline
+LangGraph intake ownership can coexist with paid dispatch disabled; distinguish
+those observations explicitly in the acceptance package.
 
-- The legacy Director orchestration engine remains the sole writer for provider
-  dispatch, Slack/GitHub side effects, and task-state transitions on active
-  deployments.
-- LangGraph surfaces in the repository (shadow comparison, packet runtime,
-  completion workers) are capability evidence only when their deployment switches
-  and health output prove they are active — not when documentation or a merged PR
-  exists.
-- Gate 0 acceptance (2026-08-16, Project Uppercut Issue #48) closed a prerequisite;
-  it did not start LangGraph, change the sole writer, or authorize deployment.
-- Contract schemas in `docs/schemas/` and `docs/model-interoperability-contract.md`
-  remain binding for packet work; this document does not replace them.
+Exactly one engine owns each task's mutations and external effects. Ownership
+transfer requires the cutover gates below; rollback must preserve the ledger and
+reconcile external effects rather than blindly replay them. Gate 0 accepted a
+prerequisite, not a deployment. Packet schemas and the
+[interoperability contract](model-interoperability-contract.md) remain binding.
 
 ## Target topology
 
@@ -67,7 +63,7 @@ LangGraph becomes the primary coordinator for the full task lifecycle:
    idempotency keys.
 2. **Authority binding** — project/profile, allowlisted repository, immutable
    starting commit and authority-snapshot digest.
-3. **Plan and decomposition** — OpenAI-directed planning; validated assignment DAG.
+3. **Plan and decomposition** — configured runtime Director planning; validated assignment DAG.
 4. **Deterministic gates** — policy preflight, workload limits, budget reservation,
    hop/revision/timeout counters; model output may add gates, never remove them.
 5. **Authenticated interrupts** — owner approval and provider callbacks bound to
@@ -78,11 +74,11 @@ LangGraph becomes the primary coordinator for the full task lifecycle:
 8. **Evidence aggregation** — normalized manifests, usage, interaction evidence.
 9. **Bounded debate** — Gemini/Antigravity simulation and behavioral validation
    lanes where policy permits; not free-form routing.
-10. **OpenAI synthesis and acceptance** — integrates peer evidence; cannot accept
-    its own exact candidate.
+10. **Synthesis and acceptance** — configured runtime Director integrates peer
+    evidence; cannot accept its own exact candidate.
 11. **Revisions** — bounded revision loop with deterministic escalation.
-12. **Exact-candidate review** — independent different-provider exact-head
-    acceptance before merge authority.
+12. **Exact-candidate review** — independent exact-head acceptance under the
+    applicable review contract before merge authority.
 13. **CI, security, and completion gates** — trusted CI, security review, and
     allowlisted completion workers. Exact-head evidence alone grants no merge or
     deployment authority; a deterministic effect executor may perform an explicitly
@@ -199,13 +195,14 @@ not transfer writer ownership to model output.
 
 | Provider | Role |
 | --- | --- |
-| **OpenAI / Codex** | Directs, plans, synthesizes, accepts, and integrates peer evidence |
-| **Claude** | Full-spectrum implementation and review peer |
+| **OpenAI / Codex** | Default runtime Director; bounded engineering and eligible independent review |
+| **Claude** | Acting project Director; engineering/review peer; alternate runtime Director only when explicitly activated |
 | **Cursor** | Full-spectrum implementation and review peer |
-| **Grok** | Full-spectrum Cursor-family peer; adversarial and security value |
+| **Grok** | Independent xAI lane; adversarial and security value; Grok Bot and Cursor-hosted models are separate routes |
 | **Gemini / Antigravity** | Isolated implementation, simulation, behavioral validation, bounded debate |
 | **Perplexity** | Public sourced evidence only; no private data expansion |
-| **Copilot Lite** | Optional non-gating hygiene |
+| **Firecrawl** | Public repository-research acquisition where the selected profile permits it |
+| **GitHub Copilot** | Bounded hygiene where the selected profile permits it; distinct from retired Microsoft 365 Copilot |
 
 **Acceptance rule:** a producer cannot independently accept its own exact candidate.
 Exact-head acceptance requires a different provider than the implementation producer.
@@ -241,11 +238,12 @@ Procedure:
 1. Bind the accepted source baseline commit and tree above as the immutable authority
    for Native Long Table canary intake.
 2. Execute in the isolated canary worktree and branch listed above.
-3. Run the **full all-provider graph** with deterministic IDs through Postgres
-   checkpointing and the production namespace.
+3. Run the scoped graph with applicable qualified providers, deterministic IDs
+   and Postgres checkpointing in the selected isolated canary namespace. A zero
+   allocation target does not permit filler assignments to manufacture coverage.
 4. **Freeze exact head** — record commit SHA and tree digest at canary completion.
 5. Require **targeted and full tests**, Unreal build/automation evidence where
-   applicable, trusted CI, security review, **different-provider exact-head
+   applicable, trusted CI, security review, **contract-eligible independent exact-head
    acceptance**, restart/Docker/network recovery drills, **zero duplicate**
    provider/Slack/GitHub effects, and rollback evidence with preserved ledgers.
 6. **Merge scope:** the canary may merge only an **isolated test-only candidate**
@@ -313,6 +311,43 @@ lifecycle, and the writer lease described here.
 Until activation evidence passes, treat any `LANGGRAPH_*` switch in a deployment as
 operator-local unless health and ledger inspection prove otherwise. Do not present
 contract-only or default-off features as active production behavior.
+
+## Source architecture and review boundaries
+
+The accepted release must expose distinct request and result boundaries around
+its internal checkpoint state, preserve compatible persisted keys and keep
+sequential parent-node fields under LastValue semantics. Parallel assignment
+coordination must not introduce concurrent writes or additive reducers for those
+fields without a separately reviewed contract. Bind proof of these requirements
+to the exact accepted release and its schema/regression tests; an implementation
+assignment or this document alone does not prove that the schemas have landed.
+Typed ingress and provider packet contracts remain binding independently.
+
+Ordinary repository PRs follow the current [agent rules](../AGENTS.md): one material
+non-author reviewer records exact-head ACCEPT and performs the authorized merge.
+That does not remove provider identity separation required by runtime acceptance
+issuers or completion receipts. Runtime provider evidence must satisfy its actual
+binding contract; a PR comment is not a provider activation receipt.
+
+Workload targets come from `allocation_profiles.py`, selected per intake. The
+engineering profile assigns OpenAI/Claude/Cursor/Grok/Antigravity 40/25/15/10/10;
+its other lanes have zero targets. Other profiles enable research or hygiene as
+needed. Preserve the twenty-real-assignment denominator, soft tolerance and hard
+limits; use neither fake assignments nor automatic redistribution.
+
+## Active documentation guard
+
+`python scripts/check_active_documentation.py` checks active Markdown and YAML under `docs/`
+and `prompts/`, plus root README/agent instructions. It excludes `docs/archive/**`.
+Its semantic rules target obsolete fixed allocation, unconditional legacy-writer
+claims and retired blanket provider restrictions; this is a focused regression
+check, not a proof of every statement or current deployment state.
+
+A necessary historical quotation outside the archive can use an explicit HTML
+comment pair `director-doc-history BEGIN: <reason>` / `director-doc-history END`
+around only the quotation. The reason is mandatory; nested, unmatched or empty
+blocks fail validation. Reviewers must reject a history exemption used to hide
+current instructions. The checker does not exempt whole dated files automatically.
 
 ## Work ownership
 
@@ -385,7 +420,7 @@ that host-side DSN is a secret-store value and must never be copied into logs or
 checked-in profile files.
 
 The bridge currently permits only explicitly configured Claude, Grok,
-Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct and are never aliased through the Windows bridge.
+Antigravity, and GitHub Copilot packet-wrapper commands. Cursor remains direct and is never aliased through the Windows bridge.
 
 Endpoint and secret configuration alone never makes a host-bridge lane callable.
 Before composing adapters, the container sends a fresh HMAC-authenticated
@@ -637,3 +672,5 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 07:55 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->
