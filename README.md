@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
@@ -84,7 +85,7 @@ attest that a deployed service has switched its executing provider.
   supplemental research. Membership and allocation attest nothing about whether a provider
   route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
   configuration.
-- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine
+- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all eight
   provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and
   Antigravity 10%; other profiles reserve real research and enterprise work. A fixed
   real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion,
@@ -467,3 +468,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
