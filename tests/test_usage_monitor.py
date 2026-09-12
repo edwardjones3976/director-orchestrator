@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
@@ -1051,7 +1052,8 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 cursor_api_key="test-cursor",
                 sqlite_path=str(Path(directory) / "tasks.sqlite3"),
             )
-            monitor = UsageMonitor(settings, store, adapters={})
+            adapter = SuccessfulCursorProbe()
+            monitor = UsageMonitor(settings, store, adapters={"cursor": adapter})
             first = await monitor.reserve_manual_cycle("USAGE-RESERVE001")
             second = await monitor.reserve_manual_cycle("USAGE-RESERVE002")
 
@@ -1062,8 +1064,12 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             # The reserved owner can still run; a concurrent unreserved pass cannot.
             skipped = await monitor.run_once(force=True)
             self.assertEqual(skipped, [])
-            records = await monitor.run_once(force=True, cycle_id="USAGE-RESERVE001")
+            with patch("httpx.AsyncClient.send", side_effect=AssertionError("unexpected network request")):
+                records = await monitor.run_once(force=True, cycle_id="USAGE-RESERVE001")
             self.assertEqual([record.cycle_id for record in records], ["USAGE-RESERVE001"])
+            self.assertEqual(adapter.calls, 1)
+            self.assertEqual(records[0].status, UsageCheckStatus.OK)
+            self.assertEqual(records[0].provider, ProviderName.CURSOR)
 
     async def test_minimum_interval_cannot_be_bypassed_by_reservation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1099,3 +1105,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
