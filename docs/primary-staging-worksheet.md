@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]] -->
@@ -7,7 +8,9 @@
 
 **Purpose:** bring `langgraph_primary.configuration_valid` from false to true on
 this deployment. This is configuration staging only. No activation switch is
-flipped, no provider is dispatched, and the legacy Director remains sole writer.
+flipped and no provider is dispatched by these staging steps. They do not transfer
+writer ownership; verify the actual owner from fresh generation-bound health and
+the authoritative writer ledger before proceeding.
 
 **Status of this document:** Pass 2 starts only after explicit owner approval.
 The owner-authorized operator supplies the deployment-specific snapshot path.
@@ -390,3 +393,4 @@ Those actions remain behind the separately accepted primary activation gates.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
