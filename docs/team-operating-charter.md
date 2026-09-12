@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
@@ -248,9 +249,9 @@ independence, safety, and deterministic gates always outrank cost.
   *Rules that already bind every lane, restated so this grant reads as no
   exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
   materially authored, so merge authority never lets Antigravity merge its own
-  work. And a delegated merge requires the producer, the reviewer, and the
-  acting agent to be three distinct identities, plus one exact-SHA `ACCEPT`
-  verdict from a non-author provider. Owner ruling, 2026-09-12, verbatim: "it's a
+  work. And a delegated merge requires one author and one reviewer who are distinct
+  identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer,
+  who then performs the merge. Owner ruling, 2026-09-12, verbatim: "it's a
   one-non-author-reviewer project-wide".
   Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
   Grok — neither more nor less.
@@ -704,8 +705,8 @@ review, security, CI, and merge evidence and requires a new handoff.
 
 Where the owner has delegated merge under
 `docs/human-out-of-the-loop-operation.md`, the handoff is unchanged: delegation
-supplies the reviewer identity and a distinct executing identity, and requires the producer, reviewer, and acting agent to be three
-distinct identities. It does not alter what a review must contain, when evidence
+supplies the single reviewer identity, and requires the author and the reviewer
+to be two distinct identities. It does not alter what a review must contain, when evidence
 is invalidated, or which gates apply.
 
 The reviewer named above is a provider, not the owner, so a named provider's
@@ -730,10 +731,9 @@ exact-SHA `ACCEPT` verdict from a non-author provider, and
 every other item of the evidence bar. In `ATTENDED` state, or with no live
 grant, the duty is to name that blocker on the pull request, not to merge.
 
-Where a merge is authorised, the provider that supplied the `ACCEPT` is
-the reviewer and does not execute; a different non-author identity executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to a non-author identity other than the reviewer, and executes itself only when it is not an author of the candidate. With
-the producer that is the three distinct identities this handoff requires, and the
-executing approver fills the acting-agent slot rather than the reviewer's. An
+Where a merge is authorised, the reviewer that supplied the `ACCEPT` performs
+the merge itself; a rejection goes back to the author with notes. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
+This is how the Director discharges its eligible-merge-execution duty: it dispatches one reviewer and records the outcome, and merges itself only when it is that reviewer of a candidate it did not author. An
 approving reviewer is never a material author, because a material author is
 ineligible to review the candidate at all, so AGENTS.md rule 3's no-self-merge
 bar is unaffected and never lifts.
@@ -936,3 +936,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->
