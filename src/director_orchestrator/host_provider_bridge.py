@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -252,7 +253,7 @@ class BridgeRequest:
             raise HostProviderBridgeError("origin work-packet digest is invalid")
         if self.writer_generation < 1:
             raise HostProviderBridgeError("writer generation is not active")
-        if not self.writer_owner_token_digest.startswith("sha256:") or len(self.writer_owner_token_digest) != 71:
+        if not self.writer_owner_token_digest.startswith("sha256:") or _HEX_64.fullmatch(self.writer_owner_token_digest[7:]) is None:
             raise HostProviderBridgeError("writer owner token digest is invalid")
         observed_now = int(time.time()) if now is None else int(now)
         if abs(observed_now - self.timestamp) > max_age_seconds:
@@ -558,7 +559,7 @@ class HostBridgePacketTransport:
         if len(secret) < 32:
             raise ValueError("host bridge secret must contain at least 32 characters")
         self.provider = provider
-        if not writer_owner_token_digest.startswith("sha256:") or len(writer_owner_token_digest) != 71:
+        if not writer_owner_token_digest.startswith("sha256:") or _HEX_64.fullmatch(writer_owner_token_digest[7:]) is None:
             raise ValueError("host bridge writer owner token digest is invalid")
         self.endpoint = endpoint
         self.secret = secret
@@ -687,3 +688,4 @@ def dispatch_bridge_request(
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]

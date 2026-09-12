@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:55 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | BEGIN]]
 from __future__ import annotations
@@ -125,6 +127,30 @@ def _enforce_canonical_size(document: Mapping[str, Any], *, label: str) -> None:
 
 def _schema_path(kind: Literal["work", "result", "replay"]) -> Path:
     return _SCHEMA_ROOT / _SCHEMA_FILENAMES[kind]
+
+
+@lru_cache(maxsize=1)
+def result_contract_properties() -> dict[str, frozenset[str]]:
+    """Allowed property names for each closed object in the result packet.
+
+    Several result fields set ``additionalProperties: false``, so a provider
+    that reports one extra key fails validation and its whole capture is
+    rejected. Callers normalizing a native envelope project onto these sets
+    first. Deriving them from the schema rather than restating them keeps the
+    projection from drifting the next time the contract changes.
+
+    Array fields map to their item properties; object fields to their own.
+    """
+
+    schema = _validators()["result"].schema
+    allowed: dict[str, frozenset[str]] = {}
+    for name, spec in schema.get("properties", {}).items():
+        if not isinstance(spec, dict):
+            continue
+        target = spec.get("items") if isinstance(spec.get("items"), dict) else spec
+        if target.get("additionalProperties") is False:
+            allowed[name] = frozenset(target.get("properties", {}))
+    return allowed
 
 
 @lru_cache(maxsize=1)
@@ -311,3 +337,5 @@ def load_replay_run(
     )
 # [[Claude | Claude Opus 5 | 2026-08-25 | 02:41 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
