@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | BEGIN]] -->
@@ -271,10 +272,17 @@ Required by acceptance mode. `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE` defaults to
 
 - `github-v1`: `LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON`
   and `LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON`
-- `provider-v2`: `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH`,
+- `provider-v2` or explicitly selected `provider-v3-two-party`:
+  `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH`,
   `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256`,
   `LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH`,
   `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_DIRECTORY`
+
+The v3 mode additionally requires signed owner adoption and qualified native
+evidence under [two-party activation v3](two-party-activation-v3.md). This
+inventory grants no adoption or activation. Signed registry/generation pins and
+non-default selected paths are also examined by the legacy-mode refusal guard;
+those guard references are not additional `$required` entries.
 
 Not checked by the script, but required before live dispatch:
 
@@ -339,12 +347,12 @@ The staging lifecycle, in order, all of it before any provider is dispatched:
 1. `BootstrapDatabaseIdentity` is the only action that may establish the durable
    pre-acceptance database identity. It initialises no application or checkpoint
    schema.
-2. `SelectGeneration` is provider-v2 only. It stops and proves every intake
-   surface stopped, reserves the manifest and journal, and then writes the six
-   identities above.
+2. `SelectGeneration` requires `provider-v2` or `provider-v3-two-party`. It
+   stops and proves every intake surface stopped, reserves the manifest and
+   journal, and then writes the six identities above.
 3. `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill` are unchanged in
-   intent, but in provider-v2 mode each one first re-verifies the selected
-   generation.
+   intent, but in either signed provider mode each one first re-verifies the
+   selected generation.
 4. `StageRuntime` starts the evidence-only app with `ALLOW_PAID_RUNS`,
    `LANGGRAPH_PRIMARY_ENABLED`, `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`,
    `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and
@@ -381,3 +389,4 @@ Those actions remain behind the separately accepted primary activation gates.
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 09:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]] -->

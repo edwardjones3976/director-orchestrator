@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -75,6 +79,7 @@ from .langgraph_primary import (
     ProviderDisposition,
     ProviderSubgraphResult,
     ScheduleResult,
+    _context as _handler_context_from_state,
 )
 from .models import (
     AntigravityDirective,
@@ -144,8 +149,6 @@ from .workload_policy import FailureKind
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
-    provider_lane_external_blockers,
-    read_protected_delegated_token_file,
 )
 
 
@@ -297,7 +300,6 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "perplexity": ProviderName.PERPLEXITY,
     "firecrawl": ProviderName.FIRECRAWL,
     "github-copilot": ProviderName.GITHUB_COPILOT,
-    "microsoft-365-copilot": ProviderName.MICROSOFT_365_COPILOT,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
     {"perplexity", "firecrawl"}
@@ -819,8 +821,7 @@ def build_automatic_primary_live_dependencies(
 
     Authentication comes from configured secret presence or a documented,
     non-secret local status/receipt probe. Native keychain state without such a
-    contract is never inferred. Microsoft 365 Copilot remains unavailable behind
-    an exact typed blocker until production Work IQ evidence is complete.
+    contract is never inferred.
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
@@ -847,7 +848,6 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
-        "microsoft-365-copilot": False,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -878,16 +878,7 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-        microsoft_365_copilot_access_token=read_protected_delegated_token_file(
-            settings.microsoft_365_copilot_delegated_token_file
-        ),
-        microsoft_365_copilot_tenant_id=settings.microsoft_365_copilot_tenant_id,
-        microsoft_365_copilot_expected_subject=(
-            settings.microsoft_365_copilot_expected_subject
-        ),
-        microsoft_365_copilot_expected_object_id=(
-            settings.microsoft_365_copilot_expected_object_id
-        ),
+
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -901,20 +892,9 @@ def build_automatic_primary_live_dependencies(
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
     from .primary_roster import core_inventory_ready
     if not core_inventory_ready(tuple(adapters)):
-        blockers = provider_lane_external_blockers(capabilities)
-        blocked_missing = [
-            f"{provider_id}:{blockers[provider_id]}"
-            for provider_id in missing
-            if provider_id in blockers
-        ]
         raise ValueError(
             "automatic graph-native live dependencies are unavailable: missing="
             + ",".join(missing)
-            + (
-                "; external_blockers=" + ",".join(blocked_missing)
-                if blocked_missing
-                else ""
-            )
         )
 
     def candidate_sha(
@@ -1351,6 +1331,14 @@ class DefaultDryRunServices:
         )
 
 
+# The charter requires this exact label, verbatim, for any test, projection or
+# replay that contacted no provider (docs/team-operating-charter.md).  The
+# offline dispatcher persists outcomes into the human-visible TaskRecord
+# projection, so the label has to travel with them.
+_SIMULATION_LABEL = "SIMULATION — NO PROVIDER INTERACTION"
+_OFFLINE_RESULT_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 class DefaultOfflineSimulationServices(DefaultDryRunServices):
     """Full graph services backed only by deterministic, paid-off doubles."""
 
@@ -1390,6 +1378,60 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
         with self._provider_call_lock:
             return dict(self._provider_calls)
 
+    def has_ledger_double(self, provider: str) -> bool:
+        """Report whether a lane has a configured offline double.
+
+        The dispatcher checks this before invoking, so an unconfigured lane
+        settles as a known FAILED rather than raising. A raise here would reach
+        the ledger as AMBIGUOUS, which retains the concurrency slot and blocks
+        terminal lifecycle processing for a failure that is already known
+        before any execution begins.
+        """
+
+        return provider in self._provider_doubles
+
+    def dispatch_ledger_double(
+        self,
+        *,
+        provider: str,
+        context: HandlerContext,
+        reservation_digest: str,
+    ) -> str:
+        """Invoke exactly one lane's offline double for a ledger reservation.
+
+        The Default lifecycle dispatches through the Postgres parallel ledger
+        rather than the graph's single-item provider edge, so the doubles must
+        be reachable from a reservation. Without this seam an offline task
+        proves intake, planning and approval but never executes a provider
+        wave, because the ledger has no dispatcher to call.
+
+        Contacts no provider and produces no external effect. The returned
+        digest binds the reservation, so two lanes and two reservations of the
+        same lane stay distinguishable in the ledger.
+        """
+
+        if provider not in self._provider_doubles:
+            raise RuntimeError("offline ledger dispatch has no double for this lane")
+        with self._provider_call_lock:
+            self._provider_calls[provider] += 1
+        result_digest = self._provider_doubles[provider](context)
+        # Validate the whole digest, not just its prefix. A malformed value such
+        # as "sha256:x" would otherwise be wrapped into a newly valid digest and
+        # settle the ledger assignment as SUCCEEDED, letting the graph report
+        # DONE while the double had violated its declared result contract.
+        if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+            result_digest
+        ) is None:
+            raise RuntimeError("offline provider double returned an invalid digest")
+        return _digest(
+            {
+                "reservation_digest": reservation_digest,
+                "provider": provider,
+                "provider_result_digest": result_digest,
+                "mode": "offline-ledger-double",
+            }
+        )
+
     @property
     def provider_calls(self) -> int:
         return sum(self.provider_call_counts.values())
@@ -1403,9 +1445,14 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
             with self._provider_call_lock:
                 self._provider_calls[provider] += 1
             result_digest = self._provider_doubles[provider](context)
-            if not isinstance(result_digest, str) or not result_digest.startswith(
-                "sha256:"
-            ):
+            # Validate the whole digest here too. This path settles no ledger
+            # row, but a malformed value such as "sha256:x" is malformed on
+            # every path that reads one: a prefix-only check folded it into the
+            # subgraph result digest, so the graph carried a double's contract
+            # violation forward as a COMPLETED disposition.
+            if not isinstance(result_digest, str) or _OFFLINE_RESULT_DIGEST.fullmatch(
+                result_digest
+            ) is None:
                 raise RuntimeError("offline provider double returned an invalid digest")
             return provider, result_digest
 
@@ -1498,6 +1545,129 @@ class DefaultOfflineSimulationServices(DefaultDryRunServices):
         )
 
 
+def build_offline_parallel_dispatcher(
+    services: DefaultOfflineSimulationServices,
+    coordinator: Callable[[], Any],
+) -> Callable[[ParallelReservation], ParallelDispatchOutcome]:
+    """Build the ledger dispatcher an offline-simulation deployment needs.
+
+    The Default lifecycle sets ``auto_execute_provider=False`` and dispatches
+    exclusively through the Postgres parallel ledger. Without a dispatcher the
+    ledger settles nothing, so an offline task proved intake, planning and
+    approval while its provider wave never ran.
+
+    ``coordinator`` is a late-bound accessor because the activation builds its
+    coordinator after choosing a dispatcher.
+    """
+
+    def dispatch_offline_assignment(
+        reservation: ParallelReservation,
+    ) -> ParallelDispatchOutcome:
+        """Settle one reserved offline lane through the ledger.
+
+        Mirrors the live dispatcher's reservation-identity checks so an offline
+        proof exercises the same binding rules, then substitutes the lane's
+        deterministic double for the adapter, attempt roster and budget path.
+        No provider is contacted and no result-packet artifact is persisted, so
+        a simulated wave can never be mistaken for authenticated provider
+        evidence.
+        """
+
+        if not services.has_ledger_double(reservation.provider_id):
+            # Settled, not raised. This failure is known before any execution
+            # begins, and an exception would reach the ledger as AMBIGUOUS,
+            # retaining the concurrency slot and stopping the lifecycle from
+            # ever reaching a terminal state. Identity violations below still
+            # raise: those are unexpected and must not be downgraded.
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED,
+                None,
+                "offline_provider_double_missing",
+            )
+        record = services._record(reservation.task_id)
+        if record.plan is None:
+            raise RuntimeError("parallel dispatch has no durable plan")
+        assignment = next(
+            (
+                item
+                for item in record.plan.assignments
+                if item.sequence == reservation.sequence
+            ),
+            None,
+        )
+        if assignment is None:
+            raise RuntimeError("parallel reservation identity is unknown")
+        assignment_id = services._packet_router._assignment_id(record, assignment)
+        provider = _assignment_provider_lane(assignment)
+        if (
+            assignment_id != reservation.assignment_id
+            or provider != reservation.provider_id
+        ):
+            raise RuntimeError("parallel reservation binding changed")
+        result_digest = services.dispatch_ledger_double(
+            provider=provider,
+            context=_handler_context_from_state(
+                coordinator()._runtime.compact_state(reservation.task_id)
+            ),
+            reservation_digest=reservation.reservation_digest,
+        )
+        with services._lock:
+            if not any(
+                item.assignment_sequence == assignment.sequence
+                for item in record.assignment_outcomes
+            ):
+                record.assignment_outcomes.append(
+                    AssignmentOutcome(
+                        assignment_sequence=assignment.sequence,
+                        provider=assignment.agent,
+                        run_id=f"offline-double:{reservation.reservation_digest}",
+                        result=_SIMULATION_LABEL,
+                        review_summary=(
+                            f"{_SIMULATION_LABEL} - offline provider double"
+                        ),
+                        provider_result_digest=result_digest.removeprefix("sha256:"),
+                    )
+                )
+        return ParallelDispatchOutcome(
+            ParallelAssignmentStatus.SUCCEEDED,
+            result_digest,
+            "offline_provider_double_completed",
+        )
+
+    return dispatch_offline_assignment
+
+
+class HistoricalParallelPlanHold(RuntimeError):
+    """An exact pre-allocation binding requires explicit reconciliation."""
+
+
+def _historical_parallel_binding(payload: Mapping[str, Any]) -> str | None:
+    application = payload.get("application")
+    raw = application.get("task_record") if isinstance(application, Mapping) else None
+    plan = raw.get("plan") if isinstance(raw, Mapping) else None
+    if not isinstance(plan, Mapping) or not plan.get("assignments"):
+        return None
+    if any("allocation_profile" in item for item in plan["assignments"]):
+        return None
+    record = TaskRecord.model_validate(dict(raw))
+    assignments = []
+    for item in sorted(record.plan.assignments, key=lambda value: value.sequence):
+        lane = _assignment_provider_lane(item)
+        assignments.append({
+            "assignment_id": f"{record.task_id}-{item.sequence}",
+            "sequence": item.sequence,
+            "provider_id": lane,
+            "deployment_id": item.model_label or lane,
+            "dependencies": [f"{record.task_id}-{value}" for value in item.depends_on],
+            "write_surfaces": ["repository-write"] if item.allow_draft_pr else [],
+            "retry_limit": 3,
+        })
+    # Hash the surviving raw plan: model defaults are not historical authority.
+    digest = _digest({"task_id": record.task_id, "plan_digest": _digest(plan),
+                      "assignments": assignments})
+    return digest if digest == payload.get("parallel_plan_digest") else None
+
+
 class DefaultPrimaryApplication:
     """Route Default Director intake and reads through one primary coordinator."""
 
@@ -1570,9 +1740,22 @@ class DefaultPrimaryApplication:
     def _ensure_parallel_lifecycle(self, record: TaskRecord) -> str:
         """Idempotently repair a crash after graph intake but before registration."""
 
+        self._check_historical_parallel_hold(record.task_id)
         if record.workload_selection_hold_reasons:
             return _digest(record.workload_selection_hold_reasons)
         return self._register_parallel_lifecycle(record)
+
+    def _check_historical_parallel_hold(self, task_id: str) -> None:
+        projection = self.coordinator.get_projection(task_id)
+        if projection is None:
+            return
+        historical = _historical_parallel_binding(projection.projection)
+        if historical is None:
+            return
+        state = self.coordinator._runtime.compact_state(task_id)
+        if state.get("parallel_plan_digest") != historical:
+            raise ValueError("parallel plan binding changed")
+        raise HistoricalParallelPlanHold("historical_parallel_plan_requires_reconciliation")
 
     def _drive_parallel_lifecycle(self, record: TaskRecord) -> ParallelAggregate:
         """Consume every ready wave, stopping on terminal or no durable progress."""
@@ -1787,6 +1970,7 @@ class DefaultPrimaryApplication:
         )
 
     def resume_approval(self, command: ApprovalResume) -> TaskRecord:
+        self._check_historical_parallel_hold(command.task_id)
         projection = self.coordinator.get_projection(command.task_id)
         if projection is None:
             raise KeyError(command.task_id)
@@ -1930,6 +2114,7 @@ class DefaultPrimaryApplication:
         return self.coordinator.read_external_effect_remote(reservation)
 
     def recover(self, task_id: str) -> TaskRecord:
+        self._check_historical_parallel_hold(task_id)
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
@@ -2498,7 +2683,13 @@ class DefaultPrimaryActivation:
                     else DefaultDryRunServices(settings)
                 )
                 handlers = services.handlers()
-                parallel_dispatcher = None
+                parallel_dispatcher = (
+                    build_offline_parallel_dispatcher(
+                        services, lambda: self.coordinator
+                    )
+                    if settings.langgraph_primary_offline_simulation_enabled
+                    else None
+                )
             coordinator = PrimaryTaskCoordinator(
                 handle,
                 handlers,
@@ -2559,11 +2750,18 @@ class DefaultPrimaryActivation:
         assert self.application is not None
         # Readiness describes this bounded pass, never a sticky historical win.
         self._reconciliation_worker_ready = False
+        self._historical_parallel_hold_count = 0
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
             if payload.get("terminal_classification") is not None:
                 continue
+            if _historical_parallel_binding(payload) is not None:
+                try:
+                    self.application._check_historical_parallel_hold(projection.task_id)
+                except HistoricalParallelPlanHold:
+                    self._historical_parallel_hold_count += 1
+                    continue
             writer = self.coordinator.get_task_writer(projection.task_id)
             # A live durable writer lease is a positive heartbeat: its
             # DISPATCHING/EXECUTING work is normal in-flight work and must not
@@ -2578,8 +2776,11 @@ class DefaultPrimaryActivation:
                     for value in aggregate.statuses.values()
                 ):
                     continue
-            recovered.append(self.application.recover(projection.task_id))
-        self._reconciliation_worker_ready = True
+            try:
+                recovered.append(self.application.recover(projection.task_id))
+            except HistoricalParallelPlanHold:
+                self._historical_parallel_hold_count += 1
+        self._reconciliation_worker_ready = self._historical_parallel_hold_count == 0
         return len(recovered)
 
     def health(self) -> dict[str, Any]:
@@ -2617,6 +2818,13 @@ class DefaultPrimaryActivation:
                 "ambiguous_effect_count": 0,
             }
         observed = self.coordinator.readiness().as_dict()
+        observed["historical_parallel_plan_hold_count"] = getattr(
+            self, "_historical_parallel_hold_count", 0
+        )
+        observed["reconciliation_hold_reason"] = (
+            "historical_parallel_plan_requires_reconciliation"
+            if observed["historical_parallel_plan_hold_count"] else None
+        )
         observed["reconciliation_worker_ready"] = (
             self._reconciliation_worker_ready
         )
@@ -2700,3 +2908,7 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

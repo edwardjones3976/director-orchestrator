@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
@@ -417,8 +418,20 @@ def _job(cfg: Config, job_id: str):
     return value, context
 
 
+def require_supported_acceptance_mode():
+    # This installed producer signs v2 only. Never spend a native attempt on a
+    # v3 challenge and silently return an unusable older receipt. V3 product
+    # qualification/observation producers require separate reviewed enrollment.
+    mode = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "provider-v2")
+    if mode == "provider-v3-two-party":
+        raise IssuerError("v3 native product issuer is not installed; no provider attempt is permitted")
+    if mode not in {"github-v1", "provider-v2"}:
+        raise IssuerError("unknown native acceptance mode; no provider attempt is permitted")
+
+
 def issue(cfg: Config, job_id: str):
     """Broker starts one fixed worker request; a later collect never redispatches."""
+    require_supported_acceptance_mode()
     cfg.identity()
     job, context = _job(cfg, job_id)
     from .native_auth_enrollment import require_native_auth
@@ -436,6 +449,7 @@ def issue(cfg: Config, job_id: str):
 
 
 def initialize(cfg: Config):
+    require_supported_acceptance_mode()
     cfg.identity()
     path = cfg.root / "broker" / "private.key"
     if not path.exists():
@@ -454,6 +468,7 @@ def initialize(cfg: Config):
 
 
 def collect(cfg: Config, job_id: str):
+    require_supported_acceptance_mode()
     cfg.identity()
     _, context = _job(cfg, job_id)
     request = cfg.read("requests", job_id + ".json", MAX_PACKET * 2)
@@ -494,6 +509,7 @@ def main():
     p.add_argument("--base")
     p.add_argument("--head")
     a = p.parse_args()
+    require_supported_acceptance_mode()
     cfg = Config.load(a.config, a.config_sha256)
     if a.action == "prepare":
         packet = prepare_packet(git=cfg.git, mirror=cfg.mirror, repository=cfg.repository, base=a.base or "", head=a.head or "")
@@ -524,3 +540,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
