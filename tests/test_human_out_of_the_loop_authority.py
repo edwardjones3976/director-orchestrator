@@ -216,7 +216,7 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("never consumed an owner verdict", section)
         self.assertIn("least-recent eligible non-author", section)
         self.assertIn("satisfied in its ordinary\nform", section)
-        self.assertIn("strictly higher review bar", section)
+        self.assertIn("the same review bar", section)
         # The charter sentence it defers to must still exist verbatim.
         self.assertIn(
             "never substitutes for applicable deterministic\napproval, exact-SHA review, security, CI, budget, allowlist, or rollback gates.",
