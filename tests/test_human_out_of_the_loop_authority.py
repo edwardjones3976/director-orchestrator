@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]]
@@ -186,7 +187,9 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
         self.assertIn("not equivalent to human judgment", limits)
         self.assertIn("correlated ways", limits)
         self.assertIn("untrusted material", limits)
-        self.assertIn("has not yet produced a verdict", limits)
+        self.assertIn("cancelled session", limits)
+        self.assertIn("reported to the owner as empty", limits)
+        self.assertNotIn("has not yet produced a verdict", limits)
         # An agent wrote the rules that govern agents; the document must say so.
         self.assertIn("conflict of interest", limits)
         self.assertIn("drafted by an agent", limits)
@@ -443,3 +446,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
