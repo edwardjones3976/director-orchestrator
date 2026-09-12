@@ -1,5 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -28,6 +30,8 @@ import subprocess
 import sys
 import tempfile
 import hashlib
+import asyncio
+from time import monotonic
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -299,7 +303,7 @@ class BoundedJsonCommandTransport:
 
 
 class OpenAIResponsesPacketTransport:
-    """One synchronous, tool-free Responses API call using project settings."""
+    """Count exact input, then make at most one bounded, tool-free generation."""
 
     def __init__(
         self,
@@ -326,6 +330,10 @@ class OpenAIResponsesPacketTransport:
         timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
         if timeout < 1:
             raise RuntimeError("OpenAI transport timeout is exhausted")
+        token_limit = context.total_token_limit
+        if type(token_limit) is not int or token_limit < 1:
+            raise RuntimeError("OpenAI transport lacks an authoritative total token allowance")
+        deadline = monotonic() + timeout
         work = json.loads(work_packet_json)
         body: dict[str, Any] = {
             "model": self.model,
@@ -340,38 +348,103 @@ class OpenAIResponsesPacketTransport:
         }
         if self.reasoning_effort:
             body["reasoning"] = {"effort": self.reasoning_effort}
+        # Count the identical configured model and full input, including the
+        # instructions and message framing. A packet label or character estimate
+        # cannot establish the input side of an owner-signed total-token limit.
+        count_body = {key: value for key, value in body.items() if key != "store"}
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+        def remaining_seconds() -> float:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise RuntimeError("OpenAI transport timeout is exhausted")
+            return remaining
+
+        async def invoke():
+            # HTTPX timeouts bound individual I/O operations, not total elapsed
+            # time. Cancellation also bounds a response that keeps trickling.
+            async with asyncio.timeout(remaining_seconds()), httpx.AsyncClient(timeout=timeout) as client:
+                async def post_json(url, payload, maximum_bytes):
+                    async with client.stream("POST", url, headers=headers, json=payload,
+                                             timeout=remaining_seconds()) as response:
+                        response.raise_for_status()
+                        raw = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            if len(raw) + len(chunk) > maximum_bytes:
+                                raise RuntimeError("OpenAI response exceeds its byte bound")
+                            raw.extend(chunk)
+                    return json.loads(raw)
+
+                count = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
+                if (not isinstance(count, dict)
+                        or count.get("object") != "response.input_tokens"
+                        or type(count.get("input_tokens")) is not int
+                        or count["input_tokens"] < 0):
+                    raise RuntimeError("OpenAI input token count is malformed")
+                input_tokens = count["input_tokens"]
+                output_allowance = token_limit - input_tokens
+                if output_allowance < 1:
+                    raise RuntimeError("OpenAI input exhausts the authorized token allowance")
+                # Responses includes reasoning tokens in max_output_tokens.
+                # This is a token bound, never a converted or vendor USD cap.
+                body["max_output_tokens"] = output_allowance
+                native = await post_json(self.api_url, body, _MAX_COMMAND_RESULT_BYTES)
+                remaining_seconds()
+                return native, input_tokens, output_allowance
+
         try:
-            with httpx.Client(timeout=timeout) as client:
-                response = client.post(
-                    self.api_url,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=body,
-                )
-                response.raise_for_status()
-                native = response.json()
+            native, input_tokens, output_allowance = asyncio.run(invoke())
+        except TimeoutError as exc:
+            raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError("OpenAI provider outcome is ambiguous") from exc
+        if (not isinstance(native, dict) or native.get("status") != "completed"
+                or native.get("error") is not None
+                or native.get("incomplete_details") is not None):
+            raise RuntimeError("OpenAI response is not a completed terminal result")
         run_reference = native.get("id")
-        if not isinstance(run_reference, str) or not run_reference:
+        if not isinstance(run_reference, str) or not run_reference.strip():
             raise RuntimeError("OpenAI response lacks its authenticated request id")
-        outcome = native.get("output_text")
-        if not isinstance(outcome, str) or not outcome:
-            chunks: list[str] = []
-            for item in native.get("output", []):
-                if not isinstance(item, Mapping):
-                    continue
-                for content in item.get("content", []):
-                    if isinstance(content, Mapping) and isinstance(content.get("text"), str):
-                        chunks.append(content["text"])
-            outcome = "".join(chunks)
-        if not outcome:
+        output = native.get("output")
+        if not isinstance(output, list):
+            raise RuntimeError("OpenAI response output is malformed")
+        chunks: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                raise RuntimeError("OpenAI response output is malformed")
+            if item.get("type") == "reasoning" and item.get("status") in {None, "completed"}:
+                continue
+            if (item.get("type") != "message" or item.get("role") != "assistant"
+                    or item.get("status") != "completed"
+                    or not isinstance(item.get("content"), list)):
+                raise RuntimeError("OpenAI response contains non-completed or unexpected output")
+            for content in item["content"]:
+                if (not isinstance(content, dict) or content.get("type") != "output_text"
+                        or not isinstance(content.get("text"), str)):
+                    raise RuntimeError("OpenAI response text is malformed or refused")
+                chunks.append(content["text"])
+        outcome = "".join(chunks)
+        if not outcome.strip():
             raise RuntimeError("OpenAI response lacks output text")
-        return _bound_research_result(
+        usage = native.get("usage")
+        if (not isinstance(usage, dict)
+                or any(type(usage.get(key)) is not int or usage[key] < 0
+                       for key in ("input_tokens", "output_tokens", "total_tokens"))
+                or usage["input_tokens"] != input_tokens
+                or usage["output_tokens"] > output_allowance
+                or usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]
+                or usage["total_tokens"] > token_limit):
+            raise RuntimeError("OpenAI response usage is missing or violates the token allowance")
+        result = _bound_research_result(
             "openai", work, run_reference=run_reference, outcome=outcome
         )
+        result["usage"] = {"model": self.model, "input_tokens": usage["input_tokens"],
+                           "output_tokens": usage["output_tokens"],
+                           "total_tokens": usage["total_tokens"], "cost_usd": None}
+        return result
 
 
 class PublicSearchCommandTransport:
@@ -1164,5 +1237,8 @@ def provider_lane_readiness(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]

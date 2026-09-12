@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -2639,6 +2640,7 @@ class DefaultPrimaryActivation:
                                 ),
                                 timeout_seconds=attempt_timeout_seconds,
                                 budget_usd=attempt_budget_usd,
+                                total_token_limit=attempt.total_token_limit,
                                 max_hops=int(limits["max_hops"]),
                                 max_revisions=int(limits["max_revisions"]),
                                 allowed_tools=tuple(packet["allowed_tools"]),
@@ -2937,3 +2939,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
