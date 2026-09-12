@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]] -->
@@ -130,7 +131,7 @@ authorized Stage A run. Before selecting the initial generation, set explicit
 `DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` in its protected profile. The action
 rejects missing or enabled values rather than rewriting them. Validation mode
 is part of the resolved Compose digest, so adding it later requires a fresh
-generation. The action requires an explicitly selected signed-provider mode (provider-v2 or provider-v3-two-party / two-party) and the same clean candidate,
+generation. The action requires an explicitly selected signed-provider mode (`provider-v2` or the exact literal `provider-v3-two-party`) and the same clean candidate,
 image, database and selected-generation verification as the other controls.
 
 After authenticated acceptance and restore pass `require-staged`, the action
@@ -149,9 +150,10 @@ host-wide fencing. Keep that quarantine in force through the handoff.
 
 `Activate` also captures and binds final inventory after stopping intake, then
 selects the normal application with its existing live provider, acceptance,
-ownership and effect gates. Provider-v2 normal startup verifies the selected
-immutable generation and runtime acceptance, including bound inventory, before
-offline provider doubles are selected. `PrepareOfflineHandoff` satisfies that
+ownership and effect gates. Normal startup under either signed-provider mode
+(`provider-v2` or `provider-v3-two-party`) verifies the selected immutable
+generation and runtime acceptance, including bound inventory, before offline
+provider doubles are selected. `PrepareOfflineHandoff` satisfies that
 inventory prerequisite without being live activation. Rollback selects the
 normal application after its existing fenced proof.
 
@@ -179,3 +181,4 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->

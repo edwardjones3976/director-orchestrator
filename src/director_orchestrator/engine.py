@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
@@ -3981,7 +3982,8 @@ class OrchestrationEngine:
                 unknowns=initial.unknowns,
                 conditions_to_change=initial.conditions_to_change,
                 confidence=initial.confidence,
-                # The only weighted OpenAI vote is emitted after rebuttals.
+                # Any weighted Director vote is emitted after rebuttals;
+                # synthesis may instead record an explicit abstention.
                 vote_option=None,
                 abstain=True,
                 interaction_id=record.plan_interaction_id,
@@ -4050,8 +4052,8 @@ class OrchestrationEngine:
             else:
                 label = f"{self._director_label(record)} Participant"
                 suffix = (
-                    "Independent preliminary position only; the single advisory vote is cast "
-                    "after rebuttals."
+                    "Independent preliminary position only; after rebuttals the Participant "
+                    "casts its single advisory vote or records an explicit abstention."
                 )
             delivered, turn.slack_message_ts = await self._deliver_collaboration_message(
                 record,
@@ -5230,7 +5232,8 @@ class OrchestrationEngine:
                 continue
             if turn.phase == "rebuttal":
                 details = (
-                    f"Exactly one {self._director_label(record)} advisory vote at its configured weight; no authority."
+                    f"One {self._director_label(record)} advisory vote at its configured weight "
+                    "or an explicit abstention; moderation preserves the right to vote; no authority."
                 )
             elif turn.phase == "tie_judgment":
                 details = (
@@ -6995,3 +6998,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]

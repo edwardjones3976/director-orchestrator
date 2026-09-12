@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
@@ -312,9 +313,8 @@ class TwoPartyTests(unittest.TestCase):
                     self.verify()
                 self.policy['revoked_deployments'] = saved
 
-    def test_product_grok_bot_does_not_imply_family_grok(self):
-        # Separately authenticated non-Grok independent_review may use product grok-bot
-        # when observed provider_family matches the enrolled authority (not material author).
+    def test_product_grok_bot_requires_canonical_grok_family(self):
+        # (a) independent_review enrolled as 'claude', product 'grok-bot' fails
         family = 'claude'
         self.context = replace(self.context, material_author_providers=frozenset({'openai'}))
         self.authorities['independent_review'] = replace(
@@ -335,9 +335,27 @@ class TwoPartyTests(unittest.TestCase):
             receipt['native_observation'] = signed(
                 self.observer_key, v3.OBSERVATION_DOMAIN, observation)
         self.sign()
+        with self.assertRaises(v2.ProviderAcceptanceError):
+            self.verify()
+
+        # (b) independent_review enrolled as 'grok', product 'grok-bot' succeeds
+        family = 'grok'
+        self.authorities['independent_review'] = replace(
+            self.authorities['independent_review'], provider=family)
+        self.policy['authorities']['independent_review']['provider'] = family
+        self.adopt()
+        for role in ('security', 'independent_review'):
+            receipt = self.package['receipts'][role]
+            observation = receipt['native_observation']['document']
+            if role != 'security':
+                receipt['provider'] = family
+                observation.update(product='grok-bot', provider_family=family)
+            receipt['native_observation'] = signed(
+                self.observer_key, v3.OBSERVATION_DOMAIN, observation)
+        self.sign()
         self.assertEqual(self.verify().challenge, self.context.challenge)
 
-        # Wrong-family: observation provider_family must match enrolled authority.provider.
+        # (c) enrolled 'grok' but observation provider_family 'openai' is rejected
         saved = copy.deepcopy(self.package)
         envelope = self.package['receipts']['independent_review']['native_observation']
         envelope['document']['provider_family'] = 'openai'
@@ -506,3 +524,4 @@ ConvertTo-Json -InputObject $results -Compress
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
 # [[Grok Bot | serving model unreported | 2026-09-10 | END]]
 # [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]
