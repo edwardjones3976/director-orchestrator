@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
 import json
@@ -72,23 +73,36 @@ class NativeCodexTests(unittest.TestCase):
         with patch('director_orchestrator.native_codex_transport.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=b'Logged in using an API key')):
             self.assertFalse(native.authenticated())
 
-    def test_isolated_prompt_only_flags_and_no_retry(self):
+    def test_signed_token_limit_fails_before_authentication_or_process_launch(self):
         native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
-        context = SimpleNamespace(fencing_generation=1, max_hops=1, timeout_seconds=5, allowed_external_effects=())
-        with patch.object(native, 'authenticated', return_value=True), patch.object(native, '_run', return_value=encode(events())) as run:
-            native.send(json.dumps(work()).encode(), context=context)
-        argv, prompt, cwd, timeout = run.call_args.args
-        self.assertIn('--ignore-user-config', argv)
-        self.assertIn('forced_login_method="chatgpt"', argv)
-        self.assertIn('features.shell_tool=false', argv)
-        self.assertNotEqual(str(ROOT), cwd)
-        self.assertFalse(Path(cwd).exists())
-        self.assertEqual(5, timeout)
-        run.assert_called_once()
-        with patch.object(native, 'authenticated', return_value=False), patch.object(native, '_run') as run:
-            with self.assertRaises(RuntimeError):
-                native.send(json.dumps(work()).encode(), context=context)
-            run.assert_not_called()
+        # Even a generous limit cannot be promised without a native hard cap.
+        for limit in (1, 1000, 10**12):
+            with self.subTest(limit=limit):
+                context = SimpleNamespace(fencing_generation=1, max_hops=1,
+                    timeout_seconds=5, allowed_external_effects=(), total_token_limit=limit)
+                with patch.object(native, 'authenticated') as auth, \
+                     patch.object(native, '_run') as run, \
+                     patch('director_orchestrator.native_codex_transport.subprocess.Popen') as process:
+                    with self.assertRaisesRegex(RuntimeError, 'total_token_limit cannot be enforced'):
+                        native.send(json.dumps(work()).encode(), context=context)
+                    auth.assert_not_called()
+                    run.assert_not_called()
+                    process.assert_not_called()
+
+    def test_missing_or_invalid_token_limit_never_launches(self):
+        native = NativeCodexPacketTransport(str(Path(sys.executable).resolve()), 'gpt-5.6')
+        for limit in (None, False, True, 0, -1, 1.5, '1000'):
+            with self.subTest(limit=limit):
+                context = SimpleNamespace(fencing_generation=1, max_hops=1,
+                    timeout_seconds=5, allowed_external_effects=())
+                if limit is not None:
+                    context.total_token_limit = limit
+                with patch.object(native, 'authenticated') as auth, \
+                     patch.object(native, '_run') as run:
+                    with self.assertRaisesRegex(RuntimeError, 'positive signed total_token_limit'):
+                        native.send(json.dumps(work()).encode(), context=context)
+                    auth.assert_not_called()
+                    run.assert_not_called()
 
     def test_native_selection_never_exposes_api_fallback(self):
         with patch('director_orchestrator.primary_transports._which', return_value=None):
@@ -127,3 +141,5 @@ class NativeCodexTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]
+
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:29 UTC | END]]
