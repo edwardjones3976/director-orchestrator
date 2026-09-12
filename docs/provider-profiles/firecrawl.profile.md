@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -229,27 +231,21 @@ Separation of duties:
 | `result-packet-return` | mediated | provider_to_director | provider_response_to_dispatch | authorized | enabled | none | `src/director_orchestrator/packet_results.py`, `src/director_orchestrator/packet_contracts.py` |
 | `slack-collaboration-relay` | mediated | director_to_owner | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/slack_bot.py` |
 | `dependency-outcome-forwarding` | mediated | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/engine.py`, `src/director_orchestrator/antigravity.py` |
-| `review-to-merge-handoff` | mediated | director_to_provider | director | authorized | enabled | evidence_for_deterministic_gate | `src/director_orchestrator/review_handoff.py`, `src/director_orchestrator/primary_roster.py` |
-| `advisory-debate` | mediated | bidirectional | director | authorized | enabled | advisory_evidence_only | `src/director_orchestrator/team_charter.py:tally_advisory_votes` |
-| `oracle-exact-sha-merge-gate` | mediated | provider_to_director | director | authorized | disabled | evidence_for_deterministic_gate | `src/director_orchestrator/oracle_merge.py`, `src/director_orchestrator/policy.py` |
-| `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `src/director_orchestrator/usage.py` |
 | `owner-manual-recovery` | mediated | owner_to_director | owner | authorized | enabled | none | `src/director_orchestrator/callbacks.py`, `src/director_orchestrator/engine.py` |
 | `firecrawl-public-search-cli` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/primary_transports.py:PublicSearchCommandTransport`, `src/director_orchestrator/primary_default.py` |
-| `browser-provider-ui` | direct | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/team_charter.py` |
-| `shared-workflow-skills` | external | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/director.py` |
 | `direct-provider-to-provider` | direct | provider_to_provider | none | prohibited | not_applicable | none | `src/director_orchestrator/interactions.py:ProviderTransport`, `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/primary_transports.py:PrimaryProviderCapability` |
 
 ## Routes to other providers
 
 | Peer | Direct channel status | Direct route ids | Mediated via |
 | --- | --- | --- | --- |
-| `openai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `claude` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `cursor` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `grok` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
+| `openai` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `claude` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `cursor` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `grok` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -277,3 +273,5 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | BEGIN]] -->
@@ -183,6 +184,31 @@ limit. Those routes require independently established upstream spending bounds
 before their reservations can be treated as a guaranteed maximum bill. This
 change makes no paid call and does not establish that transport evidence.
 
+For the primary OpenAI Responses route, the exact signed budget's `token_limit`
+now travels from atomic admission to the adapter as a total-token allowance.
+It is never read from model-authored packet fields or converted from USD. The
+adapter first calls the authenticated Responses `input_tokens` endpoint with
+the identical configured model, instructions, input, reasoning and tools. It permits at
+most one generation with `max_output_tokens` equal to the remaining allowance;
+that output cap includes reasoning tokens. An invalid count or no remaining
+allowance stops before generation. Both requests share one cancellable deadline;
+the count response is bounded to 4 KiB and generation response to 1 MiB, including
+when a server keeps sending small chunks. Neither request is retried.
+A non-completed result, malformed output, missing usage,
+changed input count or exceeded total is not recorded as success.
+
+The returned token usage is provider telemetry, not a signed
+`ProviderUsageReceipt` or a new monetary authority. This check bounds the
+generation request under the provider's counting/output contracts; it cannot
+undo a provider-reported violation after execution. It does not establish
+count-endpoint pricing, a hard USD billing cap, or equivalent enforcement on
+other transports. Cancelling local I/O cannot prove that the provider stopped
+remote computation; an interrupted generation remains ambiguous. Runtime
+enrollment and paid activation remain separate.
+
+The request shape follows the [Responses input-count contract](https://developers.openai.com/api/reference/python/resources/responses/subresources/input_tokens/methods/count).
+The shared deadline uses `asyncio.timeout` because [HTTPX timeouts cover individual I/O operations](https://www.python-httpx.org/advanced/timeouts/).
+
 `PrimaryTeamRouting` composes enrolled runtime-proof, worker, artifact and
 repository services. `DefaultPrimaryActivation` accepts that explicit typed
 composition. When team mode is enabled, automatic startup without it fails
@@ -204,3 +230,5 @@ versioned contract name with `/v1`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]] -->
