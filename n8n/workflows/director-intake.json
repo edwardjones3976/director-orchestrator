@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [-80, 160],
-      "notes": "The distinction this whole workflow turns on. Only 401, 403 or 422 means the orchestrator refused before reserving intake, so no task was created and the caller can be told plainly. A 409 from SlackIntakeReplayConflict means a conflicting task may already exist, so it takes the ambiguity branch with other non-401/422 4xx. A 5xx is NOT a definite refusal either: primary intake is reserved before later operations can fail, and main.py wraps those as 503, so a task may already exist behind one. 5xx therefore takes the same unproven path as a missing status code. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
+      "notes": "The distinction this whole workflow turns on. Only 401, 403 or 422 means the orchestrator refused before reserving intake, so no task was created and the caller can be told plainly. A 409 from SlackIntakeReplayConflict means a conflicting task may already exist, so it takes the ambiguity branch with other non-401/403/422 4xx. A 5xx is NOT a definite refusal either: primary intake is reserved before later operations can fail, and main.py wraps those as 503, so a task may already exist behind one. 5xx therefore takes the same unproven path as a missing status code. No status code means the outcome is genuinely unknown — a timeout, a dropped socket, a response lost after the task was written — and no claim about it is safe."
     },
     {
       "parameters": {
