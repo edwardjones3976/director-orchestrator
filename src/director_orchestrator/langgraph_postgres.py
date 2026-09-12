@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
@@ -478,6 +480,7 @@ _APPEND_ONLY_TABLES = (
 )
 
 _RATCHET_TABLES = (
+    ("director_primary_slack_delivery", "director_primary_slack_delivery_guard"),
     ("director_primary_task_writer", "director_primary_writer_guard_fn"),
     ("director_primary_intake_authority", "director_primary_intake_guard_fn"),
     ("director_primary_task_projection", "director_primary_projection_guard_fn"),
@@ -574,6 +577,32 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_slack_delivery (
+            task_id text NOT NULL REFERENCES {schema}.director_primary_task_projection(task_id),
+            notification_key text NOT NULL,
+            projection_digest text NOT NULL,
+            payload jsonb NOT NULL,
+            client_msg_id text NOT NULL UNIQUE,
+            bot_user_id text,
+            state text NOT NULL CHECK (state IN ('PENDING','POSTING','ACKNOWLEDGED',
+                'DELIVERED','AMBIGUOUS','REFUSED','SUPPRESSED','SUPERSEDED')),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            claimed_at timestamptz,
+            acknowledged_at timestamptz,
+            delivered_at timestamptz,
+            slack_ts text,
+            readback_attempts integer NOT NULL DEFAULT 0 CHECK (readback_attempts BETWEEN 0 AND 2),
+            last_error text,
+            owner_decision_at timestamptz,
+            owner_command_id text,
+            PRIMARY KEY (task_id, notification_key)
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_slack_delivery_pending_idx
+        ON {schema}.director_primary_slack_delivery (state, created_at, task_id)
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_dedup (
@@ -1249,6 +1278,39 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 RAISE EXCEPTION
                     'director primary budget reservations never decrease'
                     USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $fn$
+        """,
+        f"""
+        CREATE OR REPLACE FUNCTION {schema}.director_primary_slack_delivery_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                RAISE EXCEPTION 'primary Slack delivery records are never deleted';
+            END IF;
+            IF (NEW.task_id, NEW.notification_key, NEW.projection_digest,
+                NEW.payload, NEW.client_msg_id, NEW.created_at) IS DISTINCT FROM
+               (OLD.task_id, OLD.notification_key, OLD.projection_digest,
+                OLD.payload, OLD.client_msg_id, OLD.created_at)
+               OR NEW.readback_attempts < OLD.readback_attempts THEN
+                RAISE EXCEPTION 'primary Slack delivery identity is immutable';
+            END IF;
+            IF NEW.state <> OLD.state AND NOT (
+                (OLD.state='PENDING' AND NEW.state IN ('POSTING','SUPPRESSED','SUPERSEDED')) OR
+                (OLD.state='POSTING' AND NEW.state IN ('ACKNOWLEDGED','AMBIGUOUS','REFUSED')) OR
+                (OLD.state IN ('ACKNOWLEDGED','AMBIGUOUS') AND NEW.state='DELIVERED')) THEN
+                RAISE EXCEPTION 'primary Slack delivery cannot be retried or rewound';
+            END IF;
+            IF (OLD.claimed_at IS NOT NULL AND NEW.claimed_at IS DISTINCT FROM OLD.claimed_at)
+                OR (OLD.acknowledged_at IS NOT NULL AND NEW.acknowledged_at IS DISTINCT FROM OLD.acknowledged_at)
+                OR (OLD.delivered_at IS NOT NULL AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
+                OR (OLD.slack_ts IS NOT NULL AND NEW.slack_ts IS DISTINCT FROM OLD.slack_ts)
+                OR (OLD.bot_user_id IS NOT NULL AND NEW.bot_user_id IS DISTINCT FROM OLD.bot_user_id)
+                OR (OLD.owner_command_id IS NOT NULL AND NEW.owner_command_id IS DISTINCT FROM OLD.owner_command_id)
+                OR (OLD.owner_decision_at IS NOT NULL AND NEW.owner_decision_at IS DISTINCT FROM OLD.owner_decision_at) THEN
+                RAISE EXCEPTION 'primary Slack delivery evidence is immutable';
             END IF;
             RETURN NEW;
         END;
@@ -5158,3 +5220,6 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
 # [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]

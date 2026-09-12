@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
@@ -1187,15 +1189,24 @@ class DefaultDryRunServices:
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
+        self._effect_grants: dict[str, dict | None] = {}
+        self._execution_modes: dict[str, str] = {}
         self._lock = threading.RLock()
 
-    def register(self, record: TaskRecord) -> None:
+    def register(self, record: TaskRecord, *, effect_grant: dict | None = None,
+                 execution_mode: str | None = None) -> None:
         with self._lock:
             self._records[record.task_id] = record.model_copy(deep=True)
+            self._effect_grants[record.task_id] = None if effect_grant is None else dict(effect_grant)
+            self._execution_modes[record.task_id] = execution_mode or (
+                "offline_simulation" if self.settings.langgraph_primary_offline_simulation_enabled
+                else "live" if self._live_composition else "paid_off")
 
     def discard(self, task_id: str) -> None:
         with self._lock:
             self._records.pop(task_id, None)
+            self._effect_grants.pop(task_id, None)
+            self._execution_modes.pop(task_id, None)
 
     def hydrate(self, projection: PrimaryTaskProjection) -> None:
         """Rehydrate bounded service input from the graph-owned task projection."""
@@ -1206,7 +1217,8 @@ class DefaultDryRunServices:
         raw = application.get("task_record")
         if not isinstance(raw, Mapping):
             raise RuntimeError("primary recovery projection lacks its task record")
-        self.register(TaskRecord.model_validate(dict(raw)))
+        self.register(TaskRecord.model_validate(dict(raw)), effect_grant=application.get("effect_grant"),
+                      execution_mode=application.get("execution_mode", "unknown"))
 
     def _record(self, task_id: str) -> TaskRecord:
         with self._lock:
@@ -1223,6 +1235,8 @@ class DefaultDryRunServices:
             return {
                 "schema_version": "director-default-task-view/v1",
                 "task_record": record.model_dump(mode="json"),
+                "effect_grant": self._effect_grants.get(task_id),
+                "execution_mode": self._execution_modes[task_id],
             }
 
     def authenticate_scope(self, context: HandlerContext) -> PhaseResult:
@@ -1960,7 +1974,8 @@ class DefaultPrimaryApplication:
                     return self._record_from_projection(repaired)
             record.task_id = task_id
             request = self._request(record)
-        self.services.register(record)
+        self.services.register(record, effect_grant=(
+            None if self.effect_grant is None else self.effect_grant.as_dict()))
         try:
             projection = self.coordinator.create_intake(request)
             planned = self._record_from_projection(projection)
@@ -2941,3 +2956,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
