@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -588,6 +589,94 @@ class PostgresParallelDispatch:
                     """,
                     {"task_id": task_id},
                 )
+
+    def has_pending_assignments(self, task_id: str) -> bool:
+        # Aggregate presentation can label dependency-blocked PENDING rows as
+        # BLOCKED; quiescence and reconciliation must inspect the stored status.
+        with self._pool.connection() as connection:
+            return connection.execute(f"""SELECT EXISTS (SELECT 1 FROM
+                {self._schema}.director_primary_parallel_assignment
+                WHERE task_id=%s AND status='PENDING') AS pending""", (task_id,)).fetchone()["pending"]
+
+    def reconcile_cancelled_pending(self, *, task_id: str, writer: TaskWriterLease) -> int:
+        """Close only demonstrably unstarted rows of a durably cancelled task.
+
+        This does not cancel a task or grant command authority. The task's
+        cancellation and killed batch must already exist. Ambiguous or charged
+        history stays visible, even where it cannot be attributed to one row.
+        """
+        if writer.task_id != task_id or writer.engine_owner != "langgraph":
+            raise ParallelDispatchError("writer does not authorize this cancelled task")
+        schema = self._schema
+        with self._pool.connection() as connection, connection.transaction():
+            self._writer(connection, task_id=task_id, owner_token=writer.owner_token,
+                         fencing_generation=writer.fencing_generation)
+            self._row(connection, "SELECT pg_advisory_xact_lock(hashtextextended(%(key)s, 0))",
+                      {"key": f"director-primary-parallel:{schema}:{task_id}"})
+            held = self._row(connection, f"""
+                SELECT p.projection, p.projection_digest, b.plan_digest, b.kill_switch
+                FROM {schema}.director_primary_task_projection p
+                JOIN {schema}.director_primary_parallel_batch b USING(task_id)
+                WHERE p.task_id=%(task_id)s AND p.engine_owner='langgraph'
+                FOR UPDATE OF p,b""", {"task_id": task_id})
+            if held is None:
+                return 0
+            projection = held["projection"]
+            if (projection.get("run_status") != "TERMINAL"
+                    or projection.get("terminal_classification") != "CANCELLED"
+                    or not held["kill_switch"]):
+                return 0
+            if projection.get("parallel_plan_digest") != held["plan_digest"]:
+                raise ParallelDispatchError("cancelled task parallel plan binding changed")
+            # CLAIMED and graph budget_used_units are planning bookkeeping.
+            # The real reservation/attempt/spend records below decide whether
+            # execution began; neither graph field is reset by this repair.
+            if (projection.get("provider_dispatch_status") not in {"NOT_STARTED", "CLAIMED"}
+                    or projection.get("effect_status") not in {"NOT_REQUIRED", "NOT_STARTED"}
+                    or projection.get("parallel_ambiguous_slot_count") != 0
+                    or projection.get("application", {}).get("task_record", {}).get("assignment_outcomes")):
+                return 0
+            # Claims and monetary spend are task-scoped. Without a trustworthy
+            # assignment mapping, retaining the task's pending rows is safer
+            # than declaring any of them unstarted.
+            if connection.execute(f"""SELECT 1 WHERE
+                EXISTS (SELECT 1 FROM {schema}.director_primary_claim WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_effect_reservation WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_provider_spend WHERE task_id=%s)
+                OR EXISTS (SELECT 1 FROM {schema}.director_primary_budget
+                           WHERE task_id=%s AND budget_reserved_units>0)""", (task_id,) * 4).fetchone():
+                return 0
+            # Lock all assignment rows before the final real-clock fence check;
+            # waiting on a row must not turn an expired lease into authority.
+            connection.execute(f"""SELECT assignment_id FROM {schema}.director_primary_parallel_assignment
+                WHERE task_id=%s FOR UPDATE""", (task_id,)).fetchall()
+            if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
+                WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
+                AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
+                (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
+                raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
+            repaired = connection.execute(f"""
+                UPDATE {schema}.director_primary_parallel_assignment a
+                SET status='FAILED', reason_code='task_cancelled_before_dispatch', completed_at=clock_timestamp()
+                WHERE a.task_id=%s AND a.status='PENDING'
+                  AND a.reservation_digest IS NULL AND a.reserved_at IS NULL
+                  AND a.result_digest IS NULL AND a.completed_at IS NULL AND a.reason_code IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_provider_attempt e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_result_packet_artifact e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_workload_assignment e
+                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+                RETURNING assignment_id""", (task_id,)).fetchall()
+            if repaired:
+                evidence = _digest({"task_id": task_id, "projection_digest": held["projection_digest"],
+                    "plan_digest": held["plan_digest"], "assignment_ids": sorted(row["assignment_id"] for row in repaired),
+                    "reason_code": "task_cancelled_before_dispatch"})
+                connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
+                    (task_id, owner_token, fencing_generation, event_code, payload_digest)
+                    VALUES (%s,%s,%s,'cancelled_pending_reconciled',%s)""",
+                    (task_id, writer.owner_token, writer.fencing_generation, evidence))
+            return len(repaired)
 
     def reserve_ready(
         self,
@@ -1514,3 +1603,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
