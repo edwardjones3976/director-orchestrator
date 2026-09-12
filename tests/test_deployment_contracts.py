@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | BEGIN]]
@@ -6,6 +9,9 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -14,6 +20,93 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def _run_status_sequence(self, responses):
+        workflow = json.loads(
+            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+        )
+        code = next(node for node in workflow["nodes"] if node["name"] == "Diff Readiness")
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required to execute the stored n8n status code")
+        result = subprocess.run(
+            [node, "-e", """
+const fs = require('node:fs');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const run = new Function('items', '$getWorkflowStaticData', input.code);
+const store = {};
+const outputs = input.responses.map(json => run([{json}], () => store));
+process.stdout.write(JSON.stringify({outputs, store}));
+"""],
+            input=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
+            text=True, encoding="utf-8", capture_output=True, timeout=10, check=True,
+        )
+        return json.loads(result.stdout)
+
+    def _status_response(self, **providers):
+        return {"statusCode": 200, "body": {
+            "providers": {name: providers.get(name, True) for name in (
+                "slack", "openai_director", "cursor", "claude", "gemini", "grok", "perplexity"
+            )},
+            "parallel_dispatch": {"kill_switch_open": True},
+            "langgraph_primary": {"ambiguous_effect_count": 0},
+        }}
+
+    def test_status_executes_provider_changes_and_suppresses_unchanged_health(self):
+        healthy = self._status_response()
+        down = self._status_response(gemini=False)
+        result = self._run_status_sequence([healthy, healthy, down, down, healthy])
+        initial, quiet, changed, still_down, recovered = result["outputs"]
+        self.assertEqual(len(initial), 1)
+        self.assertEqual(quiet, [])
+        self.assertEqual(still_down, [])
+        self.assertEqual(changed[0]["json"]["changed"], ["provider_gemini_ready"])
+        self.assertIn("true → false", changed[0]["json"]["text"])
+        self.assertIn("false → true", recovered[0]["json"]["text"])
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertEqual(sum(key.startswith("provider_") for key in watched), 7)
+
+    def test_status_executes_transport_http_and_repeated_ambiguity_alarms(self):
+        ambiguous = self._status_response()
+        ambiguous["body"]["langgraph_primary"]["ambiguous_effect_count"] = 1
+        stopped = self._status_response()
+        stopped["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        responses = [{"error": "connection refused"}, {"statusCode": 503},
+                     ambiguous, ambiguous, stopped]
+        result = self._run_status_sequence(responses)
+        for index, output in enumerate(result["outputs"]):
+            with self.subTest(response=index):
+                self.assertEqual(len(output), 1)
+                self.assertIs(output[0]["json"]["alarm"], True)
+        self.assertIn("unreachable", result["outputs"][0][0]["json"]["text"])
+        self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
+        self.assertIn("kill switch engaged", result["outputs"][4][0]["json"]["text"])
+
+    def test_status_only_emits_fixed_boolean_provider_fields(self):
+        response = self._status_response(gemini="sensitive-test-value", grok={"key": "sensitive-test-value"})
+        response["body"]["providers"]["api_key"] = "sensitive-test-value"
+        response["body"]["credentials"] = {"token": "sensitive-test-value"}
+        result = self._run_status_sequence([response])
+        self.assertNotIn("sensitive-test-value", json.dumps(result))
+        self.assertNotIn("api_key", json.dumps(result))
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertIsNone(watched["provider_gemini_ready"])
+        self.assertIsNone(watched["provider_grok_ready"])
+        self.assertIs(watched["provider_openai_director_ready"], True)
+
+    def test_status_connects_schedule_health_diff_and_slack_without_other_routes(self):
+        workflow = json.loads(
+            (ROOT / "n8n/workflows/director-status.json").read_text(encoding="utf-8")
+        )
+        names = ["Every 5 minutes", "Read Health", "Diff Readiness", "Post Status"]
+        self.assertEqual({node["name"] for node in workflow["nodes"]}, set(names))
+        self.assertEqual(workflow["connections"], {
+            source: {"main": [[{"node": target, "type": "main", "index": 0}]]}
+            for source, target in zip(names, names[1:])
+        })
+        health = next(node for node in workflow["nodes"] if node["name"] == "Read Health")
+        self.assertEqual(health["parameters"]["url"], "http://orchestrator:8080/health")
+        self.assertEqual(health["onError"], "continueRegularOutput")
+        self.assertTrue(health["parameters"]["options"]["response"]["response"]["fullResponse"])
+
     def test_default_primary_postgres_is_dedicated_healthy_and_default_off(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         environment = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -159,22 +252,114 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIs(settings["saveManualExecutions"], False)
         self.assertIs(settings["saveExecutionProgress"], False)
 
-    def test_n8n_preserves_intake_body_and_stops_on_ambiguous_delivery(self):
-        workflow = json.loads(
+    def _intake_workflow(self):
+        return json.loads(
             (ROOT / "n8n" / "workflows" / "director-intake.json").read_text(encoding="utf-8")
         )
-        request = next(node for node in workflow["nodes"] if node["name"] == "Create Director Task")
+
+    def _intake_node(self, name):
+        return next(node for node in self._intake_workflow()["nodes"] if node["name"] == name)
+
+    def test_n8n_preserves_intake_body_and_refuses_redirects(self):
+        request = self._intake_node("Create Director Task")
         self.assertEqual(request["parameters"]["method"], "POST")
         self.assertEqual(
             request["parameters"]["body"], "={{ JSON.stringify($json.body ?? $json) }}"
         )
         self.assertFalse(request.get("retryOnFail", False))
         self.assertFalse(request.get("continueOnFail", False))
-        self.assertEqual(request.get("onError", "stopWorkflow"), "stopWorkflow")
-        self.assertEqual(request["parameters"]["options"]["timeout"], 30000)
-        accepted = next(node for node in workflow["nodes"] if node["name"] == "Accepted")
+        # A redirect would resend the caller's Authorization header to another host.
+        self.assertIs(
+            request["parameters"]["options"]["redirect"]["redirect"]["followRedirects"],
+            False,
+        )
+
+    def test_n8n_relay_decides_before_its_caller_stops_waiting(self):
+        # slack_bot._forward posts with httpx timeout=20. A relay that waits
+        # longer than its caller cannot classify the outcome for anyone: the
+        # gateway has already given up and recorded an unconfirmed delivery.
+        request = self._intake_node("Create Director Task")
+        self.assertLess(request["parameters"]["options"]["timeout"], 20_000)
+
+    def test_n8n_accepts_only_an_exact_202_from_the_orchestrator(self):
+        # The intake contract is 202. Any other 2xx is a contract violation and
+        # must not be relayed to the gateway as an acceptance.
+        request = self._intake_node("Create Director Task")
+        self.assertIs(
+            request["parameters"]["options"]["response"]["response"]["fullResponse"], True
+        )
+        gate = self._intake_node("Exactly 202")
+        self.assertEqual(gate["type"], "n8n-nodes-base.if")
+        self.assertIn(
+            "$json.statusCode === 202",
+            json.dumps(gate["parameters"]["conditions"]),
+        )
+        accepted = self._intake_node("Accepted")
         self.assertEqual(accepted["parameters"]["options"]["responseCode"], 202)
-        self.assertEqual(accepted["parameters"]["responseBody"], "={{ JSON.stringify($json) }}")
+        # Body only. fullResponse also carries the upstream response headers.
+        self.assertEqual(
+            accepted["parameters"]["responseBody"], "={{ JSON.stringify($json.body) }}"
+        )
+        unexpected = self._intake_node("Unexpected Upstream Success")
+        self.assertEqual(unexpected["parameters"]["options"]["responseCode"], 502)
+
+    def test_n8n_reports_a_definite_refusal_and_stays_silent_on_ambiguity(self):
+        # The invariant this replaces asserted onError == "stopWorkflow", which
+        # stopped on *every* failure. That is right for an ambiguous delivery and
+        # wrong for a definite refusal: a 401 or 422 means no task was created and
+        # the gateway can be told so, whereas a timeout or dropped socket means the
+        # task may exist and no claim about it is safe. The workflow now separates
+        # the two rather than treating every failure as unknowable.
+        workflow = self._intake_workflow()
+        request = self._intake_node("Create Director Task")
+        self.assertEqual(request.get("onError"), "continueErrorOutput")
+
+        classifier = self._intake_node("Definite Upstream Refusal")
+        condition = json.dumps(classifier["parameters"]["conditions"])
+        self.assertIn("$json.error?.statusCode", condition)
+
+        failed = self._intake_node("Intake Failed")
+        self.assertEqual(failed["parameters"]["options"]["responseCode"], 502)
+        self.assertIn("upstream_status", failed["parameters"]["responseBody"])
+
+        # The ambiguous branch must terminate without a Respond node, so the
+        # webhook answers n8n's standard 200 message -- body text undocumented,
+        # so only the absence of a Respond node is asserted -- and the gateway
+        # records an unconfirmed
+        # delivery rather than a fabricated success or failure.
+        stop = self._intake_node("Ambiguous Delivery - Stop")
+        self.assertEqual(stop["type"], "n8n-nodes-base.noOp")
+        self.assertNotIn("Ambiguous Delivery - Stop", workflow["connections"])
+
+    def test_n8n_treats_a_5xx_as_unproven_because_intake_is_reserved_first(self):
+        # A-19'' P1. The relay once classified every 400-599 as a definite
+        # refusal. That is false for 5xx: primary intake is reserved before
+        # later operations can fail (primary_coordinator.reserve path), and
+        # main.py wraps those exceptions as 503 -- so a task can already exist
+        # behind one. Reporting "no task was created" there loses a live task.
+        # This asserts the boundary numerically, not by matching prose.
+        classifier = self._intake_node("Definite Upstream Refusal")
+        condition = json.dumps(classifier["parameters"]["conditions"])
+
+        bounds = [int(n) for n in re.findall(r"statusCode\s*<=\s*(\d{3})", condition)]
+        self.assertEqual(len(bounds), 1, "expected exactly one upper bound")
+        self.assertLess(
+            bounds[0],
+            500,
+            "5xx must not be classified as a definite refusal; a task may exist",
+        )
+        self.assertNotIn("599", condition)
+
+        # And the operator-facing text must not contradict the classifier.
+        notes = json.dumps(self._intake_node("Intake Failed").get("notes", ""))
+        self.assertNotIn("503", notes)
+
+    def test_n8n_intake_relays_no_response_body_on_failure(self):
+        # Only the upstream status code may cross back through the webhook.
+        for name in ("Intake Failed", "Unexpected Upstream Success"):
+            body = self._intake_node(name)["parameters"]["responseBody"]
+            self.assertNotIn("$json.body", body)
+            self.assertNotIn("headers", body)
 
     def test_compose_does_not_expose_the_orchestrator_secret_to_n8n(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -255,3 +440,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:18 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:20 UTC | END]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | END]]
+# [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]

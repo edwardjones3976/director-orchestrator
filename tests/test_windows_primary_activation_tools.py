@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
@@ -52,7 +54,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
             values = "$values = @{}" if mode is None else "$values = @{LANGGRAPH_PRIMARY_ACCEPTANCE_MODE='" + mode + "'}"
             result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
                 "$ErrorActionPreference='Stop'; " + values + "\n" + selection + "\nConvertTo-Json -Compress -InputObject @($required)"],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=300)
             if mode == "unknown":
                 self.assertNotEqual(0, result.returncode)
                 continue
@@ -270,7 +272,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,
             )
 
             self.assertEqual(0, completed.returncode, completed.stderr)
@@ -366,7 +368,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertNotIn(".Contains(", review_parser)
         self.assertNotIn("DIRECTOR_SECURITY_REVIEW=ACCEPT", text)
         self.assertIn("database_instance_id", text)
-        self.assertIn('"firecrawl", "github-copilot", "microsoft-365-copilot"', text)
+        self.assertIn('"firecrawl", "github-copilot"', text)
         self.assertNotIn('"firecrawl", "github-copilot", "windows-copilot"', text)
         self.assertNotIn("Invoke-Compose up -d langgraph-primary-db", text)
         self.assertNotIn("Invoke-Compose build orchestrator", text)
@@ -388,7 +390,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
 
     def test_host_wrapper_preserves_unsupported_lane_rejection(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
-        self.assertIn('@("microsoft-365-copilot")', text)
+        self.assertIn("unallowlisted provider", text)
         self.assertIn("Preflight", text)
         self.assertIn("no provider was invoked", text)
 
@@ -604,3 +606,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -5,8 +7,21 @@
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
+import json
 import unittest
-from director_orchestrator.primary_roster import PrimaryRosterHold, core_inventory_ready, select_primary_roster
+from dataclasses import replace
+
+from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, allocation_targets
+from director_orchestrator.config import Settings
+from director_orchestrator.primary_roster import (
+    IMPLEMENTERS,
+    KNOWN_LANES,
+    RESEARCH_LANES,
+    PrimaryRosterHold,
+    core_inventory_ready,
+    lanes_requiring_cost_rank,
+    select_primary_roster,
+)
 from director_orchestrator.primary_workload import admission_reason
 
 class PrimaryRosterTests(unittest.TestCase):
@@ -119,7 +134,161 @@ class PrimaryRosterTests(unittest.TestCase):
         roster = self.select(**args)
         self.assertEqual(roster.producer, "github-copilot")
         self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})
+
+
+_ACTIVATION_BINDING = {
+    "workspace_id": "default-director",
+    "provider_version": "v1",
+    "app_version": "v1",
+    "runtime_adapter_version": "v1",
+    "workspace_version": "v1",
+    "binding_version": "v1",
+}
+
+
+class SelectableLaneCostRankTests(unittest.TestCase):
+    """A selectable lane without a cost rank must fail at configuration time.
+
+    ``eligible_for`` already refuses, but it holds the *entire* roster rather
+    than degrading the one lane, and it does so only once a task reaches
+    dispatch. These cover the earlier refusal without weakening the later one.
+    """
+
+    def settings(self, *, bound, ranks):
+        return replace(
+            Settings(),
+            allow_paid_runs=True,
+            workload_policy_enabled=True,
+            workload_policy_mode="enforced",
+            primary_workhorse="cheapest_capable",
+            trusted_provider_cost_ranks_json=json.dumps(ranks),
+            langgraph_primary_provider_activation_bindings_json=json.dumps(
+                {lane: _ACTIVATION_BINDING for lane in bound}
+            ),
+            # Keep exactly one credential-ready specialist so the pre-existing
+            # ready-specialist check is satisfied and cannot mask this one.
+            claude_routine_url="https://example.invalid/claude",
+            claude_routine_token="token",
+            cursor_api_key="",
+            gemini_api_key="",
+            grok_api_key="",
+            perplexity_api_key="",
+        )
+
+    def test_startup_is_refused_and_names_the_unranked_selectable_lane(self):
+        settings = self.settings(
+            bound=("openai", "claude", "cursor", "grok"),
+            ranks={"openai": 4, "claude": 1, "cursor": 2},
+        )
+
+        self.assertEqual(("grok",), settings.unranked_selectable_primary_lanes())
+        with self.assertRaises(ValueError) as caught:
+            settings.validate_workload_policy_configuration()
+        self.assertIn("TRUSTED_PROVIDER_COST_RANKS", str(caught.exception))
+        self.assertIn("grok", str(caught.exception))
+
+    def test_startup_succeeds_once_every_selectable_lane_is_ranked(self):
+        settings = self.settings(
+            bound=("openai", "claude", "cursor", "grok"),
+            ranks={"openai": 4, "claude": 1, "cursor": 2, "grok": 3},
+        )
+
+        self.assertEqual((), settings.unranked_selectable_primary_lanes())
+        settings.validate_workload_policy_configuration()
+
+
+    def test_an_unbound_lane_needs_no_rank(self):
+        # provider_ready is False without a binding, and the roster's available
+        # pool is filtered through it, so an unbound lane never becomes a
+        # candidate. Requiring its rank would refuse a working deployment.
+        settings = replace(
+            self.settings(
+                bound=("openai", "claude", "cursor"),
+                ranks={"openai": 4, "claude": 1, "cursor": 2},
+            ),
+            langgraph_primary_required_providers=(
+                "openai", "claude", "cursor", "grok", "antigravity",
+            ),
+        )
+
+        self.assertEqual((), settings.unranked_selectable_primary_lanes())
+        settings.validate_workload_policy_configuration()
+
+    def test_capability_gated_lanes_still_require_a_rank(self):
+        # antigravity and github-copilot are reachable behind a capability gate,
+        # but the capability arrives with the intake rather than the
+        # configuration, so a bound gated lane is always required to be ranked.
+        settings = self.settings(
+            bound=("openai", "claude", "cursor", "antigravity", "github-copilot"),
+            ranks={"openai": 4, "claude": 1, "cursor": 2},
+        )
+
+        self.assertEqual(
+            ("antigravity", "github-copilot"),
+            settings.unranked_selectable_primary_lanes(),
+        )
+
+    def test_a_gemini_rank_satisfies_the_antigravity_lane(self):
+        # TRUSTED_PROVIDER_COST_RANKS normalizes antigravity to gemini, and
+        # canonical_allocation_lane maps it back, so no separate rank exists.
+        settings = self.settings(
+            bound=("openai", "claude", "cursor", "antigravity"),
+            ranks={"openai": 4, "claude": 1, "cursor": 2, "gemini": 3},
+        )
+
+        self.assertIn("gemini", settings.trusted_provider_cost_ranks())
+        self.assertNotIn("antigravity", settings.trusted_provider_cost_ranks())
+        self.assertEqual((), settings.unranked_selectable_primary_lanes())
+        settings.validate_workload_policy_configuration()
+
+        aliased = self.settings(
+            bound=("openai", "claude", "cursor", "antigravity"),
+            ranks={"openai": 4, "claude": 1, "cursor": 2, "antigravity": 3},
+        )
+        self.assertIn("gemini", aliased.trusted_provider_cost_ranks())
+        self.assertEqual((), aliased.unranked_selectable_primary_lanes())
+
+    def test_a_lane_with_a_zero_target_under_one_profile_still_needs_a_rank(self):
+        # The allocation profile arrives with the intake, so a zero target under
+        # engineering does not make a lane unselectable; another profile admits
+        # it. Only a lane no profile can admit is exempt.
+        self.assertEqual(0, allocation_targets("engineering")["github-copilot"])
+        self.assertEqual(
+            "workload_profile_lane_ineligible",
+            admission_reason("github-copilot", [], allocation_profile="engineering"),
+        )
+        self.assertIn("github-copilot", lanes_requiring_cost_rank(KNOWN_LANES))
+
+        self.assertEqual(
+            [],
+            [lane for lane in KNOWN_LANES
+             if not any(allocation_targets(profile).get(lane, 0) > 0
+                        for profile in ALLOCATION_PROFILES)],
+            "no known lane is currently zero under every profile; the exemption "
+            "exists so a lane that becomes so is dropped without editing this",
+        )
+
+    def test_derivation_tracks_the_roster_tuples_rather_than_a_copy(self):
+        selectable = frozenset(IMPLEMENTERS) | frozenset(RESEARCH_LANES)
+        self.assertEqual(selectable & KNOWN_LANES,
+                         lanes_requiring_cost_rank(KNOWN_LANES))
+        self.assertEqual(frozenset(), lanes_requiring_cost_rank(()))
+        # An identity outside the target table can never be admitted.
+        self.assertEqual(frozenset({"openai"}),
+                         lanes_requiring_cost_rank({"openai", "not-a-lane"}))
+
+    def test_the_dispatch_time_roster_hold_still_fires(self):
+        # Proof this is an additional gate, not a replacement: the same partial
+        # rank map that configuration now refuses still holds the roster.
+        with self.assertRaisesRegex(PrimaryRosterHold, "primary_trusted_cost_rank_required"):
+            select_primary_roster(
+                available=("openai", "claude", "cursor", "grok"),
+                history=(),
+                trusted_cost_ranks={"openai": 4, "claude": 1, "cursor": 2},
+            )
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | BEGIN]]
 name: Isolated CI acceptance issuer
@@ -120,6 +121,8 @@ jobs:
         env:
           PYTHONPATH: src
           CI_ISSUER_POLICY_JSON: ${{ vars.CI_ISSUER_POLICY_JSON }}
+          # Owner-protected environment variable, never workflow-dispatch input.
+          CI_ACCEPTANCE_MODE: ${{ vars.CI_ACCEPTANCE_MODE || 'provider-v2' }}
           CI_REVIEW_CONTEXT_JSON: ${{ inputs.context_json }}
           CI_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CI_CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
@@ -132,3 +135,4 @@ jobs:
           retention-days: 1
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 09:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]

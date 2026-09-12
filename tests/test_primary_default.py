@@ -1,3 +1,7 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -65,6 +69,7 @@ from director_orchestrator.primary_effect_gateways import (
 )
 from director_orchestrator.primary_parallel import (
     ParallelAssignmentStatus,
+    ParallelReservation,
     ParallelDispatchError,
     ParallelDispatchOutcome,
     PostgresParallelDispatch,
@@ -75,9 +80,11 @@ from director_orchestrator.primary_parallel import (
     PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
 )
 from director_orchestrator.primary_default import (
+    _SIMULATION_LABEL,
     DefaultDryRunServices,
     DefaultOfflineSimulationServices,
     DefaultPrimaryActivation,
+    build_offline_parallel_dispatcher,
     DefaultPrimaryApplication,
     DefaultPrimaryAuthority,
     _assignment_provider_lane,
@@ -578,24 +585,6 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 services=None,  # type: ignore[arg-type]
             )
 
-    def test_automatic_live_discovery_reports_typed_microsoft_365_copilot_blocker(self):
-        settings = replace(
-            Settings(),
-            repository_snapshot_root=str(Path.cwd()),
-        )
-
-        with patch(
-            "director_orchestrator.primary_transports._which", return_value=None
-        ), self.assertRaisesRegex(
-            ValueError,
-            r"external_blockers=microsoft-365-copilot:"
-            r"microsoft_365_copilot_work_iq_capability_evidence_missing",
-        ):
-            build_automatic_primary_live_dependencies(
-                settings,
-                handle=None,  # type: ignore[arg-type]
-                services=None,  # type: ignore[arg-type]
-            )
 
 
 class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
@@ -670,7 +659,7 @@ class DefaultPrimaryLiveWaveBoundaryTests(unittest.TestCase):
             settings.max_task_budget_usd,
             sum(item.estimated_cost_usd for item in record.plan.assignments),
         )
-        # Every lane, including microsoft-365-copilot, keeps its own slot.
+        # Every supported lane keeps its own slot.
         self.assertEqual(
             list(lanes),
             [
@@ -2508,6 +2497,320 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             all(value == 1 for value in services.provider_call_counts.values())
         )
 
+    def _offline_ledger_application(self, *, namespace, dispatch, event_id):
+        """Build the Default production wiring: ledger-only provider dispatch."""
+
+        settings = replace(
+            self.settings,
+            langgraph_primary_offline_simulation_enabled=True,
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        coordinator = PrimaryTaskCoordinator(
+            self.handle,
+            services.handlers(),
+            owner_token="default-primary-test-owner",
+            checkpoint_namespace=namespace,
+            # Production wiring: the graph's single-item provider edge is an
+            # approval interrupt, never a second transport owner.
+            auto_execute_provider=False,
+            application_projection_provider=services.application_projection,
+        )
+        coordinator.adopt_or_activate_new_intake()
+        application = DefaultPrimaryApplication(
+            settings,
+            coordinator,
+            services,
+            DefaultPrimaryAuthority(
+                starting_sha=SHA, authority_snapshot_digest=digest("authority")
+            ),
+            parallel_dispatcher=(
+                build_offline_parallel_dispatcher(services, lambda: coordinator)
+                if dispatch
+                else None
+            ),
+        )
+        pending = application.create_intake(
+            self.intake().model_copy(update={"source_event_id": event_id}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        projection = coordinator.get_projection(pending.task_id)
+        assert projection is not None
+        approval = projection.projection["pending_approval"]
+        completed = application.resume_approval(
+            ApprovalResume(
+                task_id=pending.task_id,
+                kind=ApprovalKind(approval["kind"]),
+                request_digest=approval["request_digest"],
+                approval_event_id=f"approve-{event_id}",
+                decision=ApprovalDecision.APPROVE,
+            )
+        )
+        return services, coordinator, application, pending, completed
+
+    def test_offline_doubles_execute_through_the_parallel_ledger(self):
+        """The offline wave must run under the production ledger-only wiring."""
+
+        services, coordinator, _application, pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-ledger-v1",
+                dispatch=True,
+                event_id="event-offline-ledger",
+            )
+        )
+
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        self.assertTrue(aggregate.terminal, aggregate)
+        self.assertTrue(aggregate.succeeded, aggregate)
+        self.assertEqual(0, aggregate.ambiguous_slot_count)
+        self.assertTrue(
+            aggregate.statuses
+            and all(
+                status == ParallelAssignmentStatus.SUCCEEDED
+                for status in aggregate.statuses.values()
+            ),
+            aggregate.statuses,
+        )
+        # Every dispatched lane ran its double exactly once, through the ledger.
+        self.assertTrue(services.provider_calls > 0, services.provider_call_counts)
+        self.assertTrue(
+            all(value <= 1 for value in services.provider_call_counts.values()),
+            services.provider_call_counts,
+        )
+        self.assertEqual(TaskStatus.DONE, completed.status)
+        self.assertTrue(completed.assignment_outcomes)
+
+    def test_offline_ledger_without_a_dispatcher_executes_no_provider(self):
+        """Regression guard for the Stage A M0 finding.
+
+        With auto_execute_provider=False and no ledger dispatcher, approval
+        succeeded but the provider wave never ran. Ownership and approval are
+        not execution, so this configuration must not report a finished task.
+        """
+
+        services, coordinator, _application, pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-nodispatch-v1",
+                dispatch=False,
+                event_id="event-offline-nodispatch",
+            )
+        )
+
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+        aggregate = coordinator.parallel_aggregate(pending.task_id)
+        self.assertFalse(aggregate.succeeded, aggregate)
+        self.assertNotEqual(TaskStatus.DONE, completed.status)
+
+    def test_unconfigured_lane_settles_failed_without_calling_a_double(self):
+        """An unconfigured lane must settle FAILED, never AMBIGUOUS.
+
+        Required by the independent review of #122/#126: raising here reaches
+        the ledger as AMBIGUOUS, which retains the concurrency slot and stops
+        the lifecycle from reaching a terminal state, for a failure that is
+        already known before any execution starts.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        outcome = dispatch(
+            ParallelReservation(
+                task_id="DIR-LG-UNCONFIGURED",
+                assignment_id="assignment-not-a-lane",
+                sequence=1,
+                provider_id="not-a-lane",
+                deployment_id="deployment-test",
+                reservation_digest=digest("reservation:not-a-lane"),
+            )
+        )
+
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertIsNone(outcome.result_digest)
+        self.assertEqual("offline_provider_double_missing", outcome.reason_code)
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+
+    def test_malformed_double_digest_is_rejected_not_wrapped(self):
+        """A prefix-only check let "sha256:x" settle the ledger as SUCCEEDED.
+
+        The bad value was wrapped into a newly valid digest, so the graph could
+        report DONE while the double had violated its declared result contract.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        lane = sorted(settings.langgraph_primary_required_providers)[0]
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: (lambda _context: "sha256:x")
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid digest"):
+            services.dispatch_ledger_double(
+                provider=lane,
+                context=SimpleNamespace(task_id="DIR-LG-MALFORMED"),
+                reservation_digest=digest("reservation:malformed"),
+            )
+
+    def test_malformed_double_digest_is_rejected_in_the_provider_subgraph(self):
+        """The sibling path kept the prefix-only check "sha256:x" slips through.
+
+        The ledger path was hardened alone, so the graph's own provider edge
+        still folded a malformed digest into its aggregate result digest.
+        """
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings,
+            packet_router=packet_router(settings),
+            provider_doubles={
+                provider: (lambda _context: "sha256:x")
+                for provider in settings.langgraph_primary_required_providers
+            },
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid digest"):
+            services.provider_subgraph(
+                SimpleNamespace(
+                    task_id="DIR-LG-MALFORMED-SUBGRAPH",
+                    provider_attempt_digest=digest("attempt:malformed"),
+                    scheduled_producer_id="producer-malformed",
+                    work_packet_digest=digest("packet:malformed"),
+                    idempotency_key_digest=digest("idempotency:malformed"),
+                    authority_snapshot_digest=digest("authority:malformed"),
+                    starting_sha="0" * 40,
+                )
+            )
+
+    def test_simulated_outcomes_carry_the_charter_simulation_label(self):
+        """Charter: a projection that contacted no provider must be labelled.
+
+        These strings reach the human-visible TaskRecord projection, so without
+        the verbatim label a simulated wave reads like real provider evidence.
+        """
+
+        charter = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "team-operating-charter.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(_SIMULATION_LABEL, charter)
+
+        _services, _coordinator, _application, _pending, completed = (
+            self._offline_ledger_application(
+                namespace="default-primary-offline-label-v1",
+                dispatch=True,
+                event_id="event-offline-label",
+            )
+        )
+
+        self.assertTrue(completed.assignment_outcomes)
+        for outcome in completed.assignment_outcomes:
+            self.assertIn(_SIMULATION_LABEL, outcome.result)
+            self.assertIn(_SIMULATION_LABEL, outcome.review_summary)
+
+    def fresh_witness(self, task_id: str) -> dict:
+        import psycopg
+        from psycopg import sql
+        # A new physical connection proves visibility beyond the insert transaction.
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as connection:
+            connection.execute("SET statement_timeout = '10s'")
+            row = connection.execute(sql.SQL(
+                "SELECT projection FROM {}.director_primary_task_projection WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (task_id,)).fetchall()
+            dedup = connection.execute(sql.SQL(
+                "SELECT task_id FROM {}.director_primary_intake_dedup WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (task_id,)).fetchall()
+        projected = row[0][0] if len(row) == 1 else {}
+        return {
+            "projection_rows": len(row), "dedup_rows": len(dedup),
+            "reason_code": projected.get("reason_code"),
+            "provider_dispatch_status": projected.get("provider_dispatch_status"),
+        }
+
+    def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
+        import psycopg
+        import httpx
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+
+        def deny_http(*_args, **_kwargs):
+            raise AssertionError("External HTTP is forbidden in this test")
+
+        with patch.object(httpx.HTTPTransport, "handle_request", side_effect=deny_http), \
+             patch.object(httpx.AsyncHTTPTransport, "handle_async_request", side_effect=deny_http):
+            settings = replace(
+                self.settings, shared_secret="standalone-qa-synthetic-secret",
+                langgraph_primary_new_intake_enabled=True,
+                langgraph_primary_live_provider_dispatch_enabled=False,
+            )
+            activation = SimpleNamespace(application=self.application)
+            headers = {"Authorization": "Bearer standalone-qa-synthetic-secret"}
+            captured: dict = {}
+
+            def request(client, suffix):
+                payload = self.intake().model_copy(update={"source_event_id": "qa-" + suffix})
+                return client.post("/v1/intake", headers=headers, json=payload.model_dump(mode="json"))
+
+            def fail_after_reservation(command):
+                captured["task_id"] = command.task_id
+                before_failure = self.fresh_witness(command.task_id)
+                self.assertEqual(before_failure["projection_rows"], 1)
+                self.assertEqual(before_failure["dedup_rows"], 1)
+                captured["visible_before_failure"] = before_failure
+                captured["failure_reached"] = True
+                raise psycopg.OperationalError("QA injected failure after committed reservation")
+
+            with patch.object(main, "settings", settings), \
+                 patch.object(main, "primary_default_activation", activation):
+                # Deliberately no context manager: no ASGI lifespan or service startup.
+                client = TestClient(main.app)
+                try:
+                    with patch.object(self.coordinator._runtime, "start", side_effect=fail_after_reservation) as fault:
+                        response = request(client, "after-reservation")
+                    fault.assert_called_once()
+                    witness = self.fresh_witness(captured["task_id"])
+
+                    self.assertEqual(503, response.status_code)
+                    self.assertEqual(1, witness.get("projection_rows"))
+                    self.assertEqual(1, witness.get("dedup_rows"))
+                    self.assertTrue(captured.get("failure_reached", False))
+                    self.assertEqual("intake_reserved", witness.get("reason_code"))
+                    self.assertEqual("NOT_STARTED", witness.get("provider_dispatch_status"))
+                    self.assertEqual(response.json(), {"detail": "LangGraph primary intake is unavailable"})
+
+                    # Same outward 503 without a reservation MUST fail the evidence predicate.
+                    early = {}
+                    def fail_before_reservation(**kwargs):
+                        early["task_id"] = kwargs["task_id"]
+                        raise psycopg.OperationalError("QA injected failure before reservation")
+                    with patch.object(type(self.coordinator._store), "create_primary_task_projection", side_effect=fail_before_reservation) as early_fault:
+                        early_response = request(client, "before-reservation")
+                    early_fault.assert_called_once()
+                    early_witness = self.fresh_witness(early["task_id"])
+                    self.assertEqual(early_response.status_code, 503)
+                    self.assertEqual(0, early_witness.get("projection_rows"))
+
+                    # Removing the injected fault must take the existing paid-off success path.
+                    success = request(client, "without-fault")
+                    self.assertEqual(success.status_code, 202)
+                    successful_witness = self.fresh_witness(success.json()["task_id"])
+                    self.assertEqual(successful_witness["provider_dispatch_status"], "NOT_STARTED")
+                finally:
+                    client.close()
+
 
 class DefaultPrimaryFastAPIIntegrationTests(unittest.TestCase):
     @classmethod
@@ -2724,3 +3027,7 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]

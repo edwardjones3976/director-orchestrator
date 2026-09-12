@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
@@ -15,7 +17,7 @@ schema_version: "director-provider-routes/v1"
 document_type: "director-provider-route-catalog"
 authority_granted: "none"
 
-lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
 
 endpoints:
   - id: "openai"
@@ -34,8 +36,6 @@ endpoints:
     description: "Firecrawl lane: public search transport under the research contract."
   - id: "github-copilot"
     description: "GitHub Copilot lane: supplemental hygiene reviewer, no production authority."
-  - id: "microsoft-365-copilot"
-    description: "Microsoft 365 Copilot lane: blocked pending Work IQ capability evidence."
   - id: "director"
     description: "The runtime Director control plane; executing provider is recorded separately from Claude project leadership."
   - id: "owner"
@@ -85,7 +85,7 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries:
       - "one immutable pre-staged work packet revision per assignment"
       - "task text, acceptance checks, owned and prohibited paths, budgets, timeouts, and retry limits for prose-bearing lanes"
@@ -115,7 +115,7 @@ routes:
     direction: "provider_to_director"
     initiation: "provider_response_to_dispatch"
     endpoints: { from: "all_providers", to: "director" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries:
       - "one structured result packet bound to the dispatched packet identity"
       - "provider-native run or session identifiers and returned usage telemetry when present"
@@ -142,7 +142,7 @@ routes:
     direction: "director_to_owner"
     initiation: "director"
     endpoints: { from: "director", to: "slack_thread" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries:
       - "concise, assignment-correlated status relayed by the Director on behalf of every provider"
     withheld_context:
@@ -170,7 +170,7 @@ routes:
     direction: "director_to_provider"
     initiation: "director"
     endpoints: { from: "director", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries:
       - "bounded outcomes of declared upstream assignments, embedded by the Director into the dependent packet"
     withheld_context:
@@ -228,7 +228,7 @@ routes:
     carries:
       - "the neutrally framed question and bounded options"
       - "independent positions, evidence, counterarguments, confidence, unknowns"
-      - "one advisory vote per seated member at the configured weight"
+      - "at most one advisory vote per seated member at the configured weight, or an explicit abstention"
     withheld_context:
       - "other members' conclusions before independent positions are recorded, when practical"
     authority: "advisory_evidence_only"
@@ -415,7 +415,7 @@ routes:
     direction: "owner_to_director"
     initiation: "owner"
     endpoints: { from: "owner", to: "director" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries:
       - "provider run or session identifiers supplied by the owner to reconcile an ambiguous paid dispatch"
     withheld_context:
@@ -743,30 +743,6 @@ routes:
     config: [LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED, COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN]
     notes: "Not gating. A rejected finding is waste; a confirmed defect blocks through the existing defect gates, not through Copilot."
 
-  - route_id: "microsoft-365-copilot-work-iq"
-    name: "Microsoft 365 Copilot Work IQ"
-    kind: "direct"
-    direction: "director_to_provider"
-    initiation: "director"
-    endpoints: { from: "director", to: "microsoft-365-copilot" }
-    providers_involved: [microsoft-365-copilot]
-    carries:
-      - "nothing today; discovery hard-codes this lane unauthenticated with a typed external blocker"
-    withheld_context:
-      - "production authority; the capability validator refuses it for this lane"
-    authority: "none"
-    status: "proposed"
-    default_config_state: "blocked"
-    charter_basis:
-      - document: "docs/langgraph-primary-operations.md"
-        anchor: "the production Work IQ REST endpoint"
-      - document: "docs/provider-setup.md"
-        anchor: "Microsoft Work IQ requires the tenant, a protected non-symlink token file, and"
-    enforced_by: []
-    prohibition_quote: null
-    config: [MICROSOFT_365_COPILOT_TENANT_ID, MICROSOFT_365_COPILOT_DELEGATED_TOKEN_FILE, MICROSOFT_365_COPILOT_EXPECTED_SUBJECT, MICROSOFT_365_COPILOT_EXPECTED_OBJECT_ID]
-    notes: "Blocker code microsoft_365_copilot_work_iq_capability_evidence_missing. A transport class exists but no live capability evidence has been accepted."
-
   - route_id: "windows-host-provider-bridge"
     name: "Windows host provider bridge"
     kind: "direct"
@@ -778,7 +754,6 @@ routes:
       - "a validated packet to one native command per supported lane, behind a signed challenge and a durable claim store"
     withheld_context:
       - "Director and API secrets; the child environment carries a fixed safe subset"
-      - "Microsoft 365 Copilot, which remains an unsupported host lane"
     authority: "none"
     status: "authorized"
     default_config_state: "disabled"
@@ -972,7 +947,7 @@ routes:
     direction: "provider_to_provider"
     initiation: "none"
     endpoints: { from: "all_providers", to: "all_providers" }
-    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, microsoft-365-copilot]
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot]
     carries: []
     withheld_context:
       - "everything; no such channel exists in the transport enums, the host bridge lane sets, or the typed effect actions"
@@ -1012,3 +987,5 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]

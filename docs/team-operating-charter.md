@@ -1,3 +1,11 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]] -->
@@ -32,7 +40,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director team operating charter
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
 
 **Status:** Owner-authorized operating guidance. Deterministic application policy remains authoritative.
 
@@ -99,21 +107,19 @@ other profiles and advisory weights reflect the role swap. Account facts remain 
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
-| OpenAI / Codex production | 25% | 40% | 20% | 25% |
-| Claude | 30% | 25% | 25% | 30% |
+| OpenAI / Codex production | 27% | 40% | 20% | 32% |
+| Claude | 33% | 25% | 25% | 38% |
 | Cursor | 10% | 15% | 5% | 5% |
 | Grok | 10% | 10% | 5% | 5% |
 | Gemini / Antigravity | 5% | 10% | 5% | 5% |
 | Perplexity | 5% | 0% | 25% | 0% |
 | Firecrawl | 5% | 0% | 15% | 5% |
 | GitHub Copilot | 5% | 0% | 0% | 10% |
-| Microsoft 365 Copilot | 5% | 0% | 0% | 15% |
 | Total | 100% | 100% | 100% | 100% |
 
 Canonical profile IDs are `mixed`, `engineering`, `public_research`, and
 `enterprise`. Canonical lane IDs are `openai`, `claude`, `cursor`, `grok`,
-`antigravity`, `perplexity`, `firecrawl`, `github-copilot`, and
-`microsoft-365-copilot`. Models, native apps, CLI contacts, API transports, and
+`antigravity`, `perplexity`, `firecrawl`, and `github-copilot`. Models, native apps, CLI contacts, API transports, and
 aliases map to their existing parent lane; they never create a second quota or
 an independent reviewer. Gemini and Antigravity share the Antigravity lane.
 
@@ -158,8 +164,12 @@ independence, safety, and deterministic gates always outrank cost.
 - **Claude — Acting Director-Orchestrator:** project leadership, planning,
   neutral moderation, evidence synthesis, disagreement resolution, acceptance
   supervision, recovery, and milestone reporting. Moderator, Participant, and
-  Director functions remain distinct; only Participant may cast the single
-  Claude advisory vote at weight 2.0. Actual Claude material authorship removes
+  Director functions remain distinct, and Claude holds all three at once in
+  every debate it joins. Its single advisory vote at weight 2.0 is booked under
+  Participant when cast, or an explicit abstention is recorded. Moderating never
+  removes Claude's right to vote; only Claude's own abstention forgoes exercising
+  it. Separating the functions decides where a cast vote is recorded, never
+  whether Claude retains that right. Actual Claude material authorship removes
   its review/merge independence; leadership creates no production credit.
 - **OpenAI / Codex — Bounded implementer and reviewer:** full-spectrum primary
   for programming, repository-scale reasoning, architecture, QA, and independent
@@ -188,25 +198,26 @@ independence, safety, and deterministic gates always outrank cost.
 - **Gemini/Antigravity — Specialist and Backup Programmer:** subordinate supplemental specialist, never a primary-team
   substitute. Work assignments are limited to explicit boilerplate,
   scaffolding, low-level mechanical implementation, and alternate/abstract
-  ideation, including the bounded sandbox execution those need. Its ideas and
-  artifacts are non-authoritative evidence: it cannot perform exact-SHA
-  review, final acceptance, deterministic merge, or define research-contract
-  or methodology truth, and every work assignment must feed a later Claude,
-  Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+  ideation, including the bounded sandbox execution those need. Its output is
+  authoritative under the owner authority decision recorded immediately below:
+  it may perform exact-SHA review, final acceptance, and deterministic merge
+  into a non-protected branch. It still may not define research-contract or
+  methodology truth, and every Antigravity output must feed a later OpenAI,
+  Claude, Cursor, or Grok assignment that independently verifies and integrates
+  or rejects it.
   A rights-ledger mechanism exists to record a `review_verdict` grant to
   Antigravity against an exact verified build, and any such grant is not
   self-service: it requires the configuration flag, a recorded grant, an
   owner notice raised at the moment of grant, and is revocable at any time — a
   revocation that no later rebuild undoes. See `docs/entitlement-control-plane.md`.
   Today that mechanism has no runtime consumer: no authorization gate reads a
-  granted `review_verdict` right, so no exception to the review restriction
-  above is currently live. Any future exception requires a separate,
-  owner-gated implementation — including live build-bound rights checking and
-  whatever admission or wire changes that requires — not merely a ledger
-  entry. Final acceptance, exact-SHA review, and deterministic merge remain
-  outside what any ledger entry can widen, and a provisioned verdict does not
-  enlarge the work kinds above: `CAPABILITY_BY_KIND` still admits only the
-  four subordinate kinds.
+  granted `review_verdict` right. The authority above comes from the owner's
+  charter decision, never from a ledger entry; a ledger entry widens nothing on
+  its own, and a provisioned verdict does not enlarge the work kinds above:
+  `CAPABILITY_BY_KIND` still admits only the four subordinate kinds. Carrying
+  the owner's grant into the runtime requires a separate, owner-gated
+  implementation — including live build-bound rights checking and whatever
+  admission or wire changes that requires — not merely a ledger entry.
   Antigravity may hold a debate seat, but only one the Director gave it: it
   cannot initiate, self-route, widen, or autonomously continue a conversation,
   and a seat grants it no review, acceptance, merge, deployment, publication,
@@ -214,7 +225,54 @@ independence, safety, and deterministic gates always outrank cost.
   weight is cast only for an invited turn and stays advisory inside the immutable
   denominator. Keep credentials and external-write paths out of disposable
   sandboxes unless a later work order explicitly and safely provides them.
-- **Antigravity outbound contract.** Ordinary Antigravity *work* is sent no
+- **Antigravity review and acceptance authority — owner decision, 2026-09-08 UTC.**
+  The owner decided that Antigravity's output is authoritative: it may perform
+  exact-SHA review, final acceptance, and deterministic merge. This supersedes
+  the earlier charter wording that made Antigravity's output non-authoritative
+  outside team mode, and it is not conditioned on team mode. The owner holds
+  authority over this charter; the grant is recorded as decided.
+
+  *Scope boundary — protected branches.* The granted deterministic merge reaches
+  a **non-protected branch only**. Merging into a protected branch is a tier-0
+  class in `docs/human-out-of-the-loop-operation.md`, never delegable under any
+  configuration, and AGENTS.md rule 4 forbids model output from removing an
+  approval requirement. Protected-branch merge stays owner-only for every lane,
+  Antigravity included. This bounds the grant; it does not qualify it.
+
+  *Rules that already bind every lane, restated so this grant reads as no
+  exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
+  materially authored, so merge authority never lets Antigravity merge its own
+  work. And a delegated merge requires the producer, the reviewer, and the
+  acting agent to be three distinct identities, plus two concurring exact-SHA
+  `ACCEPT` verdicts from different providers, neither of them a material author.
+  Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
+  Grok — neither more nor less.
+
+  *Mandatory independent proofread.* Every Antigravity output — work it produces
+  **and** any review, acceptance, or merge verdict it issues — is followed by an
+  independent assignment from OpenAI, Claude, Cursor, or Grok that verifies or
+  rejects it. This adds a requirement rather than removing one, so it lands
+  cleanly under rule 4. The owner's list **widens** the verifier set:
+  `src/director_orchestrator/primary_roster.py` currently constrains an
+  antigravity producer's reviewer to `lane in {"claude", "cursor", "grok"}`, and
+  the owner's decision adds `openai`. The proofreading assignment may not be
+  Antigravity and may not be a material author of what it checks.
+
+  *Authority granted; lane still not qualified and not live.* This decision
+  changes what Antigravity is **permitted** to do. It does not change whether
+  Antigravity runs, and nobody may read it as an activation.
+  `docs/provider-profiles/antigravity.yaml` still records
+  `operational_status: not_qualified_not_live`, and the profile schema still
+  freezes `execution_modes` as a constant. The runtime has not yet caught up
+  either: the closed default-path wire contract in
+  `src/director_orchestrator/antigravity.py` still lists `review_verdict`,
+  `acceptance_verdict`, and `merge` in `DENIED_AUTHORITIES`, and the primary
+  roster still admits Antigravity as a reviewer only under team mode. Those code
+  paths, and the mirrored profile and contract fields that must track them,
+  change only through a separate owner-gated assignment. Until that lands, this
+  section is the charter's authority record and not a description of live
+  behavior.
+- **Antigravity outbound contract (default path).** Ordinary Antigravity *work* is sent no
   model-authored prose of any kind. `src/director_orchestrator/antigravity.py`
   composes that request from three sources only: fixed strings that live in that
   file, values of closed enums, and integers inside declared bounds. The
@@ -249,6 +307,46 @@ independence, safety, and deterministic gates always outrank cost.
   change. Repository, starting ref, draft PR, and public research query are refused
   as fields. Rejections report labels drawn from the same file and never quote the
   assignment.
+- **Antigravity team mode — default off, documented, not live.** A second,
+  separately gated contract exists beside the closed one above:
+  `antigravity-team-engineering/v1`, implemented default-off across
+  `src/director_orchestrator/antigravity_team*.py`. It inverts that boundary for
+  one explicitly selected assignment. Under it Antigravity receives the full v1
+  work packet — objective, dependencies, constraints, acceptance checks, and
+  approval requirements — plus the exact repository source bytes of an
+  owner-signed manifest, base64-encoded into the worker prompt. It is granted
+  `writable_paths`, and a validated proposal becomes real Git blob, tree, and
+  commit objects held by a private `refs/director/team/` retention anchor. It is
+  today the only path on which the primary roster will plan Antigravity for
+  independent review: the roster code admits the lane as a reviewer when, and
+  only when, team mode is on. That is a description of the current runtime, not
+  a ceiling on the owner grant recorded above, which the roster has not yet been
+  changed to reflect. Documenting this route does not authorize it.
+
+  The route is off unless `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` is true,
+  and the closed subordinate contract stays the default in every other case.
+  Startup fails closed in both directions: live primary composition raises when
+  the setting is true and no typed enrolled routing services are supplied, and
+  raises again when routing services are present while the setting is off, so
+  neither the flag nor the services can enable the route alone. Beyond the flag,
+  each assignment needs its own owner-HMAC-signed `TeamGrant` bound to that exact
+  `task_id`, `assignment_id`, and packet digest; a live entitlement query at all
+  five boundaries — `disclosure`, `dispatch`, `execution`, `command`, `result` —
+  that re-reads revocation, scope, installed build, and entitlement generation
+  every time; a monetary reservation through the shared signed budget authority;
+  and fresh, challenge-bound signed worker containment evidence produced before
+  any packet or source byte is exported. A grant signature never substitutes for
+  the live query. Antigravity still may not self-accept, merge into a protected
+  branch, deploy, or publish in this mode, and review and acceptance remain
+  restricted to an exact target it did not materially author.
+
+  No production assembly exists today. `PrimaryTeamRouting` is constructed
+  nowhere in this repository — not in the service and not in the test suite — so
+  no configuration currently reaches the route, and
+  `docs/provider-profiles/antigravity.yaml` records it as
+  `not_qualified_not_live`. Host enrollment, issuer acceptance, activation
+  generations, and live cutover remain separately owner-gated. See
+  `docs/antigravity-team-engineering.md`.
 - **Perplexity.ai — Research Programmers:** evidence-only methodological, theoretical, source-discovery,
   and fact-verification research under the strict contract below.
 
@@ -335,11 +433,16 @@ The acting Director keeps three functions separate throughout that process:
 - **Moderator:** frames the question and bounded options neutrally, requests
   positions without leading language, prevents premature cross-exposure, and
   performs a counter-bias pass that tests the favored view against the strongest
-  contrary evidence. Moderation does not cast a vote.
+  contrary evidence. The counter-bias pass itself is vote-free so that it cannot
+  pre-empt the synthesis vote. Moderating never removes, reduces, defers, or
+  forfeits Claude's vote.
 - **Participant:** records its independently formed initial position before
-  specialist conclusions are exposed and may cast the single existing Claude
-  vote at weight 2.0 during synthesis. It does not receive an additional vote
-  for planning, moderation, synthesis, or acceptance.
+  specialist conclusions are exposed and casts the single existing Claude vote
+  at weight 2.0 during synthesis or records an explicit abstention. Claude retains
+  its right to vote in every debate it joins, including every debate it moderates;
+  only Claude's own abstention forgoes exercising it. Planning, moderation, synthesis, and
+  acceptance earn no additional vote; that rule bars a second Claude vote and
+  never the first.
 - **Director:** compares evidence quality, reports uncertainty and dissent,
   synthesizes the recommendation, applies the tie boundary below, and routes the
   next bounded action. Director authority does not create a vote or participation
@@ -689,7 +792,8 @@ For a medium-or-higher complexity decision, preserve:
 
 For each acting Director contribution, also identify whether it was Moderator,
 Participant, or Director work. A Participant entry may contain no more than the
-one existing Claude vote; Moderator and Director entries have no additional vote.
+one existing Claude vote, and moderating the same debate does not remove it;
+Moderator and Director entries add no second vote on top of that one.
 Record the neutral framing and counter-bias check when debate was used, and never
 fabricate participation to make a record look complete.
 
@@ -734,7 +838,7 @@ establish participation, completion, readiness, or authorization.
 
 <!-- TEAM_CHARTER_MANIFEST_BEGIN -->
 ```json
-{"antigravity_debate_eligible":true,"antigravity_may_initiate_conversation":false,"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":20480,"committee_weights":{"antigravity":1.0,"claude":2.0,"cursor":1.5,"grok":1.5,"openai":2.5},"concise_evidence_first":true,"configured_weight_total":8.5,"cursor_capability_parity_target":1.0,"director_operating_directive":{"allocation_profiles":{"lane_order":["openai","claude","cursor","grok","antigravity","perplexity","firecrawl","github-copilot","microsoft-365-copilot"],"weights":{"engineering":[40,25,15,10,10,0,0,0,0],"enterprise":[25,30,5,5,5,0,5,10,15],"mixed":[25,30,10,10,5,5,5,5,5],"public_research":[20,25,5,5,5,25,15,0,0]}},"availability":{"additional_attempt_requires":["second_requires_temporary_failure","third_requires_new_information_or_different_transport","stop_on_success","resource_budgets_remaining"],"after":"unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempt_ledger":"append_only_postgres_child_events","attempts":"conditional_maximum_three","format_roster":"conditional_roster_maximum_three","partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"capacity_context":"owner_Pro20x_Max5x_not_API_entitlements","closure":{"may_skip_required_gate":false,"ordinary_review_to_merge_major_actions":5,"over_budget_action":"RESHAPED_or_OWNER_DECISION_REQUIRED","parallel_checks_count_as_one_orchestration_wave":true,"raw_provider_and_tool_calls_reported_separately":true},"coding_routing":{"claude_exact_requirement_rule":"exact_trusted_requirement_may_select_claude_and_model_label","missing_cost_rule":"unknown_cost_never_becomes_zero_or_cheapest","model_output_cannot_expand_eligibility":true,"one_writer_lease_per_file_or_error_surface":true,"reviewer_must_differ_from_producer_and_material_authors":true,"reviewer_rotation":"least_recent_eligible_non_author","selection_order":["exact_scope_allowlists_transport_and_readiness","task_capability_tools_context_risk_and_independence","direct_allocation_compliance_and_under_target_preference","total_effort_eligibility_and_corrective_under_band_preference","lowest_trusted_estimated_cost","deterministic_tie_breaker"],"selection_policy":"cheap_capable_model_first","trusted_cost_rule":"use_only_authenticated_or_operator_configured_comparable_cost_evidence","unavailable_action":"stop_and_reshape_without_silent_substitution","unconditional_claude_medium_or_long_requirement":false},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"copilot_lite_hygiene_review":{"attempts":"conditional_maximum_three","authority_granted":[],"automatic_every_push":false,"candidate_change_rule":"invalidate_the_observation_do_not_auto_rerun","finding_rule":"validate_independently_block_only_confirmed_defect","gating":false,"material_fix_authorship_rule":"substantive_fix_makes_copilot_material_author_ineligible_to_review_candidate","provider_or_committee_member":false,"rejected_finding_rule":"record_as_waste","trigger":"request_after_checks_green_and_exact_candidate_freeze","unavailable_or_quota_failure":"record_waste_and_continue_without_inferred_verdict","workload_percentage":null},"default_allocation_profile":"engineering","director":"claude","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_direct_production_share":true,"efficiency_targets":{"browser_handoff_reduction_target":null,"duplicate_validation_reduction_percent":70,"ordinary_review_to_merge_max_major_actions":5,"required_evidence_preservation_percent":100,"total_task_action_reduction_percent":60,"unchanged_status_check_reduction_percent":80},"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":true,"surface":"owner_authorized_external_codex_openai"},"overall_effort_policy":"telemetry_only_no_separate_allocation","pre_staging":{"authority_change":"new_owner_authorized_revision","candidate_binding":"new_canonical_packet_revision_then_relay_delta_before_review","digest":"canonical_by_enforcer","execution_limits":"immutable_assignment_retry_and_resource_budgets","invalid_or_missing_action":"PRESTAGE_REQUIRED_no_dispatch","priority":"high_blocking","provider_updates":"initial_packet_once_then_relevant_deltas_only","required_before_provider_dispatch":true,"required_fields":["packet_id","goal","terminal_condition","repository","worktree","branch","base_sha","candidate_sha","producer","independent_reviewer","owned_paths","prohibited_paths","required_tests","required_security_evidence","budget_units","timeout_seconds","retry_limit","merge_eligibility_conditions","stopping_conditions"],"revision_mode":"immutable_canonical_packet_revisions"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale","prospective_total_effort_soft_bands_and_share_advisories","prestage_packet_digest_workload_size_effort_points_and_deltas","status_validation_action_counts_reduction_baselines_and_browser_use","acting_director_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry","copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"research_policy":{"default":"research_when_public_evidence_can_materially_improve_the_outcome","private_context_prohibited":true,"research_evidence_values":["external_sources","user_reviews","competitor_solutions"],"triggers":["current_or_time_sensitive_claims","user_reviews_and_real_world_experience","competitor_solutions_to_similar_issues","market_customer_and_product_alternatives","unfamiliar_niche_or_emerging_claims","material_methodology_or_source_gap"]},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"roi_and_waste":{"accepted_productive_unit":"authenticated_accepted_direct_production_effort_point","correction_rate":"reviewable_candidates_requiring_correction_divided_by_reviewable_candidates","estimated_roi":"accepted_productive_units_divided_by_recorded_estimated_cost","first_pass_yield":"accepted_on_primary_attempt_divided_by_primary_attempts","historical_effort_unit":"authenticated_observed_attempt_or_recovery_effort_point","reported_cost_roi_rule":"compute_only_from_correlated_reported_cost_never_invent_missing_telemetry","selection_record_requires":["eligible_candidate_set","exclusion_reasons","trusted_comparable_costs","selected_provider_and_model","deterministic_tie_break_reason"],"waste_categories":["rejected_or_unusable_output","quota_or_unavailable_invocation","duplicate_dispatch","duplicate_validation","recovery_attempt","ambiguous_dispatch","rejected_copilot_finding"],"waste_unit":"invoked_effort_without_accepted_productive_credit"},"runtime_director":{"activation_from_role_change":false,"default_provider":"openai"},"shadow_mode":{"assignment_count":5,"changes_live_routing":false,"counts_as_participation_or_workload":false,"dispatches_provider":false,"effect":"observe_only_would_route_would_block_and_would_correct","exit":"compare_decisions_then_enable_automatic_enforcement","writes_externally":false},"status_and_validation":{"browser":"enabled_lower_priority_without_a_usage_reduction_target","green_rerun_requires":"candidate_or_environment_change_or_named_coverage_gap","initial_status_read_limit":1,"status_mode":"event_callback_first","terminal_verification_limit":1,"unchanged_status_reads":"deduplicate","validation_cache_key":"candidate_check_environment_and_command_digest"},"team_first":{"default":true,"minimum_distinct_provider_roles":2,"parallel_nonconflicting_lanes":["research","reproduction","qa","review"],"simple_local_director_exception":{"complexity":"simple","external_action":false,"external_opinion_required":false,"material_uncertainty":false,"reviewable_artifact":false,"risk":"low"}},"workload_accounting":{"control_plane_rule":"usage_telemetry_only_not_production_credit","effort_points":{"maximum":100,"minimum":1},"failed_attempt_rule":"retain_admission_without_productive_credit","ledgers":{"direct_production":"accepted_productive_work_allocation","overall_effort":"prospective_observed_effort_guard"},"unit_basis":"real_reserved_assignment_once","windows":["rolling_20_real_assignments"],"workload_size_values":["simple","short","medium","long"]},"workload_enforcement":{"automatic_drift_correction":true,"automatic_enforcement_after_shadow":true,"degraded_team_rule":"no_threshold_relaxation_or_implicit_external_openai_spill","enforced_measure":"admitted_assignment_count","evaluate":["prospective_last20_assignment_count"],"filler_work_prohibited":true,"normal_tolerance_percentage_points":3,"overall_effort_can_block_or_route":false,"profile_changes":"preserve_history_and_require_fresh_approval","share_pressure_action":"block_above_direct_target_plus_five","soft_action":"route_next_eligible_work_to_an_under_target_provider","startup_denominator":"twenty_slots_real_assignments_only","zero_target_rule":"ineligible"},"workload_lanes":{"antigravity":"bounded_subordinate_specialist","claude":"control_plane_and_authorized_production","cursor":"primary_full_spectrum","grok":"primary_full_spectrum","openai":"primary_full_spectrum","perplexity":"public_research_evidence_only"},"workload_policy_version":"capacity-allocation-v1"},"director_operating_directive_sha256":"48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e","external_action_authority_from_vote":false,"grok_capability_parity_target":1.0,"grok_family":"cursor","minimal_fix_attempt_limit":3,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
+{"antigravity_debate_eligible":true,"antigravity_may_initiate_conversation":false,"availability_attempt_limit":3,"browser_evidence_authoritative":false,"browser_owner_authorizable_actions":["slack_post","eligible_merge","approved_deployment","scoped_repository_access_change"],"browser_transport_fallback":"microsoft_edge","browser_transport_primary":"chrome","charter_max_bytes":20480,"committee_weights":{"antigravity":1.0,"claude":2.0,"cursor":1.5,"grok":1.5,"openai":2.5},"concise_evidence_first":true,"configured_weight_total":8.5,"cursor_capability_parity_target":1.0,"director_operating_directive":{"allocation_profiles":{"lane_order":["openai","claude","cursor","grok","antigravity","perplexity","firecrawl","github-copilot"],"weights":{"engineering":[40,25,15,10,10,0,0,0],"enterprise":[32,38,5,5,5,0,5,10],"mixed":[27,33,10,10,5,5,5,5],"public_research":[20,25,5,5,5,25,15,0]}},"availability":{"additional_attempt_requires":["second_requires_temporary_failure","third_requires_new_information_or_different_transport","stop_on_success","resource_budgets_remaining"],"after":"unavailable_and_reshape","ambiguous":"no_duplicate_dispatch","attempt_ledger":"append_only_postgres_child_events","attempts":"conditional_maximum_three","format_roster":"conditional_roster_maximum_three","partial":"untrusted"},"avoidable_commit_reduction":{"baseline":{"comparable":true,"measurement_fields":["baseline_window","baseline_sample","baseline_count_or_rate","current_count_or_rate","absolute_delta","percentage_delta","exclusions","comparability_changes"],"reset_when_unfavorable":false,"rolling":true},"excludes":["security_safety","evidence_restoration","milestones","recovery"],"scope":"avoidable_micro_fixup_only","target_percent":33},"capacity_context":"owner_Pro20x_Max5x_not_API_entitlements","closure":{"may_skip_required_gate":false,"ordinary_review_to_merge_major_actions":5,"over_budget_action":"RESHAPED_or_OWNER_DECISION_REQUIRED","parallel_checks_count_as_one_orchestration_wave":true,"raw_provider_and_tool_calls_reported_separately":true},"coding_routing":{"claude_exact_requirement_rule":"exact_trusted_requirement_may_select_claude_and_model_label","missing_cost_rule":"unknown_cost_never_becomes_zero_or_cheapest","model_output_cannot_expand_eligibility":true,"one_writer_lease_per_file_or_error_surface":true,"reviewer_must_differ_from_producer_and_material_authors":true,"reviewer_rotation":"least_recent_eligible_non_author","selection_order":["exact_scope_allowlists_transport_and_readiness","task_capability_tools_context_risk_and_independence","direct_allocation_compliance_and_under_target_preference","total_effort_eligibility_and_corrective_under_band_preference","lowest_trusted_estimated_cost","deterministic_tie_breaker"],"selection_policy":"cheap_capable_model_first","trusted_cost_rule":"use_only_authenticated_or_operator_configured_comparable_cost_evidence","unavailable_action":"stop_and_reshape_without_silent_substitution","unconditional_claude_medium_or_long_requirement":false},"communication_labels":{"draft":"DRAFT \u2014 NOT SENT","predicted":"PREDICTED POSITION \u2014 PROVIDER HAS NOT RESPONDED","simulation":"SIMULATION \u2014 NO PROVIDER INTERACTION"},"coordination_percent":{"productive":95,"reserve":5},"copilot_lite_hygiene_review":{"attempts":"conditional_maximum_three","authority_granted":[],"automatic_every_push":false,"candidate_change_rule":"invalidate_the_observation_do_not_auto_rerun","finding_rule":"validate_independently_block_only_confirmed_defect","gating":false,"material_fix_authorship_rule":"substantive_fix_makes_copilot_material_author_ineligible_to_review_candidate","provider_or_committee_member":false,"rejected_finding_rule":"record_as_waste","trigger":"request_after_checks_green_and_exact_candidate_freeze","unavailable_or_quota_failure":"record_waste_and_continue_without_inferred_verdict","workload_percentage":null},"default_allocation_profile":"engineering","director":"claude","duties":["plan","decompose","route","coordinate","synthesize","acceptance_review","review_handoff","milestone_reporting"],"duties_excluded_from_direct_production_share":true,"efficiency_targets":{"browser_handoff_reduction_target":null,"duplicate_validation_reduction_percent":70,"ordinary_review_to_merge_max_major_actions":5,"required_evidence_preservation_percent":100,"total_task_action_reduction_percent":60,"unchanged_status_check_reduction_percent":80},"external_action_boundary":{"oversight_grants_authority":false,"provider_or_browser_output_grants_authority":false,"requires":"exact_stored_owner_authorization_for_action_scope_and_current_deterministic_gates"},"openai_direct_production_boundary":{"authority":"owner_scope_and_current_gates","candidate_change":"invalidate_evidence","counts":"authenticated_production_only","review":"different_provider_exact_candidate","runtime_assignment_target_allowed":true,"surface":"owner_authorized_external_codex_openai"},"overall_effort_policy":"telemetry_only_no_separate_allocation","pre_staging":{"authority_change":"new_owner_authorized_revision","candidate_binding":"new_canonical_packet_revision_then_relay_delta_before_review","digest":"canonical_by_enforcer","execution_limits":"immutable_assignment_retry_and_resource_budgets","invalid_or_missing_action":"PRESTAGE_REQUIRED_no_dispatch","priority":"high_blocking","provider_updates":"initial_packet_once_then_relevant_deltas_only","required_before_provider_dispatch":true,"required_fields":["packet_id","goal","terminal_condition","repository","worktree","branch","base_sha","candidate_sha","producer","independent_reviewer","owned_paths","prohibited_paths","required_tests","required_security_evidence","budget_units","timeout_seconds","retry_limit","merge_eligibility_conditions","stopping_conditions"],"revision_mode":"immutable_canonical_packet_revisions"},"reporting":{"fabrication_prohibited":true,"mode":"evidence_first","participation_source":"authenticated_provider_response_only","requires":["project_id_and_assignment_ids","objective_bounded_scope_and_categorized_status","starting_and_current_refs_shas_and_artifact_digests","authenticated_provider_participation_unavailable_abstaining_and_labels","target_and_actual_enforced_direct_production_by_provider_deviations_and_rationale","prospective_total_effort_soft_bands_and_share_advisories","prestage_packet_digest_workload_size_effort_points_and_deltas","status_validation_action_counts_reduction_baselines_and_browser_use","acting_director_moderator_participant_director_actions_and_vote","dissent_counter_bias_and_alternative_analysis","exact_tests_trusted_ci_security_independent_review_and_verdict","unresolved_risks_limitations_blockers_and_confidence","measured_cost_token_usage_elapsed_time_and_unavailable_telemetry","roi_first_pass_yield_correction_rate_and_categorized_waste_with_missing_telemetry","copilot_lite_result_attempt_formats_quota_state_validated_findings_and_material_authorship","rolling_commit_baseline_current_measurement_delta_and_exclusions","scope_or_authority_changes_and_exact_stored_owner_authorization","recovery_state_rollback_and_restart_evidence_integrity","next_deterministic_or_owner_gate_and_responsible_party","owner_decisions_and_exact_stored_scope","not_done_and_unverified"]},"repository_oversight":{"mode":"read_only","scope":["named_repository","refs","worktrees","diffs","artifacts","checks","reviews","security_evidence","deployment_state"],"writes_require":"separate_exact_owner_authorization_and_current_gates"},"research_policy":{"default":"research_when_public_evidence_can_materially_improve_the_outcome","private_context_prohibited":true,"research_evidence_values":["external_sources","user_reviews","competitor_solutions"],"triggers":["current_or_time_sensitive_claims","user_reviews_and_real_world_experience","competitor_solutions_to_similar_issues","market_customer_and_product_alternatives","unfamiliar_niche_or_emerging_claims","material_methodology_or_source_gap"]},"reserve_is_planned_idle":false,"reserve_use":["checks","drift_correction","contingencies","evidence_reconciliation","recovery","process_improvement","infrastructure_failure"],"review":{"binding":"exact_candidate","changed_candidate":"invalidate_evidence","reviewer":"different_non_author","unavailable":"reroute_no_self_review"},"roi_and_waste":{"accepted_productive_unit":"authenticated_accepted_direct_production_effort_point","correction_rate":"reviewable_candidates_requiring_correction_divided_by_reviewable_candidates","estimated_roi":"accepted_productive_units_divided_by_recorded_estimated_cost","first_pass_yield":"accepted_on_primary_attempt_divided_by_primary_attempts","historical_effort_unit":"authenticated_observed_attempt_or_recovery_effort_point","reported_cost_roi_rule":"compute_only_from_correlated_reported_cost_never_invent_missing_telemetry","selection_record_requires":["eligible_candidate_set","exclusion_reasons","trusted_comparable_costs","selected_provider_and_model","deterministic_tie_break_reason"],"waste_categories":["rejected_or_unusable_output","quota_or_unavailable_invocation","duplicate_dispatch","duplicate_validation","recovery_attempt","ambiguous_dispatch","rejected_copilot_finding"],"waste_unit":"invoked_effort_without_accepted_productive_credit"},"runtime_director":{"activation_from_role_change":false,"default_provider":"openai"},"shadow_mode":{"assignment_count":5,"changes_live_routing":false,"counts_as_participation_or_workload":false,"dispatches_provider":false,"effect":"observe_only_would_route_would_block_and_would_correct","exit":"compare_decisions_then_enable_automatic_enforcement","writes_externally":false},"status_and_validation":{"browser":"enabled_lower_priority_without_a_usage_reduction_target","green_rerun_requires":"candidate_or_environment_change_or_named_coverage_gap","initial_status_read_limit":1,"status_mode":"event_callback_first","terminal_verification_limit":1,"unchanged_status_reads":"deduplicate","validation_cache_key":"candidate_check_environment_and_command_digest"},"team_first":{"default":true,"minimum_distinct_provider_roles":2,"parallel_nonconflicting_lanes":["research","reproduction","qa","review"],"simple_local_director_exception":{"complexity":"simple","external_action":false,"external_opinion_required":false,"material_uncertainty":false,"reviewable_artifact":false,"risk":"low"}},"workload_accounting":{"control_plane_rule":"usage_telemetry_only_not_production_credit","effort_points":{"maximum":100,"minimum":1},"failed_attempt_rule":"retain_admission_without_productive_credit","ledgers":{"direct_production":"accepted_productive_work_allocation","overall_effort":"prospective_observed_effort_guard"},"unit_basis":"real_reserved_assignment_once","windows":["rolling_20_real_assignments"],"workload_size_values":["simple","short","medium","long"]},"workload_enforcement":{"automatic_drift_correction":true,"automatic_enforcement_after_shadow":true,"degraded_team_rule":"no_threshold_relaxation_or_implicit_external_openai_spill","enforced_measure":"admitted_assignment_count","evaluate":["prospective_last20_assignment_count"],"filler_work_prohibited":true,"normal_tolerance_percentage_points":3,"overall_effort_can_block_or_route":false,"profile_changes":"preserve_history_and_require_fresh_approval","share_pressure_action":"block_above_direct_target_plus_five","soft_action":"route_next_eligible_work_to_an_under_target_provider","startup_denominator":"twenty_slots_real_assignments_only","zero_target_rule":"ineligible"},"workload_lanes":{"antigravity":"bounded_subordinate_specialist","claude":"control_plane_and_authorized_production","cursor":"primary_full_spectrum","grok":"primary_full_spectrum","openai":"primary_full_spectrum","perplexity":"public_research_evidence_only"},"workload_policy_version":"capacity-allocation-v1"},"director_operating_directive_sha256":"cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4","external_action_authority_from_vote":false,"grok_capability_parity_target":1.0,"grok_family":"cursor","minimal_fix_attempt_limit":3,"minimal_fix_invalidates_candidate_evidence":true,"perplexity_prohibited":["private repository context or credentials","code or repository writes","approval, acceptance, or merge verdicts","committee votes","Slack or other external posts","merge, deployment, publication, or permission changes"],"perplexity_role":"evidence_only_research_specialist","repeat_requires_new_information":true,"review_handoff_verdicts":["ACCEPT","CHANGES_REQUIRED","SERIOUS_SAFETY_STOP"],"schema_version":"director-team-charter/v1"}
 ```
 <!-- TEAM_CHARTER_MANIFEST_END -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
@@ -771,3 +875,11 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->

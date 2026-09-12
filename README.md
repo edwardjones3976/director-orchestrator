@@ -1,3 +1,8 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -32,7 +37,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=48b05b2b1201c3ee9fbcd2039021759a58b9113f490fd7fbc7b7f6df4d1f193e -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
 
 I am the Director.
 
@@ -130,9 +135,12 @@ Deeper operational detail lives in `docs/always-on-runbook.md`, `docs/provider-s
 
 Claude keeps Moderator, Participant, and Director project functions separate. Moderation
 uses neutral framing, gathers independent positions before cross-exposure when
-practical, and performs a counter-bias check without voting. Claude may then
-contribute one participant position and its one existing advisory vote; Director
-synthesis and tie handling create no extra vote and never fabricate participation.
+practical, and performs a counter-bias check that holds the vote back so it cannot
+pre-empt synthesis. Claude then contributes one participant position and casts its one
+existing advisory vote at full weight or records an explicit abstention. Moderating
+a debate never costs Claude its right to vote; only Claude's own abstention forgoes
+exercising it. Director synthesis and tie handling create no extra vote and never fabricate
+participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
 next action rather than activity summaries.
 
@@ -453,5 +461,9 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
-
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->

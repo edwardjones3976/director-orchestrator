@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | BEGIN]]
@@ -33,8 +37,13 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Protocol
 
+from .delegation_ledger import (
+    DelegationAuditError,
+    DelegationAuditRecord,
+    parse_record,
+)
 from .interactions import (
     CommunicationEvidenceFailure,
     InteractionProvider,
@@ -110,6 +119,64 @@ class WorkloadReservationConflict(RuntimeError):
     """A workload idempotency key was reused with different assignment identity."""
 
 
+class DelegationAuditConflict(RuntimeError):
+    """An identical delegation audit record was already appended.
+
+    The ledger is append-only, so a repeat is refused rather than replacing the
+    row that is already there. A genuinely new observation differs in at least
+    its timestamp and therefore in its digest.
+    """
+
+
+class DelegationAuditLedgerCorrupt(RuntimeError):
+    """Stored delegation evidence disagrees with its digest or external anchor.
+
+    Raised on read, not repaired. A ledger that cannot be verified is not
+    evidence, and ``docs/human-out-of-the-loop-operation.md`` treats an
+    unwritable audit ledger as a trip condition for exactly this reason.
+    """
+
+
+class DelegationAuditAnchorUnavailable(RuntimeError):
+    """No trustworthy external checkpoint can be read or durably advanced."""
+
+
+class DelegationAuditAnchor(Protocol):
+    """A separately protected, durable checkpoint for ONE ledger.
+
+    Implementations must authenticate reads and atomically compare-and-set the
+    (row count, chain digest) pair, surviving process restarts and rejecting
+    rollback. Database writers must not be able to rewrite this authority.
+    Provision the initial (0, 64 zeroes) checkpoint independently for a new
+    empty ledger; NEVER bootstrap it from existing database contents. Sharing
+    a checkpoint between databases, a sidecar writable by the database
+    operator, and an in-memory production implementation violate this contract.
+
+    Phase 2 supplies no production backend or credentials. Without an explicitly
+    supplied anchor the ledger fails closed. Checkpoint advancement occurs before
+    SQLite commit: an ambiguous failure or crash can leave a mismatch, which
+    requires external recovery and must never be silently rebased or retried.
+    """
+
+    def read_head(self) -> tuple[int, str]: ...
+
+    def compare_and_set(
+        self, expected: tuple[int, str], updated: tuple[int, str]
+    ) -> None: ...
+
+
+def _audit_chain_digest(
+    previous: str, ledger_id: int, digest: str, document: str, recorded_at: str
+) -> str:
+    try:
+        return canonical_content_digest(json.dumps(
+            ["delegation-audit-chain/v1", previous, ledger_id, digest, document, recorded_at],
+            ensure_ascii=True, separators=(",", ":"),
+        ))
+    except (TypeError, ValueError, RecursionError, MemoryError) as exc:
+        raise DelegationAuditLedgerCorrupt("audit row cannot be hashed") from exc
+
+
 class WorkloadAttemptOutcome(str, Enum):
     """Append-only terminal classification for a workload reservation."""
 
@@ -149,8 +216,11 @@ class PrivacyCleanupResume:
 
 
 class TaskStore:
-    def __init__(self, path: str):
+    def __init__(
+        self, path: str, *, delegation_audit_anchor: DelegationAuditAnchor | None = None
+    ):
         self.path = path
+        self._audit_anchor = delegation_audit_anchor
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._initialize()
@@ -740,6 +810,50 @@ class TaskStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_usage_checks_provider_time ON usage_checks(provider, checked_at DESC)"
+            )
+            # Human-out-of-the-loop phase 2: the audit ledger.  Nothing writes
+            # here yet; phase 3 shadow recording is the first caller.  The
+            # record itself is validated in delegation_ledger.py, so the table
+            # keeps only the digest that identifies it, the canonical bytes it
+            # was written from, and the time it was written.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delegated_decision_audit (
+                    ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_digest TEXT NOT NULL UNIQUE,
+                    record_json TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+                """
+            )
+            # Append-only in the storage engine, not merely by convention.  The
+            # document calls the record immutable and lists an unwritable ledger
+            # as a trip condition, so a correction has to be a new row and a
+            # mutation has to fail even when it comes from outside this class.
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_replace
+                BEFORE INSERT ON delegated_decision_audit
+                WHEN EXISTS (
+                    SELECT 1 FROM delegated_decision_audit existing
+                    WHERE existing.record_digest = NEW.record_digest
+                )
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_update
+                BEFORE UPDATE ON delegated_decision_audit
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS delegated_decision_audit_no_delete
+                BEFORE DELETE ON delegated_decision_audit
+                BEGIN SELECT RAISE(ABORT, 'delegation audit records are append-only'); END
+                """
             )
         self._attempt_privacy_cleanup()
 
@@ -3819,6 +3933,153 @@ class TaskStore:
             record.error = error
         return self.save(record)
 
+    def _verified_audit_snapshot(
+        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None
+    ) -> tuple[tuple[int, str], list[sqlite3.Row]]:
+        """Verify every row, retaining only the page from the same cursor.
+
+        Time is O(total history), inherent for a linear chain with a single head;
+        bounded verification time needs authenticated checkpoints (out of scope).
+        Retention is O(limit) rows plus one row's hashing workspace, independent
+        of history length. The reader caps limit at 1,000; append uses zero and
+        retains no history. StreamingAuditVerificationTests exercises real SQLite
+        chains through 10,000 rows, including the maximum page size. This is a
+        tested ceiling, not a latency guarantee or a cap on ledger length.
+        """
+
+        if self._audit_anchor is None:
+            raise DelegationAuditAnchorUnavailable("external audit anchor is required")
+        try:
+            expected = self._audit_anchor.read_head()
+        except Exception as exc:
+            raise DelegationAuditAnchorUnavailable("external audit anchor is unreadable") from exc
+        if (
+            not isinstance(expected, tuple) or len(expected) != 2
+            or type(expected[0]) is not int or expected[0] < 0
+            or not isinstance(expected[1], str) or len(expected[1]) != 64
+            or any(c not in "0123456789abcdef" for c in expected[1])
+        ):
+            raise DelegationAuditAnchorUnavailable("external audit anchor is malformed")
+        count, chain = 0, "0" * 64
+        page: list[sqlite3.Row] = []
+        after_found = after_digest is None
+        # Never stop hashing at the page boundary: the prefix and tail must also
+        # match the anchor. Iterating the cursor avoids materializing history.
+        for row in connection.execute(
+            "SELECT ledger_id, record_digest, record_json, recorded_at "
+            "FROM delegated_decision_audit ORDER BY ledger_id"
+        ):
+            count += 1
+            if row["ledger_id"] != count:
+                raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
+            chain = _audit_chain_digest(
+                chain, count, row["record_digest"], row["record_json"], row["recorded_at"]
+            )
+            if after_found:
+                if len(page) < limit:
+                    page.append(row)
+            elif row["record_digest"] == after_digest:
+                after_found = True
+        if count != expected[0] or not hmac.compare_digest(chain, expected[1]):
+            raise DelegationAuditLedgerCorrupt("audit chain differs from external anchor")
+        if not after_found:
+            raise ValueError("after_digest is not in this ledger")
+        return (count, chain), page
+
+    def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
+        """Append one immutable delegation audit record and return its digest.
+
+        This is the whole write surface for the ledger. There is deliberately no
+        update and no delete counterpart anywhere on this class: the record is
+        immutable, and a correction is a new record.
+
+        Appending executes no decision. It writes evidence about one, which
+        ``docs/human-out-of-the-loop-operation.md`` requires to happen before the
+        action rather than after it. Verification streams all history in O(N)
+        time with O(1) retained rows; see _verified_audit_snapshot for the tested
+        ceiling. BEGIN IMMEDIATE remains necessary here to serialize verification,
+        insertion and external anchor advancement across store instances, including
+        the interval between anchor advancement and SQLite commit.
+        """
+
+        if not isinstance(record, DelegationAuditRecord):
+            raise TypeError("delegation audit ledger accepts validated records only")
+        digest = record.digest
+        try:
+            with self._lock, self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                previous, _ = self._verified_audit_snapshot(connection)
+                cursor = connection.execute(
+                    """INSERT INTO delegated_decision_audit(
+                        record_digest, record_json, recorded_at
+                    ) VALUES (?, ?, ?)""",
+                    (digest, record.canonical_json(), record.recorded_at.isoformat()),
+                )
+                if cursor.lastrowid != previous[0] + 1:
+                    raise DelegationAuditLedgerCorrupt("audit sequence differs from anchor")
+                updated = (cursor.lastrowid, _audit_chain_digest(
+                    previous[1], cursor.lastrowid, digest, record.canonical_json(),
+                    record.recorded_at.isoformat(),
+                ))
+                try:
+                    self._audit_anchor.compare_and_set(previous, updated)
+                    if self._audit_anchor.read_head() != updated:
+                        raise RuntimeError("checkpoint was not durably acknowledged")
+                except Exception as exc:
+                    raise DelegationAuditAnchorUnavailable("audit anchor advance failed") from exc
+        except sqlite3.IntegrityError as exc:
+            # Both the UNIQUE constraint and the no-replace trigger surface
+            # here.  Neither is worked around: an identical record is refused.
+            raise DelegationAuditConflict(digest) from exc
+        return digest
+
+    def delegation_audit_records(
+        self, *, limit: int = 100, after_digest: str | None = None
+    ) -> list[DelegationAuditRecord]:
+        """Read a bounded page from one cursor verified against the external anchor.
+
+        Use the last returned record's digest as ``after_digest`` for the next
+        page. An unknown cursor is refused, never treated as the first page.
+        Cursor lookup and page retention happen during the full-chain traversal;
+        parsing uses only those retained, hashed row objects, never a second query.
+        Verification remains O(total history) time with O(limit) retained rows;
+        see _verified_audit_snapshot for the tested ceiling.
+        Every returned row is re-parsed and its digest recomputed rather than trusted.
+        A record is meant to be independently checkable by a reader who was not
+        present when it was written, and that property is worth nothing if the
+        reader that ships with the writer skips the check.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit is out of bounds")
+        if after_digest is not None and (
+            not isinstance(after_digest, str) or len(after_digest) != 64
+            or any(c not in "0123456789abcdef" for c in after_digest)
+        ):
+            raise ValueError("after_digest must be a full record digest")
+        with self._lock, self._connect() as connection:
+            # A deferred read transaction needs no writer reservation: the cursor
+            # supplies one SQLite snapshot, and the retained page must match the
+            # observed external head before anything returns. A concurrent append
+            # may cause a fail-closed mismatch; never retry or rebase that anchor.
+            # In rollback-journal mode, the read lock can still delay writer commit.
+            connection.execute("BEGIN")
+            _, rows = self._verified_audit_snapshot(
+                connection, limit=limit, after_digest=after_digest
+            )
+        records: list[DelegationAuditRecord] = []
+        for row in rows:
+            try:
+                record = parse_record(row["record_json"])
+            except DelegationAuditError as exc:
+                raise DelegationAuditLedgerCorrupt(str(row["record_digest"])) from exc
+            if not hmac.compare_digest(record.digest, str(row["record_digest"])):
+                raise DelegationAuditLedgerCorrupt(str(row["record_digest"]))
+            records.append(record)
+        return records
+
     def add_usage_check(self, record: UsageCheckRecord) -> UsageCheckRecord:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -3907,3 +4168,7 @@ class TaskStore:
 # [[Codex | GPT-6 | 2026-09-05 | 23:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | END]]
