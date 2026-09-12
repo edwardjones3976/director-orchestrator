@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | BEGIN]]
@@ -425,7 +426,7 @@ class DelegationAuditRecord:
         if len(self.verdicts) > _MAX_VERDICTS:
             raise DelegationAuditError("verdicts exceed their bound")
         # One entry per provider.  The document is explicit that "two runs of
-        # the same provider" are not two independent verdicts, so a record that
+        # the same provider" are not independent verdicts, so a record that
         # could list a provider twice is a record a later reader could miscount
         # as two.  A second run against the same candidate is a new record.
         providers = [item.provider for item in self.verdicts]
@@ -598,3 +599,4 @@ def parse_record(document: str) -> DelegationAuditRecord:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]

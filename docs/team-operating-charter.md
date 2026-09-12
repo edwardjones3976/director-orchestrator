@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
@@ -248,8 +249,9 @@ independence, safety, and deterministic gates always outrank cost.
   exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
   materially authored, so merge authority never lets Antigravity merge its own
   work. And a delegated merge requires the producer, the reviewer, and the
-  acting agent to be three distinct identities, plus two concurring exact-SHA
-  `ACCEPT` verdicts from different providers, neither of them a material author.
+  acting agent to be three distinct identities, plus one exact-SHA `ACCEPT`
+  verdict from a non-author provider. Owner ruling, 2026-09-12, verbatim: "it's a
+  one-non-author-reviewer project-wide".
   Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
   Grok — neither more nor less.
 
@@ -702,8 +704,7 @@ review, security, CI, and merge evidence and requires a new handoff.
 
 Where the owner has delegated merge under
 `docs/human-out-of-the-loop-operation.md`, the handoff is unchanged: delegation
-supplies the reviewer identity and a second concurring verdict from a different
-provider, and requires the producer, reviewer, and acting agent to be three
+supplies the reviewer identity and a distinct executing identity, and requires the producer, reviewer, and acting agent to be three
 distinct identities. It does not alter what a review must contain, when evidence
 is invalidated, or which gates apply.
 
@@ -711,8 +712,8 @@ The reviewer named above is a provider, not the owner, so a named provider's
 exact-SHA `ACCEPT` is how the independent review gate is satisfied in its
 ordinary form. It is not an authorization substituting for that gate, and the
 sentence forbidding such substitution is unaffected. A delegated merge requires
-two concurring verdicts from distinct providers where an attended merge requires
-one, so it clears a strictly higher review bar, never a lower one.
+the same one non-author verdict an attended merge requires (owner ruling
+ 2026-09-12: one non-author reviewer, project-wide), never a lower bar.
 
 ### Approver carries the merge
 
@@ -724,13 +725,13 @@ Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
 approver to carry that candidate towards a terminal result rather than return it
 to a queue; it does not authorise the merge and does not skip
 `OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
-requires a live grant under `docs/human-out-of-the-loop-operation.md`, **two**
-concurring exact-SHA `ACCEPT` verdicts from different non-author providers, and
+requires a live grant under `docs/human-out-of-the-loop-operation.md`, **one**
+exact-SHA `ACCEPT` verdict from a non-author provider, and
 every other item of the evidence bar. In `ATTENDED` state, or with no live
 grant, the duty is to name that blocker on the pull request, not to merge.
 
-Where a merge is authorised, the provider that supplied the first `ACCEPT` is
-the reviewer and does not execute; the second concurring provider executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to the second concurring provider, and executes itself only when it is that provider and not an author of the candidate. With
+Where a merge is authorised, the provider that supplied the `ACCEPT` is
+the reviewer and does not execute; a different non-author identity executes. This is how the Director discharges its eligible-merge-execution duty: it routes execution to a non-author identity other than the reviewer, and executes itself only when it is not an author of the candidate. With
 the producer that is the three distinct identities this handoff requires, and the
 executing approver fills the acting-agent slot rather than the reviewer's. An
 approving reviewer is never a material author, because a material author is
@@ -745,13 +746,13 @@ grant names it**; appearing in the enumeration turns nothing on. This section
 assigns a duty to finish, not that class. An approver that cannot execute the
 merge states that on the pull request and names the blocker — no live grant or an
 `ATTENDED` deployment, ineligible lane, unbound or absent actor, refusing gate,
-missing second concurring verdict, protected target, or a still-required owner
+missing non-author verdict, protected target, or a still-required owner
 decision — because an approved candidate left silently open is the failure this
 decision corrects. With the grant off, which is the default, naming the blocker
 is the expected outcome rather than an exception.
 
 This adds an obligation and removes no gate. Trusted CI, Codex Security,
-exact-SHA binding, the concurring verdicts, budget, allowlist, actor binding,
+exact-SHA binding, the non-author verdict, budget, allowlist, actor binding,
 and every owner-decision boundary apply unchanged, and deterministic code alone
 still performs the merge.
 
@@ -934,3 +935,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->

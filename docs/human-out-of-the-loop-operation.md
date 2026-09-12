@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | BEGIN]] -->
@@ -88,8 +89,9 @@ weighting, no majority, and no discretion.
 2. Independent security evidence exists at that same head.
 3. An independent exact-SHA review returns `ACCEPT` from a provider that is
    neither the producer nor a material author of the candidate.
-4. A second concurring `ACCEPT` comes from a **different** provider that is also
-   neither the producer nor a material author.
+4. That `ACCEPT` is the whole verdict requirement. Owner ruling 2026-09-12,
+   verbatim: "it's a one-non-author-reviewer project-wide". A second verdict
+   is never required and never substitutes for any other item.
 5. Producer, reviewer, and the agent executing the decision are three distinct
    identities.
 6. The change touches only paths inside the assignment's `owned_paths` and none
@@ -106,17 +108,17 @@ the decision to `OWNER_DECISION_REQUIRED`. **Absence of evidence is never
 consent.** A provider that is out of quota, unauthenticated, or silent has not
 approved anything, and its silence may not be counted, inferred, or waited out.
 
-## Why two independent verdicts
+## Why one independent verdict
 
 A single agent verdict is a single point of failure, and this repository's own
 record shows it is a fragile one. Every delegation attempt recorded to date has
 failed to produce a verdict at all: providers have returned ambiguous results,
 failed authentication, hit usage limits, or been absent from the environment.
-A framework that treats one `ACCEPT` as sufficient would, in practice, most
-often be deciding on the one provider that happened to answer.
+The owner has ruled that one non-author `ACCEPT` is the bar, project-wide;
+what this section protects is that the one verdict is genuinely independent.
 
-Two verdicts from distinct providers is the minimum that makes a delegated
-`ACCEPT` more than one model's opinion. Two providers that share a backing
+The reviewer must be distinct from the producer and every material author.
+A reviewer and a producer that share a backing
 model are not distinct for this purpose, and neither are two runs of the same
 provider. Independence is a property of the failure mode, not of the label.
 
@@ -175,7 +177,7 @@ before the action, not after it.
   authoritative.** Model output may add approval requirements and may never
   remove them. That includes output from a delegated reviewer.
 - **The charter's review-to-merge handoff is unchanged.** Delegation supplies
-  the reviewer identity and a second concurring verdict; it does not alter what
+  the reviewer identity and a distinct executing identity; it does not alter what
   a review must contain or when evidence is invalidated.
 - **The charter's Director and provider authorship boundary supplies the
   identity terms used here.** "Producer" and "material author" mean whoever
@@ -211,9 +213,9 @@ What delegation changes is narrower than it first appears. Previously the gate
 could be satisfied while the *merge decision that follows it* still waited for
 the owner. Under a live grant, that following decision may proceed, and only
 then, and only when every other item on the evidence bar also holds. The
-framework requires two concurring provider verdicts where the charter requires
-one, so a delegated decision clears a strictly higher review bar than an
-attended one, never a lower one.
+framework requires the same one non-author provider verdict the charter
+requires, so a delegated decision clears the same review bar as an attended
+one, never a lower one.
 
 ### Rule 3's no-self-merge bar
 
@@ -253,7 +255,7 @@ These are stated plainly because a framework that hides them is worse than none.
 
 - An agent verdict is not equivalent to human judgment on novel risk. The
   evidence bar is good at catching what it models and blind to what it does not.
-- Providers that share a base model can fail in correlated ways. The two-verdict
+- Providers that share a base model can fail in correlated ways. The non-author
   rule reduces independent error, not common-mode error.
 - Reviews read untrusted material. A diff, an issue, or a CI log can carry
   instructions aimed at the reviewer, and a delegated reviewer has no owner
@@ -270,3 +272,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 03:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-04 | 17:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
