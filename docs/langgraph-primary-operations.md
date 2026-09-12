@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
@@ -313,14 +314,14 @@ contract-only or default-off features as active production behavior.
 
 ## Source architecture and review boundaries
 
-The primary parent graph uses one checkpoint-safe `PrimaryGraphState` TypedDict
-(`langgraph_primary.py`) and sequential parent-node transitions. It does not
-currently declare separate graph input/internal/output schemas or custom reducers.
-Issue #81's original three-schema wording remains an explicit architecture decision:
-this page records the implemented alternative, without declaring that requirement
-accepted or adding concurrency semantics. Typed ingress, packet and output boundaries
-remain enforced by their own contracts; parallel assignment execution is coordinated
-outside concurrent writes to this parent state.
+The accepted release must expose distinct request and result boundaries around
+its internal checkpoint state, preserve compatible persisted keys and keep
+sequential parent-node fields under LastValue semantics. Parallel assignment
+coordination must not introduce concurrent writes or additive reducers for those
+fields without a separately reviewed contract. Bind proof of these requirements
+to the exact accepted release and its schema/regression tests; an implementation
+assignment or this document alone does not prove that the schemas have landed.
+Typed ingress and provider packet contracts remain binding independently.
 
 Ordinary repository PRs follow the current [agent rules](../AGENTS.md): one material
 non-author reviewer records exact-head ACCEPT and performs the authorized merge.
@@ -336,7 +337,7 @@ limits; use neither fake assignments nor automatic redistribution.
 
 ## Active documentation guard
 
-`python scripts/check_active_documentation.py` checks active Markdown under `docs/`
+`python scripts/check_active_documentation.py` checks active Markdown and YAML under `docs/`
 and `prompts/`, plus root README/agent instructions. It excludes `docs/archive/**`.
 Its semantic rules target obsolete fixed allocation, unconditional legacy-writer
 claims and retired blanket provider restrictions; this is a focused regression
@@ -672,3 +673,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->

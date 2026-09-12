@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]]
 """Focused active-documentation authority guard; not a runtime attestation."""
 from pathlib import Path
@@ -53,7 +54,8 @@ def check_text(text: str) -> list[str]:
 def check_tree(root: Path) -> list[str]:
     paths = set()
     for directory in ("docs", "prompts"):
-        paths.update((root / directory).rglob("*.md"))
+        for extension in ("*.md", "*.yaml", "*.yml"):
+            paths.update((root / directory).rglob(extension))
     paths.update(root / name for name in ("README.md", "AGENTS.md", "CLAUDE.md"))
     errors = []
     for path in sorted(paths):
@@ -69,3 +71,4 @@ if __name__ == "__main__":
     print("\n".join(failures) if failures else "Active documentation authority checks passed.")
     raise SystemExit(bool(failures))
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]

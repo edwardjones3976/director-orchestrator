@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]]
 import importlib.util
 from pathlib import Path
@@ -52,15 +53,16 @@ class ActiveDocumentationTests(unittest.TestCase):
     def test_archive_exclusion_is_exact_and_dated_docs_are_not_exempt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative in ("docs/archive/old.md", "docs/archive-neighbor/current.md", "docs/audit-2020-01-01.md", "prompts/director.md", "README.md"):
+            for relative in ("docs/archive/old.md", "docs/archive/old.yaml", "docs/archive-neighbor/current.md", "docs/audit-2020-01-01.md", "prompts/director.md", "docs/templates/nested/profile.yaml", "prompts/nested/contract.yml", "README.md"):
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("25/25/20/15/11/4", encoding="utf-8")
             errors = guard.check_tree(root)
-            self.assertEqual(4, len(errors))
+            self.assertEqual(6, len(errors))
             self.assertFalse(any("docs/archive/old.md" in error for error in errors))
 
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
