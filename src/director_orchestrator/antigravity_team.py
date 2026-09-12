@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -408,6 +409,15 @@ class PrimaryProviderBudgetAuthority:
         if row is None or (row["grant_digest"],row["provider_id"])!=(receipt.authority_digest,receipt.provider_id):
             raise TeamAuthorizationError("usage receipt reservation mismatch")
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",("primary-provider-budget:"+row["project_id"],))
+        if receipt.metering_evidence is not None:
+            response_id=receipt.metering_evidence.response_id
+            connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                ("primary-response-meter:"+response_id,))
+            used=connection.execute(f"SELECT attempt_digest FROM {self.schema}.director_primary_provider_usage "
+                "WHERE document->>'provider_id'='openai' AND document->'metering_evidence'->>'response_id'=%s",
+                (response_id,)).fetchone()
+            if used is not None and used["attempt_digest"]!=receipt.attempt_digest:
+                raise TeamAuthorizationError("provider response already metered for another attempt")
         previous=connection.execute(f"SELECT document FROM {self.schema}.director_primary_provider_usage WHERE attempt_digest=%s",(receipt.attempt_digest,)).fetchone()
         if previous is not None:
             old=ProviderUsageReceipt.model_validate_json(json.dumps(previous["document"]))
@@ -584,3 +594,4 @@ class TeamAttemptAdmission:
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]

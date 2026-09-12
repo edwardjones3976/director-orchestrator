@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -723,6 +724,10 @@ class Settings:
         default_factory=lambda: _bool("CLAUDE_DIRECTOR_ENABLED", False)
     )
     langgraph_primary_openai_transport: str = os.getenv("LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", "responses-api")
+    # Empty keeps metering disabled. This names owner-signed metadata, never keys.
+    langgraph_primary_openai_response_meter_enrollment_file: str = os.getenv(
+        "LANGGRAPH_PRIMARY_OPENAI_RESPONSE_METER_ENROLLMENT_FILE", ""
+    )
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
     # Explicit accounting estimates for Director calls. Defaults preserve the
@@ -2247,3 +2252,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]

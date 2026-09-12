@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -1049,6 +1050,15 @@ def build_automatic_primary_live_dependencies(
 
     from .antigravity_team_routing import configured_provider_budget_routing
     budget_routing = configured_provider_budget_routing(settings, handle)
+    meter_file = getattr(settings, "langgraph_primary_openai_response_meter_enrollment_file", "")
+    if meter_file:
+        from .primary_transports import OpenAIResponsesPacketTransport
+        from .response_meter import load_response_meter_registry
+        transport = transports.get("openai")
+        if not isinstance(transport, OpenAIResponsesPacketTransport):
+            raise ValueError("response meter enrollment requires the explicit OpenAI Responses route")
+        transport.response_meter = load_response_meter_registry(meter_file,
+            authority=budget_routing.authority, pool=budget_routing.pool)
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         attempt_formats={
@@ -2965,3 +2975,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]

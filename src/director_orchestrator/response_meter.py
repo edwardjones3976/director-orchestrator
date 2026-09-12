@@ -1,3 +1,4 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 """Opt-in Responses metering; signed tariffs are not invoice-charge evidence.
 
@@ -10,6 +11,9 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
+from pathlib import Path
+import stat
 from types import MappingProxyType
 from typing import Annotated, Literal
 
@@ -194,4 +198,41 @@ class ResponseMeterRegistry:
         if enrollment is None:
             raise TeamAuthorizationError("admitted attempt lacks protected response meter enrollment")
         return EnrolledResponseMeter(enrollment=enrollment, authority=self.authority, pool=self.pool)
+
+
+def load_response_meter_registry(path, *, authority, pool):
+    """Load bounded owner-signed metadata; this does not attest host ACL custody.
+
+    Runtime credentials and signing keys stay in their existing stores. A valid
+    signature is required even for files supplied by trusted startup config.
+    """
+    source = Path(path)
+    if not source.is_absolute():
+        raise TeamAuthorizationError("response meter enrollment path must be absolute")
+    for component in (source, *source.parents):
+        info = component.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise TeamAuthorizationError("response meter enrollment path cannot traverse links")
+    with source.open("rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise TeamAuthorizationError("response meter enrollment must be a regular file")
+        raw = stream.read(1_048_577)
+    if len(raw) > 1_048_576:
+        raise TeamAuthorizationError("response meter enrollment exceeds its byte bound")
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise TeamAuthorizationError("duplicate response meter enrollment key")
+            result[key] = value
+        return result
+    documents = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(documents, list) or not 1 <= len(documents) <= 128:
+        raise TeamAuthorizationError("response meter registry requires 1 to 128 signed enrollments")
+    enrollments = tuple(ResponseMeterEnrollment.model_validate_json(json.dumps(item)) for item in documents)
+    registry = ResponseMeterRegistry(enrollments=enrollments, authority=authority, pool=pool)
+    for enrollment in enrollments:
+        EnrolledResponseMeter(enrollment=enrollment, authority=authority, pool=pool)._verify()
+    return registry
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]

@@ -1,12 +1,15 @@
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 """Synthetic tariffs, real PostgreSQL authority; no external calls or enrollment."""
 import hashlib
 import hmac
 import json
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -15,7 +18,10 @@ import httpx
 from director_orchestrator.antigravity_team import ProviderUsageReceipt, TeamAuthorizationError
 from director_orchestrator.entitlement_contracts import canonical_json_bytes
 from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
-from director_orchestrator.response_meter import EnrolledResponseMeter, ResponseMeterEnrollment, ResponseMeterRegistry
+from director_orchestrator.config import Settings
+from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
+from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
+from director_orchestrator.response_meter import EnrolledResponseMeter, ResponseMeterEnrollment, ResponseMeterRegistry, load_response_meter_registry
 from tests import test_antigravity_team as team
 
 
@@ -93,6 +99,22 @@ class ResponseMeterTests(unittest.TestCase):
         self.assertEqual(receipts[0], receipts[1])
         self.assertEqual(1, self.count_rows())
 
+    def test_same_provider_response_cannot_charge_two_attempts(self):
+        self.meter.settle(self.native(),self.headers)
+        second="sha256:"+"5"*64
+        # A second small reservation under the same unchanged 100 micro-USD ceiling.
+        second_budget=team.signed(self.budget.model_copy(update={"grant_digest":"c"*64,
+            "attempt_reservation_microusd":1}),team.fixtures.OWNER_SECRET)
+        with self.store._pool.connection() as c,c.transaction():
+            self.authority.budgets.register(c,second_budget)
+            self.authority.budgets.reserve(c,authority_digest=second_budget.grant_digest,
+                provider="openai",task_id=self.g.task_id,attempt_digest=second)
+        enrollment=team.signed(self.enrollment.model_copy(update={"attempt_digest":second,
+            "authority_digest":second_budget.grant_digest}),team.fixtures.OWNER_SECRET)
+        with self.assertRaisesRegex(TeamAuthorizationError,"another attempt"):
+            self.meter_for(enrollment).settle(self.native(),self.headers)
+        self.assertEqual(1,self.count_rows())
+
     def test_account_model_tier_freshness_and_unknown_token_details_hold(self):
         for field, value in (("model","unapproved"), ("service_tier","priority"),
                 ("status","incomplete"), ("created_at",0)):
@@ -144,6 +166,39 @@ class ResponseMeterTests(unittest.TestCase):
             ResponseMeterRegistry(enrollments=(self.enrollment,self.enrollment),authority=self.authority.budgets,pool=self.store._pool)
         with self.assertRaises(TypeError):registry.enrollments[self.attempt]=self.enrollment
 
+    def test_startup_registry_loader_requires_bounded_signed_current_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"enrollments.json"
+            path.write_text(json.dumps([self.enrollment.model_dump(mode="json")]))
+            registry=load_response_meter_registry(path,authority=self.authority.budgets,pool=self.store._pool)
+            self.assertEqual(self.enrollment,registry.for_context(self.context).enrollment)
+            for contents in ('[]', '[{"model":"one","model":"two"}]', 'x'*1_048_577,
+                    json.dumps([self.enrollment.model_copy(update={"owner_signature":"0"*64}).model_dump(mode="json")])):
+                path.write_text(contents)
+                with self.subTest(size=len(contents)),self.assertRaises(ValueError):
+                    load_response_meter_registry(path,authority=self.authority.budgets,pool=self.store._pool)
+
+    def test_actual_runtime_factory_loads_explicit_registry_and_default_is_off(self):
+        self.assertEqual("",Settings().langgraph_primary_openai_response_meter_enrollment_file)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"enrollments.json"
+            path.write_text(json.dumps([self.enrollment.model_dump(mode="json")]))
+            settings=replace(Settings(),langgraph_primary_antigravity_team_enabled=False,
+                langgraph_primary_openai_response_meter_enrollment_file=str(path))
+            transport=OpenAIResponsesPacketTransport(api_key="test-key",model=self.enrollment.model)
+            self.assertIsNone(transport.response_meter)
+            routing=PrimaryProviderBudgetRouting(authority=self.authority.budgets,pool=self.store._pool)
+            providers=("openai","claude","cursor")
+            adapters={provider:object() for provider in providers}
+            capabilities={provider:SimpleNamespace(transport_kind="responses-api" if provider=="openai" else "test") for provider in providers}
+            with patch("director_orchestrator.primary_default.discover_local_primary_command_transports",return_value=({"openai":transport},capabilities)), \
+                 patch("director_orchestrator.primary_default.build_graph_native_packet_adapters",return_value=adapters), \
+                 patch("director_orchestrator.primary_default.build_primary_packet_result_resolver",return_value=lambda _:None), \
+                 patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing",return_value=routing):
+                dependencies=build_automatic_primary_live_dependencies(settings,None,None)
+            self.assertIs(dependencies.budget_routing,routing)
+            self.assertEqual(self.enrollment,transport.response_meter.for_context(self.context).enrollment)
+
     def test_wrong_origin_or_credential_rejected_before_http(self):
         for changes in ({"api_url":"http://api.openai.com/v1/responses"}, {"api_key":"wrong"}):
             args=dict(api_key="test-key",model=self.enrollment.model,response_meter=self.meter);args.update(changes)
@@ -191,3 +246,4 @@ class ResponseMeterTests(unittest.TestCase):
         self.assertEqual(1,self.count_rows())
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
