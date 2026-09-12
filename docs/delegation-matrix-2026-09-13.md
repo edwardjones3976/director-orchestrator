@@ -1,23 +1,20 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | BEGIN]] -->
 # Delegation matrix — 2026-09-13 delivery (rev 2)
 
-> **Correction, 2026-09-09.** Revision 1 of this document excluded Perplexity
-> and Firecrawl from all work on the grounds that the `engineering` allocation
-> profile gives them a target of zero. That was wrong, and the owner was right
-> to reject it. `workload_policy.py` settles it: `is_direct_production_kind`
-> returns true for `WorkKind.IMPLEMENTATION` **and nothing else**, the
-> zero-target check `allocation_profile_lane_ineligible` sits inside the
-> direct-production path, and the module's own docstring says the overall-effort
-> ledger — which covers direction, review, research and validation —
-> "never blocks solely because of share." `is_accepted_productive_kind` then
-> names Perplexity, Firecrawl and Microsoft 365 Copilot explicitly as lanes
-> whose **research is accepted productive work without code**. A zero target
-> bars those lanes from implementation assignments, which they never perform
-> anyway; it bars nothing else. Revision 2 assigns them research, restores
-> Copilot's review lane, and corrects the quota accounting, which had been
-> charging analysis and review against direct-production quotas that only count
-> implementation.
+> **Correction, 2026-09-09 (WO-COMBINED-1).** Eligibility depends on the
+> selected allocation profile. A zero target refuses the lane in that profile
+> for accepted productive work, including accepted non-code research. It does
+> not prohibit that lane under every profile, and it does not bar implementation
+> only. `is_accepted_productive_kind` classifies Perplexity and Firecrawl research
+> as productive, and admission applies the allocation check to that classification.
+> `engineering` gives both lanes zero and refuses their research assignments;
+> `public_research` gives Perplexity 25% and Firecrawl 15% and admits the same
+> requests when the other admission conditions pass. This correction changes no
+> allocation profile, dispatch authorization, credential, or live route.
 
 **Issued by:** Claude, acting Director-Orchestrator · 2026-09-08
 **Authority:** `docs/team-operating-charter.md`, `docs/provider-allocation-profiles.md`,
@@ -30,15 +27,28 @@ Read with [`docs/director-decision-rules.md`](director-decision-rules.md) and
 
 ---
 
-## 1. Lane eligibility, established from the profiles
+## 1. Lane eligibility depends on the selected allocation profile
 
 Read from `docs/provider-profiles/*.yaml`, `routes.yaml`, and
-`allocation_profiles.py` on the candidate. The deployment runs the **engineering**
+`allocation_profiles.py` on the candidate. The default is the **engineering**
 allocation profile (`DEFAULT_ALLOCATION_PROFILE = "engineering"`), whose targets
 are `openai 40, claude 25, cursor 15, grok 10, antigravity 10, perplexity 0,
-firecrawl 0, github-copilot 0, microsoft-365-copilot 0` over a rolling window of
+firecrawl 0, github-copilot 0` over a rolling window of
 twenty admitted assignments, soft tolerance ±3 points, hard ceiling target +5.
-**Zero target means ineligible.**
+**Zero target refuses the lane in that profile, including for accepted non-code
+research; a profile with a non-zero target can admit the same lane.**
+
+Verified against this branch's unchanged source: [`is_accepted_productive_kind`
+at workload_policy.py:512–529](../src/director_orchestrator/workload_policy.py#L512-L529)
+includes Perplexity and Firecrawl research. The [`evaluate_assignment` admission
+call site at workload_policy.py:993–1002](../src/director_orchestrator/workload_policy.py#L993-L1002)
+uses that classification before calling `direct_assignment_capacity_violation`;
+the [zero-target refusal at lines 617–618](../src/director_orchestrator/workload_policy.py#L617-L618)
+returns `allocation_profile_lane_ineligible`. The [targets at
+allocation_profiles.py:17–18](../src/director_orchestrator/allocation_profiles.py#L17-L18)
+are zero for both lanes in `engineering`, and 25%/15% respectively in
+`public_research`. Non-zero targets satisfy this allocation condition only;
+remaining capacity, capability, evidence and approval gates still apply.
 
 | Lane | Class | Assignable now | Governing constraint |
 | --- | --- | --- | --- |
@@ -47,10 +57,10 @@ twenty admitted assignments, soft tolerance ±3 points, hard ceiling target +5.
 | **Cursor** | full-spectrum primary | **Yes** — implementation, research, QA, independent exact-SHA review | Every run needs an allowlisted project, repository and durable starting ref. Auto-generated `cursor/...` branches are not durable starting points |
 | **Grok** | full-spectrum primary | **Analysis now; implementation and verdicts once the CLI contact is bound** | The in-process Responses API contact is synchronous, tool-free and **analysis only**; API output is never promoted into repository or review authority. Repository work and verdicts require the digest-verified Build CLI contact through an authenticated host runner. The host bridge preflight has not been run and activation bindings are `{}`, so Grok's verdict capability is `U` |
 | **Antigravity / Gemini** | subordinate supplemental specialist | **Yes, in two closed forms only** | Denied `review_verdict`, `acceptance_verdict`, `repository_write`, `repository_access`, `branch_selection`, `contract_or_methodology_definition`, `external_write`, `merge`. Ordinary dispatch sends **no model-authored prose** — the request is composed only from fixed strings, closed enums and three bounded integers (`assignment_sequence`, `variant_count`, `max_lines_per_artifact`), and the validator rejects anything else. Withheld: task text, repository paths or source, acceptance criteria, owner objective. Every artifact must feed a later Claude, Cursor or Grok assignment that independently verifies and integrates it |
-| **Perplexity** | evidence-only research | **Yes — bounded public research** | Zero target bars implementation only. `is_accepted_productive_kind` names Perplexity as research-productive without code. Each assignment needs an owner approval bound to the digest of the exact outbound query, and a later mutation invalidates that approval. Output is untrusted evidence until a primary lane evaluates it |
-| **Firecrawl** | public search transport | **Yes — two distinct surfaces** | Zero target bars implementation only; the code names Firecrawl research-productive. Surface one: the repository lane, which executes on the LangGraph primary path, has no legacy adapter, and needs `FIRECRAWL_API_KEY` added to the deployment. Surface two: a Firecrawl MCP server connected to the Director's own session, already live and already used — these are different transports and evidence from one is not evidence about the other |
+| **Perplexity** | evidence-only research | **Refused in `engineering`; allocation-admissible in `public_research`** | Accepted non-code research is productive under `is_accepted_productive_kind`, so the zero target in `engineering` refuses it. The 25% target in `public_research` permits it subject to admission and the remaining gates (§1). Each assignment needs an owner approval bound to the digest of the exact outbound query, and a later mutation invalidates that approval. Output is untrusted evidence until a primary lane evaluates it |
+| **Firecrawl** | public search transport | **Repository lane refused in `engineering`; allocation-admissible in `public_research`** | Accepted non-code research is productive, so the zero target in `engineering` refuses it. The 15% target in `public_research` permits it subject to admission and the remaining gates (§1). Surface one: the repository lane, which executes on the LangGraph primary path, has no legacy adapter, and needs `FIRECRAWL_API_KEY` added to the deployment. Surface two: a Firecrawl MCP server connected to the Director's own session, already live and already used — these are different transports and evidence from one is not evidence about the other |
 | **GitHub Copilot (Lite)** | supplemental hygiene reviewer | **Yes, post-freeze, non-gating** | Explicitly carries no workload share, range or ceiling, and no production credit, so a Lite observation does not consume a quota slot. Requires required checks green and a frozen exact candidate; fails closed without an authenticated contact; at most three conditional attempts; a substantive Copilot-authored fix would make it a material author and ineligible to review that candidate |
-| **Microsoft 365 Copilot** | research-capable, transport-blocked | **Not yet — the blocker is capability, not allocation** | The code names it research-productive alongside Perplexity and Firecrawl, so allocation is not what stops it. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with `microsoft_365_copilot_work_iq_capability_evidence_missing`, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path |
+| **Microsoft 365 Copilot** | retired, transport-blocked | **No — retired by #161** | The lane was retired by #161 and is not in LANES. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with `microsoft_365_copilot_work_iq_capability_evidence_missing`, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path |
 
 `direct-provider-to-provider` is the one route catalogued as **prohibited**.
 Every exchange between lanes in this matrix is brokered by the Director.
@@ -60,10 +70,11 @@ Every exchange between lanes in this matrix is brokered by the Director.
 Largest-remainder apportionment of the engineering targets over the
 twenty-assignment window, with the soft band and hard ceiling as integer bounds:
 
-**The quota counts implementation only.** `is_direct_production_kind` is true
-for `WorkKind.IMPLEMENTATION` and nothing else, so audits, triage, analysis,
-review, validation, research and Director coordination consume no quota.
-Revision 1 charged them against it and reached the wrong conclusion twice.
+**The allocation check covers accepted productive work.** Implementation is
+productive, and `is_accepted_productive_kind` also includes accepted Perplexity
+and Firecrawl research. Admission projects those research assignments into the
+same capacity check (§1). Ordinary analysis, review, validation and Director
+coordination do not acquire production credit merely by consuming effort.
 
 | Lane | Target | Quota of 20 | Ceiling | Implementation this delivery | Non-quota work |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -72,15 +83,16 @@ Revision 1 charged them against it and reached the wrong conclusion twice.
 | Cursor | 15% | **3** | 4 | 1 — A-04 | A-02 triage, four reviews |
 | Grok | 10% | **2** | 3 | 0 — **quota untouched** | A-11, A-12 analyses |
 | Antigravity | 10% | **2** | 3 | 1 — A-13 | A-14 debate seat |
-| Perplexity | 0% | 0 impl. | — | 0 | **A-15 research** — productive without code |
-| Firecrawl | 0% | 0 impl. | — | 0 | **A-16 research** — productive without code |
+| Perplexity | 0% | 0 impl. | — | 0 | **A-15 research held in `engineering`** — requires a non-zero target |
+| Firecrawl | 0% | 0 impl. | — | 0 | **A-16 research held in `engineering`** — requires a non-zero target |
 | GitHub Copilot | 0% | 0 impl. | — | 0 | **A-17 hygiene review** — no production credit by charter |
 | | | **20** | | **5 of 20 consumed** | |
 
 Two corrections follow from this. Grok is **not** at cap — its analyses cost no
 quota, so it can take an implementation assignment as soon as its digest-verified
-CLI contact is bound. And the zero-target lanes are not idle: they simply produce
-in kinds the quota does not count.
+CLI contact is bound. A-15 and A-16 cannot be admitted as repository-lane
+research under `engineering`; they require a profile with non-zero targets.
+These engineering quotas do not describe a `public_research` allocation window.
 
 `workload_policy.py` is the authority at admission over the true rolling window,
 which includes history this document does not hold. If it refuses an assignment,
@@ -307,7 +319,7 @@ and each has a path.
 | **Grok** | The in-process Responses API contact is tool-free and analysis-only; repository work and exact-SHA verdicts need the digest-verified Build CLI contact through an authenticated host runner | Run `scripts/windows-host-provider-bridge.ps1 -Action Preflight`, then bind the Grok CLI lane in the host bridge command map and confirm the signed, digest-bound command map through the HMAC challenge | Owner, on the Windows host | **Wednesday** — the preflight is already in WO-10 prep for Friday and can move earlier at no cost. Grok's implementation quota is untouched, so a bound contact converts directly into real work |
 | **Firecrawl** (repository lane) | No `FIRECRAWL_API_KEY` in `.env.example` or `provider-setup.md`; the name exists only in the primary transport auth map, and there is no legacy adapter, so the lane executes only on the primary path | Add the credential to the deployment's secret store under the name the transport map expects, and exercise it once the candidate-live profile is up. Until then the Director-side MCP surface covers the research need | Owner | **After WO-08**, on the candidate-live profile |
 | **Microsoft 365 Copilot** | Discovery hard-codes the lane unauthenticated; the blocker is `work_iq_capability_evidence_missing`. **It also gates Gate 8**: the canary requires all nine surfaces `LIVE_OK` | A delegated work or school Entra identity with admin-consented `WorkIQAgent.Ask`, Work IQ enabled by the tenant administrator, and a token that verifies against the tenant's OIDC discovery document and cached JWKS with the exact issuer, audience and scope, inside its signed validity window. Only a successful authenticated response bound to its Microsoft request ID proves entitlement — environment booleans and configuration do not | Owner plus a tenant administrator | **Not this week.** It is a tenant-administration task with an external dependency, and it must stay out of the activation binding map until it succeeds, because the combined live signal is AND-ed across bindings. Attempting it before Sunday would put the live gate at risk for no delivery benefit |
-| **Antigravity** | *Ordinary* dispatch admits no model-authored prose — closed enums and three bounded integers only. **Correction, 2026-09-09:** the authorized **team mode** is not a contract rewrite; it is already implemented behind `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` (`config.py:719`, default false), with `team_ddl` composed into `_control_plane_ddl`, a `director_primary_team_guard` trigger, `TeamGrant` writable paths, a `PinnedSshTeamWorker`, and a qualification canary in `provider_validation_team.py` | Enable the switch on the candidate profile; `Migrate` creates the team schema; authenticate the pinned SSH engineering worker (absent worker evidence the lane fails closed); run the qualification canary; issue a `TeamGrant` with bounded writable paths | Owner, then the Director issues the grant | **Thursday, if a reachable SSH worker host exists** — that is the one open question (D-14). Everything else is on the candidate already |
+| **Antigravity** | *Ordinary* dispatch admits no model-authored prose — closed enums and three bounded integers only. **Correction, 2026-09-09:** the authorized **team mode** is not a contract rewrite; it is already implemented behind `LANGGRAPH_PRIMARY_ANTIGRAVITY_TEAM_ENABLED` (`config.py:750`, default false), with `team_ddl` composed into `_control_plane_ddl`, a `director_primary_team_guard` trigger, `TeamGrant` writable paths, a `PinnedSshTeamWorker`, and a qualification canary in `provider_validation_team.py` | Enable the switch on the candidate profile; `Migrate` creates the team schema; authenticate the pinned SSH engineering worker (absent worker evidence the lane fails closed); run the qualification canary; issue a `TeamGrant` with bounded writable paths | Owner, then the Director issues the grant | **Thursday, if a reachable SSH worker host exists** — that is the one open question (D-14). Everything else is on the candidate already |
 
 Nothing in this table is a judgement about a provider's ability. Each row is a
 missing credential, an unbound transport, or a contract that has not yet been
@@ -315,13 +327,13 @@ changed.
 
 ## 6. Owner decisions this raises
 
-**D-07 — allocation profile — withdrawn.** Revision 1 asked whether to change
-the allocation profile so Perplexity could work. That question rested on the
-error corrected at the top of this document: research is not direct production,
-so the `engineering` profile never barred it. **No profile change is needed or
-recommended.** Perplexity and Firecrawl take research assignments under the
-current profile. The only thing a profile change would alter is implementation
-targets, and nothing in this delivery needs that.
+**D-07 — allocation profile prerequisite for A-15 and A-16.** The prior
+withdrawal rested on the incorrect claim that `engineering` never barred research.
+It refuses these lanes' accepted research because their targets are zero.
+`public_research` gives both lanes non-zero targets and permits the same requests
+through allocation admission when the other conditions pass. A-15 and A-16
+remain conditional on an authorized profile with non-zero targets and all their
+other gates. This document does not select or activate a different profile.
 
 **D-08 — Grok's contact class.** Grok's two assignments are analysis, which the
 API contact serves. If the Director later needs Grok as an exact-SHA reviewer —
@@ -354,3 +366,6 @@ work order awaiting owner launch. The profile sheets grant no authority, and a
 documented route is not an authorized one.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->

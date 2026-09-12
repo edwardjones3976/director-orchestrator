@@ -1,9 +1,16 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
@@ -242,9 +249,10 @@ independence, safety, and deterministic gates always outrank cost.
   *Rules that already bind every lane, restated so this grant reads as no
   exception.* AGENTS.md rule 3: no agent merges a pull request it produced or
   materially authored, so merge authority never lets Antigravity merge its own
-  work. And a delegated merge requires the producer, the reviewer, and the
-  acting agent to be three distinct identities, plus two concurring exact-SHA
-  `ACCEPT` verdicts from different providers, neither of them a material author.
+  work. And a delegated merge requires one author and one reviewer who are distinct
+  identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer,
+  who then performs the merge. Owner ruling, 2026-09-12, verbatim: "it's a
+  one-non-author-reviewer project-wide".
   Antigravity satisfies these on the same terms as OpenAI, Claude, Cursor, and
   Grok — neither more nor less.
 
@@ -691,23 +699,62 @@ files, tests, known limitations, acceptance checks, and security context.
 The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
 `SERIOUS_SAFETY_STOP` for that exact candidate. The producer's planning vote
 does not make it an eligible reviewer. Independent acceptance is followed by
-Codex Security and trusted CI for the unchanged exact SHA; deterministic code
-alone may execute an eligible merge. Any new commit invalidates all prior
+Codex Security and trusted CI for the unchanged exact SHA; the accepting
+reviewer then executes the eligible merge through the deterministic merge path. Any new commit invalidates all prior
 review, security, CI, and merge evidence and requires a new handoff.
 
 Where the owner has delegated merge under
 `docs/human-out-of-the-loop-operation.md`, the handoff is unchanged: delegation
-supplies the reviewer identity and a second concurring verdict from a different
-provider, and requires the producer, reviewer, and acting agent to be three
-distinct identities. It does not alter what a review must contain, when evidence
+supplies the single reviewer identity, and requires the author and the reviewer
+to be two distinct identities. It does not alter what a review must contain, when evidence
 is invalidated, or which gates apply.
 
 The reviewer named above is a provider, not the owner, so a named provider's
 exact-SHA `ACCEPT` is how the independent review gate is satisfied in its
 ordinary form. It is not an authorization substituting for that gate, and the
 sentence forbidding such substitution is unaffected. A delegated merge requires
-two concurring verdicts from distinct providers where an attended merge requires
-one, so it clears a strictly higher review bar, never a lower one.
+the same one non-author verdict an attended merge requires (owner ruling
+ 2026-09-12: one non-author reviewer, project-wide), never a lower bar.
+
+### Approver carries the merge
+
+Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+
+> If they approve it, they should merge it as well.
+
+**One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+approver to carry that candidate towards a terminal result rather than return it
+to a queue; it does not authorise the merge and does not skip
+`OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
+requires a live grant under `docs/human-out-of-the-loop-operation.md`, **one**
+exact-SHA `ACCEPT` verdict from a non-author provider, and
+every other item of the evidence bar. In `ATTENDED` state, or with no live
+grant, the duty is to name that blocker on the pull request, not to merge.
+
+Where a merge is authorised, the reviewer that supplied the `ACCEPT` performs
+the merge itself; a rejection goes back to the author with notes. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
+This is how the Director discharges its eligible-merge-execution duty: it dispatches one reviewer and records the outcome, and merges itself only when it is that reviewer of a candidate it did not author. An
+approving reviewer is never a material author, because a material author is
+ineligible to review the candidate at all, so AGENTS.md rule 3's no-self-merge
+bar is unaffected and never lifts.
+
+The obligation reaches non-protected branches **only**. Merging into a protected
+branch stays owner-only for every lane and is never delegable, and no lane gains
+merge authority it does not already hold. Tier 1 enumerates the non-protected
+merge as a delegable class, and that class is delegable **only while a live
+grant names it**; appearing in the enumeration turns nothing on. This section
+assigns a duty to finish, not that class. An approver that cannot execute the
+merge states that on the pull request and names the blocker — no live grant or an
+`ATTENDED` deployment, ineligible lane, unbound or absent actor, refusing gate,
+missing non-author verdict, protected target, or a still-required owner
+decision — because an approved candidate left silently open is the failure this
+decision corrects. With the grant off, which is the default, naming the blocker
+is the expected outcome rather than an exception.
+
+This adds an obligation and removes no gate. Trusted CI, Codex Security,
+exact-SHA binding, the non-author verdict, budget, allowlist, actor binding,
+and every owner-decision boundary apply unchanged, and the accepting reviewer
+still performs the merge through the deterministic merge path.
 
 ## GitHub Copilot Lite hygiene review
 
@@ -877,9 +924,16 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:37 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 00:37 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->
