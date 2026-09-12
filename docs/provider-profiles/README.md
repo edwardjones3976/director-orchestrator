@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -23,20 +24,20 @@
 - No direct provider-to-provider channel exists. Every exchange between providers is brokered by the Director.
 - Values are never recorded: allowlists, keys, tokens, endpoints, paths, and owner identifiers appear only as variable names.
 
-Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.md#execution-modes).
+Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.profile.md#execution-modes).
 
 ## Roster
 
 | Lane | Sheet | ProviderName enum | Backend identity | Legacy accounting agent | Team | Lane class | Committee weight | Health key |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `openai` | [openai.md](openai.md) | `openai` | `openai` | `openai` | primary | full_spectrum_primary | 2.5 | `openai_director` |
-| `claude` | [claude.md](claude.md) | `claude` | `claude` | `claude` | primary | director_control_plane | 2.0 | `claude` |
-| `cursor` | [cursor.md](cursor.md) | `cursor` | `cursor` | `cursor` | primary | full_spectrum_primary | 1.5 | `cursor` |
-| `grok` | [grok.md](grok.md) | `grok` | `grok` | `grok` | primary | full_spectrum_primary | 1.5 | `grok` |
-| `antigravity` | [antigravity.md](antigravity.md) | `gemini` | `gemini` | `gemini` | supplemental | subordinate_specialist | 1.0 | `gemini` |
-| `perplexity` | [perplexity.md](perplexity.md) | `perplexity` | `perplexity` | `perplexity` | supplemental | evidence_only_research | - | `perplexity` |
-| `firecrawl` | [firecrawl.md](firecrawl.md) | `firecrawl` | `firecrawl` | `firecrawl` | lane_only | public_search_transport | - | - |
-| `github-copilot` | [github-copilot.md](github-copilot.md) | `github-copilot` | `github-copilot` | `github-copilot` | lane_only | supplemental_hygiene_reviewer | - | - |
+| `openai` | [openai.profile.md](openai.profile.md) | `openai` | `openai` | `openai` | primary | full_spectrum_primary | 2.5 | `openai_director` |
+| `claude` | [claude.profile.md](claude.profile.md) | `claude` | `claude` | `claude` | primary | director_control_plane | 2.0 | `claude` |
+| `cursor` | [cursor.profile.md](cursor.profile.md) | `cursor` | `cursor` | `cursor` | primary | full_spectrum_primary | 1.5 | `cursor` |
+| `grok` | [grok.profile.md](grok.profile.md) | `grok` | `grok` | `grok` | primary | full_spectrum_primary | 1.5 | `grok` |
+| `antigravity` | [antigravity.profile.md](antigravity.profile.md) | `gemini` | `gemini` | `gemini` | supplemental | subordinate_specialist | 1.0 | `gemini` |
+| `perplexity` | [perplexity.profile.md](perplexity.profile.md) | `perplexity` | `perplexity` | `perplexity` | supplemental | evidence_only_research | - | `perplexity` |
+| `firecrawl` | [firecrawl.profile.md](firecrawl.profile.md) | `firecrawl` | `firecrawl` | `firecrawl` | lane_only | public_search_transport | - | - |
+| `github-copilot` | [github-copilot.profile.md](github-copilot.profile.md) | `github-copilot` | `github-copilot` | `github-copilot` | lane_only | supplemental_hygiene_reviewer | - | - |
 
 ## Route catalog
 
@@ -52,7 +53,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 | `antigravity-invited-debate` | mediated | bidirectional | director_invitation_only | authorized | enabled | advisory_evidence_only | `antigravity` | `src/director_orchestrator/antigravity.py:build_debate_request`, `src/director_orchestrator/policy.py` |
 | `antigravity-closed-work-directive` | mediated | director_to_provider | director | authorized | enabled | none | `antigravity` | `src/director_orchestrator/antigravity.py`, `src/director_orchestrator/primary_transports.py:antigravity_closed_payload` |
 | `oracle-exact-sha-merge-gate` | mediated | provider_to_director | director | authorized | disabled | evidence_for_deterministic_gate | `claude`, `cursor`, `grok`, `openai` | `src/director_orchestrator/oracle_merge.py`, `src/director_orchestrator/policy.py` |
-| `typed-external-effect-gateways` | mediated | director_to_owner | director | authorized | disabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity` | `src/director_orchestrator/primary_effect_gateways.py:SUPPORTED_EFFECT_ACTIONS`, `src/director_orchestrator/primary_default.py` |
+| `typed-external-effect-gateways` | mediated | director_to_owner | director | authorized | disabled | none | `openai`, `claude`, `cursor`, `grok` | `src/director_orchestrator/primary_effect_gateways.py:SUPPORTED_EFFECT_ACTIONS`, `src/director_orchestrator/primary_default.py` |
 | `provider-usage-checks` | mediated | director_to_provider | timer_or_owner | authorized | disabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity` | `src/director_orchestrator/usage.py` |
 | `owner-intake-n8n-slack` | mediated | owner_to_director | owner | authorized | enabled | none | - | `src/director_orchestrator/slack_bot.py`, `src/director_orchestrator/main.py` |
 | `owner-manual-recovery` | mediated | owner_to_director | owner | authorized | enabled | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot` | `src/director_orchestrator/callbacks.py`, `src/director_orchestrator/engine.py` |
@@ -75,7 +76,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 | `cursor-native-acceptance-issuer` | direct | provider_to_director | owner | proposed | blocked | evidence_for_deterministic_gate | `cursor` | - |
 | `codex-security-review-comment` | external | github_to_director | github_label_event | authorized | enabled | advisory_evidence_only | `openai` | `.github/workflows/codex-security-review.yml` |
 | `ci-acceptance-issuer` | external | github_to_director | github_push_event | proposed | blocked | evidence_for_deterministic_gate | - | - |
-| `shared-workflow-skills` | external | director_to_provider | director | authorized | enabled | none | `cursor`, `antigravity`, `perplexity` | `src/director_orchestrator/director.py` |
+| `shared-workflow-skills` | external | director_to_provider | director | authorized | enabled | none | `cursor`, `antigravity`, `perplexity` | - |
 | `direct-provider-to-provider` | direct | provider_to_provider | none | prohibited | not_applicable | none | `openai`, `claude`, `cursor`, `grok`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot` | `src/director_orchestrator/interactions.py:ProviderTransport`, `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/primary_transports.py:PrimaryProviderCapability` |
 
 Endpoints:
@@ -107,13 +108,13 @@ Endpoints:
 | `result-packet-return` | x | x | x | x | x | x | x | x |
 | `slack-collaboration-relay` | x | x | x | x | x | x | x | x |
 | `dependency-outcome-forwarding` | x | x | x | x | x | x | x | x |
-| `review-to-merge-handoff` | x | x | x | x | x | x | x | x |
-| `advisory-debate` | x | x | x | x | x | x | x | x |
+| `review-to-merge-handoff` | x | x | x | x |  |  |  |  |
+| `advisory-debate` | x | x | x | x | x |  |  |  |
 | `antigravity-invited-debate` |  |  |  |  | x |  |  |  |
 | `antigravity-closed-work-directive` |  |  |  |  | x |  |  |  |
-| `oracle-exact-sha-merge-gate` | x | x | x | x | x | x | x | x |
-| `typed-external-effect-gateways` | x | x | x | x | x |  |  |  |
-| `provider-usage-checks` | x | x | x | x | x | x | x | x |
+| `oracle-exact-sha-merge-gate` | x | x | x | x |  |  |  |  |
+| `typed-external-effect-gateways` | x | x | x | x |  |  |  |  |
+| `provider-usage-checks` | x | x | x | x | x | x |  |  |
 | `owner-intake-n8n-slack` |  |  |  |  |  |  |  |  |
 | `owner-manual-recovery` | x | x | x | x | x | x | x | x |
 | `openai-responses-api` | x |  |  |  |  |  |  |  |
@@ -129,13 +130,13 @@ Endpoints:
 | `firecrawl-public-search-cli` |  |  |  |  |  |  | x |  |
 | `github-copilot-lite-review` |  |  |  |  |  |  |  | x |
 | `windows-host-provider-bridge` | x | x | x | x | x |  |  | x |
-| `browser-provider-ui` | x | x | x | x | x | x | x | x |
+| `browser-provider-ui` |  | x | x | x | x |  |  |  |
 | `chatgpt-slack-alias-bridge` | x |  |  |  |  |  |  |  |
 | `claude-native-acceptance-issuer` |  | x |  |  |  |  |  |  |
 | `cursor-native-acceptance-issuer` |  |  | x |  |  |  |  |  |
 | `codex-security-review-comment` | x |  |  |  |  |  |  |  |
 | `ci-acceptance-issuer` |  |  |  |  |  |  |  |  |
-| `shared-workflow-skills` | x | x | x | x | x | x | x | x |
+| `shared-workflow-skills` |  |  | x |  | x | x |  |  |
 | `direct-provider-to-provider` | x | x | x | x | x | x | x | x |
 
 ## Peer matrix (direct channel status)
@@ -178,3 +179,4 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->

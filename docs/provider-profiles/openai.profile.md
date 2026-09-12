@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -268,10 +269,8 @@ Separation of duties:
 | `openai-responses-api` | direct | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/director.py`, `src/director_orchestrator/primary_transports.py:OpenAIResponsesPacketTransport` |
 | `openai-native-codex-host` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/native_codex_transport.py`, `src/director_orchestrator/host_provider_bridge.py` |
 | `windows-host-provider-bridge` | direct | director_to_provider | director | authorized | disabled | none | `src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES`, `scripts/windows-host-provider-bridge.ps1` |
-| `browser-provider-ui` | direct | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/team_charter.py` |
 | `chatgpt-slack-alias-bridge` | direct | owner_to_director | owner | authorized | disabled | none | `src/director_orchestrator/chatgpt_bridge.py` |
 | `codex-security-review-comment` | external | github_to_director | github_label_event | authorized | enabled | advisory_evidence_only | `.github/workflows/codex-security-review.yml` |
-| `shared-workflow-skills` | external | director_to_provider | director | authorized | enabled | none | `src/director_orchestrator/director.py` |
 | `direct-provider-to-provider` | direct | provider_to_provider | none | prohibited | not_applicable | none | `src/director_orchestrator/interactions.py:ProviderTransport`, `src/director_orchestrator/workload_policy.py:Transport`, `src/director_orchestrator/primary_transports.py:PrimaryProviderCapability` |
 
 ## Routes to other providers
@@ -281,10 +280,10 @@ Separation of duties:
 | `claude` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `typed-external-effect-gateways`, `provider-usage-checks`, `owner-manual-recovery` |
 | `cursor` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `typed-external-effect-gateways`, `provider-usage-checks`, `owner-manual-recovery` |
 | `grok` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `typed-external-effect-gateways`, `provider-usage-checks`, `owner-manual-recovery` |
-| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `typed-external-effect-gateways`, `provider-usage-checks`, `owner-manual-recovery` |
-| `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
-| `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `review-to-merge-handoff`, `advisory-debate`, `oracle-exact-sha-merge-gate`, `provider-usage-checks`, `owner-manual-recovery` |
+| `antigravity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `advisory-debate`, `provider-usage-checks`, `owner-manual-recovery` |
+| `perplexity` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `provider-usage-checks`, `owner-manual-recovery` |
+| `firecrawl` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
+| `github-copilot` | prohibited | `direct-provider-to-provider` | `work-packet-dispatch`, `result-packet-return`, `slack-collaboration-relay`, `dependency-outcome-forwarding`, `owner-manual-recovery` |
 
 ## This profile does not change
 
@@ -312,3 +311,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->

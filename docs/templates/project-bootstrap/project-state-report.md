@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
@@ -69,7 +70,7 @@ report or submission envelope.
 - **Selected modules:** <active modules>
 - **Team routing:** <providers, roles, and discovered workflow skills>
 - **Provider roles contract:** <path to the project's `provider-roles-contract.yaml`, or none; it records the eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries>
-- **Director/control plane:** <OpenAI coordination effort separately reported; material OpenAI production is attributed and requires non-author review/merge>
+- **Director/control plane:** <Claude acting leadership and actual runtime provider separately reported; material provider production is attributed and requires non-author review/merge>
 - **Enforced accepted-productive-work routing:** <frozen approved allocation profile and digest; all nine lane targets, real admissions, accepted output, deviations and capacity exclusions>
 - **Prospective total effort:** <observed immutable effort points, tokens, costs, missing telemetry, waste and separate subscription/API budgets; no independent legacy percentage matrix>
 - **Workload accounting:** <last nineteen real assignments plus candidate, fixed20 startup denominator, zero-target ineligible, target+5 hard ceiling, ±3 preference, preserved history across profile changes>
@@ -173,3 +174,4 @@ published, enabled, or otherwise changed>.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->

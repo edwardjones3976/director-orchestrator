@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | BEGIN]] -->
@@ -136,8 +137,8 @@ baseline with the baseline, current result, delta, exclusions, and window record
 Provider selection records the eligible candidate set, exclusions, trusted comparable
 costs, selected provider/model, and deterministic tie-break reason. Routing first
 requires scope, capability, readiness, risk, and reviewer independence; applies
-total-effort eligibility and corrective under-band preference before
-direct-production rank; then uses trusted estimated cost and the deterministic
+direct-production eligibility and corrective under-band preference; total effort
+remains telemetry, never an eligibility gate; then uses trusted estimated cost and the deterministic
 tie-breaker. Missing cost
 telemetry is unknown, never zero. Paid routing therefore requires an operator-supplied
 `TRUSTED_PROVIDER_COST_RANKS` JSON object with one unique positive rank for every
@@ -470,3 +471,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]] -->
 <!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->

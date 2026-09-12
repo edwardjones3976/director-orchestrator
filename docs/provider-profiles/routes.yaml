@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -340,7 +341,7 @@ routes:
     direction: "director_to_owner"
     initiation: "director"
     endpoints: { from: "director", to: "github" }
-    providers_involved: [openai, claude, cursor, grok, antigravity]
+    providers_involved: [openai, claude, cursor, grok]
     carries:
       - "exactly one of chat.postMessage or pulls.mark_ready per reserved effect intent"
     withheld_context:
@@ -671,7 +672,7 @@ routes:
     kind: "direct"
     direction: "director_to_provider"
     initiation: "director"
-    endpoints: { from: "host_bridge", to: "perplexity" }
+    endpoints: { from: "director", to: "perplexity" }
     providers_involved: [perplexity]
     carries:
       - "bounded public web search and public-page snippets under the research-only contract"
@@ -696,7 +697,7 @@ routes:
     kind: "direct"
     direction: "director_to_provider"
     initiation: "director"
-    endpoints: { from: "host_bridge", to: "firecrawl" }
+    endpoints: { from: "director", to: "firecrawl" }
     providers_involved: [firecrawl]
     carries:
       - "bounded public search under the same fail-closed research contract as Perplexity"
@@ -722,7 +723,7 @@ routes:
     kind: "direct"
     direction: "director_to_provider"
     initiation: "director"
-    endpoints: { from: "host_bridge", to: "github-copilot" }
+    endpoints: { from: "director", to: "github-copilot" }
     providers_involved: [github-copilot]
     carries:
       - "one requested hygiene observation after checks are green and the exact candidate is frozen"
@@ -934,11 +935,10 @@ routes:
         anchor: "The shared provider catalog may expose `cursor-agent-workflow`,"
       - document: "docs/team-operating-charter.md"
         anchor: "A skill is a workflow overlay, not new authority."
-    enforced_by:
-      - "src/director_orchestrator/director.py"
+    enforced_by: []
     prohibition_quote: null
     config: []
-    notes: "Local absolute installation paths are not project contracts."
+    notes: "Prompt-level workflow guidance has no runtime enforcer. Local absolute installation paths are not project contracts."
 
   # ---------------------------------------------------------------- prohibited
   - route_id: "direct-provider-to-provider"
@@ -989,3 +989,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
