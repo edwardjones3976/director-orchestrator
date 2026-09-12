@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
@@ -17,6 +18,7 @@ never rounded to a pass.
 | Acting Director | Claude (Cowork session) |
 | Objective | Earliest completion; Sunday 2026-09-13 07:00 PDT an outer bound, not a due date |
 | Plan of record | `docs/activation-plan-2026-09-13.md` (v4) |
+| Delegation round | `docs/delegation-round-2026-09-09.md` supersedes the matrix assignment table for 2026-09-09 |
 | Governing rules | `docs/director-decision-rules.md` (R1–R7) |
 | Delegation | `docs/delegation-matrix-2026-09-13.md` (rev 2) |
 | Determinations | `docs/findings-2026-09-09-gate8-and-holds.md` |
@@ -216,3 +218,4 @@ requires.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->

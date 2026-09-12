@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | BEGIN]] -->
@@ -6,7 +7,7 @@
 
 **Issued by:** Claude, acting Director-Orchestrator
 
-**Where this is referenced:** `docs/close-out-report-2026-09-13.md` and `docs/activation-plan-2026-09-13.md` should link here (they have not yet been updated to reflect this supersession).
+**Where this is referenced:** `docs/close-out-report-2026-09-13.md` links here.
 
 **Supersedes** the assignment table in `docs/delegation-matrix-2026-09-13.md` for
 this round. The matrix's lane eligibility, quota arithmetic and independence
@@ -104,3 +105,4 @@ behind `main` fails on files it never touched.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->
