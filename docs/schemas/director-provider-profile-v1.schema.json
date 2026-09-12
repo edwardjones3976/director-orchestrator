@@ -10,15 +10,15 @@
   "$defs": {
     "lane": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot"]
     },
     "backendIdentity": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+      "enum": ["openai", "claude", "cursor", "grok", "gemini", "perplexity", "firecrawl", "github-copilot"]
     },
     "legacyAgent": {
       "type": "string",
-      "enum": ["cursor", "claude", "gemini", "grok", "perplexity", "openai", "firecrawl", "github-copilot", "microsoft-365-copilot"]
+      "enum": ["cursor", "claude", "gemini", "grok", "perplexity", "openai", "firecrawl", "github-copilot"]
     },
     "committeeKey": {
       "type": "string",
@@ -555,7 +555,7 @@
             "required": ["transport_id", "kind", "runtime", "enum_value", "transport_kind_observed", "status", "direction", "config", "authority_note", "current_transport_constraints", "route_id", "browser_policy"],
             "properties": {
               "transport_id": { "$ref": "#/$defs/slug" },
-              "kind": { "type": "string", "enum": ["http_api", "callback", "native_cli", "host_bridge", "browser_ui", "work_iq_rest", "public_search_cli", "github_actions", "slack_alias", "cloud_agent_api", "managed_agent_api", "acceptance_issuer"] },
+              "kind": { "type": "string", "enum": ["http_api", "callback", "native_cli", "host_bridge", "browser_ui", "public_search_cli", "github_actions", "slack_alias", "cloud_agent_api", "managed_agent_api", "acceptance_issuer"] },
               "runtime": { "type": "string", "enum": ["legacy_engine", "langgraph_primary", "both", "documented_only"] },
               "enum_value": { "oneOf": [{ "$ref": "#/$defs/providerTransportEnum" }, { "type": "null" }] },
               "transport_kind_observed": { "type": ["string", "null"], "pattern": "^[a-z0-9-]+$" },
@@ -607,10 +607,10 @@
           "type": "array",
           "prefixItems": [
             { "const": "openai" }, { "const": "claude" }, { "const": "cursor" }, { "const": "grok" }, { "const": "antigravity" },
-            { "const": "perplexity" }, { "const": "firecrawl" }, { "const": "github-copilot" }, { "const": "microsoft-365-copilot" }
+            { "const": "perplexity" }, { "const": "firecrawl" }, { "const": "github-copilot" }
           ],
-          "minItems": 9,
-          "maxItems": 9
+          "minItems": 8,
+          "maxItems": 8
         },
         "endpoints": {
           "type": "array",
@@ -639,7 +639,7 @@
     },
     "endpoint": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "microsoft-365-copilot", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
     },
     "route": {
       "type": "object",

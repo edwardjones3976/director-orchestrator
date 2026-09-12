@@ -1,3 +1,7 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | BEGIN]] -->
@@ -17,17 +21,16 @@ It exists because `-Action Activate` is Stage A and Stage B together: it sets
 `ALLOW_PAID_RUNS=true` and
 `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=true` in the same switch write
 and then asserts `combined_live_ready`
-(`scripts/windows-langgraph-primary-control.ps1`). `Activate` remains the only
-action that hands new intake to primary, so there is still no sanctioned way to
-get primary *ownership* without also authorising paid dispatch. Offline
-simulation is the rung between them.
+(`scripts/windows-langgraph-primary-control.ps1`). `PrepareOfflineHandoff`
+provides the missing immutable inventory prerequisite while leaving intake
+stopped and paid execution off. It does not transfer ownership or start Stage A;
+the separately authorized mode switch and runtime startup below do that.
 
 ## Which control version this describes
 
-This runbook is written against the control script in this checkout, whose
-latest contribution record is `OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC`.
-That version's `-Action` set is `PrepareAcceptance`,
-`BootstrapDatabaseIdentity`, `SelectGeneration`, `StageRuntime`,
+This runbook requires the control script with `PrepareOfflineHandoff` in this
+checkout. That version's `-Action` set is `PrepareAcceptance`,
+`BootstrapDatabaseIdentity`, `SelectGeneration`, `StageRuntime`, `PrepareOfflineHandoff`,
 `ValidateProviders`, `Challenge`, `Preflight`, `Accept`, `Migrate`, `Backup`,
 `RestoreDrill`, `Health`, `Activate`, `Rollback`. Confirm the ValidateSet of the
 script the deployment actually holds before running anything here; an earlier
@@ -98,7 +101,8 @@ compare-and-swap the live path uses. The ownership move is real, not simulated.
 
 ## Preconditions
 
-Verify before touching switches. All were true at the time of writing.
+Verify before touching switches; this document is not evidence of current
+deployment readiness.
 
 | Check | Where | Expected |
 | --- | --- | --- |
@@ -111,13 +115,23 @@ The snapshot check must be run **inside the container**, not on the host. A
 snapshot created on Windows can be clean to host git and entirely dirty to the
 container; see `docs/` history for the line-ending defect this caused.
 
-Stage A is a hand edit, so it inherits none of the control script's gates. It
-may only be attempted on a deployment that has already reached, and is held at,
-the accepted lifecycle state:
+Stage A's mode switch remains an operator edit. First use
+`PrepareOfflineHandoff` on a deployment that has reached, and is held at, the
+accepted lifecycle state:
 
-- Acceptance evidence recorded and the schema migrated through the sanctioned
-  actions, on the accepted candidate — Stage A is not a way to skip ahead of
-  them.
+- Authenticated acceptance, migration, backup and matching restore proof recorded
+  through the sanctioned actions for the selected signed-provider mode (`provider-v2` or the exact literal `provider-v3-two-party`).
+  Runtime acceptance checks the bound legacy inventory before selecting offline
+  doubles; a successful staging health check alone cannot satisfy it.
+- The initial generation-bound profile explicitly sets `ALLOW_PAID_RUNS=false`,
+  `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false` and
+  `DIRECTOR_PROVIDER_VALIDATION_ENABLED=false`. Prepare these before generation
+  selection; validation mode is not an operational digest exclusion.
+- Default Director (D) and any other deployment separately quarantined from
+  admitting the same intake or mutating the inventoried legacy database. The
+  action stops and proves only the selected Compose project's intake services;
+  it does not stop sibling services or establish host-wide fencing. Maintain
+  this operator-established quarantine through the handoff.
 - `LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and `LANGGRAPH_PRIMARY_PINNED_TREE_SHA`
   set to that accepted candidate, equal to the snapshot's commit and tree, and
   equal to the checkout the operator will run any later control action from.
@@ -129,10 +143,12 @@ the accepted lifecycle state:
 - The operator holding the deployment, present for the whole pass, with the
   authority to stop it.
 
-**This runbook adds no safeguard that runs.** Every item above is an operator
-check performed by hand. Nothing in the repository verifies them for a Stage A
-edit, no script blocks the edit if they are false, and this document does not
-propose adding one. Treat the absence of an error as the absence of a check.
+`PrepareOfflineHandoff` enforces the paid-off profile, exact candidate/image,
+database/generation, acceptance, restore and immutable inventory checks. It
+returns with selected-project intake stopped, without writing switches or an
+`ACTIVATED` stage. The subsequent Stage A edit, cross-deployment quarantine and
+quiescence checks remain operator responsibilities; preparation does not
+authorize runtime startup or paid execution.
 
 ## The switch set
 
@@ -164,6 +180,16 @@ of `.env`, performed outside the script, and the generation binding will not
 catch a mistake in it: operational switches are deliberately normalised out of
 both the deployment-configuration digest and the resolved-Compose digest, so
 generation verification neither authorises nor detects this edit.
+
+First run `scripts/windows-langgraph-primary-control.ps1
+-Action PrepareOfflineHandoff -EnvironmentFile <protected-profile>
+-ComposeProject <selected-project> -HostPort <selected-port>` from the clean,
+accepted candidate. It requires staged prerequisites, stops and proves intake,
+captures and binds the real legacy inventory, requires readiness, and proves
+intake remains stopped. Stop on any failure. An identical inventory retry is
+allowed, but a changed inventory cannot replace the bound one. Leave intake
+closed until the separately authorized steps below; do not use `Activate` to
+prepare an offline run.
 
 1. Capture a **protected configuration backup**: for each of the three switch
    names, whether it was present and what its prior value was, written through
@@ -320,3 +346,7 @@ closed.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]] -->
+<!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
+<!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->

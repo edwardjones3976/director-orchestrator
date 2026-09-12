@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -123,7 +125,6 @@ class ProviderName(StrEnum):
     OPENAI = "openai"
     FIRECRAWL = "firecrawl"
     GITHUB_COPILOT = "github-copilot"
-    MICROSOFT_365_COPILOT = "microsoft-365-copilot"
 
 
 class AssignmentKind(StrEnum):
@@ -317,8 +318,9 @@ class Assignment(BaseModel):
 class DebateInitialPosition(BaseModel):
     """OpenAI's preliminary view captured before specialist conclusions exist.
 
-    ``provisional_option`` is deliberately not an advisory vote. OpenAI casts its
-    one weighted vote only in the later synthesis response.
+    ``provisional_option`` is deliberately not an advisory vote. The executing
+    Director casts its one weighted vote or records an explicit abstention in
+    the later synthesis response; moderating preserves its right to vote.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1251,3 +1253,5 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]

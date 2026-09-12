@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | BEGIN]]
@@ -147,8 +149,6 @@ from .workload_policy import FailureKind
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
-    provider_lane_external_blockers,
-    read_protected_delegated_token_file,
 )
 
 
@@ -300,7 +300,6 @@ _PRIMARY_LANE_AGENT: Mapping[str, ProviderName] = {
     "perplexity": ProviderName.PERPLEXITY,
     "firecrawl": ProviderName.FIRECRAWL,
     "github-copilot": ProviderName.GITHUB_COPILOT,
-    "microsoft-365-copilot": ProviderName.MICROSOFT_365_COPILOT,
 }
 _PRIMARY_PUBLIC_RESEARCH_LANES = frozenset(
     {"perplexity", "firecrawl"}
@@ -822,8 +821,7 @@ def build_automatic_primary_live_dependencies(
 
     Authentication comes from configured secret presence or a documented,
     non-secret local status/receipt probe. Native keychain state without such a
-    contract is never inferred. Microsoft 365 Copilot remains unavailable behind
-    an exact typed blocker until production Work IQ evidence is complete.
+    contract is never inferred.
     """
 
     bridge_secret = settings.langgraph_primary_host_bridge_secret
@@ -850,7 +848,6 @@ def build_automatic_primary_live_dependencies(
             or os.environ.get("GH_TOKEN", "").strip()
             or os.environ.get("GITHUB_TOKEN", "").strip()
         ),
-        "microsoft-365-copilot": False,
     }
     bridge_challenge = None
     if settings.langgraph_primary_host_bridge_endpoint and bridge_secret:
@@ -881,16 +878,7 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-        microsoft_365_copilot_access_token=read_protected_delegated_token_file(
-            settings.microsoft_365_copilot_delegated_token_file
-        ),
-        microsoft_365_copilot_tenant_id=settings.microsoft_365_copilot_tenant_id,
-        microsoft_365_copilot_expected_subject=(
-            settings.microsoft_365_copilot_expected_subject
-        ),
-        microsoft_365_copilot_expected_object_id=(
-            settings.microsoft_365_copilot_expected_object_id
-        ),
+
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -904,20 +892,9 @@ def build_automatic_primary_live_dependencies(
     missing = sorted(set(settings.langgraph_primary_required_providers) - set(adapters))
     from .primary_roster import core_inventory_ready
     if not core_inventory_ready(tuple(adapters)):
-        blockers = provider_lane_external_blockers(capabilities)
-        blocked_missing = [
-            f"{provider_id}:{blockers[provider_id]}"
-            for provider_id in missing
-            if provider_id in blockers
-        ]
         raise ValueError(
             "automatic graph-native live dependencies are unavailable: missing="
             + ",".join(missing)
-            + (
-                "; external_blockers=" + ",".join(blocked_missing)
-                if blocked_missing
-                else ""
-            )
         )
 
     def candidate_sha(
@@ -1660,6 +1637,37 @@ def build_offline_parallel_dispatcher(
     return dispatch_offline_assignment
 
 
+class HistoricalParallelPlanHold(RuntimeError):
+    """An exact pre-allocation binding requires explicit reconciliation."""
+
+
+def _historical_parallel_binding(payload: Mapping[str, Any]) -> str | None:
+    application = payload.get("application")
+    raw = application.get("task_record") if isinstance(application, Mapping) else None
+    plan = raw.get("plan") if isinstance(raw, Mapping) else None
+    if not isinstance(plan, Mapping) or not plan.get("assignments"):
+        return None
+    if any("allocation_profile" in item for item in plan["assignments"]):
+        return None
+    record = TaskRecord.model_validate(dict(raw))
+    assignments = []
+    for item in sorted(record.plan.assignments, key=lambda value: value.sequence):
+        lane = _assignment_provider_lane(item)
+        assignments.append({
+            "assignment_id": f"{record.task_id}-{item.sequence}",
+            "sequence": item.sequence,
+            "provider_id": lane,
+            "deployment_id": item.model_label or lane,
+            "dependencies": [f"{record.task_id}-{value}" for value in item.depends_on],
+            "write_surfaces": ["repository-write"] if item.allow_draft_pr else [],
+            "retry_limit": 3,
+        })
+    # Hash the surviving raw plan: model defaults are not historical authority.
+    digest = _digest({"task_id": record.task_id, "plan_digest": _digest(plan),
+                      "assignments": assignments})
+    return digest if digest == payload.get("parallel_plan_digest") else None
+
+
 class DefaultPrimaryApplication:
     """Route Default Director intake and reads through one primary coordinator."""
 
@@ -1732,9 +1740,22 @@ class DefaultPrimaryApplication:
     def _ensure_parallel_lifecycle(self, record: TaskRecord) -> str:
         """Idempotently repair a crash after graph intake but before registration."""
 
+        self._check_historical_parallel_hold(record.task_id)
         if record.workload_selection_hold_reasons:
             return _digest(record.workload_selection_hold_reasons)
         return self._register_parallel_lifecycle(record)
+
+    def _check_historical_parallel_hold(self, task_id: str) -> None:
+        projection = self.coordinator.get_projection(task_id)
+        if projection is None:
+            return
+        historical = _historical_parallel_binding(projection.projection)
+        if historical is None:
+            return
+        state = self.coordinator._runtime.compact_state(task_id)
+        if state.get("parallel_plan_digest") != historical:
+            raise ValueError("parallel plan binding changed")
+        raise HistoricalParallelPlanHold("historical_parallel_plan_requires_reconciliation")
 
     def _drive_parallel_lifecycle(self, record: TaskRecord) -> ParallelAggregate:
         """Consume every ready wave, stopping on terminal or no durable progress."""
@@ -1949,6 +1970,7 @@ class DefaultPrimaryApplication:
         )
 
     def resume_approval(self, command: ApprovalResume) -> TaskRecord:
+        self._check_historical_parallel_hold(command.task_id)
         projection = self.coordinator.get_projection(command.task_id)
         if projection is None:
             raise KeyError(command.task_id)
@@ -2092,6 +2114,7 @@ class DefaultPrimaryApplication:
         return self.coordinator.read_external_effect_remote(reservation)
 
     def recover(self, task_id: str) -> TaskRecord:
+        self._check_historical_parallel_hold(task_id)
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
@@ -2727,11 +2750,18 @@ class DefaultPrimaryActivation:
         assert self.application is not None
         # Readiness describes this bounded pass, never a sticky historical win.
         self._reconciliation_worker_ready = False
+        self._historical_parallel_hold_count = 0
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
             if payload.get("terminal_classification") is not None:
                 continue
+            if _historical_parallel_binding(payload) is not None:
+                try:
+                    self.application._check_historical_parallel_hold(projection.task_id)
+                except HistoricalParallelPlanHold:
+                    self._historical_parallel_hold_count += 1
+                    continue
             writer = self.coordinator.get_task_writer(projection.task_id)
             # A live durable writer lease is a positive heartbeat: its
             # DISPATCHING/EXECUTING work is normal in-flight work and must not
@@ -2746,8 +2776,11 @@ class DefaultPrimaryActivation:
                     for value in aggregate.statuses.values()
                 ):
                     continue
-            recovered.append(self.application.recover(projection.task_id))
-        self._reconciliation_worker_ready = True
+            try:
+                recovered.append(self.application.recover(projection.task_id))
+            except HistoricalParallelPlanHold:
+                self._historical_parallel_hold_count += 1
+        self._reconciliation_worker_ready = self._historical_parallel_hold_count == 0
         return len(recovered)
 
     def health(self) -> dict[str, Any]:
@@ -2785,6 +2818,13 @@ class DefaultPrimaryActivation:
                 "ambiguous_effect_count": 0,
             }
         observed = self.coordinator.readiness().as_dict()
+        observed["historical_parallel_plan_hold_count"] = getattr(
+            self, "_historical_parallel_hold_count", 0
+        )
+        observed["reconciliation_hold_reason"] = (
+            "historical_parallel_plan_requires_reconciliation"
+            if observed["historical_parallel_plan_hold_count"] else None
+        )
         observed["reconciliation_worker_ready"] = (
             self._reconciliation_worker_ready
         )
@@ -2870,3 +2910,5 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:40 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 07:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
