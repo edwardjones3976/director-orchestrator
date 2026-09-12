@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
@@ -736,7 +737,24 @@ class PrimaryTaskCoordinator:
                     succeeded=aggregate.succeeded,
                     ambiguous_slot_count=aggregate.ambiguous_slot_count,
                 )
-        return self._persist_outcome(self._runtime.cancel(task_id), writer)
+        projection = self._persist_outcome(self._runtime.cancel(task_id), writer)
+        self.parallel.reconcile_cancelled_pending(task_id=task_id, writer=writer)
+        return projection
+
+    def reconcile_cancelled_pending(self, task_id: str) -> int:
+        """Repair historical cancelled rows without accepting a new command."""
+        projection = self.get_projection(task_id)
+        if (projection is None or projection.projection.get("run_status") != "TERMINAL"
+                or projection.projection.get("terminal_classification") != "CANCELLED"
+                or projection.projection.get("parallel_plan_digest") is None):
+            return 0
+        if not self.parallel.has_pending_assignments(task_id):
+            return 0  # Do not keep renewing completed tasks on every worker pass.
+        writer = self._task_writer(task_id)
+        try:
+            return self.parallel.reconcile_cancelled_pending(task_id=task_id, writer=writer)
+        finally:
+            self._active_task_ids.discard(task_id)
 
     def recover(self, task_id: str) -> PrimaryTaskProjection:
         writer = self._task_writer(task_id)
@@ -933,3 +951,4 @@ class PrimaryTaskCoordinator:
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
@@ -2794,6 +2795,11 @@ class DefaultPrimaryActivation:
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
+            if payload.get("terminal_classification") == "CANCELLED":
+                # Reconcile ledger-only cancellation residue, never reconstruct
+                # or drive a terminal task's historical graph/provider plan.
+                self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                continue
             if payload.get("terminal_classification") is not None:
                 continue
             if _historical_parallel_binding(payload) is not None:
@@ -2958,3 +2964,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
