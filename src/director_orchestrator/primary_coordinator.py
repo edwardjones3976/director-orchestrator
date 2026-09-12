@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | BEGIN]]
@@ -519,6 +521,7 @@ class PrimaryTaskCoordinator:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        budget_limits=None,
     ) -> ProviderAttemptReservation:
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
@@ -529,6 +532,7 @@ class PrimaryTaskCoordinator:
             budget_evidence_digest=budget_evidence_digest,
             team_admission=team_admission,
             budget_admission=budget_admission,
+            budget_limits=budget_limits,
         )
 
     def record_provider_attempt(
@@ -690,8 +694,23 @@ class PrimaryTaskCoordinator:
             writer,
         )
 
-    def cancel(self, task_id: str) -> PrimaryTaskProjection:
-        writer = self._task_writer(task_id)
+    def _authorized_cancellation_writer(self, task_id: str, generation: int) -> TaskWriterLease:
+        # Never reacquire after an authenticated cancellation has selected its
+        # exact fence; a successor or an expired proof execution fails closed.
+        writer = self._store.renew_task_writer(
+            task_id, owner_token=self._owner_token, fencing_generation=generation)
+        self._mark_active_task(task_id)
+        return writer
+
+    def authorize_cancellation(self, **authorization: Any) -> TaskWriterLease:
+        writer = self._store.authorize_primary_cancellation(
+            **authorization, owner_token=self._owner_token)
+        self._mark_active_task(writer.task_id)
+        return writer
+
+    def cancel(self, task_id: str, *, expected_fencing_generation: int | None = None) -> PrimaryTaskProjection:
+        writer = (self._task_writer(task_id) if expected_fencing_generation is None else
+                  self._authorized_cancellation_writer(task_id, expected_fencing_generation))
         # New reservations must be fenced before the graph records cancellation.
         # Existing ACTIVE rows remain occupied and are reconciled rather than
         # being freed for an ambiguous duplicate dispatch.
@@ -757,6 +776,7 @@ class PrimaryTaskCoordinator:
         command_id: str,
         command_digest: str,
         projection: PrimaryTaskProjection,
+        expected_fencing_generation: int | None = None,
     ) -> PrimaryCommandReceipt:
         """Append one sanitized command identity under the current task fence."""
 
@@ -764,7 +784,10 @@ class PrimaryTaskCoordinator:
             raise PrimaryCoordinatorError(
                 "command receipt projection belongs to another task"
             )
-        writer = self._task_writer(task_id)
+        if expected_fencing_generation is not None and operation != "cancellation":
+            raise PrimaryCoordinatorError("an authorized cancellation fence is cancellation-only")
+        writer = (self._task_writer(task_id) if expected_fencing_generation is None else
+                  self._authorized_cancellation_writer(task_id, expected_fencing_generation))
         return self._store.record_primary_command_receipt(
             task_id=task_id,
             operation=operation,
@@ -900,3 +923,5 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 07:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

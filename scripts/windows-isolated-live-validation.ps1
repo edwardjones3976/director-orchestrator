@@ -1,6 +1,27 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | BEGIN]]
@@ -18,6 +39,7 @@ param(
     [switch]$EnablePaidRuns,
     [switch]$SkipProviderChecks,
     [switch]$SeedProviderCredentialsFromPrimaryEnv,
+    [string]$ProviderCredentialSourceEnvPath = "",
     [int]$TimeoutSeconds = 900
 )
 
@@ -26,6 +48,10 @@ Set-StrictMode -Version Latest
 $originalLocation = Get-Location
 $profilePath = $null
 $composeProject = $null
+# Set only once the ownership check has proved this invocation owns the Compose
+# project name. Strict mode makes an unset read an error, and the outer catch
+# reads it, so it is declared here rather than beside the check.
+$composeProjectOwned = $false
 $composeEnvironmentNames = @(
     "DIRECTOR_ENV_FILE", "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT",
     "N8N_HOST_PORT", "APP_ENV", "LOG_LEVEL", "TZ", "ORCHESTRATOR_BASE_URL",
@@ -50,6 +76,7 @@ $composeEnvironmentNames = @(
     "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
     "LANGGRAPH_PARALLEL_KILL_SWITCH"
 )
+$ProfileOwnedServices = @("orchestrator", "slackbot", "n8n", "n8n-db")
 $script:win32EnvironmentReady = $false
 try {
     # Established here, before a single variable is touched. Compiling inside the
@@ -69,6 +96,8 @@ catch {
 }
 
 $originalProcessEnvironment = @{}
+# Preserve the interpolation source before staging rebinds managed names.
+$composeInterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
 foreach ($name in $composeEnvironmentNames) {
     $originalProcessEnvironment[$name] = [pscustomobject]@{
         Present = Test-Path -LiteralPath "Env:${name}"
@@ -100,7 +129,8 @@ if ($unrestorableEmptyNames.Count -gt 0 -and -not $script:win32EnvironmentReady)
 }
 
 try {
-Set-Location (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $repoRoot
 
 $profiles = @{
     "project-uppercut" = [ordered]@{
@@ -142,7 +172,7 @@ $profiles = @{
         DIRECTOR_HOST_PORT = "38080"
         N8N_HOST_PORT = "35678"
         SQLITE_PATH = "/data/long-table.sqlite3"
-        PROJECT_ALLOWLIST = "long-table"
+        PROJECT_ALLOWLIST = "long-table-bid-whist"
         REPOSITORY_ALLOWLIST = "edwardjones3976/long-table-bid-whist"
         ALLOWED_STARTING_REFS = "main"
         MAX_AGENT_HOPS = "6"
@@ -154,6 +184,15 @@ $selected = $profiles[$ProfileName]
 $displayName = [string]$selected.DisplayName
 $profilePath = [string]$selected.ProfilePath
 $profileTemplate = [string]$selected.ProfileTemplate
+# The Compose project is a fixed identity of the selected profile, never a
+# value read back from the profile file. Deriving it here, before any fallible
+# profile staging or validation, lets the early stop below and every rollback
+# path address the correct stack. Compose resolves the orchestrator env_file
+# from DIRECTOR_ENV_FILE, so bind it to the isolated profile at the same point:
+# without it Compose falls back to the primary .env and cannot load the model
+# to stop anything. The finally block restores the original process value.
+$composeProject = [string]$selected.DIRECTOR_COMPOSE_PROJECT_NAME
+[Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 
 function New-RandomSecret {
     $bytes = New-Object byte[] 48
@@ -164,16 +203,118 @@ function New-RandomSecret {
 }
 
 function Read-DotEnv {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$ResolveForComparison,
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
+    )
 
-    $values = @{}
+    $values = if ($ResolveForComparison) { [hashtable]::new([StringComparer]::Ordinal) } else { @{} }
     foreach ($line in Get-Content -LiteralPath $Path) {
         if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) { continue }
+        if ($ResolveForComparison) {
+            # Compose resolves each line against the shell and previously read
+            # lines, not later definitions. Keep credential-copy reads raw.
+            $assignment = [Regex]::Match($line, '^\s*(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(?<raw>.*)$')
+            if (-not $assignment.Success) { throw "Unsupported env-file syntax; ownership is unproved. No values were printed." }
+            $key = $assignment.Groups['name'].Value
+            $values[$key] = ConvertTo-ComposeValue -Raw $assignment.Groups['raw'].Value -FileValues $values -InterpolationEnvironment $InterpolationEnvironment
+            continue
+        }
         $separator = $line.IndexOf("=")
         if ($separator -lt 1) { continue }
+        # The raw text, exactly as written. This function also feeds the
+        # credential copy at Copy-ProviderCredentialValues, so normalising here
+        # rewrites values that are then handed to Compose: a review of #142
+        # measured CLAUDE_ROUTINE_TOKEN='synthetic # literal' surviving before a
+        # normalising version of this function and arriving as "synthetic"
+        # after it. Identity comparison normalises separately, in
+        # ConvertTo-ComposeValue, where changing the value harms nothing.
         $values[$line.Substring(0, $separator).Trim()] = $line.Substring($separator + 1).Trim()
     }
     return $values
+}
+
+function ConvertTo-ComposeValue {
+    <#
+      .SYNOPSIS
+      Resolve an env-file value the way Compose does, for comparison only.
+
+      Never use this on a value that will be written back or handed to a
+      service. It is deliberately lossy: it answers "which project does this
+      name?", not "what did the operator write?".
+
+      Sources for this launcher's explicit --env-file: process environment
+      first (including present empty values), then earlier resolved entries in
+      that env file. No ambient .env is merged into an explicit --env-file.
+      Verified 2026-09-09 against Docker's interpolation documentation:
+      https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/
+      and compose-go dotenv/parser.go and dotenv/godotenv.go (expandVariables).
+      ${VAR}, ${VAR:-d}, ${VAR-d} and $VAR use these sources. Colon-minus
+      defaults on unset OR empty; minus defaults only on unset. Single quotes
+      remain literal. Unsupported syntax refuses ownership, never guesses.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Raw,
+        [hashtable]$FileValues = @{},
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
+    )
+
+    $value = $Raw.Trim()
+    $quoted = $false
+    if ($value.Length -ge 2) {
+        foreach ($quote in @('"', "'")) {
+            if ($value.StartsWith($quote)) {
+                # Escapes/multiline values need the complete Compose parser.
+                # Refuse instead of silently comparing a different identity.
+                if ($value.Contains('\')) { throw "Unsupported quoted escape; ownership is unproved. No values were printed." }
+                # A closing quote ends the value; anything after it is a
+                # comment. `NAME="project" # sibling` resolves to `project`,
+                # and matching only start-and-end let exactly that spelling
+                # through the ownership check.
+                $close = $value.IndexOf($quote, 1)
+                if ($close -lt 1 -or $value.Substring($close + 1).Trim() -notmatch '^(#.*)?$') {
+                    throw "Unsupported quoted env value; ownership is unproved. No values were printed."
+                }
+                if ($close -gt 0) {
+                    $value = $value.Substring(1, $close - 1)
+                    # Compose keeps single-quoted values literal, but resolves
+                    # interpolation inside double quotes after stripping them.
+                    if ($quote -eq "'") { return $value }
+                    $quoted = $true
+                    break
+                }
+            }
+        }
+    }
+    # Unquoted: an inline comment needs whitespace before the '#', which is
+    # what distinguishes it from a '#' inside a value.
+    if (-not $quoted) {
+        $comment = $value.IndexOf(" #")
+        if ($comment -ge 0) { $value = $value.Substring(0, $comment).Trim() }
+        $tab = $value.IndexOf("`t#")
+        if ($tab -ge 0) { $value = $value.Substring(0, $tab).Trim() }
+    }
+    $pattern = '\$\$|\$(?:\{(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:(?<operator>:-|-)(?<default>[^${}]*))?\}|(?<name>[A-Za-z_][A-Za-z0-9_]*))|\$'
+    return [Regex]::Replace($value, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        if ($match.Value -ceq '$$') { return '$' }
+        if ($match.Value -ceq '$') { throw "Unsupported interpolation; ownership is unproved. No values were printed." }
+        $name = $match.Groups['name'].Value
+        $present = $InterpolationEnvironment.Contains($name)
+        $resolved = ''
+        if ($present) { $resolved = [string]$InterpolationEnvironment[$name] }
+        elseif ($FileValues.ContainsKey($name)) {
+            $present = $true
+            $resolved = [string]$FileValues[$name]
+        }
+        $operator = $match.Groups['operator'].Value
+        if (($operator -ceq ':-' -and (-not $present -or $resolved -ceq '')) -or
+            ($operator -ceq '-' -and -not $present)) {
+            return $match.Groups['default'].Value
+        }
+        return $resolved
+    })
 }
 
 function Set-DotEnvValue {
@@ -189,7 +330,30 @@ function Set-DotEnvValue {
     if ([Regex]::IsMatch($Text, $pattern)) {
         return [Regex]::Replace($Text, $pattern, "${Name}=${escapedValue}")
     }
-    return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${Value}" + [Environment]::NewLine
+    return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${escapedValue}" + [Environment]::NewLine
+}
+
+function Copy-ProviderCredentialValues {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$SourceValues,
+        [Parameter(Mandatory = $true)][string]$ProfileText
+    )
+
+    # Only these named credential values are copied. GROK_ENABLED and
+    # PERPLEXITY_ENABLED are neither copied nor synthesized because a key exists;
+    # those providers require their own enable flags. Gemini has no enable flag.
+    # Usage checks require explicit USAGE_CHECK_PROVIDERS membership and the
+    # runtime readiness and global usage/paid gates described below.
+    $text = $ProfileText
+    foreach ($name in @(
+        "OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN",
+        "GEMINI_API_KEY", "PERPLEXITY_API_KEY", "XAI_API_KEY"
+    )) {
+        if ($SourceValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$SourceValues[$name])) {
+            $text = Set-DotEnvValue -Text $text -Name $name -Value ([string]$SourceValues[$name])
+        }
+    }
+    return $text
 }
 
 function Write-Utf8NoBom {
@@ -368,7 +532,12 @@ function Assert-ProfileIdentity {
 }
 
 function Assert-NoProfileCollisions {
-    param([Parameter(Mandatory = $true)][hashtable]$TargetValues)
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$TargetValues,
+        [string[]]$Names = @(),
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process"),
+        [string[]]$SiblingProfiles = @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")
+    )
 
     $identityNames = @(
         "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH",
@@ -378,13 +547,22 @@ function Assert-NoProfileCollisions {
         "ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64",
         "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"
     )
-    foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")) {
+    if ($Names.Count -gt 0) { $identityNames = @($identityNames | Where-Object { $Names -contains $_ }) }
+    foreach ($otherPath in $SiblingProfiles) {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
-        $other = Read-DotEnv -Path $otherPath
+        $other = Read-DotEnv -Path $otherPath -ResolveForComparison -InterpolationEnvironment $InterpolationEnvironment
         foreach ($name in $identityNames) {
-            if ($other.ContainsKey($name) -and
-                -not [string]::IsNullOrWhiteSpace([string]$other[$name]) -and
-                [string]$other[$name] -ceq [string]$TargetValues[$name]) {
+            if (-not $other.ContainsKey($name)) { continue }
+            # Compare what Compose resolves, not what was typed. A sibling that
+            # quotes its project name, comments after it, or writes it as an
+            # interpolation default still names the same project, and a raw
+            # string comparison let each of those spellings through the check
+            # that exists to stop this launcher touching that deployment.
+            # Already resolved in file order. Interpolating twice would expand
+            # literal dollars from single quotes or from a substituted value.
+            $theirs = [string]$other[$name]
+            $ours = ConvertTo-ComposeValue -Raw ([string]$TargetValues[$name]) -InterpolationEnvironment $InterpolationEnvironment
+            if (-not [string]::IsNullOrWhiteSpace($theirs) -and $theirs -ceq $ours) {
                 throw "$profilePath collides with $otherPath on $name. No service was started."
             }
         }
@@ -427,11 +605,79 @@ function Get-UsageProviderNames {
     return @($Values | ForEach-Object { [string]$_ })
 }
 
+function Get-ValidatedUsageCheckProviders {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Values,
+        [Parameter(Mandatory = $true)][string]$ProfileLabel
+    )
+
+    # Mirrors SUPPORTED_PROVIDERS in src/director_orchestrator/usage.py. OpenAI,
+    # Claude, and Cursor are mandatory check providers. An optional provider is
+    # listed explicitly and carries a configured credential. Grok and Perplexity
+    # also require their enable flags. Gemini has no enable flag: usage.py's
+    # run_once uses Settings.usage_check_readiness(), which delegates to
+    # gemini_supplemental_readiness() in config.py (credential, configuration,
+    # mode and budget checks). Global usage/paid gates still apply at runtime.
+    # Anything not listed is never dispatched. The returned set is the exact
+    # partition the usage-check endpoint must report, not full runtime readiness.
+    $mandatory = @("openai", "claude", "cursor")
+    $known = @("openai", "claude", "cursor", "grok", "perplexity", "gemini")
+    if (-not $Values.ContainsKey("USAGE_CHECK_PROVIDERS") -or
+        [string]::IsNullOrWhiteSpace([string]$Values["USAGE_CHECK_PROVIDERS"])) {
+        throw "$ProfileLabel must declare USAGE_CHECK_PROVIDERS explicitly before paid provider checks."
+    }
+    $configured = @(([string]$Values["USAGE_CHECK_PROVIDERS"]).Split(",") | ForEach-Object { $_.Trim() })
+    if (@($configured | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains an empty provider entry."
+    }
+    $unknown = @($configured | Where-Object { $_ -cnotin $known })
+    if ($unknown.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS names unknown providers: $($unknown -join ', ')."
+    }
+    $duplicates = @($configured | Group-Object -CaseSensitive | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
+    if ($duplicates.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS contains duplicate providers: $($duplicates -join ', ')."
+    }
+    $missing = @($mandatory | Where-Object { $_ -cnotin $configured })
+    if ($missing.Count -gt 0) {
+        throw "$ProfileLabel USAGE_CHECK_PROVIDERS omits mandatory primary providers: $($missing -join ', ')."
+    }
+    foreach ($provider in $configured) {
+        $enabledName = $null
+        $credentialNames = @()
+        if ($provider -ceq "grok") {
+            $enabledName = "GROK_ENABLED"
+            $credentialNames = @("XAI_API_KEY")
+        }
+        elseif ($provider -ceq "perplexity") {
+            $enabledName = "PERPLEXITY_ENABLED"
+            $credentialNames = @("PERPLEXITY_API_KEY")
+        }
+        elseif ($provider -ceq "gemini") {
+            $credentialNames = @("GEMINI_API_KEY")
+        }
+        else {
+            continue
+        }
+        if ($null -ne $enabledName -and [string]$Values[$enabledName] -cne "true") {
+            throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $enabledName is not exactly true."
+        }
+        foreach ($name in $credentialNames) {
+            if (-not $Values.ContainsKey($name) -or
+                [string]::IsNullOrWhiteSpace([string]$Values[$name]) -or
+                ([string]$Values[$name]).StartsWith("REPLACE_WITH_")) {
+                throw "$ProfileLabel lists $provider in USAGE_CHECK_PROVIDERS but $name is not configured. No values were printed."
+            }
+        }
+    }
+    return @($configured | Sort-Object)
+}
+
 function Assert-UsageProviderPartition {
     param(
         [Parameter(Mandatory = $true)]$ScheduledProviders,
         [Parameter(Mandatory = $true)]$CoolingDownProviders,
-        [string[]]$ExpectedPrimary = @("claude", "cursor", "openai")
+        [Parameter(Mandatory = $true)][string[]]$ExpectedPrimary
     )
 
     $scheduled = @(Get-UsageProviderNames -Values $ScheduledProviders)
@@ -615,6 +861,228 @@ function Assert-LongTableSnapshot {
         throw "The configured Long Table snapshot is not at the locally verified origin/main commit. No service was started."
     }
 }
+
+function Assert-N8nWorkflowPublishCapability {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$HelpOutput)
+
+    # The selected n8n image must expose both exact command names before any
+    # workflow mutation. The pinned CLI renders command headings with a trailing
+    # separator (for example, "publish:workflow:"). Anchor each name at the
+    # beginning of its own help line so unpublish cannot satisfy publish and a
+    # deprecation note cannot stand in for a missing command.
+    $ansi = "{0}\[[0-9;?]*[ -/]*[@-~]" -f [char]27
+    $lines = @(
+        $HelpOutput |
+            ForEach-Object { ([string]$_) -replace $ansi, "" } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    $missing = @(@("publish:workflow", "unpublish:workflow") | Where-Object {
+        $heading = "^\s*$([Regex]::Escape($_)):\s*(?:$|\S.*$)"
+        @($lines | Where-Object { [string]$_ -cmatch $heading }).Count -eq 0
+    })
+    if ($missing.Count -gt 0) {
+        throw "The selected n8n image does not expose the required workflow commands: $($missing -join ', '). No workflow was modified."
+    }
+}
+
+function Stop-PreviouslyRunningServices {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string[]]$Services
+    )
+
+    # Containers keep the environment they were created with, so closing the
+    # profile switches cannot reach a paid orchestrator or Slack intake that an
+    # earlier activation left running. Stop the named services, then prove that
+    # none of them is still live. A failed stop is never masked by the check and
+    # a live container fails closed before any preflight step can run.
+    $label = $Services -join " and "
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop $Services
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to stop the previously running $label services of Compose project $ComposeProject before preflight."
+    }
+    $live = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath ps --quiet --status running --status paused --status restarting $Services |
+            ForEach-Object { [string]$_ } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to verify that the $label services of Compose project $ComposeProject are stopped before preflight."
+    }
+    if ($live.Count -gt 0) {
+        throw "Compose project $ComposeProject still has $($live.Count) live $label container(s) after the stop. No preflight step was started."
+    }
+}
+
+function Get-N8nIntakeWebhookPath {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $workflowPath = Join-Path $RepositoryRoot "n8n\workflows\director-intake.json"
+    if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+        throw "The n8n intake workflow is missing. Full-stack readiness cannot be established."
+    }
+    try {
+        $definition = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "The n8n intake workflow is not valid JSON. Full-stack readiness cannot be established."
+    }
+    $webhooks = @($definition.nodes | Where-Object { $_.type -ceq "n8n-nodes-base.webhook" })
+    if ($webhooks.Count -ne 1) {
+        throw "The n8n intake workflow must declare exactly one webhook node; found $($webhooks.Count)."
+    }
+    $path = [string]$webhooks[0].parameters.path
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        throw "The n8n intake workflow's webhook node declares no path."
+    }
+    return $path
+}
+
+function Get-N8nServiceEndpoint {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    # Read the service name and the port it listens on out of the compose file
+    # rather than restating them here, so moving the service or changing its
+    # port cannot leave this asserting the old endpoint. The published host
+    # port is deliberately not consulted: slack_bot dials from inside the
+    # network, where only the container port exists.
+    $composePath = Join-Path $RepositoryRoot "docker-compose.yml"
+    if (-not (Test-Path -LiteralPath $composePath -PathType Leaf)) {
+        throw "docker-compose.yml is missing. Full-stack readiness cannot be established."
+    }
+    $compose = Get-Content -LiteralPath $composePath -Raw
+    $service = "n8n"
+    # Scope to the n8n service's own block. Searching the whole document let a
+    # different service declaring N8N_PORT earlier in the file decide this
+    # answer: a review of #142 put N8N_PORT: 5679 under another service and the
+    # validator then accepted 5679 while n8n stayed on 5678.
+    $header = [Regex]::Match($compose, "(?m)^(?<indent>\s{2})${service}:\s*$")
+    if (-not $header.Success) {
+        throw "docker-compose.yml declares no $service service. Full-stack readiness cannot be established."
+    }
+    $rest = $compose.Substring($header.Index + $header.Length)
+    # The block ends at the next line indented no further than the service key.
+    $next = [Regex]::Match($rest, "(?m)^\s{0,$($header.Groups['indent'].Value.Length)}\S")
+    $block = if ($next.Success) { $rest.Substring(0, $next.Index) } else { $rest }
+
+    $port = [Regex]::Match($block, "(?m)^\s+N8N_PORT:\s*(?<port>\d+)\s*$")
+    if (-not $port.Success) {
+        throw "docker-compose.yml does not set N8N_PORT for the $service service."
+    }
+    # Protocol too: https against a service serving http is as unreachable as
+    # the wrong port, and was accepted while only the port was checked.
+    $protocol = [Regex]::Match($block, "(?m)^\s+N8N_PROTOCOL:\s*(?<scheme>[A-Za-z]+)\s*$")
+    if (-not $protocol.Success) {
+        throw "docker-compose.yml does not set N8N_PROTOCOL for the $service service."
+    }
+    return [pscustomobject]@{
+        Host = $service
+        Port = [int]$port.Groups["port"].Value
+        Scheme = $protocol.Groups["scheme"].Value.ToLowerInvariant()
+    }
+}
+
+function Assert-N8nRouteMatchesWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Url,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $expected = Get-N8nIntakeWebhookPath -RepositoryRoot $RepositoryRoot
+    $endpoint = Get-N8nServiceEndpoint -RepositoryRoot $RepositoryRoot
+    $parsed = $null
+    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$parsed)) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL is not an absolute URL. No value was printed."
+    }
+    if ($parsed.Scheme -cne $endpoint.Scheme) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must use $($endpoint.Scheme), which is the protocol the n8n service serves. No value was printed."
+    }
+    # The right path on the wrong destination is still a destination Slack
+    # cannot reach. slack_bot sends the intake, with its authorization header,
+    # to this URL verbatim from inside the Compose network, so the only host
+    # that resolves is the n8n service name and the only port it listens on is
+    # the container port. Checking the path alone accepted port 5679 against a
+    # service listening on 5678, and accepted unrelated hosts and container
+    # loopback; an independent review of #142 drove a full-stack run to
+    # readiness that way. Both halves come from docker-compose.yml.
+    if ($parsed.Host -cne $endpoint.Host) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must address the $($endpoint.Host) service over the Compose network. No value was printed."
+    }
+    if ($parsed.Port -ne $endpoint.Port) {
+        throw "N8N_DIRECTOR_WEBHOOK_URL must use the n8n container port $($endpoint.Port), not the host-published port. No value was printed."
+    }
+    # Compare the path the workflow serves, case-sensitively: n8n webhook paths
+    # are case-sensitive, so a differing case is a 404 rather than a nicety.
+    $actual = $parsed.AbsolutePath.TrimEnd("/")
+    if ($actual -cne "/webhook/$expected") {
+        throw "N8N_DIRECTOR_WEBHOOK_URL does not address the imported workflow: it must end with /webhook/$expected. No value was printed."
+    }
+}
+
+function Initialize-N8nIntakeWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposeProject,
+        [Parameter(Mandatory = $true)][string]$ProfilePath,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $workflowId = "directorIntake"
+    $workflowPath = Join-Path $RepositoryRoot "n8n\workflows\director-intake.json"
+    if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
+        throw "The n8n intake workflow is missing. Full-stack readiness cannot be established."
+    }
+    try {
+        $workflowDefinition = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "The n8n intake workflow is not valid JSON. Full-stack readiness cannot be established."
+    }
+    if ([string]$workflowDefinition.id -cne $workflowId) {
+        throw "The committed n8n intake workflow does not carry the required directorIntake identity."
+    }
+    $workflowMount = "${workflowPath}:/workflows/director-intake.json:ro"
+
+    # Capability preflight: prove the selected n8n image's CLI exposes the exact
+    # publish/unpublish commands in an ephemeral container before n8n is stopped,
+    # n8n-db is started, or any workflow is unpublished, imported, or published.
+    $helpOutput = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n --help |
+            ForEach-Object { [string]$_ }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to read the selected n8n image's command list. No workflow was modified." }
+    Assert-N8nWorkflowPublishCapability -HelpOutput $helpOutput
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath stop n8n
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stop n8n before deterministic workflow import." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath up -d --wait --wait-timeout 120 n8n-db
+    if ($LASTEXITCODE -ne 0) { throw "Unable to start the isolated n8n database." }
+
+    $existingIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect isolated n8n workflows." }
+    if ($workflowId -in $existingIds) {
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n unpublish:workflow --id=$workflowId
+        if ($LASTEXITCODE -ne 0) { throw "Unable to unpublish the prior n8n intake workflow before replacement." }
+    }
+
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T -v $workflowMount n8n import:workflow --input=/workflows/director-intake.json
+    if ($LASTEXITCODE -ne 0) { throw "Unable to import the n8n intake workflow." }
+    docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n publish:workflow --id=$workflowId
+    if ($LASTEXITCODE -ne 0) { throw "Unable to publish the n8n intake workflow." }
+
+    $activeIds = @(
+        docker compose --project-name $ComposeProject --env-file $ProfilePath run --rm --no-deps -T n8n list:workflow --active=true --onlyId |
+            Where-Object { [string]$_ -match '^[A-Za-z0-9_-]+$' }
+    )
+    if ($LASTEXITCODE -ne 0) { throw "Unable to verify active isolated n8n workflows." }
+    if (@($activeIds | Where-Object { [string]$_ -ceq $workflowId }).Count -ne 1) {
+        throw "The isolated n8n intake workflow is not uniquely active."
+    }
+    Write-Host "The isolated n8n intake workflow was imported, published, and verified active."
+}
 if ($ApiOnly -and $ProfileName -notin @("edge-oracle", "long-table")) {
     throw "-ApiOnly is limited to the Edge Oracle recovery and Long Table canary profiles."
 }
@@ -625,6 +1093,43 @@ if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
     }
     Copy-Item -LiteralPath $profileTemplate -Destination $profilePath
 }
+
+# The stop below reaches a Compose project by name, so ownership of that name
+# must be proved first: if a sibling profile already claims it, this invocation
+# would stop that deployment and only then reject the collision. The full
+# collision check runs after the secrets are filled, because two profiles both
+# holding REPLACE_WITH_RANDOM_SECRET would read as a collision here. These four
+# names are fixed identities of the selected profile, so they are comparable
+# before any of that.
+#
+# The values come from $selected, never from the profile file. The stop uses
+# $composeProject, which is $selected.DIRECTOR_COMPOSE_PROJECT_NAME; an earlier
+# version of this check read the file instead, so a profile on disk carrying a
+# stale name had its stale name checked while a sibling's project was stopped.
+# Check the identity that is actually about to be addressed.
+$selectedIdentity = @{
+    DIRECTOR_COMPOSE_PROJECT_NAME = $composeProject
+    DIRECTOR_HOST_PORT = [string]$selected.DIRECTOR_HOST_PORT
+    N8N_HOST_PORT = [string]$selected.N8N_HOST_PORT
+    SQLITE_PATH = [string]$selected.SQLITE_PATH
+}
+Assert-NoProfileCollisions -TargetValues $selectedIdentity -Names @(
+    "DIRECTOR_COMPOSE_PROJECT_NAME", "DIRECTOR_HOST_PORT", "N8N_HOST_PORT", "SQLITE_PATH"
+) -InterpolationEnvironment $composeInterpolationEnvironment
+# Only now may anything address this Compose project. Every later teardown,
+# including the outer catch, reads this rather than assuming the name was ever
+# validated: the rollback stopped a foreign project after the check rejected it.
+$composeProjectOwned = $true
+
+# Every invocation stages the paid gate closed in the profile, but containers
+# started by an earlier activation keep their launch-time environment. Stop the
+# previously running orchestrator and Slack intake, and prove they are stopped,
+# before any profile validation, snapshot check, n8n mutation, image build,
+# store inspection, or provider prevalidation can fail and leave a paid service
+# live. They stay stopped until this script intentionally recreates the
+# validated service further down.
+Stop-PreviouslyRunningServices -ComposeProject $composeProject -ProfilePath $profilePath -Services $ProfileOwnedServices
+Write-Host "Previously running $displayName orchestrator, Slack intake, n8n, and n8n-db are stopped; they stay stopped until the validated service is recreated."
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $profilePath "/inheritance:r" "/grant:r" "${currentIdentity}:(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
@@ -640,17 +1145,29 @@ foreach ($name in @("ORCHESTRATOR_SHARED_SECRET", "CLAUDE_CALLBACK_SECRET", "N8N
     }
 }
 
-if ($SeedProviderCredentialsFromPrimaryEnv) {
-    if (-not (Test-Path -LiteralPath ".env" -PathType Leaf)) {
-        throw "Cannot seed providers because the primary .env does not exist."
+if ($SeedProviderCredentialsFromPrimaryEnv -and
+    -not [string]::IsNullOrWhiteSpace($ProviderCredentialSourceEnvPath)) {
+    throw "Choose either -SeedProviderCredentialsFromPrimaryEnv or -ProviderCredentialSourceEnvPath, not both."
+}
+$providerCredentialSource = if ($SeedProviderCredentialsFromPrimaryEnv) {
+    ".env"
+}
+else {
+    $ProviderCredentialSourceEnvPath
+}
+if (-not [string]::IsNullOrWhiteSpace($providerCredentialSource)) {
+    if (-not (Test-Path -LiteralPath $providerCredentialSource -PathType Leaf)) {
+        throw "Cannot seed providers because the configured credential source does not exist."
     }
-    $primaryValues = Read-DotEnv -Path ".env"
-    foreach ($name in @("OPENAI_API_KEY", "CURSOR_API_KEY", "CLAUDE_ROUTINE_URL", "CLAUDE_ROUTINE_TOKEN")) {
-        if ($primaryValues.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$primaryValues[$name])) {
-            $profileText = Set-DotEnvValue -Text $profileText -Name $name -Value ([string]$primaryValues[$name])
-        }
+    $resolvedCredentialSource = (Resolve-Path -LiteralPath $providerCredentialSource).Path
+    $resolvedProfilePath = (Resolve-Path -LiteralPath $profilePath).Path
+    if ($resolvedCredentialSource -ceq $resolvedProfilePath) {
+        throw "The provider credential source must be different from the target profile."
     }
-    Write-Host "Provider credentials were copied locally from .env to $profilePath; values were not displayed."
+    $primaryValues = Read-DotEnv -Path $resolvedCredentialSource
+    # Credential values only; enable flags are never copied or synthesized here.
+    $profileText = Copy-ProviderCredentialValues -SourceValues $primaryValues -ProfileText $profileText
+    Write-Host "Provider credentials were copied locally from the configured source to $profilePath; values were not displayed."
 }
 
 $identity = [ordered]@{
@@ -664,9 +1181,11 @@ $identity = [ordered]@{
     ALLOWED_STARTING_REFS = [string]$selected.ALLOWED_STARTING_REFS
     MAX_AGENT_HOPS = [string]$selected.MAX_AGENT_HOPS
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
-    PRIMARY_TEAM = "openai,claude,cursor,grok"
+    PRIMARY_TEAM = "openai,claude,cursor"
     PRIMARY_WORKHORSE = "cheapest_capable"
-    USAGE_CHECK_PROVIDERS = "openai,claude,cursor,grok"
+    # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
+    # explicit periodic-check membership is preserved and validated by
+    # Get-ValidatedUsageCheckProviders before any paid dispatch.
     USAGE_CHECK_INTERVAL_MINUTES = "360"
     ALLOW_PAID_RUNS = "false"
     USAGE_CHECK_ENABLED = "false"
@@ -700,7 +1219,7 @@ $profileText = $null
 $values = Read-DotEnv -Path $profilePath
 Assert-ProfileIdentity -Values $values
 Assert-LongTableSnapshot -Values $values
-Assert-NoProfileCollisions -TargetValues $values
+Assert-NoProfileCollisions -TargetValues $values -InterpolationEnvironment $composeInterpolationEnvironment
 $requiredConfiguration = @(
     "ORCHESTRATOR_SHARED_SECRET", "OPENAI_API_KEY", "CLAUDE_ROUTINE_URL",
     "CLAUDE_ROUTINE_TOKEN", "CLAUDE_CALLBACK_SECRET", "CURSOR_API_KEY",
@@ -721,6 +1240,21 @@ if ($EnablePaidRuns) {
 if ($ProfileName -eq "edge-oracle") {
     Assert-Configured -Values $values -Names @("ORACLE_AUTOMERGE_REVIEW_SECRET")
 }
+if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
+    # A full-stack run starts n8n, but slack_bot only routes through it when
+    # N8N_DIRECTOR_WEBHOOK_URL is set; blank means Slack posts straight to the
+    # orchestrator. Profiles copied from the earlier template carry a blank
+    # value, so without this the run reports full-stack readiness while n8n is
+    # bypassed. Reject it rather than filling it in: the URL is the operator's.
+    Assert-Configured -Values $values -Names @("N8N_DIRECTOR_WEBHOOK_URL")
+    # Non-blank is not the same as correct. A URL naming a path the imported
+    # workflow does not serve reported readiness just as happily, and Slack
+    # then posts to a 404 forever: the only HTTP check here is orchestrator
+    # health, and slack_bot uses this value verbatim. The expected path is read
+    # out of the committed workflow rather than written here twice, so editing
+    # the workflow's webhook path cannot leave this check asserting the old one.
+    Assert-N8nRouteMatchesWorkflow -Url ([string]$values["N8N_DIRECTOR_WEBHOOK_URL"]) -RepositoryRoot $repoRoot
+}
 if ($ProfileName -eq "long-table") {
     Assert-Configured -Values $values -Names @("LANGGRAPH_RUNTIME_WRITER_SECRET")
     $secretNames = @(
@@ -734,7 +1268,8 @@ if ($ProfileName -eq "long-table") {
     }
 }
 
-$composeProject = [string]$values["DIRECTOR_COMPOSE_PROJECT_NAME"]
+# Assert-ProfileIdentity already proved the profile names the selected Compose
+# project, so $composeProject keeps the value derived before validation.
 $hostPort = [int]$values["DIRECTOR_HOST_PORT"]
 [Environment]::SetEnvironmentVariable("DIRECTOR_ENV_FILE", $profilePath, "Process")
 Sync-ComposeEnvironment -Values $values
@@ -742,6 +1277,13 @@ Sync-ComposeEnvironment -Values $values
 Write-Host "Using isolated $displayName profile $profilePath, Compose project $composeProject, and host port $hostPort."
 docker compose --project-name $composeProject --env-file $profilePath config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose configuration validation failed." }
+
+if ($ProfileName -eq "long-table" -and -not $ApiOnly) {
+    Initialize-N8nIntakeWorkflow `
+        -ComposeProject $composeProject `
+        -ProfilePath $profilePath `
+        -RepositoryRoot $repoRoot
+}
 
 docker compose --project-name $composeProject --env-file $profilePath build orchestrator
 if ($LASTEXITCODE -ne 0) { throw "Unable to build the isolated $displayName Director image." }
@@ -780,6 +1322,17 @@ if (-not $EnablePaidRuns) {
     return
 }
 
+# Provider partition preflight. The paid gate, usage checks, and the manual
+# usage-check endpoint stay closed until the profile's explicit
+# USAGE_CHECK_PROVIDERS is valid: no duplicates or unknown names, every
+# mandatory primary provider present, and every listed optional provider has a
+# configured credential. Grok and Perplexity also require their enable flags;
+# Gemini has no enable flag. Runtime readiness and global usage/paid gates still
+# apply as described in Get-ValidatedUsageCheckProviders. The endpoint response
+# must later partition exactly this validated set.
+$expectedUsageProviders = @(Get-ValidatedUsageCheckProviders -Values $values -ProfileLabel $profilePath)
+Write-Host "Validated usage-check providers before paid dispatch: $($expectedUsageProviders -join ', ')."
+
 # Provider probes require the paid gate, but the live writer and parallel gate
 # remain closed until that evidence succeeds.
 Write-ProfileSwitches -PaidRuns $true -UsageChecks $true -RuntimeGraduation $false
@@ -801,7 +1354,8 @@ try {
     $runStatus = [string]$accepted.status
     $partition = Assert-UsageProviderPartition `
         -ScheduledProviders $accepted.scheduled_providers `
-        -CoolingDownProviders $accepted.cooling_down_providers
+        -CoolingDownProviders $accepted.cooling_down_providers `
+        -ExpectedPrimary $expectedUsageProviders
     $scheduledProviders = @($partition.ScheduledProviders)
     $coolingProviders = @($partition.CoolingDownProviders)
     $completionVerifiedProviders = @(
@@ -955,10 +1509,16 @@ catch {
                 $outerRollbackErrors.Add("the Long Table profile switches could not be closed")
             }
         }
-        if ($null -ne $composeProject -and $composeProject) {
-            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot | Out-Null
+        # $composeProjectOwned, not merely a non-empty name. The ownership check
+        # runs before anything addresses this project, and when it rejects a
+        # collision this handler is exactly the path that used to run anyway --
+        # stopping the sibling deployment the check had just refused to touch.
+        # A rejected ownership check leaves nothing of ours started, so there is
+        # nothing here to roll back.
+        if ($composeProjectOwned -and $composeProject) {
+            docker compose --project-name $composeProject --env-file $profilePath stop $ProfileOwnedServices | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                $outerRollbackErrors.Add("the previously running Long Table writers could not be stopped")
+                $outerRollbackErrors.Add("the previously running Long Table services could not be stopped")
             }
         }
         if ($outerRollbackErrors.Count -gt 0) {
@@ -1004,6 +1564,27 @@ finally {
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:37 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]]
+# [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:54 UTC | END]]
+# [[Claude Code | Claude Fable 5 | 2026-08-31 | 10:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 18:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:34 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 19:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-07 | 20:22 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 21:35 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 23:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 03:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 01:09 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:08 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-09 | 07:08 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:13 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]]

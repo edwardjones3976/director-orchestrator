@@ -1,0 +1,974 @@
+diff --git a/README.md b/README.md
+index b4c73e5..70daf00 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,10 @@
++<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
++<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
+ <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
++<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | BEGIN]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
+ <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
+@@ -37,65 +40,99 @@
+ 
+ <!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
+ 
+-A bounded, event-driven control plane for coordinating specialist AI agents from a private Slack channel. The first deployment target is an always-on Windows desktop using Docker Desktop. Paid execution remains disabled by default and requires the existing activation gates.
++I am the Director.
++
++One owner posts a work order in one private Slack channel. I turn it into a bounded plan,
++route it to the provider lane that fits, hold each result against acceptance evidence, and
++report an outcome — or stop and ask. This repository is the event-driven control plane
++behind that, and it is built to stay up on an always-on Windows desktop under Docker
++Desktop.
++
++It is not built to run *unattended*, and it does not claim to. Operation is attended by
++default: human-out-of-the-loop is off unless the owner configures it, paid dispatch is off,
++and owner-gated work stops for a person rather than proceeding. What the design buys you is
++that leaving it running is safe **because it fails closed**, not because it decides for you.
++
++Read this before anything else: **I do not hold the authority. The deterministic policy
++does.** Every plan I produce passes through the gates in
++[`src/director_orchestrator/policy.py`](src/director_orchestrator/policy.py). My output may
++*add* an approval requirement. It can never remove one. Paid execution remains disabled by
++default and requires the existing activation gates. When a plan touches deployment,
++publication, merge, deletion, purchases, credentials, or expanded access, I stop in
++`OWNER_DECISION_REQUIRED` and hand it back.
++
++That is the design, not a limitation I am working around. No model approves its own work,
++and that includes me: I may write a change or I may accept one, never both.
+ 
+ **Claude is the acting project Director. Codex/ChatGPT provides bounded engineering
+ and eligible independent review.** See [current project leadership](docs/project-leadership.md)
+ and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
+ attest that a deployed service has switched its executing provider.
+ 
+-## What is included
++## What I am built from
+ 
+-- A Slack Socket Mode gateway, so the desktop does not need a public inbound port.
+-- A persistent Slack collaboration bus for bounded delegation, building, research,
+-  evidence collection, review handoff, debate, synthesis, and completion reporting.
+-- A FastAPI orchestration service with idempotent task intake and durable SQLite state.
++- A Slack Socket Mode gateway, so the desktop needs no public inbound port.
++- A persistent Slack collaboration bus carrying delegation, building, research, evidence,
++  review handoff, debate, synthesis, and completion reporting.
++- A FastAPI service with idempotent intake and durable SQLite state.
+ - Deterministic approval gates that model output cannot remove.
+-- Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed Agents, and the Perplexity Agent API.
+-- A structured Director interface retaining the legacy OpenAI runtime and an
+-  explicitly enabled Claude adapter that requires a real bound native transport.
+-- A Claude-led OpenAI–Claude–Cursor–Grok team with Gemini/Antigravity eligible
+-  for its explicitly authorized team mode after enrollment and qualification.
+-  Perplexity provides bounded supplemental research. Membership and allocation
+-  do not attest that a provider route is enrolled or live.
+-- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all nine provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and Antigravity 10%; other profiles reserve real research and enterprise work. A fixed real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion, with ±3-point normal preference.
+-- Deterministic accepted-productive-work accounting, an immutable pre-stage packet,
+-  rolling twenty-assignment preferences, cheap-capable-model selection, and a
+-  five-action ordinary review-to-merge ceiling. Total effort is telemetry, and
+-  pure Director coordination creates no production credit.
+-- An optional GitHub Copilot hygiene review after required checks are green, and the exact candidate is frozen. It has no assigned workload share, range, or ceiling; no provider adapter or automatic routing; and no production credit, gate, authority, or every-push trigger. Without an authenticated contact, it fails closed as unavailable. A requested review uses at most three conditional attempt slots. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat an ambiguous paid dispatch.
+-- Evidence-first milestone reporting and explicit coordination-quality targets: 95% productive coordination, a 5% incident/replanning reserve, and a 33% reduction in avoidable micro/fixup commits.
+-- Format-aware contribution tags for human responses and safely commentable files, with structured and syntax-sensitive formats attributed through their submission envelope.
+-- A durable periodic provider-prompt monitor that records returned token metadata and posts bounded status summaries.
++- Adapters for Cursor Cloud Agents, Claude Code Routines, Gemini Antigravity Managed
++  Agents, and the Perplexity Agent API.
++- A structured Director interface retaining the legacy OpenAI runtime and an explicitly
++  enabled Claude adapter that requires a real bound native transport.
++- A Claude-led OpenAI–Claude–Cursor–Grok team, with Gemini/Antigravity eligible for its
++  authorized team mode after enrollment and qualification, and Perplexity supplying bounded
++  supplemental research. Membership and allocation attest nothing about whether a provider
++  route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
++  configuration.
++- Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all eight
++  provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and
++  Antigravity 10%; other profiles reserve real research and enterprise work. A fixed
++  real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion,
++  with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.
++- Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
++  twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
++  review-to-merge ceiling. Total effort is telemetry, and pure Director coordination creates
++  no production credit — routing work is not authoring it.
++- An optional GitHub Copilot hygiene review after required checks are green and the exact
++  candidate is frozen. It has no assigned workload share, range, or ceiling; no provider
++  adapter or automatic routing; and no production credit, gate, authority, or every-push
++  trigger. Without an authenticated contact it fails closed as unavailable. A requested
++  review uses at most three conditional attempt slots. Stop on success; recovery requires
++  temporary failure; a third attempt requires materially new information or a substantially
++  different transport. Never repeat an ambiguous paid dispatch.
++- Evidence-first milestone reporting and explicit coordination-quality targets: 95%
++  productive coordination, a 5% incident/replanning reserve, and a 33% reduction in
++  avoidable micro/fixup commits.
++- Format-aware contribution tags for human responses and safely commentable files, with
++  structured and syntax-sensitive formats attributed through their submission envelope.
++- A durable periodic provider-prompt monitor recording returned token metadata and posting
++  bounded status summaries.
+ - A local n8n deployment and an importable intake workflow.
+ - A reusable Slack app manifest and a Claude routine prompt.
+-- A reusable project rollout packet that records isolated deployment, Slack,
+-  allowlist, activation-evidence, fallback, and rollback requirements.
+-- Dry-run previews for testing without provider spending.
++- A reusable project rollout packet recording isolated deployment, Slack, allowlist,
++  activation-evidence, fallback, and rollback requirements.
++- Dry-run previews that spend nothing.
+ 
+-Detailed operations notes live in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
++Deeper operational detail lives in `docs/always-on-runbook.md`, `docs/provider-setup.md`,
+ `docs/slack-collaboration-bus.md`, `docs/project-bootstrap-protocol.md`,
+ `docs/contribution-attribution-policy.md`, `docs/provider-profiles/README.md`,
+ `docs/cloud-hosting-later.md`, `docs/project-uppercut-reiteration.md`, and
+ `docs/edge-oracle-operations.md`.
+ 
+-## Architecture
++## How a work order reaches me
+ 
+ 1. Aesop posts `DIRECTOR` in the private Slack channel.
+ 2. The Slack gateway accepts only the configured owner and channel, ignores bot messages, and forwards a stable Slack event ID.
+ 3. n8n passes the normalized event to the orchestrator.
+-4. The orchestrator deduplicates it, creates a task record, applies hard limits, and builds a preview or live Director plan.
+-5. The Director opens one persisted collaboration thread, posts each bounded delegation,
+-   and relays concise structured results without exposing raw provider output.
+-6. Specialist runs are dispatched sequentially unless the plan explicitly marks independent work.
+-   Medium-to-critical plans can include independent positions and one rebuttal round.
+-7. Results are reviewed against acceptance checks. Revision loops are capped. Advisory votes
+-   use fixed weights, while Director synthesis preserves dissent and never creates action authority.
+-8. Slack receives collected evidence, review handoffs, completion state, or a narrowly scoped
+-   owner decision request. Approval-gated plans include a confirm button; ambiguity requires a
+-   written `/director approve DIR-… <clarification>` response.
+-9. In-progress tasks resume after an orchestrator restart without redispatching an already-recorded provider run.
+-10. When live execution is enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
++4. The orchestrator deduplicates it, creates a task record, applies hard limits, and builds a preview or live plan.
++5. I open one persisted collaboration thread, post each bounded delegation, and relay concise structured results — never raw provider output.
++6. Specialist runs dispatch sequentially unless the plan explicitly marks work independent. Medium-to-critical plans may include independent positions and one rebuttal round.
++7. Results are judged against acceptance checks. Revision loops are capped. Advisory votes use fixed weights, and synthesis preserves dissent without creating action authority.
++8. Slack receives collected evidence, a review handoff, completion state, or one narrowly scoped owner decision. Approval-gated plans carry a confirm button; ambiguity requires a written `/director approve DIR-… <clarification>`.
++9. In-progress tasks resume after a restart without redispatching an already-recorded provider run.
++10. With live execution enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
++
+ 
+ Claude keeps Moderator, Participant, and Director project functions separate. Moderation
+ uses neutral framing, gathers independent positions before cross-exposure when
+@@ -115,9 +152,9 @@ eligibility for that candidate. Different-provider exact-candidate review, secur
+ CI and action-specific approval remain mandatory. Profile selection grants no
+ external-action authority or subscription-to-API entitlement.
+ Prepared but undelivered content is labeled
+-`DRAFT — NOT SENT`; offline exercises use
+-`SIMULATION — NO PROVIDER INTERACTION`; hypothetical provider views use
+-`PREDICTED POSITION — PROVIDER HAS NOT RESPONDED` and never count as participation
++`DRAFT â€” NOT SENT`; offline exercises use
++`SIMULATION â€” NO PROVIDER INTERACTION`; hypothetical provider views use
++`PREDICTED POSITION â€” PROVIDER HAS NOT RESPONDED` and never count as participation
+ or a vote. Alternatives are recorded only when credible and decision-relevant.
+ 
+ The 5% coordination reserve covers checks, drift, evidence gaps, recovery,
+@@ -148,9 +185,9 @@ External actions require exact stored owner authorization for the named action
+ and scope plus all current deterministic gates. Neither browser content nor
+ provider output creates authority.
+ 
+-## Windows desktop quick start
++## Run me on a Windows desktop
+ 
+-Prerequisites: Docker Desktop with Linux containers and PowerShell 7 or Windows PowerShell 5.1.
++Prerequisites: Docker Desktop with Linux containers, and PowerShell 7 or Windows PowerShell 5.1.
+ 
+ ```powershell
+ git clone https://github.com/edwardjones3976/director-orchestrator.git
+@@ -158,11 +195,11 @@ cd director-orchestrator
+ powershell -ExecutionPolicy Bypass -File .\scripts\windows-bootstrap.ps1
+ ```
+ 
+-The bootstrap script creates `.env` with random local secrets and starts the stack. It does not create or store provider credentials.
++The bootstrap script writes `.env` with random local secrets and starts the stack. It creates and stores no provider credentials.
+ 
+-Open `http://localhost:5678`, create the local n8n owner login, and import `n8n/workflows/director-intake.json`. Activate that workflow after inspection.
++Open `http://localhost:5678`, create the local n8n owner login, and import `n8n/workflows/director-intake.json`. Activate that workflow only after you have inspected it.
+ 
+-For always-on operation, enable Docker Desktop's start-on-sign-in option, disable sleep/hibernation for the host while plugged in, keep Windows and Docker auto-restart behavior enabled, and use a UPS if this desktop is expected to act as infrastructure. Containers use `restart: unless-stopped`; in-progress provider polls resume from durable task state after the orchestrator restarts.
++For always-on operation: enable Docker Desktop's start-on-sign-in, disable sleep and hibernation while plugged in, keep Windows and Docker auto-restart enabled, and put a UPS behind the machine if you intend to treat it as infrastructure. Containers run `restart: unless-stopped`, and in-progress provider polls resume from durable task state after a restart.
+ 
+ ### Default LangGraph-primary database (inactive by default)
+ 
+@@ -254,7 +291,7 @@ Never paste tokens into Slack, chat, source control, screenshots, or issue bodie
+ **[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | BEGIN]]**
+ The official ChatGPT Slack app remains a dedicated App/DM experience. To let the
+ owner use the visible `@ChatGPT` identity inside an allowlisted project channel,
+-enable Aesop Director's bounded alias bridge. Aesop—not the OpenAI-managed bot—posts
++enable Aesop Director's bounded alias bridge. Aesopâ€”not the OpenAI-managed botâ€”posts
+ the threaded answer with an honest bridge label only after a second signed owner
+ approval. Undelivered answers remain recoverable as bounded ciphertext until Slack
+ delivery is acknowledged. After an ambiguous Slack post, only an explicit owner
+@@ -267,7 +304,7 @@ tool, repository, delegation, merge, deployment, or purchasing authority. See
+ [the ChatGPT Slack alias bridge runbook](docs/chatgpt-slack-alias-bridge.md).
+ **[[Codex | GPT-5.6 | 2026-08-23 | 08:31 UTC | END]]**
+ 
+-## Safe smoke test
++## Prove I am safe before you pay me
+ 
+ Keep `ALLOW_PAID_RUNS=false`, then post:
+ 
+@@ -278,27 +315,27 @@ Outcome: Produce a dry-run plan for adding a /version health field.
+ Constraints: Do not edit GitHub and do not call paid providers.
+ ```
+ 
+-The expected result is a task ID, a preview plan, and `OWNER_DECISION_REQUIRED` because live execution is disabled. No provider should run.
++Expect a task ID, a preview plan, and `OWNER_DECISION_REQUIRED` because live execution is disabled. No provider should run. If one does, stop and report it — that is a defect in the gate, not a surprise to work around.
+ 
+-## Enabling live execution
++## Turning on spending
+ 
+-Add credentials one provider at a time. Verify each adapter independently before setting `ALLOW_PAID_RUNS=true`.
++Add credentials one provider at a time, and verify each adapter independently before setting `ALLOW_PAID_RUNS=true`.
+ 
+ 1. `OPENAI_API_KEY` and the configured Director model.
+ 2. At least one specialist credential.
+ 3. A repository URL and starting branch in the work order.
+ 4. Provider-side spending limits.
+ 5. Exact `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, and `ALLOWED_STARTING_REFS` values for this deployment profile.
+-6. A separate `CLAUDE_CALLBACK_SECRET` installed in both the orchestrator and the trusted Claude callback sender when callbacks are enabled.
+-7. `ALLOW_PAID_RUNS=true`, followed by a low-risk test task.
++6. A separate `CLAUDE_CALLBACK_SECRET`, installed in both the orchestrator and the trusted Claude callback sender, when callbacks are enabled.
++7. `ALLOW_PAID_RUNS=true`, then one low-risk test task.
+ 
+ OpenAI Pro 20x, Claude Max 5x, Cursor, Gemini, and Perplexity subscriptions do not necessarily include API usage. Claude Code Routine triggers are the exception represented here: they use the routine-specific URL and token supplied by Claude's routine UI.
+ 
+-## Periodic provider usage checks
++## Watching the meter
+ 
+-Periodic prompts are opt-in. After provider-side spend limits are configured, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt that instructs the provider not to use tools or perform project work. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; either switch being false prevents every monitor-initiated model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously and an unbypassable 15-minute per-provider minimum.
++Periodic prompts are opt-in. Once provider-side spend limits exist, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt instructing the provider to use no tools and do no project work. The default list is the primary team — OpenAI, Claude, Cursor; add Gemini and Perplexity explicitly to monitor their supplemental lanes. Checks are additionally gated by `ALLOW_PAID_RUNS=true`, and either switch being false prevents every monitor-initiated model call. The default interval is six hours, providers prompted sequentially rather than simultaneously, with an unbypassable 15-minute per-provider minimum.
+ 
+-The monitor stores provider-returned token metadata, provider-reported USD cost, bounded retry count, and normalized quota errors in SQLite and posts a concise status summary to `#project-director`. It never invents a dollar estimate when a provider omits cost telemetry. A model reply is an availability signal, not authoritative proof of an account or subscription balance. Cursor documents plan usage in its dashboard, and other providers may likewise expose authoritative quota only in their account consoles.
++The monitor records provider-returned token metadata, provider-reported USD cost, bounded retry count, and normalized quota errors in SQLite, then posts a concise summary to `#project-director`. **It never invents a dollar estimate when a provider omits cost telemetry.** A model reply is an availability signal, not proof of an account or subscription balance — Cursor documents plan usage in its dashboard, and other providers may expose authoritative quota only in their own consoles.
+ 
+ Authenticated operator endpoints:
+ 
+@@ -307,37 +344,38 @@ GET  /v1/usage-checks/latest
+ POST /v1/usage-checks/run
+ ```
+ 
+-The manual POST respects both safety switches and the 15-minute minimum. It returns a structured body:
++The manual POST respects both safety switches and the 15-minute minimum, and returns a structured body:
+ 
+ - `202` `accepted` with `cycle_id` and `scheduled_providers` when work will run
+ - `200` `not_due` with `cooling_down_providers` when nothing is due under the minimum interval
+ - `409` while paid execution or periodic checks are disabled, or when a cycle is already `busy`
+ 
+-Callers must wait only for the providers listed in `scheduled_providers`, must treat `not_due` as an explicit no-new-work response, and must still prove every cooling primary provider has a recent `ok`/`prompted` record before claiming readiness.
++Wait only on the providers named in `scheduled_providers`. Treat `not_due` as an explicit no-new-work answer, and still prove every cooling primary provider has a recent `ok`/`prompted` record before claiming readiness.
+ 
+ ## Execution profiles and handoffs
+ 
+-Live plans fail closed unless their project is listed in `PROJECT_ALLOWLIST`. Every explicit repository and starting ref must match `REPOSITORY_ALLOWLIST` and `ALLOWED_STARTING_REFS`; Cursor assignments must always name a repository so they cannot fall back to an account-level default. Use separate deployments and databases when projects require different repositories, credentials, budgets, or Slack destinations. Every project presented to the Director receives a rollout packet; concurrently active deployments require distinct Slack apps, project channels, deployment profiles, and state namespaces. Pending identities permit analysis-only shaping but block Slack activation.
++Live plans fail closed unless their project is listed in `PROJECT_ALLOWLIST`. Every explicit repository and starting ref must match `REPOSITORY_ALLOWLIST` and `ALLOWED_STARTING_REFS`, and Cursor assignments must always name a repository so they cannot fall back to an account-level default. Use separate deployments and databases when projects need different repositories, credentials, budgets, or Slack destinations. Every project presented to me receives a rollout packet; concurrently active deployments require distinct Slack apps, project channels, deployment profiles, and state namespaces. Pending identities permit analysis-only shaping but block Slack activation.
+ 
+-After OpenAI accepts an assignment, the orchestrator persists a bounded outcome containing its result, review summary, and evidence. Later assignments receive prior accepted outcomes and their declared `depends_on` results inside a marked untrusted-data envelope. Missing, forward, or unknown dependencies block execution rather than being ignored.
++After an assignment is accepted, the orchestrator persists a bounded outcome carrying its result, review summary, and evidence. Later assignments receive prior accepted outcomes and their declared `depends_on` results inside a marked untrusted-data envelope. Missing, forward, or unknown dependencies block execution rather than being quietly ignored.
+ 
+-Claude completion callbacks use `CLAUDE_CALLBACK_SECRET`, not the general orchestrator bearer secret. A callback must identify the exact pending Claude `run_id`; duplicate identical callbacks are idempotent and conflicting results are rejected.
++Claude completion callbacks authenticate with `CLAUDE_CALLBACK_SECRET`, not the general orchestrator bearer secret. A callback must identify the exact pending Claude `run_id`; duplicate identical callbacks are idempotent, and conflicting results are rejected.
+ 
+ ## Cloud hosting later
+ 
+-The desktop design intentionally keeps Slack on Socket Mode and stores state locally. For cloud migration:
++The desktop design deliberately keeps Slack on Socket Mode and state local. To migrate:
+ 
+-- Move the orchestrator state from SQLite to managed PostgreSQL.
++- Move orchestrator state from SQLite to managed PostgreSQL.
+ - Put n8n and the orchestrator behind HTTPS with restricted ingress.
+ - Replace long-lived cloud credentials with OIDC or narrowly scoped service credentials where supported.
+ - Use a managed secret store, encrypted backups, centralized logs, uptime monitoring, and provider webhook verification.
+ - Pin container images by version or digest before production.
+ - Keep the Slack channel, task schema, approval policy, and provider adapters unchanged.
+ 
+-Do not expose the local n8n editor or orchestrator port directly to the internet.
++Do not expose the local n8n editor or the orchestrator port directly to the internet.
+ 
+ ## Project Uppercut reiteration
+ 
++
+ Project Uppercut runs as a separate Compose project using `.env.uppercut`, dedicated ports, volumes, task state, Slack routing, budgets, and callback secrets. The supervised Windows script never edits the primary `.env`. See [the Uppercut runbook](docs/project-uppercut-reiteration.md). The broader LangGraph migration is planned separately in [PR #18](https://github.com/edwardjones3976/director-orchestrator/pull/18) so this remediation stays focused.
+ 
+ Edge Oracle uses the same isolated bootstrap through a separate `.env.edge-oracle`,
+@@ -424,7 +462,10 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
+ <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
++<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | END]] -->
+ <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
+ <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
++<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
++<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
+diff --git a/src/director_orchestrator/launch_status.py b/src/director_orchestrator/launch_status.py
+deleted file mode 100644
+index 016dbe1..0000000
+--- a/src/director_orchestrator/launch_status.py
++++ /dev/null
+@@ -1,224 +0,0 @@
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | BEGIN]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | BEGIN]]
+-"""Measure launch readiness instead of asserting it.
+-
+-Three things this answers, each of which was previously a claim in prose:
+-
+-Which of the five "done" terms hold, read from the live health document rather
+-than from memory of the last time someone looked.
+-
+-How many owner touchpoints remain on the launch path. That count, k, dominates
+-the schedule: T is roughly k times the owner's round-trip plus agent work, so
+-batching k from about twenty into about three is worth more than any amount of
+-parallelism. Amdahl caps agent speedup at about 1.25x while four fifths of the
+-remaining wall time is the serial owner-gated chain.
+-
+-Whether an optional re-check is worth running. A check earns its cost only when
+-its result could change a decision, and with no state change since the last
+-verified result that probability is zero. Security, approval and exact-SHA gates
+-are never optional and are refused by name.
+-
+-Every term is derived from an input, never hard-coded to a hoped-for value. A
+-term with no machine-readable source is reported as attested, not assumed.
+-"""
+-
+-from __future__ import annotations
+-
+-from dataclasses import dataclass
+-from enum import StrEnum
+-
+-
+-class Source(StrEnum):
+-    MEASURED = "measured"      # read from the live health document
+-    ATTESTED = "attested"      # requires a human or an out-of-band record
+-
+-
+-# Never skippable, whatever the stopping rule computes.
+-NON_OPTIONAL_CHECKS: frozenset[str] = frozenset(
+-    {"security", "approval", "exact_sha_review", "ci"}
+-)
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class Term:
+-    name: str
+-    holds: bool
+-    source: Source
+-    evidence: str
+-
+-
+-def done_terms(health: dict, *, restore_drill_recorded: bool = False) -> tuple[Term, ...]:
+-    """The five-term conjunction, read from a live health document."""
+-
+-    primary = health.get("langgraph_primary", {})
+-    owner = primary.get("new_intake_owner")
+-    # `is True`, never bool(). A health document is JSON off the wire, and
+-    # bool() promotes the string "false", the string "0" and any non-empty
+-    # object to a satisfied gate: an independent review of #150 constructed
+-    # effect_ledger_ready="false" and got a term reading
+-    # `effect_ledger_ready=True`. Only the literal boolean counts, and the
+-    # evidence prints what was actually read rather than the coercion.
+-    runtime_active = primary.get("primary_runtime_active")
+-    live_requested = primary.get("live_provider_dispatch_requested")
+-    ledger = primary.get("effect_ledger_ready")
+-    bindings = primary.get("provider_activation_bindings_configured")
+-    tasks = primary.get("graph_task_count")
+-
+-    return (
+-        Term(
+-            "intake_reaches_the_primary_plane",
+-            owner == "langgraph",
+-            Source.MEASURED,
+-            f"new_intake_owner={owner!r}",
+-        ),
+-        Term(
+-            # Both switches being on says a wave *may* run, not that one has.
+-            # A review reproduced this term holding with graph_task_count=0.
+-            # The count is the only field here that distinguishes a configured
+-            # plane from an exercised one, so it is part of the conjunction.
+-            "real_execution_of_a_wave",
+-            runtime_active is True and live_requested is True and isinstance(tasks, int)
+-            and not isinstance(tasks, bool) and tasks > 0,
+-            Source.MEASURED,
+-            f"primary_runtime_active={runtime_active!r}, "
+-            f"live_provider_dispatch_requested={live_requested!r}, "
+-            f"graph_task_count={tasks!r}",
+-        ),
+-        Term(
+-            # effect_ledger_ready reports that the ledger is available, not
+-            # that a wave's results are in it. Kept as a prerequisite, and
+-            # named so, rather than promoted to durable results.
+-            "durable_result_store_ready",
+-            ledger is True,
+-            Source.MEASURED,
+-            f"effect_ledger_ready={ledger!r}",
+-        ),
+-        Term(
+-            # This field validates the binding map's contents and provider
+-            # coverage. It establishes nothing about installation, acceptance
+-            # or readiness of the controls themselves -- a review reproduced it
+-            # true with the runtime disabled and every secret-readiness field
+-            # false -- so the claim is narrowed to what the field measures.
+-            "provider_binding_map_configured",
+-            bindings is True,
+-            Source.MEASURED,
+-            f"provider_activation_bindings_configured={bindings!r}",
+-        ),
+-        Term(
+-            # No health field reports a restore drill, so this cannot be
+-            # measured here. Reporting it as attested keeps the gap visible
+-            # rather than letting a default stand in for evidence, and the
+-            # evidence string differs by case so that "the caller said so"
+-            # cannot read as a record.
+-            "recovery_proof",
+-            restore_drill_recorded is True,
+-            Source.ATTESTED,
+-            "caller attests a restore drill record; not verified here"
+-            if restore_drill_recorded is True
+-            else "no restore drill record supplied",
+-        ),
+-    )
+-
+-
+-# The launch path, as enumerated by the owner. `probe` names the health field
+-# that settles it, or None when only the owner can.
+-OWNER_TOUCHPOINTS: tuple[tuple[str, str | None], ...] = (
+-    ("acceptance_mode_choice", None),
+-    ("drive_root_ace", None),
+-    ("four_service_accounts", None),
+-    ("protected_runtimes", None),
+-    ("issuer_install_app", None),
+-    ("issuer_install_runtime_adapter", None),
+-    ("native_login_codex", None),
+-    ("native_login_cursor", None),
+-    ("broker_init_and_registry_digest", None),
+-    ("ci_issuer_adoption", None),
+-    ("snapshot_root", "authority_root_configured"),
+-    # authority_pins deliberately has no probe. `authority_pins_valid` returns
+-    # true when BOTH pins are empty (config.py), so using it credited this
+-    # touchpoint as satisfied on a default configuration and reduced k without
+-    # evidence that any pin was ever set. A field that is true for "unset" does
+-    # not settle a touchpoint; the owner does.
+-    ("authority_pins", None),
+-    ("provider_binding_map", "provider_activation_bindings_configured"),
+-    ("effect_gateway_decision", None),
+-    ("actor_allowlist", "completion_evidence_actor_allowlist_configured"),
+-    ("receipt_one", None),
+-    ("receipt_two", None),
+-    ("receipt_three", None),
+-    ("accept", None),
+-    ("activate", "live_provider_dispatch_requested"),
+-    ("token_rotation", None),
+-    ("merge_pull_requests", None),
+-    ("m0_redeploy", None),
+-)
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class Touchpoint:
+-    name: str
+-    satisfied: bool
+-    source: Source
+-
+-
+-def owner_touchpoints(health: dict) -> tuple[Touchpoint, ...]:
+-    primary = health.get("langgraph_primary", {})
+-    out = []
+-    for name, probe in OWNER_TOUCHPOINTS:
+-        if probe is None:
+-            out.append(Touchpoint(name, False, Source.ATTESTED))
+-        else:
+-            # `is True` for the same reason as the terms: a JSON "false" or a
+-            # non-empty object must not satisfy a touchpoint by truthiness.
+-            out.append(Touchpoint(name, primary.get(probe) is True, Source.MEASURED))
+-    return tuple(out)
+-
+-
+-def remaining_k(health: dict) -> int:
+-    """Outstanding owner touchpoints. This is the term that sets the schedule."""
+-
+-    return sum(1 for t in owner_touchpoints(health) if not t.satisfied)
+-
+-
+-def estimated_duration(k: int, owner_round_trip_hours: float, agent_work_hours: float) -> float:
+-    """T = k * L_owner + sum(w_i)."""
+-
+-    if k < 0 or owner_round_trip_hours < 0 or agent_work_hours < 0:
+-        raise ValueError("durations and counts cannot be negative")
+-    return k * owner_round_trip_hours + agent_work_hours
+-
+-
+-def max_speedup(serial_fraction: float, agents: int) -> float:
+-    """Amdahl. `serial_fraction` is the owner-gated chain that cannot parallelise."""
+-
+-    if not 0.0 <= serial_fraction <= 1.0:
+-        raise ValueError("serial fraction must be between 0 and 1")
+-    if agents < 1:
+-        raise ValueError("agents must be at least 1")
+-    parallel = 1.0 - serial_fraction
+-    return 1.0 / (serial_fraction + parallel / agents)
+-
+-
+-def should_recheck(
+-    check: str,
+-    *,
+-    state_changed_since_last_result: bool,
+-    probability_result_changes_decision: float,
+-    cost_of_wrong_decision: float,
+-    cost_of_check: float,
+-) -> tuple[bool, str]:
+-    """Run an optional check only when its expected value exceeds its cost."""
+-
+-    if check in NON_OPTIONAL_CHECKS:
+-        return True, f"{check} is never optional"
+-    if not 0.0 <= probability_result_changes_decision <= 1.0:
+-        raise ValueError("probability must be between 0 and 1")
+-    if not state_changed_since_last_result:
+-        # Nothing has moved, so the result cannot differ from the verified one.
+-        return False, "no state change since the last verified result"
+-    expected = probability_result_changes_decision * cost_of_wrong_decision
+-    if expected > cost_of_check:
+-        return True, f"expected value {expected:g} exceeds cost {cost_of_check:g}"
+-    return False, f"expected value {expected:g} does not exceed cost {cost_of_check:g}"
+-# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | END]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | END]]
+diff --git a/tests/test_launch_status.py b/tests/test_launch_status.py
+deleted file mode 100644
+index 9aa0243..0000000
+--- a/tests/test_launch_status.py
++++ /dev/null
+@@ -1,432 +0,0 @@
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | BEGIN]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | BEGIN]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | BEGIN]]
+-"""Readiness must be derived from inputs, never defaulted to a hoped-for value."""
+-
+-from __future__ import annotations
+-
+-import unittest
+-
+-from director_orchestrator.launch_status import (
+-    NON_OPTIONAL_CHECKS,
+-    OWNER_TOUCHPOINTS,
+-    Source,
+-    done_terms,
+-    estimated_duration,
+-    max_speedup,
+-    owner_touchpoints,
+-    remaining_k,
+-    should_recheck,
+-)
+-
+-# An illustrative health document, NOT a measurement of the live stack. An
+-# earlier comment called it "the live stack as measured on 2026-09-08"; a
+-# review compared it against real configuration readiness on this host and
+-# found it names fields that readiness does not contain, and that the live
+-# figures were 0 of 5 with k=22 rather than the 2 and 20 claimed. It exists to
+-# exercise the mapping. Every expectation below is pinned to it by name, so a
+-# hardcoded answer that happens to match a total no longer passes.
+-TODAY = {
+-    "langgraph_primary": {
+-        "new_intake_owner": "langgraph",
+-        "primary_runtime_active": False,
+-        "live_provider_dispatch_requested": False,
+-        "effect_ledger_ready": True,
+-        "provider_activation_bindings_configured": False,
+-        "authority_root_configured": True,
+-        "authority_pins_valid": True,
+-        "completion_evidence_actor_allowlist_configured": True,
+-    }
+-}
+-
+-
+-class DoneConjunctionTests(unittest.TestCase):
+-    def test_the_conjunction_reports_exactly_the_named_terms(self):
+-        """Pin the names and their holds, not a count against a hoped-for total.
+-
+-        This asserted len(terms)==5 and len(holding)==2 against a fixture
+-        authored to match the commit message. An independent review of #150
+-        hardcoded the two flags true and ignored the health document
+-        altogether, and this test still passed.
+-        """
+-
+-        terms = done_terms(TODAY)
+-        self.assertEqual(
+-            [t.name for t in terms],
+-            [
+-                "intake_reaches_the_primary_plane",
+-                "real_execution_of_a_wave",
+-                "durable_result_store_ready",
+-                "provider_binding_map_configured",
+-                "recovery_proof",
+-            ],
+-        )
+-        self.assertEqual(
+-            {t.name: t.holds for t in terms},
+-            {
+-                "intake_reaches_the_primary_plane": True,
+-                "real_execution_of_a_wave": False,
+-                "durable_result_store_ready": True,
+-                "provider_binding_map_configured": False,
+-                "recovery_proof": False,
+-            },
+-        )
+-
+-    def test_a_configured_plane_is_not_an_executed_wave(self):
+-        """Both switches on with no task run is not execution.
+-
+-        Reproduced by a review at graph_task_count=0: the term held on the two
+-        readiness flags alone.
+-        """
+-
+-        primary = dict(TODAY["langgraph_primary"])
+-        primary["primary_runtime_active"] = True
+-        primary["live_provider_dispatch_requested"] = True
+-        primary["graph_task_count"] = 0
+-        term = next(
+-            t for t in done_terms({"langgraph_primary": primary})
+-            if t.name == "real_execution_of_a_wave"
+-        )
+-        self.assertFalse(term.holds)
+-        primary["graph_task_count"] = 1
+-        term = next(
+-            t for t in done_terms({"langgraph_primary": primary})
+-            if t.name == "real_execution_of_a_wave"
+-        )
+-        self.assertTrue(term.holds)
+-
+-    # Every field the module reads with `is True`, and the term or touchpoint
+-    # it decides. Testing one of them proved nothing about the rest: a delta
+-    # review of #150 reverted the touchpoint probes and the wave switches to
+-    # bool() and all 20 tests stayed green, reopening the same "false" gate on
+-    # four touchpoints and on the wave.
+-    BOOLEAN_FIELDS = (
+-        ("effect_ledger_ready", "durable_result_store_ready"),
+-        ("provider_activation_bindings_configured", "provider_binding_map_configured"),
+-        ("primary_runtime_active", "real_execution_of_a_wave"),
+-        ("live_provider_dispatch_requested", "real_execution_of_a_wave"),
+-    )
+-    NOT_TRUE = ("false", "true", "0", "1", 0, 1, {}, {"satisfied": False}, [], None, "yes")
+-
+-    def test_no_non_boolean_value_ever_satisfies_a_term(self):
+-        """bool("false") is True, and a health document is JSON off the wire."""
+-
+-        for field, term_name in self.BOOLEAN_FIELDS:
+-            for bogus in self.NOT_TRUE:
+-                primary = dict(TODAY["langgraph_primary"])
+-                # Satisfy the wave's siblings so only `field` can decide it.
+-                primary["primary_runtime_active"] = True
+-                primary["live_provider_dispatch_requested"] = True
+-                primary["graph_task_count"] = 3
+-                primary[field] = bogus
+-                term = next(
+-                    t for t in done_terms({"langgraph_primary": primary})
+-                    if t.name == term_name
+-                )
+-                self.assertFalse(term.holds, f"{field}={bogus!r}")
+-                # The evidence must not report THIS field as True. A blanket
+-                # "=True" check is wrong here: the wave term names three
+-                # fields, and the two left satisfied read True legitimately.
+-                self.assertNotIn(f"{field}=True", term.evidence, f"{field}={bogus!r}")
+-
+-    def test_no_non_boolean_value_ever_satisfies_a_touchpoint(self):
+-        """The probes were reverted to bool() and every test stayed green.
+-
+-        A review measured "false" on all four probed touchpoints satisfying
+-        them, dropping remaining_k from 21 to 19.
+-        """
+-
+-        probed = [name for name, probe in OWNER_TOUCHPOINTS if probe is not None]
+-        self.assertEqual(len(probed), 4)
+-        for bogus in self.NOT_TRUE:
+-            primary = {probe: bogus for _, probe in OWNER_TOUCHPOINTS if probe}
+-            satisfied = [
+-                t.name for t in owner_touchpoints({"langgraph_primary": primary})
+-                if t.satisfied
+-            ]
+-            self.assertEqual(satisfied, [], repr(bogus))
+-            self.assertEqual(
+-                remaining_k({"langgraph_primary": primary}),
+-                len(OWNER_TOUCHPOINTS),
+-                repr(bogus),
+-            )
+-
+-    def test_no_non_boolean_attestation_ever_satisfies_recovery_proof(self):
+-        """The last two `is True` sites, which the corpus never reached.
+-
+-        The previous commit drove eleven non-boolean values through the health
+-        fields and the touchpoint probes and stopped there. A delta review of
+-        #150 replaced both `restore_drill_recorded is True` checks with bool()
+-        and all 22 tests stayed green, so bool("false") would have satisfied
+-        recovery_proof -- the same one-field hole, on the remaining pair.
+-        """
+-
+-        for bogus in self.NOT_TRUE:
+-            term = next(
+-                t for t in done_terms(TODAY, restore_drill_recorded=bogus)
+-                if t.name == "recovery_proof"
+-            )
+-            self.assertFalse(term.holds, repr(bogus))
+-            # The evidence must read as absent, not as an attestation.
+-            self.assertIn("no restore drill record", term.evidence, repr(bogus))
+-            self.assertNotIn("caller attests", term.evidence, repr(bogus))
+-
+-        # And the literal True still works.
+-        attested = next(
+-            t for t in done_terms(TODAY, restore_drill_recorded=True)
+-            if t.name == "recovery_proof"
+-        )
+-        self.assertTrue(attested.holds)
+-        self.assertIn("caller attests", attested.evidence)
+-
+-    def test_a_boolean_task_count_is_not_a_wave(self):
+-        """True is an int, so dropping the bool guard would count it as one.
+-
+-        The guard `not isinstance(tasks, bool)` had no test: removing it left
+-        every test passing while graph_task_count=True satisfied the wave.
+-        """
+-
+-        primary = dict(TODAY["langgraph_primary"])
+-        primary["primary_runtime_active"] = True
+-        primary["live_provider_dispatch_requested"] = True
+-        for bogus in (True, False, "3", 3.0, None):
+-            primary["graph_task_count"] = bogus
+-            term = next(
+-                t for t in done_terms({"langgraph_primary": primary})
+-                if t.name == "real_execution_of_a_wave"
+-            )
+-            self.assertFalse(term.holds, repr(bogus))
+-
+-    def test_every_condition_of_a_wave_is_separately_necessary(self):
+-        """Drop any one of the three and the term must stop holding.
+-
+-        This previously asserted that runtime plus live dispatch was
+-        sufficient. It is not: a review reproduced both switches on with
+-        graph_task_count=0, which is a plane configured to run rather than one
+-        that has. Sufficiency is pinned in
+-        test_a_configured_plane_is_not_an_executed_wave; this pins necessity,
+-        one condition at a time, so no single condition can quietly drop out
+-        of the conjunction.
+-        """
+-
+-        met = dict(TODAY["langgraph_primary"])
+-        met.update(
+-            primary_runtime_active=True,
+-            live_provider_dispatch_requested=True,
+-            graph_task_count=3,
+-        )
+-        term = next(
+-            t for t in done_terms({"langgraph_primary": met})
+-            if t.name == "real_execution_of_a_wave"
+-        )
+-        self.assertTrue(term.holds)
+-
+-        for field, unmet in (
+-            ("primary_runtime_active", False),
+-            ("live_provider_dispatch_requested", False),
+-            ("graph_task_count", 0),
+-        ):
+-            primary = dict(met)
+-            primary[field] = unmet
+-            term = next(
+-                t for t in done_terms({"langgraph_primary": primary})
+-                if t.name == "real_execution_of_a_wave"
+-            )
+-            self.assertFalse(term.holds, field)
+-
+-    def test_recovery_proof_is_attested_and_defaults_to_false(self):
+-        """No health field reports a restore drill, so it must not be assumed."""
+-
+-        term = next(t for t in done_terms(TODAY) if t.name == "recovery_proof")
+-        self.assertIs(term.source, Source.ATTESTED)
+-        self.assertFalse(term.holds)
+-        supplied = next(
+-            t for t in done_terms(TODAY, restore_drill_recorded=True)
+-            if t.name == "recovery_proof"
+-        )
+-        self.assertTrue(supplied.holds)
+-
+-    def test_an_empty_health_document_holds_nothing(self):
+-        """A missing field is not a satisfied term.
+-
+-        The assertion was an empty holding-list, which `done_terms` returning
+-        `()` also satisfies -- a review made that mutation and this passed. The
+-        five terms must be present and every one unmet.
+-        """
+-
+-        terms = done_terms({})
+-        self.assertEqual(
+-            [t.name for t in terms],
+-            [
+-                "intake_reaches_the_primary_plane",
+-                "real_execution_of_a_wave",
+-                "durable_result_store_ready",
+-                "provider_binding_map_configured",
+-                "recovery_proof",
+-            ],
+-        )
+-        self.assertEqual([t.holds for t in terms], [False] * 5)
+-
+-    def test_every_term_carries_its_evidence(self):
+-        """An empty tuple satisfies "every term" vacuously.
+-
+-        A review returned () from done_terms and this passed -- the same
+-        empty-collection hole an earlier round pinned on NON_OPTIONAL_CHECKS
+-        and left open here. The population is pinned before it is walked.
+-        """
+-
+-        terms = done_terms(TODAY)
+-        self.assertEqual(len(terms), 5)
+-        for term in terms:
+-            self.assertTrue(term.evidence, term.name)
+-
+-    def test_an_attested_term_reads_differently_when_it_is_unmet(self):
+-        """A constant caption is not evidence; it read the same either way."""
+-
+-        absent = next(t for t in done_terms(TODAY) if t.name == "recovery_proof")
+-        present = next(
+-            t for t in done_terms(TODAY, restore_drill_recorded=True)
+-            if t.name == "recovery_proof"
+-        )
+-        self.assertNotEqual(absent.evidence, present.evidence)
+-        self.assertFalse(absent.holds)
+-        self.assertTrue(present.holds)
+-        # And it never claims to have checked anything.
+-        self.assertIn("not verified here", present.evidence)
+-
+-
+-class TouchpointTests(unittest.TestCase):
+-    def test_k_counts_only_outstanding_touchpoints(self):
+-        """Pin the names and the number, not an identity that always holds.
+-
+-        `remaining_k == len(OWNER_TOUCHPOINTS) - len(satisfied)` is true by
+-        construction. A review marked every attested touchpoint satisfied and
+-        this passed; so did hardcoding remaining_k to 20.
+-        """
+-
+-        satisfied = {t.name for t in owner_touchpoints(TODAY) if t.satisfied}
+-        self.assertEqual(satisfied, {"snapshot_root", "actor_allowlist"})
+-        self.assertEqual(len(OWNER_TOUCHPOINTS), 23)
+-        self.assertEqual(remaining_k(TODAY), 21)
+-
+-    def test_authority_pins_is_not_settled_by_a_field_true_when_unset(self):
+-        """authority_pins_valid returns true when both pins are empty.
+-
+-        Using it as the probe credited this touchpoint on a default
+-        configuration and reduced k with no evidence that any pin was set.
+-        Found by a review of #150 against the real Settings.
+-        """
+-
+-        self.assertIsNone(dict(OWNER_TOUCHPOINTS)["authority_pins"])
+-        primary = dict(TODAY["langgraph_primary"])
+-        primary["authority_pins_valid"] = True
+-        pins = next(
+-            t for t in owner_touchpoints({"langgraph_primary": primary})
+-            if t.name == "authority_pins"
+-        )
+-        self.assertFalse(pins.satisfied)
+-        self.assertIs(pins.source, Source.ATTESTED)
+-
+-    def test_an_unprobeable_touchpoint_is_never_reported_satisfied(self):
+-        """Only the owner can settle these, so they may not default to done.
+-
+-        Emptying OWNER_TOUCHPOINTS passed this vacuously in a review, so the
+-        attested population is pinned before it is walked.
+-        """
+-
+-        attested = [t for t in owner_touchpoints(TODAY) if t.source is Source.ATTESTED]
+-        self.assertEqual(len(attested), 19)
+-        for touch in owner_touchpoints(TODAY):
+-            if touch.source is Source.ATTESTED:
+-                self.assertFalse(touch.satisfied, touch.name)
+-
+-    def test_k_falls_only_when_the_health_document_says_so(self):
+-        before = remaining_k(TODAY)
+-        health = {"langgraph_primary": dict(TODAY["langgraph_primary"])}
+-        health["langgraph_primary"]["provider_activation_bindings_configured"] = True
+-        self.assertEqual(remaining_k(health), before - 1)
+-
+-
+-class ScheduleTests(unittest.TestCase):
+-    def test_owner_latency_dominates_when_k_is_large(self):
+-        """20 touchpoints at 4h each dwarfs the agent work; batching is the lever."""
+-
+-        unbatched = estimated_duration(20, 4.0, 10.0)
+-        batched = estimated_duration(3, 4.0, 10.0)
+-        self.assertEqual(unbatched, 90.0)
+-        self.assertEqual(batched, 22.0)
+-        self.assertLess(batched, unbatched / 3)
+-
+-    def test_amdahl_caps_agent_speedup_on_a_serial_chain(self):
+-        """Four fifths serial gives at most 1.25x, however many agents."""
+-
+-        self.assertAlmostEqual(max_speedup(0.8, 10**6), 1.25, places=4)
+-        self.assertLessEqual(max_speedup(0.8, 1000), 1.25)
+-
+-    def test_a_fully_serial_chain_gains_nothing(self):
+-        self.assertEqual(max_speedup(1.0, 1000), 1.0)
+-
+-    def test_negative_inputs_are_refused(self):
+-        with self.assertRaises(ValueError):
+-            estimated_duration(-1, 4.0, 10.0)
+-        with self.assertRaises(ValueError):
+-            max_speedup(1.5, 4)
+-
+-
+-class StoppingRuleTests(unittest.TestCase):
+-    def test_security_and_review_gates_are_never_optional(self):
+-        # Named explicitly. Iterating the set alone would pass after the set
+-        # was emptied, which is the mutation that slipped through first.
+-        for required in ("security", "approval", "exact_sha_review", "ci"):
+-            self.assertIn(required, NON_OPTIONAL_CHECKS, required)
+-
+-        for check in NON_OPTIONAL_CHECKS:
+-            run, reason = should_recheck(
+-                check,
+-                state_changed_since_last_result=False,
+-                probability_result_changes_decision=0.0,
+-                cost_of_wrong_decision=0.0,
+-                cost_of_check=10**6,
+-            )
+-            self.assertTrue(run, check)
+-            self.assertIn("never optional", reason)
+-
+-    def test_no_state_change_means_no_recheck(self):
+-        run, reason = should_recheck(
+-            "profile_render",
+-            state_changed_since_last_result=False,
+-            probability_result_changes_decision=1.0,
+-            cost_of_wrong_decision=10**6,
+-            cost_of_check=1.0,
+-        )
+-        self.assertFalse(run)
+-        self.assertIn("no state change", reason)
+-
+-    def test_a_cheap_check_against_an_expensive_mistake_runs(self):
+-        run, _ = should_recheck(
+-            "profile_render",
+-            state_changed_since_last_result=True,
+-            probability_result_changes_decision=0.1,
+-            cost_of_wrong_decision=1000.0,
+-            cost_of_check=1.0,
+-        )
+-        self.assertTrue(run)
+-
+-    def test_an_expensive_check_against_a_trivial_mistake_does_not(self):
+-        run, _ = should_recheck(
+-            "profile_render",
+-            state_changed_since_last_result=True,
+-            probability_result_changes_decision=0.1,
+-            cost_of_wrong_decision=1.0,
+-            cost_of_check=1000.0,
+-        )
+-        self.assertFalse(run)
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()
+-# [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:22 UTC | END]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:12 UTC | END]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:50 UTC | END]]
+-# [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]

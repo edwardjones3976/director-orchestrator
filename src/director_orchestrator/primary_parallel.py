@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -735,10 +736,17 @@ class PostgresParallelDispatch:
         budget_evidence_digest: str,
         team_admission=None,
         budget_admission=None,
+        budget_limits=None,
     ) -> ProviderAttemptReservation:
         """Append one STARTED child event before I/O; never reuse an open attempt."""
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        if budget_limits is not None:
+            from .antigravity_team import ProviderAttemptBudget
+            if not isinstance(budget_limits, ProviderAttemptBudget):
+                raise ParallelDispatchError("invalid provider attempt budget ceilings")
+            if team_admission is None and budget_admission is None:
+                raise ParallelDispatchError("paid provider attempt requires authoritative monetary admission")
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
         if team_admission is not None:
@@ -841,21 +849,29 @@ class PostgresParallelDispatch:
                         or binding["provider_id"] != reservation.provider_id
                         or binding["reservation_digest"] != reservation.reservation_digest):
                     raise ParallelDispatchError("workload parallel reservation binding changed")
+                monetary_clock = None
+                admitted_grant = None
                 if team_admission is not None:
                     from .antigravity_team import TeamAttemptAdmission
                     if not isinstance(team_admission, TeamAttemptAdmission):
                         raise ParallelDispatchError("invalid team admission authority")
-                    team_admission.admit(connection, task_id=reservation.task_id,
+                    monetary_clock = team_admission.authority.entitlements._clock
+                    from datetime import timezone
+                    admission_day = monetary_clock().astimezone(timezone.utc).date()
+                    admitted_grant = team_admission.admit(connection, task_id=reservation.task_id,
                         assignment_id=reservation.assignment_id, provider=reservation.provider_id,
-                        attempt_digest=attempt_digest)
+                        attempt_digest=attempt_digest, limits=budget_limits)
                 elif format_id == "antigravity-team-engineering-v1":
                     raise ParallelDispatchError("team contract requires atomic entitlement admission")
                 if budget_admission is not None:
                     from .antigravity_team import ProviderBudgetAdmission
                     if not isinstance(budget_admission,ProviderBudgetAdmission):
                         raise ParallelDispatchError("invalid provider budget authority")
+                    monetary_clock = budget_admission.authority.entitlements._clock
+                    from datetime import timezone
+                    admission_day = monetary_clock().astimezone(timezone.utc).date()
                     budget_admission.admit(connection,task_id=reservation.task_id,
-                        provider=reservation.provider_id,attempt_digest=attempt_digest)
+                        provider=reservation.provider_id,attempt_digest=attempt_digest,limits=budget_limits)
                 admit_assignment(
                     connection, schema=schema, task_id=reservation.task_id,
                     assignment_id=reservation.assignment_id,
@@ -864,6 +880,16 @@ class PostgresParallelDispatch:
                     fencing_generation=writer.fencing_generation,
                     allocation_profile=binding["allocation_profile"],
                 )
+                # Monetary and workload locks can each wait across UTC midnight.
+                # Expired authority must roll back even if its spend insert ran
+                # before a later lock wait. Never leave a STARTED attempt behind.
+                if monetary_clock is not None:
+                    from .antigravity_team import TeamAuthorizationError
+                    admitted_at = monetary_clock()
+                    if admitted_at.astimezone(timezone.utc).date() != admission_day:
+                        raise TeamAuthorizationError("provider budget expired during atomic admission")
+                    if admitted_grant is not None:
+                        admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
                 row = self._row(
                     connection,
                     f"""
@@ -1481,3 +1507,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

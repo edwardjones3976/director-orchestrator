@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | BEGIN]]
@@ -787,11 +788,11 @@ def _require_primary_owner_actor(actor_id: str) -> None:
         raise HTTPException(status_code=403, detail="Owner identity mismatch")
 
 
-def _verify_primary_owner_command_proof(
+def _verify_primary_owner_command_signature(
     task_id: str,
     request: CancellationRequest | RecoveryRequest,
     operation: PrimaryCommandOperation,
-) -> None:
+) -> str:
     proof = request.gateway_proof
     if (
         proof is None
@@ -813,6 +814,17 @@ def _verify_primary_owner_command_proof(
     except PrimaryCommandBindingError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     _require_primary_owner_actor(request.actor_id)
+    return nonce_digest
+
+
+def _verify_primary_owner_command_proof(
+    task_id: str,
+    request: CancellationRequest | RecoveryRequest,
+    operation: PrimaryCommandOperation,
+) -> None:
+    nonce_digest = _verify_primary_owner_command_signature(task_id, request, operation)
+    proof = request.gateway_proof
+    assert proof is not None
     coordinator, _, writer, replay = _primary_command_projection(
         task_id, request, operation
     )
@@ -900,6 +912,7 @@ def _primary_command_response(
 def _record_primary_command(
     request: object,
     operation: PrimaryCommandOperation,
+    *, expected_fencing_generation: int | None = None,
 ) -> PrimaryCommandResponse:
     assert primary_default_activation is not None
     coordinator = primary_default_activation.coordinator
@@ -913,6 +926,8 @@ def _record_primary_command(
         command_id=request.command_id,
         command_digest=request.command_digest,
         projection=projection,
+        **({"expected_fencing_generation": expected_fencing_generation}
+           if expected_fencing_generation is not None else {}),
     )
     return _primary_command_response(request, operation)
 
@@ -1222,19 +1237,32 @@ def primary_completion_evidence(
 def primary_cancel(
     task_id: str, request: CancellationRequest
 ) -> PrimaryCommandResponse:
-    _verify_primary_owner_command_proof(
-        task_id, request, PrimaryCommandOperation.CANCELLATION
-    )
-    _, _, _, replay = _primary_command_projection(
-        task_id, request, PrimaryCommandOperation.CANCELLATION
-    )
-    if replay is not None:
-        return replay
-    assert primary_default_activation is not None
-    assert primary_default_activation.application is not None
+    operation = PrimaryCommandOperation.CANCELLATION
+    nonce_digest = _verify_primary_owner_command_signature(task_id, request, operation)
+    if primary_default_activation is None:
+        raise HTTPException(status_code=404, detail="LangGraph primary task not found")
+    coordinator = primary_default_activation.coordinator
+    if coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
     try:
-        primary_default_activation.application.cancel(task_id)
-        return _record_primary_command(request, PrimaryCommandOperation.CANCELLATION)
+        request.validate_path(task_id)
+        receipt = coordinator.read_command_receipt(
+            task_id=task_id, operation=operation.value, command_id=request.command_id)
+        if receipt is not None:
+            return PrimaryCommandResponse.from_receipt(request=request, operation=operation, receipt=receipt)
+        proof = request.gateway_proof
+        assert proof is not None
+        writer = coordinator.authorize_cancellation(
+            task_id=task_id, command_id=request.command_id, command_digest=request.command_digest,
+            nonce_digest=nonce_digest, proof_version=proof.version, actor_id=request.actor_id,
+            expected_projection_digest=request.expected_projection_digest,
+            expected_generation=request.expected_fencing_generation,
+            proof_expires_at=proof.issued_at + 300)
+        assert primary_default_activation.application is not None
+        primary_default_activation.application.cancel(
+            task_id, expected_fencing_generation=writer.fencing_generation)
+        return _record_primary_command(request, operation,
+                                       expected_fencing_generation=writer.fencing_generation)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1590,3 +1618,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 00:03 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]

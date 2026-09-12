@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | BEGIN]]
@@ -53,6 +55,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .config import Settings
+from .antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
 from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
 from .langgraph_postgres import PostgresCheckpointHandle, open_postgres_control_plane
 from .langgraph_runtime import (
@@ -648,6 +651,7 @@ class DefaultPrimaryLiveDependencies:
         str, Mapping[tuple[str, str], PacketBoundaryAdapter]
     ] = field(default_factory=dict)
     team_routing: Any | None = None
+    budget_routing: PrimaryProviderBudgetRouting | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -671,6 +675,9 @@ class DefaultPrimaryLiveDependencies:
         return self.adapters[provider]
 
     def validate(self, required_providers: tuple[str, ...]) -> None:
+        from .antigravity_team_routing import PrimaryProviderBudgetRouting
+        if not isinstance(self.budget_routing, PrimaryProviderBudgetRouting):
+            raise ValueError("live primary requires typed enrolled daily provider budget routing")
         expected = set(required_providers)
         actual = set(self.adapters)
         from .primary_roster import core_inventory_ready
@@ -1036,6 +1043,8 @@ def build_automatic_primary_live_dependencies(
             return None
         return artifact.evidence
 
+    from .antigravity_team_routing import configured_provider_budget_routing
+    budget_routing = configured_provider_budget_routing(settings, handle)
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         attempt_formats={
@@ -1051,6 +1060,7 @@ def build_automatic_primary_live_dependencies(
         },
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
+        budget_routing=budget_routing,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -1997,13 +2007,16 @@ class DefaultPrimaryApplication:
             self.services.discard(command.task_id)
         return self._record_from_projection(updated)
 
-    def cancel(self, task_id: str) -> TaskRecord:
+    def cancel(self, task_id: str, *, expected_fencing_generation: int | None = None) -> TaskRecord:
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
         self.services.hydrate(projection)
         try:
-            updated = self.coordinator.cancel(task_id)
+            updated = self.coordinator.cancel(task_id, **(
+                {"expected_fencing_generation": expected_fencing_generation}
+                if expected_fencing_generation is not None else {}
+            ))
         finally:
             self.services.discard(task_id)
         return self._record_from_projection(updated)
@@ -2248,6 +2261,13 @@ class DefaultPrimaryActivation:
                 elif getattr(live_dependencies,"team_routing",None) is not None:
                     raise ValueError("team routing cannot bypass the default-off setting")
                 live_dependencies.validate(settings.langgraph_primary_required_providers)
+                if (live_dependencies.budget_routing.pool is not handle.pool
+                        or live_dependencies.budget_routing.authority.schema != handle.schema):
+                    raise ValueError("daily provider budget routing must use the active primary ledger")
+                if (live_dependencies.team_routing is not None
+                        and (live_dependencies.team_routing.pool is not handle.pool
+                             or live_dependencies.team_routing.authority.schema != handle.schema)):
+                    raise ValueError("team routing must use the active primary ledger")
                 services.available_provider_lanes = tuple(live_dependencies.adapters)
                 services.provider_lane_ready = lambda provider: provider_activation.provider_ready(provider, live=True)
                 if effect_executor is None:
@@ -2583,7 +2603,10 @@ class DefaultPrimaryActivation:
                             format_roster=format_roster,
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=budget_evidence_digest,
-                            **({} if team_routing is None else team_routing.admissions(provider,packet)),
+                            **live_provider_admissions(settings=settings,
+                                budget_routing=live_dependencies.budget_routing,
+                                team_routing=team_routing, provider=provider, packet=packet,
+                                attempt_usd=attempt_budget_usd),
                         )
                     def record_attempt(
                         attempt: ProviderAttemptReservation,
@@ -2912,3 +2935,5 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 04:06 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]

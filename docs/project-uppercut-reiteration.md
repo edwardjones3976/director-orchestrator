@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | BEGIN]] -->
 # Project Uppercut Reiteration
 
 Project Uppercut uses the same runtime through an isolated deployment profile. It must not rewrite, reuse the task database of, or share local control-plane state with the primary Director deployment.
@@ -24,9 +26,9 @@ git pull --ff-only
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -SeedProviderCredentialsFromPrimaryEnv
 ```
 
-The first invocation creates `.env.uppercut`, generates new internal secrets, copies only the OpenAI, Claude Routine, and Cursor provider entries when requested, and then stops if dedicated Slack configuration is still absent. Install the generated `CLAUDE_CALLBACK_SECRET` in the trusted callback sender before live Claude work.
+The first invocation creates `.env.uppercut`, generates new internal secrets, copies only the named credential values `OPENAI_API_KEY`, `CURSOR_API_KEY`, `CLAUDE_ROUTINE_URL`, `CLAUDE_ROUTINE_TOKEN`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, and `XAI_API_KEY` when requested, and then stops if dedicated Slack configuration is still absent. Enable flags are never copied or synthesized from a seeded key: Grok and Perplexity remain disabled unless `.env.uppercut` explicitly sets `GROK_ENABLED=true` or `PERPLEXITY_ENABLED=true` and adds `grok` or `perplexity` to `USAGE_CHECK_PROVIDERS`. Install the generated `CLAUDE_CALLBACK_SECRET` in the trusted callback sender before live Claude work.
 
-After the dry-run profile is healthy and provider-side limits are set, the paid invocation first proves the isolated task store is empty, starts only the API, runs fresh OpenAI/Claude/Cursor checks, and starts Slack intake only if all three pass:
+After the dry-run profile is healthy and provider-side limits are set, the paid invocation first proves the isolated task store is empty, validates the profile's explicit `USAGE_CHECK_PROVIDERS` before opening any paid switch (OpenAI, Claude, and Cursor are mandatory; `grok`, `perplexity`, or `gemini` may be listed only when enabled with a configured credential; duplicates and unknown names fail closed), starts only the API, runs fresh checks for exactly that provider set, and starts Slack intake only if every scheduled or cooling provider shows successful evidence. The committed `.env.uppercut.example` still lists `grok`; before a paid run either enable Grok with its key or remove `grok` from `USAGE_CHECK_PROVIDERS` in `.env.uppercut`:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-live-validation.ps1 -EnablePaidRuns
@@ -43,3 +45,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-uppercut-l
 `-SkipProviderChecks` cannot be combined with `-EnablePaidRuns`. If readiness or startup fails, the script closes both paid switches, stops Slack intake, and recreates the API in the disabled state.
 
 No agent may merge, deploy, publish, delete, purchase, expand access, or claim Unreal authority without the matching owner decision and Windows evidence.
+<!-- [[Claude Code | Claude Fable 5 | 2026-08-31 | 09:49 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->

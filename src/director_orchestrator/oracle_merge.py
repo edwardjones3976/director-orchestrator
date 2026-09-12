@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | BEGIN]]
@@ -55,6 +56,15 @@ from .oracle_diff import (
     require_rest_text,
 )
 from .policy import canonical_repository
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+from .state_witness import (
+    ClaimKind,
+    StateWitnessLedger,
+    WitnessLedgerFull,
+    WitnessRow,
+    snapshot_not_merged,
+)
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
 
 class OracleReviewVerdict(StrEnum):
@@ -1408,6 +1418,10 @@ class OracleMergeService:
         mergeable_poll_max_delay_seconds: float = 8.0,
         evaluation_lease_seconds: int = 7_200,
         sleep: Callable[[float], None] = time.sleep,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        state_witness: StateWitnessLedger | None = None,
+        checks_green_oracle: Callable[[str, str], WitnessRow] | None = None,
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
     ):
         if mergeable_poll_attempts < 1:
             raise ValueError("mergeability polling requires at least one attempt")
@@ -1433,6 +1447,13 @@ class OracleMergeService:
         self._evaluation_lease_seconds = evaluation_lease_seconds
         self._claim_context = threading.local()
         self._sleep = sleep
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        self._witness = state_witness
+        # A real checks oracle (see state_witness.gh_checks_green) that sees job
+        # step counts; the forge snapshot carries none, so without one the
+        # green claim is UNOBSERVABLE and the gate denies.
+        self._checks_green_oracle = checks_green_oracle
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def process(self, artifact: OracleReviewArtifact) -> OracleMergeResult:
         if not artifact.signature_is_valid(self.policy.review_secret):
@@ -1549,6 +1570,15 @@ class OracleMergeService:
         decision = self.policy.evaluate(artifact, final_snapshot)
         if decision.reasons or decision.serious_safety_reasons:
             return self._complete(decision)
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+        # No receipt, no state. The final snapshot is the oracle; write the
+        # rows the merge consumes, and refuse on anything but MATCH.
+        refusal = self._witness_final_snapshot(artifact, final_snapshot)
+        if refusal is not None:
+            decision.status = OracleMergeStatus.REJECTED
+            decision.reasons = [refusal]
+            return self._complete(decision)
+        # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
         try:
             self._renew_claim(artifact)
@@ -1576,6 +1606,57 @@ class OracleMergeService:
         decision.merge_commit_sha = merged.merge_commit_sha
         decision.actor = merged.actor
         return self._complete(decision)
+
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
+    def _witness_final_snapshot(
+        self, artifact: OracleReviewArtifact, snapshot: OraclePullRequestSnapshot
+    ) -> str | None:
+        """Record what the gate observed at consumption time; return a refusal
+        reason, or None when both witnessed claims match."""
+
+        if self._witness is None:
+            return None
+        agent = artifact.reviewer_provider
+        try:
+            not_merged = snapshot_not_merged(
+                self._witness, self.policy.repository, artifact.pull_number,
+                artifact.head_sha, agent=agent, merged=snapshot.merged,
+                state=snapshot.state, head_sha=snapshot.head_sha,
+            )
+            if self._checks_green_oracle is None:
+                # No oracle that can see step counts: unobservable, so deny.
+                return (
+                    "witness refused gh_checks_green: no checks oracle configured;"
+                    " job step counts are UNOBSERVABLE from the forge snapshot"
+                )
+            green = self._checks_green_oracle(self.policy.repository, artifact.head_sha)
+        except WitnessLedgerFull as exc:
+            return f"witness ledger unavailable: {exc}"
+        # The gate decides from the persisted row, never from the object the
+        # oracle handed back: the returned row must be the latest persisted
+        # GH_CHECKS_GREEN row for this repository and SHA, field for field.
+        # Anything else is a forged or misrouted observation and is refused.
+        expected_subject = f"{self.policy.repository}@{artifact.head_sha}"
+        persisted = self._witness.latest(ClaimKind.GH_CHECKS_GREEN, expected_subject)
+        if (
+            not isinstance(green, WitnessRow)
+            or persisted is None
+            or persisted != green
+        ):
+            return (
+                "witness refused gh_checks_green: the checks oracle returned a row"
+                f" that is not the persisted observation for {expected_subject}"
+            )
+        green = persisted
+        for row in (not_merged, green):
+            if not row.matched:
+                return (
+                    f"witness refused {row.kind} ({row.status}): claimed {row.claimed!r},"
+                    f" observed {json.dumps(row.observed, sort_keys=True)}"
+                    f" (witness:{row.witness_id})"
+                )
+        return None
+    # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
 
     def _claim_token(self) -> str:
         token = getattr(self._claim_context, "token", None)
@@ -2776,3 +2857,4 @@ class GitHubOracleGateway:
 # [[Codex | GPT-5.6 | 2026-08-24 | 16:30 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 00:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | END]]

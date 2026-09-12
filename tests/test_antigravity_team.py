@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
 """Team authority contract and real PostgreSQL transaction tests."""
@@ -18,7 +19,10 @@ from dataclasses import replace
 
 from director_orchestrator.antigravity_team import (
     TeamGrant,SourceBlob,ProviderBudget,ProviderUsageReceipt,TeamAuthority,TeamAuthorizationError,team_ddl,
+    PrimaryProviderBudgetAuthority, ProviderAttemptBudget,
 )
+from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
+from director_orchestrator.config import Settings
 from director_orchestrator.antigravity_team_transport import parse_native_stream,verified_source_bytes,NativeTeamPacketTransport
 from director_orchestrator.entitlement_contracts import canonical_json_bytes,document_digest,EntitlementActionType,effective_capabilities,RepositoryScope
 from tests import test_entitlement_control_plane as fixtures
@@ -43,6 +47,19 @@ def budget(g,**changes):
 
 
 class TeamContractTests(unittest.TestCase):
+    def test_actual_attempt_ceiling_rounds_up_and_aggregate_ceilings_round_down(self):
+        limits = ProviderAttemptBudget.from_usd(project_id="uppercut", attempt_usd=0.0000601,
+            task_usd=0.0001009, daily_usd=0.0001009)
+        self.assertEqual((limits.attempt_microusd, limits.task_ceiling_microusd, limits.daily_ceiling_microusd), (61, 100, 100))
+        for value in (0, -1, float("inf"), float("nan")):
+            with self.subTest(value=value), self.assertRaises(TeamAuthorizationError):
+                ProviderAttemptBudget.from_usd(project_id="uppercut", attempt_usd=value, task_usd=1, daily_usd=1)
+
+    def test_live_admission_requires_typed_budget_routing_with_team_disabled(self):
+        with self.assertRaisesRegex(TeamAuthorizationError, "typed daily"):
+            live_provider_admissions(settings=Settings(), budget_routing=None, team_routing=None,
+                provider="openai", packet={"project":"uppercut"}, attempt_usd=0.00006)
+
     def test_unqualified_worker_receives_no_private_packet_or_source(self):
         work=json.loads((Path(__file__).parents[1]/"docs/schemas/model-work-packet-v1.example.json").read_text())
         g=grant()
@@ -134,6 +151,169 @@ class TeamPostgresTests(unittest.TestCase):
         if stage=="dispatch":values.update(destination_id="uppercut",reserved_spend_usd=0.00006)
         values.update(changes)
         return fixtures._boundary_query(installation_id="install-one",**values)
+
+    @contextmanager
+    def primary_budget_fixture(self):
+        from tests.test_primary_workload import PostgresAdmissionTests
+        fixture = PostgresAdmissionTests()
+        fixture.dsn = fixtures.TEST_DSN
+        fixture.setUp()
+        fixture.seed_test_history()
+        authority = PrimaryProviderBudgetAuthority(self.store, primary_schema=fixture.schema)
+        routing = PrimaryProviderBudgetRouting(authority=authority, pool=fixture.handle.pool)
+        try:
+            yield fixture, routing
+        finally:
+            fixture.tearDown()
+
+    def funded_task(self, fixture, routing, *, provider="openai", register=True, **changes):
+        task, writer = fixture.task(provider)
+        reservation = fixture.ready((task, writer))
+        packet = {"task_id": task, "project": "uppercut"}
+        g = grant(task_id=task)
+        signed_budget = budget(g, provider_id=provider, **changes)
+        if register:
+            with fixture.handle.pool.connection() as connection, connection.transaction():
+                routing.authority.register(connection, signed_budget)
+        return writer, reservation, packet
+
+    def paid_attempt(self, fixture, routing, funded, *, attempt_usd=0.00006, ordinal=1, settings=None):
+        from tests.test_primary_workload import DIGEST
+        writer, reservation, packet = funded
+        settings = settings or replace(Settings(), allow_paid_runs=True,
+            langgraph_primary_antigravity_team_enabled=False,
+            max_task_budget_usd=0.0001, max_daily_provider_budget_usd=0.0001)
+        admission = live_provider_admissions(settings=settings, budget_routing=routing,
+            team_routing=None, provider=reservation.provider_id, packet=packet, attempt_usd=attempt_usd)
+        return fixture.parallel.reserve_provider_attempt(reservation=reservation, writer=writer,
+            attempt_ordinal=ordinal, format_roster=(("model-work-packet-v1", "test-api"),),
+            idempotency_key_digest=DIGEST, budget_evidence_digest=DIGEST, **admission)
+
+    def test_team_disabled_paid_attempt_atomically_reserves_signed_money(self):
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            attempt = self.paid_attempt(fixture, routing, funded)
+            self.assertEqual(fixture.count("director_primary_provider_attempt"), 1)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 1)
+            with fixture.handle.pool.connection() as connection:
+                row = connection.execute(f"SELECT attempt_digest,reserved_microusd FROM {fixture.schema}.director_primary_provider_spend").fetchone()
+            self.assertEqual(row, {"attempt_digest": attempt.attempt_digest, "reserved_microusd": 60})
+
+    def test_missing_undersized_and_stale_budgets_stop_before_attempt(self):
+        cases = (({"register":False}, "authoritative daily"),
+                 ({"attempt_reservation_microusd":59}, "smaller than"),
+                 ({"day":(datetime.now(timezone.utc)-timedelta(days=1)).date().isoformat()}, "authoritative daily"))
+        for changes, reason in cases:
+            with self.subTest(changes=changes), self.primary_budget_fixture() as (fixture, routing):
+                funded = self.funded_task(fixture, routing, **changes)
+                with self.assertRaisesRegex(TeamAuthorizationError, reason):
+                    self.paid_attempt(fixture, routing, funded)
+                self.assertEqual(fixture.count("director_primary_provider_attempt"), 0)
+                self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
+
+    def test_budget_expiring_after_lookup_is_rechecked_inside_admission(self):
+        from tests.test_primary_workload import DIGEST
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            writer, reservation, packet = funded
+            admission = live_provider_admissions(settings=Settings(), budget_routing=routing,
+                team_routing=None, provider="openai", packet=packet, attempt_usd=0.00006)
+            tomorrow = datetime.now(timezone.utc)+timedelta(days=1)
+            with patch.object(self.store, "_clock", return_value=tomorrow):
+                with self.assertRaisesRegex(TeamAuthorizationError, "expired"):
+                    fixture.parallel.reserve_provider_attempt(reservation=reservation, writer=writer,
+                        attempt_ordinal=1, format_roster=(("json","api"),),
+                        idempotency_key_digest=DIGEST, budget_evidence_digest=DIGEST, **admission)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
+
+    def test_distinct_providers_concurrently_share_daily_cap_with_team_disabled(self):
+        with self.primary_budget_fixture() as (fixture, routing):
+            tasks = [self.funded_task(fixture, routing, provider=p) for p in ("openai", "grok")]
+            def attempt(funded):
+                try:
+                    self.paid_attempt(fixture, routing, funded)
+                    return True
+                except TeamAuthorizationError as error:
+                    self.assertIn("budget exhausted", str(error))
+                    return False
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                self.assertEqual(sorted(executor.map(attempt, tasks)), [False, True])
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 1)
+            self.assertEqual(fixture.count("director_primary_provider_attempt"), 1)
+
+    def test_ambiguous_attempt_keeps_reservation_and_blocks_other_provider_spend(self):
+        from director_orchestrator.primary_parallel import ParallelAssignmentStatus, ParallelDispatchError
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            attempt = self.paid_attempt(fixture, routing, funded)
+            fixture.parallel.record_provider_attempt(attempt=attempt, writer=funded[0],
+                status=ParallelAssignmentStatus.AMBIGUOUS, result_digest=None, reason_code="transport_unknown")
+            with self.assertRaisesRegex(ParallelDispatchError, "ambiguous"):
+                self.paid_attempt(fixture, routing, funded, ordinal=2)
+            other = self.funded_task(fixture, routing, provider="grok")
+            with self.assertRaisesRegex(TeamAuthorizationError, "budget exhausted"):
+                self.paid_attempt(fixture, routing, other)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 1)
+
+    def test_configured_daily_ceiling_can_only_tighten_signed_ceiling(self):
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            settings = replace(Settings(), max_daily_provider_budget_usd=0.00005)
+            with self.assertRaisesRegex(TeamAuthorizationError, "budget exhausted"):
+                self.paid_attempt(fixture, routing, funded, settings=settings)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
+
+    def test_nonteam_attempt_insert_failure_rolls_back_money_and_workload(self):
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            before = fixture.count("director_primary_workload_assignment")
+            with fixture.handle.pool.connection() as connection, connection.transaction():
+                connection.execute(f"CREATE FUNCTION {fixture.schema}.fail_budget_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'budget attempt insert failure'; END $$")
+                connection.execute(f"CREATE TRIGGER fail_budget_attempt BEFORE INSERT ON {fixture.schema}.director_primary_provider_attempt FOR EACH ROW EXECUTE FUNCTION {fixture.schema}.fail_budget_attempt()")
+            with self.assertRaisesRegex(Exception, "budget attempt insert failure"):
+                self.paid_attempt(fixture, routing, funded)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
+            self.assertEqual(fixture.count("director_primary_provider_attempt"), 0)
+            self.assertEqual(fixture.count("director_primary_workload_assignment"), before)
+
+    def test_resolver_uses_authority_utc_day_not_database_current_date(self):
+        fixed = datetime(2040, 1, 2, 1, tzinfo=timezone(timedelta(hours=5)))
+        with self.primary_budget_fixture() as (fixture, routing), patch.object(self.store, "_clock", return_value=fixed):
+            funded = self.funded_task(fixture, routing, day="2040-01-01")
+            self.paid_attempt(fixture, routing, funded)
+            with fixture.handle.pool.connection() as connection:
+                day = connection.execute(f"SELECT budget_day::text AS day FROM {fixture.schema}.director_primary_provider_spend").fetchone()["day"]
+            self.assertEqual(day, "2040-01-01")
+
+    def test_expiry_during_workload_lock_wait_rolls_back_entire_attempt(self):
+        from director_orchestrator.primary_workload import admit_assignment
+        with self.primary_budget_fixture() as (fixture, routing):
+            funded = self.funded_task(fixture, routing)
+            before = fixture.count("director_primary_workload_assignment")
+            clock = Mock(return_value=datetime.now(timezone.utc))
+            def after_wait(*args, **kwargs):
+                admit_assignment(*args, **kwargs)
+                clock.return_value += timedelta(days=1)
+            with patch.object(self.store, "_clock", clock), \
+                 patch("director_orchestrator.primary_parallel.admit_assignment", side_effect=after_wait):
+                with self.assertRaisesRegex(TeamAuthorizationError, "expired during atomic admission"):
+                    self.paid_attempt(fixture, routing, funded)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
+            self.assertEqual(fixture.count("director_primary_provider_attempt"), 0)
+            self.assertEqual(fixture.count("director_primary_workload_assignment"), before)
+
+    def test_atomic_admission_rejects_packet_project_rebinding(self):
+        from tests.test_primary_workload import DIGEST
+        with self.primary_budget_fixture() as (fixture, routing):
+            writer, reservation, packet = self.funded_task(fixture, routing)
+            admission = live_provider_admissions(settings=Settings(), budget_routing=routing,
+                team_routing=None, provider="openai", packet=packet, attempt_usd=0.00006)
+            admission["budget_limits"] = replace(admission["budget_limits"], project_id="other-project")
+            with self.assertRaisesRegex(TeamAuthorizationError, "project binding changed"):
+                fixture.parallel.reserve_provider_attempt(reservation=reservation, writer=writer,
+                    attempt_ordinal=1, format_roster=(("json","api"),),
+                    idempotency_key_digest=DIGEST, budget_evidence_digest=DIGEST, **admission)
+            self.assertEqual(fixture.count("director_primary_provider_spend"), 0)
 
     def test_full_manifest_authorization_and_nonce_replay(self):
         q=self.query()
@@ -262,3 +442,4 @@ class TeamPostgresTests(unittest.TestCase):
             with self.store._pool.connection() as c,c.transaction():self.authority.authorize(c,grant_digest=self.g.digest,query=self.query("result"),stage="result",attempt_digest="sha256:"+"1"*64)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
