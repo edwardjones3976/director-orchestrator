@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | BEGIN]]
@@ -15,6 +17,10 @@ from director_orchestrator.approvals import (
     record_task_effect_observation,
 )
 from director_orchestrator.engine import OrchestrationEngine
+from director_orchestrator.policy import (
+    deterministic_approval_reasons,
+    enforce_plan,
+)
 from director_orchestrator.models import (
     Assignment,
     DirectorPlan,
@@ -218,8 +224,174 @@ class ApprovalScopeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(record.status, TaskStatus.OWNER_DECISION_REQUIRED)
 
 
+class GeneratedPlanGateTests(unittest.TestCase):
+    """The deterministic floor must scan what the planner generated.
+
+    Regression for a P1 raised in independent review of PR #121: enforce_plan
+    received only ``record.intake.text``, so an approval-sensitive assignment
+    the model introduced -- one the owner never mentioned -- produced no
+    deterministic reason and could reach execution without
+    OWNER_DECISION_REQUIRED.
+    """
+
+    def _plan(self, task, acceptance=None):
+        return DirectorPlan(
+            project="demo",
+            normalized_outcome="add a version field",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            approval_reasons=[],
+            max_hops=2,
+            max_revisions=0,
+            final_acceptance=["Change is reviewed"],
+            assignments=[
+                Assignment(
+                    sequence=1,
+                    agent=ProviderName.CURSOR,
+                    task=task,
+                    acceptance=acceptance or ["Evidence exists"],
+                    repository="example/demo",
+                )
+            ],
+        )
+
+    def test_other_action_bearing_fields_cannot_hide_sensitive_actions(self):
+        from director_orchestrator.models import DebatePlan
+        for field in ("owner_question", "public_research_query", "debate"):
+            with self.subTest(field=field):
+                plan = self._plan("Update notes")
+                sensitive = "Deploy the release to production"
+                if field == "debate":
+                    plan.debate = DebatePlan(question=sensitive, position_assignments=[1, 2],
+                                             rebuttal_assignments=[3, 4], vote_options=["yes", "no"])
+                elif field == "owner_question":
+                    plan.owner_question = sensitive
+                else:
+                    setattr(plan.assignments[0], field, sensitive)
+                # Inspect the corpus as well: later debate normalization can
+                # add independent reasons, which must not mask this omission.
+                from director_orchestrator.policy import _generated_plan_gate_strings
+                self.assertIn(sensitive, _generated_plan_gate_strings(plan))
+                enforced = enforce_plan(plan, "Tidy notes", Settings())
+                self.assertIn("production deployment or public publishing", enforced.approval_reasons)
+
+    def test_intake_deterministic_label_survives_generated_reason_union(self):
+        plan = self._plan("Deploy the release to production")
+        intake = "Delete the archived data"
+        original = set(deterministic_approval_reasons(intake))
+        self.assertTrue(original)
+        enforced = enforce_plan(plan, intake, Settings())
+        self.assertTrue(original.issubset(enforced.approval_reasons))
+
+    def test_benign_intake_cannot_hide_a_generated_sensitive_action(self):
+        benign = "Add a build number to the status page."
+        self.assertEqual([], deterministic_approval_reasons(benign))
+
+        enforced = enforce_plan(
+            self._plan("Deploy the release to production"), benign, Settings()
+        )
+
+        self.assertTrue(enforced.approval_required)
+        self.assertTrue(enforced.approval_reasons, enforced.approval_reasons)
+
+    def test_acceptance_criteria_are_scanned_too(self):
+        enforced = enforce_plan(
+            self._plan(
+                "Update notes",
+                acceptance=["Deploy to production once green"],
+            ),
+            "Tidy the changelog.",
+            Settings(),
+        )
+        self.assertTrue(enforced.approval_required, enforced.approval_reasons)
+
+    def test_a_genuinely_benign_plan_is_not_escalated(self):
+        enforced = enforce_plan(
+            self._plan("Add a version field"), "Add a version field.", Settings()
+        )
+        self.assertEqual([], enforced.approval_reasons)
+        self.assertFalse(enforced.approval_required)
+
+    def test_final_acceptance_is_scanned(self):
+        """Raised P1: a gated action stated only in final_acceptance.
+
+        Those criteria reach the Director on the final assignment, and a
+        CHANGES_REQUIRED response can turn an unmet criterion into a revision
+        prompt dispatched without another deterministic scan.
+        """
+
+        plan = self._plan("Add a version field")
+        plan.final_acceptance = ["Deploy to production once checks pass"]
+
+        enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+        self.assertTrue(enforced.approval_required, enforced.approval_reasons)
+
+    def test_repository_identifiers_do_not_trip_the_prose_gates(self):
+        """A repository slug is an identifier, not an action.
+
+        Repository access is governed by the allowlist; matching org/release or
+        org/admin-tools here escalated benign work on a name alone.
+        """
+
+        for repository in ("example/release", "example/identity", "example/admin-tools"):
+            with self.subTest(repository=repository):
+                plan = self._plan("Add a version field")
+                plan.assignments[0].repository = repository
+
+                enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+                self.assertEqual([], enforced.approval_reasons)
+                self.assertFalse(enforced.approval_required)
+
+    def test_fields_are_scanned_independently_not_as_one_corpus(self):
+        """The external-representation gate spans 50 characters with re.S.
+
+        Joining fields let a verb in one match an audience noun in another,
+        escalating a plan that contains no external action.
+        """
+
+        plan = self._plan(
+            "Send events through the local queue",
+            acceptance=["Customer-facing layout remains unchanged"],
+        )
+
+        enforced = enforce_plan(plan, "Tidy the queue worker.", Settings())
+
+        self.assertEqual([], enforced.approval_reasons)
+        self.assertFalse(enforced.approval_required)
+
+    def test_a_verbose_planner_cannot_crowd_out_a_deterministic_label(self):
+        """approval_reasons is capped; the floor must survive the cap.
+
+        Otherwise the store rejects the persisted plan on its next read and an
+        approval-required task becomes unreadable.
+        """
+
+        from director_orchestrator.policy import _MAX_APPROVAL_REASONS
+
+        plan = self._plan("Deploy the release to production")
+        plan.approval_reasons = [
+            f"model reason {index}" for index in range(_MAX_APPROVAL_REASONS)
+        ]
+
+        enforced = enforce_plan(plan, "Add a build number.", Settings())
+
+        self.assertLessEqual(len(enforced.approval_reasons), _MAX_APPROVAL_REASONS)
+        self.assertIn(
+            "production deployment or public publishing", enforced.approval_reasons
+        )
+        # The result must still round-trip through the model that persists it.
+        DirectorPlan.model_validate(enforced.model_dump())
+
+
+# Kept last so a direct `python tests/test_approval_scope.py` run sees every
+# class defined above it; running it earlier silently omitted these cases.
 if __name__ == "__main__":
     unittest.main()
+
 # [[Codex | GPT-5.6 | 2026-08-24 | 09:59 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 15:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-08 | 12:20 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
