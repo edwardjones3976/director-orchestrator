@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 > **Historical record restored on 2026-09-12.** The observations and corrections below
@@ -111,9 +112,9 @@ lane**. Its repository-review qualification must be established separately.
 
 No credential was created, retrieved, modified or read. `XAI_API_KEY` is reported
 as present and longer than twenty characters; its value was never read into any
-output. No provider ran. Grok Bot's own usage figures come from the owner's
-screenshot of the Cursor spending page, not from any measurement this session
-made.
+output. No provider ran in that historical session. Private account figures
+are not retained in this document.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | END]] -->

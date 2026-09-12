@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 > **Historical record restored on 2026-09-12.** The observations and corrections below
@@ -55,7 +56,7 @@ pattern recorded in the compliance audit.
 
 ```
 GROK_ENABLED           = true
-GROK_DAILY_BUDGET_USD  = 5.00
+GROK_DAILY_BUDGET_USD  = [historical value omitted]
 XAI_API_KEY            = absent      <- present and non-empty as of 21:00 UTC
 (repository transport)               <- not required; see the correction below
 ```
@@ -143,3 +144,4 @@ No value was read into output. Every remediation above requires the owner.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:43 UTC | END]] -->
