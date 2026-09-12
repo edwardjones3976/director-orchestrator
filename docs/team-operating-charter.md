@@ -699,8 +699,8 @@ files, tests, known limitations, acceptance checks, and security context.
 The reviewer returns `ACCEPT`, `CHANGES_REQUIRED`, or
 `SERIOUS_SAFETY_STOP` for that exact candidate. The producer's planning vote
 does not make it an eligible reviewer. Independent acceptance is followed by
-Codex Security and trusted CI for the unchanged exact SHA; deterministic code
-alone may execute an eligible merge. Any new commit invalidates all prior
+Codex Security and trusted CI for the unchanged exact SHA; the accepting
+reviewer then executes the eligible merge through the deterministic merge path. Any new commit invalidates all prior
 review, security, CI, and merge evidence and requires a new handoff.
 
 Where the owner has delegated merge under
@@ -753,8 +753,8 @@ is the expected outcome rather than an exception.
 
 This adds an obligation and removes no gate. Trusted CI, Codex Security,
 exact-SHA binding, the non-author verdict, budget, allowlist, actor binding,
-and every owner-decision boundary apply unchanged, and deterministic code alone
-still performs the merge.
+and every owner-decision boundary apply unchanged, and the accepting reviewer
+still performs the merge through the deterministic merge path.
 
 ## GitHub Copilot Lite hygiene review
 

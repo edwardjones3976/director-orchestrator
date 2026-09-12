@@ -164,7 +164,7 @@ framework exists to prevent.
 Every delegated decision, and every refusal to make one, writes an immutable
 record containing the grant identifier, the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
-consulted, the acting agent identity, and timestamps. The record is written
+consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
 before the action, not after it.
 
 ## Relationship to the existing rules
