@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
@@ -450,6 +451,41 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
 
         self.assertTrue(captured["effect_executor"].ready)
         self.assertIsNotNone(activation.application)
+
+        # Exercise the constructed live dispatch closure: its authority is the
+        # admitted attempt, not an optional field or model label in a packet.
+        record = TaskRecord(task_id="DIR-TOKEN-BOUND", status=TaskStatus.QUEUED,
+            intake=SlackIntake(source_event_id="token-bound", channel_id="C123",
+                              user_id="U123", text="Review a bounded change", thread_ts="1.0"))
+        plan = preview_plan(record.intake.text, settings)
+        assignment = plan.assignments[0].model_copy(update={"agent": ProviderName.OPENAI,
+            "primary_provider_lane": "openai", "estimated_cost_usd": 1.0})
+        record.plan = plan.model_copy(update={"assignments": [assignment]})
+        activation.services._packet_router = packet_router(settings)
+        activation.services.register(record)
+        assignment_id = activation.services._packet_router._assignment_id(record, assignment)
+        reservation = ParallelReservation(record.task_id, assignment_id, assignment.sequence,
+                                          "openai", "test-deployment", digest("reservation"))
+        writer = SimpleNamespace(engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
+                                 lease_live=True, fencing_generation=4)
+        handle.claim_store.current_task_writer = lambda _task: writer
+        handle.claim_store.record_work_packet_artifact = lambda **kwargs: SimpleNamespace(
+            document_digest=document_digest(kwargs["packet"]))
+        attempt = ProviderAttemptReservation(record.task_id, assignment_id, 1, "openai", "api", "api",
+                                             digest("key"), digest("attempt"), digest("budget"),
+                                             total_token_limit=731)
+        activation.coordinator.reserve_provider_attempt = lambda **_kwargs: attempt
+        activation.coordinator.record_provider_attempt = lambda **_kwargs: None
+        contexts = []
+        dependencies.adapter_for_format = lambda *_args: SimpleNamespace(
+            dispatch=lambda _packet, *, context: (contexts.append(context) or {"status": "FAILED"}))
+        with patch("director_orchestrator.primary_default.live_provider_admissions", return_value={}):
+            outcome = activation.application._parallel_dispatcher(reservation)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual(1, len(contexts))
+        self.assertEqual(731, contexts[0].total_token_limit)
+        self.assertEqual(attempt.attempt_digest, contexts[0].idempotency_key)
+        self.assertEqual(4, contexts[0].fencing_generation)
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -3070,3 +3106,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]]
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]

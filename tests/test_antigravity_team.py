@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -191,13 +192,15 @@ class TeamPostgresTests(unittest.TestCase):
 
     def test_team_disabled_paid_attempt_atomically_reserves_signed_money(self):
         with self.primary_budget_fixture() as (fixture, routing):
-            funded = self.funded_task(fixture, routing)
+            funded = self.funded_task(fixture, routing, token_limit=731)
             attempt = self.paid_attempt(fixture, routing, funded)
             self.assertEqual(fixture.count("director_primary_provider_attempt"), 1)
             self.assertEqual(fixture.count("director_primary_provider_spend"), 1)
             with fixture.handle.pool.connection() as connection:
-                row = connection.execute(f"SELECT attempt_digest,reserved_microusd FROM {fixture.schema}.director_primary_provider_spend").fetchone()
-            self.assertEqual(row, {"attempt_digest": attempt.attempt_digest, "reserved_microusd": 60})
+                row = connection.execute(f"SELECT attempt_digest,reserved_microusd,token_limit FROM {fixture.schema}.director_primary_provider_spend").fetchone()
+            self.assertEqual(row, {"attempt_digest": attempt.attempt_digest, "reserved_microusd": 60,
+                                   "token_limit": 731})
+            self.assertEqual(row["token_limit"], attempt.total_token_limit)
 
     def test_missing_undersized_and_stale_budgets_stop_before_attempt(self):
         cases = (({"register":False}, "authoritative daily"),
@@ -443,3 +446,5 @@ class TeamPostgresTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]

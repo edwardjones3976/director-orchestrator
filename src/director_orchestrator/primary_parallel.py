@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | BEGIN]]
@@ -351,6 +352,7 @@ class ProviderAttemptReservation:
     idempotency_key_digest: str
     attempt_digest: str
     budget_evidence_digest: str
+    total_token_limit: int | None = None
 
 
 def deterministic_format_roster(formats: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
@@ -851,6 +853,7 @@ class PostgresParallelDispatch:
                     raise ParallelDispatchError("workload parallel reservation binding changed")
                 monetary_clock = None
                 admitted_grant = None
+                admitted_budget = None
                 if team_admission is not None:
                     from .antigravity_team import TeamAttemptAdmission
                     if not isinstance(team_admission, TeamAttemptAdmission):
@@ -870,7 +873,7 @@ class PostgresParallelDispatch:
                     monetary_clock = budget_admission.authority.entitlements._clock
                     from datetime import timezone
                     admission_day = monetary_clock().astimezone(timezone.utc).date()
-                    budget_admission.admit(connection,task_id=reservation.task_id,
+                    admitted_budget = budget_admission.admit(connection,task_id=reservation.task_id,
                         provider=reservation.provider_id,attempt_digest=attempt_digest,limits=budget_limits)
                 admit_assignment(
                     connection, schema=schema, task_id=reservation.task_id,
@@ -929,6 +932,7 @@ class PostgresParallelDispatch:
             idempotency_key_digest,
             attempt_digest,
             budget_evidence_digest,
+            total_token_limit=(admitted_budget.token_limit if admitted_budget is not None else None),
         )
 
     def record_provider_attempt(
@@ -1508,3 +1512,5 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
