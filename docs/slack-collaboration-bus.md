@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 # Slack collaboration bus
 
 Slack is the Director's primary human-visible coordination room. Each live task gets one
@@ -15,7 +17,8 @@ review handoffs, disagreement, synthesis, owner questions, and completion.
    source are excluded from the Slack relay.
 5. When a debate is planned, participants first work independently. One rebuttal round may see
    only declared dependency outcomes. Perplexity may supply approved public evidence but cannot
-   debate, vote, write code, review a repository, or request a merge.
+   debate, vote, write code, review a repository, or request a merge. Cursor remains a live debate
+   participant through its repository-bound code-agent transport; it has no separate chat credential.
 6. OpenAI synthesizes the evidence within the plan's explicit synthesis-cost estimate and records
    dissent. Deterministic code applies the fixed
    weights: Antigravity 1, Cursor 1.5, OpenAI 2, Claude 2.5. A producer's advisory vote counts;
@@ -47,3 +50,5 @@ Communication must be concise, accurate, and useful. The Director sends minimum 
 context, reuses fresh evidence, allows at most one rebuttal round, caps provider nonresponse at
 three persisted safe attempts, and records unavailable providers rather than creating expensive
 conversation loops.
+<!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
