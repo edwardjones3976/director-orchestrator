@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Operator CLI for the external engineering ledger. Never calls a provider."""
 import argparse
@@ -67,3 +68,4 @@ def main(argv=None):
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:22 UTC | END]]
