@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
@@ -75,6 +76,7 @@ $composeEnvironmentNames = @(
     "LANGGRAPH_PARALLEL_EXTERNAL_DISPATCH_ENABLED",
     "LANGGRAPH_PARALLEL_KILL_SWITCH"
 )
+$ProfileOwnedServices = @("orchestrator", "slackbot", "n8n", "n8n-db")
 $script:win32EnvironmentReady = $false
 try {
     # Established here, before a single variable is touched. Compiling inside the
@@ -328,7 +330,7 @@ function Set-DotEnvValue {
     if ([Regex]::IsMatch($Text, $pattern)) {
         return [Regex]::Replace($Text, $pattern, "${Name}=${escapedValue}")
     }
-    return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${Value}" + [Environment]::NewLine
+    return $Text.TrimEnd() + [Environment]::NewLine + "${Name}=${escapedValue}" + [Environment]::NewLine
 }
 
 function Copy-ProviderCredentialValues {
@@ -533,7 +535,8 @@ function Assert-NoProfileCollisions {
     param(
         [Parameter(Mandatory = $true)][hashtable]$TargetValues,
         [string[]]$Names = @(),
-        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process")
+        [System.Collections.IDictionary]$InterpolationEnvironment = [Environment]::GetEnvironmentVariables("Process"),
+        [string[]]$SiblingProfiles = @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")
     )
 
     $identityNames = @(
@@ -545,7 +548,7 @@ function Assert-NoProfileCollisions {
         "SLACK_DIRECTOR_CHANNEL_ID", "SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"
     )
     if ($Names.Count -gt 0) { $identityNames = @($identityNames | Where-Object { $Names -contains $_ }) }
-    foreach ($otherPath in @(".env", ".env.uppercut", ".env.edge-oracle", ".env.long-table")) {
+    foreach ($otherPath in $SiblingProfiles) {
         if ($otherPath -eq $profilePath -or -not (Test-Path -LiteralPath $otherPath -PathType Leaf)) { continue }
         $other = Read-DotEnv -Path $otherPath -ResolveForComparison -InterpolationEnvironment $InterpolationEnvironment
         foreach ($name in $identityNames) {
@@ -558,7 +561,7 @@ function Assert-NoProfileCollisions {
             # Already resolved in file order. Interpolating twice would expand
             # literal dollars from single quotes or from a substituted value.
             $theirs = [string]$other[$name]
-            $ours = ConvertTo-ComposeValue -Raw ([string]$TargetValues[$name])
+            $ours = ConvertTo-ComposeValue -Raw ([string]$TargetValues[$name]) -InterpolationEnvironment $InterpolationEnvironment
             if (-not [string]::IsNullOrWhiteSpace($theirs) -and $theirs -ceq $ours) {
                 throw "$profilePath collides with $otherPath on $name. No service was started."
             }
@@ -1125,8 +1128,8 @@ $composeProjectOwned = $true
 # store inspection, or provider prevalidation can fail and leave a paid service
 # live. They stay stopped until this script intentionally recreates the
 # validated service further down.
-Stop-PreviouslyRunningServices -ComposeProject $composeProject -ProfilePath $profilePath -Services @("orchestrator", "slackbot")
-Write-Host "Previously running $displayName orchestrator and Slack intake are stopped; they stay stopped until the validated service is recreated."
+Stop-PreviouslyRunningServices -ComposeProject $composeProject -ProfilePath $profilePath -Services $ProfileOwnedServices
+Write-Host "Previously running $displayName orchestrator, Slack intake, n8n, and n8n-db are stopped; they stay stopped until the validated service is recreated."
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $profilePath "/inheritance:r" "/grant:r" "${currentIdentity}:(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
@@ -1178,7 +1181,7 @@ $identity = [ordered]@{
     ALLOWED_STARTING_REFS = [string]$selected.ALLOWED_STARTING_REFS
     MAX_AGENT_HOPS = [string]$selected.MAX_AGENT_HOPS
     MAX_TASK_BUDGET_USD = [string]$selected.MAX_TASK_BUDGET_USD
-    PRIMARY_TEAM = "openai,claude,cursor,grok"
+    PRIMARY_TEAM = "openai,claude,cursor"
     PRIMARY_WORKHORSE = "cheapest_capable"
     # USAGE_CHECK_PROVIDERS is deliberately not forced here. The profile's
     # explicit periodic-check membership is preserved and validated by
@@ -1513,7 +1516,7 @@ catch {
         # A rejected ownership check leaves nothing of ours started, so there is
         # nothing here to roll back.
         if ($composeProjectOwned -and $composeProject) {
-            docker compose --project-name $composeProject --env-file $profilePath stop orchestrator slackbot n8n n8n-db | Out-Null
+            docker compose --project-name $composeProject --env-file $profilePath stop $ProfileOwnedServices | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 $outerRollbackErrors.Add("the previously running Long Table services could not be stopped")
             }
@@ -1584,3 +1587,4 @@ finally {
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:54 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]]

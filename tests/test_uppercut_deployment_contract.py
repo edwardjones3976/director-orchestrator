@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]]
@@ -1020,7 +1021,7 @@ if (-not [Pr116Probe.Seed]::SetEnvironmentVariableW('ALLOW_PAID_RUNS', '')) {
         self.assertIn("$composeProjectOwned = $false", self.script)
         self.assertIn("$composeProjectOwned = $true", self.script)
         rollback = self.script.index(
-            "stop orchestrator slackbot n8n n8n-db"
+            "stop $ProfileOwnedServices"
         )
         guard = self.script.rindex("if ($composeProjectOwned", 0, rollback)
         # The guard is the immediately enclosing condition, not one somewhere
@@ -1663,11 +1664,12 @@ foreach ($ProfileName in 'long-table', 'uppercut') {
         self.assertIn("$repoRoot = Split-Path -Parent $PSScriptRoot", self.script)
     def test_full_stack_profile_binds_slack_n8n_and_optional_bridge_to_project_channel(self):
         for line in (
-            "SLACK_DIRECTOR_CHANNEL_ID=C0BSH9SPPUH",
+            "SLACK_DIRECTOR_CHANNEL_ID=REPLACE_WITH_SLACK_CHANNEL_ID",
             "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
-            "CHATGPT_BRIDGE_CHANNEL_IDS=C0BSH9SPPUH",
+            "CHATGPT_BRIDGE_CHANNEL_IDS=REPLACE_WITH_SLACK_CHANNEL_ID",
         ):
             self.assertIn(line, self.profile.splitlines())
+        self.assertNotIn("C0BSH9SPPUH", (ROOT / ".env.long-table.example").read_text(encoding="utf-8"))
     def test_profile_declares_every_provider_credential_and_safety_boundary(self):
         for line in (
             "OPENAI_API_KEY=",
@@ -2044,13 +2046,14 @@ foreach ($entry in $scenarios.GetEnumerator()) {
         ]
         self.assertIn(
             "docker compose --project-name $composeProject --env-file $profilePath "
-            "stop orchestrator slackbot n8n n8n-db | Out-Null",
+            "stop $ProfileOwnedServices | Out-Null",
             outer_catch,
         )
     def test_previous_activation_is_stopped_and_verified_before_every_preflight_step(self):
+        self.assertEqual(1, self.script.count('$ProfileOwnedServices = @("orchestrator", "slackbot", "n8n", "n8n-db")'))
         call = (
             "Stop-PreviouslyRunningServices -ComposeProject $composeProject "
-            '-ProfilePath $profilePath -Services @("orchestrator", "slackbot")'
+            '-ProfilePath $profilePath -Services $ProfileOwnedServices'
         )
         self.assertEqual(1, self.script.count(call))
         stop = self.script.index(call)
@@ -2207,3 +2210,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:11 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 21:40 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]]

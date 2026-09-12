@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -297,7 +298,7 @@ OpenAI Pro 20x, Claude Max 5x, Cursor, Gemini, and Perplexity subscriptions do n
 
 ## Periodic provider usage checks
 
-Periodic prompts are opt-in. After provider-side spend limits are configured, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt that instructs the provider not to use tools or perform project work. The default list is the primary team: OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; either switch being false prevents every monitor-initiated model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously and an unbypassable 15-minute per-provider minimum.
+Periodic prompts are opt-in. After provider-side spend limits are configured, set `USAGE_CHECK_ENABLED=true` to schedule a short availability prompt that instructs the provider not to use tools or perform project work. The default usage-check list is OpenAI, Claude, and Cursor. Gemini and Perplexity can be added explicitly when their supplemental lanes should also be monitored. Checks are additionally gated by `ALLOW_PAID_RUNS=true`; either switch being false prevents every monitor-initiated model call. The default interval is six hours, with providers prompted sequentially rather than simultaneously and an unbypassable 15-minute per-provider minimum.
 
 The monitor stores provider-returned token metadata, provider-reported USD cost, bounded retry count, and normalized quota errors in SQLite and posts a concise status summary to `#project-director`. It never invents a dollar estimate when a provider omits cost telemetry. A model reply is an availability signal, not authoritative proof of an account or subscription balance. Cursor documents plan usage in its dashboard, and other providers may likewise expose authoritative quota only in their account consoles.
 
@@ -457,3 +458,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]] -->
