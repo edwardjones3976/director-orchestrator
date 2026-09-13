@@ -1,4 +1,4 @@
-# [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | BEGIN]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
 """Fixture regressions for OpenAI Responses validation route selection."""
 from __future__ import annotations
 
@@ -184,4 +184,4 @@ class ResponsesRouteSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-# [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | END]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
