@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
@@ -31,7 +32,11 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Literal, Mapping, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .primary_commands import PrimaryIngressProof, _BoundCommandRequest
 
 from .primary_workload import WorkloadAdmissionHold, admit_assignment
 from .allocation_profiles import allocation_targets, allocation_profile_digest
@@ -58,6 +63,24 @@ class ParallelDispatchError(RuntimeError):
 
 class CancelledPlanBindingHold(ParallelDispatchError):
     """A durably recorded task-scoped refusal; neither plan was rewritten."""
+
+
+class CancelledPlanReconciliationRequest(_BoundCommandRequest):
+    schema_version: Literal["langgraph-primary-cancelled-plan-reconciliation/v1"] = (
+        "langgraph-primary-cancelled-plan-reconciliation/v1"
+    )
+    expected_projection_plan_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_batch_plan_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_diagnostic_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    adjudication: Literal["retain_both_digests_close_unstarted"]
+    gateway_proof: PrimaryIngressProof | None = None
+
+
+class CancelledPlanReconciliationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    applied: bool
+    closed_assignment_count: int = Field(ge=0)
+    evidence_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class ProviderTransientDispatchError(RuntimeError):
@@ -656,55 +679,269 @@ class PostgresParallelDispatch:
                         WHERE task_id=%s AND event_code='cancelled_plan_binding_hold' AND payload_digest=%s)""",
                     (task_id, writer.owner_token, writer.fencing_generation, evidence, task_id, evidence))
                 return CancelledPlanBindingHold("cancelled task parallel plan binding changed; owner reconciliation required")
-            # CLAIMED and graph budget_used_units are planning bookkeeping.
-            # The real reservation/attempt/spend records below decide whether
-            # execution began; neither graph field is reset by this repair.
-            if (projection.get("provider_dispatch_status") not in {"NOT_STARTED", "CLAIMED"}
-                    or projection.get("effect_status") not in {"NOT_REQUIRED", "NOT_STARTED"}
-                    or projection.get("parallel_ambiguous_slot_count") != 0
-                    or projection.get("application", {}).get("task_record", {}).get("assignment_outcomes")):
-                return 0
-            # Claims and monetary spend are task-scoped. Without a trustworthy
-            # assignment mapping, retaining the task's pending rows is safer
-            # than declaring any of them unstarted.
-            if connection.execute(f"""SELECT 1 WHERE
-                EXISTS (SELECT 1 FROM {schema}.director_primary_claim WHERE task_id=%s)
-                OR EXISTS (SELECT 1 FROM {schema}.director_primary_effect_reservation WHERE task_id=%s)
-                OR EXISTS (SELECT 1 FROM {schema}.director_primary_provider_spend WHERE task_id=%s)
-                OR EXISTS (SELECT 1 FROM {schema}.director_primary_budget
-                           WHERE task_id=%s AND budget_reserved_units>0)""", (task_id,) * 4).fetchone():
-                return 0
-            # Lock all assignment rows before the final real-clock fence check;
-            # waiting on a row must not turn an expired lease into authority.
-            connection.execute(f"""SELECT assignment_id FROM {schema}.director_primary_parallel_assignment
-                WHERE task_id=%s FOR UPDATE""", (task_id,)).fetchall()
-            if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
-                WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
-                AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
-                (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
-                raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
-            repaired = connection.execute(f"""
-                UPDATE {schema}.director_primary_parallel_assignment a
-                SET status='FAILED', reason_code='task_cancelled_before_dispatch', completed_at=clock_timestamp()
-                WHERE a.task_id=%s AND a.status='PENDING'
-                  AND a.reservation_digest IS NULL AND a.reserved_at IS NULL
-                  AND a.result_digest IS NULL AND a.completed_at IS NULL AND a.reason_code IS NULL
-                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_provider_attempt e
-                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
-                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_result_packet_artifact e
-                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
-                  AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_workload_assignment e
-                      WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
-                RETURNING assignment_id""", (task_id,)).fetchall()
+            repaired = self._close_cancelled_pending(
+                connection, task_id=task_id, writer=writer, held=held)
             if repaired:
                 evidence = _digest({"task_id": task_id, "projection_digest": held["projection_digest"],
-                    "plan_digest": held["plan_digest"], "assignment_ids": sorted(row["assignment_id"] for row in repaired),
+                    "plan_digest": held["plan_digest"], "assignment_ids": repaired,
                     "reason_code": "task_cancelled_before_dispatch"})
                 connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
                     (task_id, owner_token, fencing_generation, event_code, payload_digest)
                     VALUES (%s,%s,%s,'cancelled_pending_reconciled',%s)""",
                     (task_id, writer.owner_token, writer.fencing_generation, evidence))
             return len(repaired)
+
+    def _close_cancelled_pending(self, connection: Any, *, task_id: str,
+                                 writer: TaskWriterLease, held: Mapping[str, Any]) -> list[str]:
+        schema = self._schema
+        projection = held["projection"]
+        # CLAIMED and graph budget_used_units are planning bookkeeping.
+        # The real reservation/attempt/spend records below decide whether
+        # execution began; neither graph field is reset by this repair.
+        if (projection.get("provider_dispatch_status") not in {"NOT_STARTED", "CLAIMED"}
+                or projection.get("effect_status") not in {"NOT_REQUIRED", "NOT_STARTED"}
+                or projection.get("parallel_ambiguous_slot_count") != 0
+                or projection.get("application", {}).get("task_record", {}).get("assignment_outcomes")):
+            return []
+        # Claims and monetary spend are task-scoped. Without a trustworthy
+        # assignment mapping, retaining the task's pending rows is safer
+        # than declaring any of them unstarted.
+        if connection.execute(f"""SELECT 1 WHERE
+            EXISTS (SELECT 1 FROM {schema}.director_primary_claim WHERE task_id=%s)
+            OR EXISTS (SELECT 1 FROM {schema}.director_primary_effect_reservation WHERE task_id=%s)
+            OR EXISTS (SELECT 1 FROM {schema}.director_primary_provider_spend WHERE task_id=%s)
+            OR EXISTS (SELECT 1 FROM {schema}.director_primary_budget
+                       WHERE task_id=%s AND budget_reserved_units>0)""", (task_id,) * 4).fetchone():
+            return []
+        # Lock all assignment rows before the final real-clock fence check;
+        # waiting on a row must not turn an expired lease into authority.
+        connection.execute(f"""SELECT assignment_id FROM {schema}.director_primary_parallel_assignment
+            WHERE task_id=%s FOR UPDATE""", (task_id,)).fetchall()
+        if connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
+            WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s
+            AND engine_owner='langgraph' AND lease_expires_at>clock_timestamp()""",
+            (task_id, writer.owner_token, writer.fencing_generation)).fetchone() is None:
+            raise ParallelDispatchError("cancelled-task repair writer expired during reconciliation")
+        repaired = connection.execute(f"""
+            UPDATE {schema}.director_primary_parallel_assignment a
+            SET status='FAILED', reason_code='task_cancelled_before_dispatch', completed_at=clock_timestamp()
+            WHERE a.task_id=%s AND a.status='PENDING'
+              AND a.reservation_digest IS NULL AND a.reserved_at IS NULL
+              AND a.result_digest IS NULL AND a.completed_at IS NULL AND a.reason_code IS NULL
+              AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_provider_attempt e
+                  WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+              AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_result_packet_artifact e
+                  WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+              AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_workload_assignment e
+                  WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
+            RETURNING assignment_id""", (task_id,)).fetchall()
+        return sorted(row["assignment_id"] for row in repaired)
+
+    def _cancelled_binding(self, connection: Any, task_id: str) -> Any:
+        connection.execute("SET LOCAL lock_timeout = '10s'")
+        connection.execute("SET LOCAL statement_timeout = '15s'")
+        return connection.execute(f"""SELECT p.projection, p.projection_digest,
+            b.plan_digest, b.kill_switch FROM {self._schema}.director_primary_task_projection p
+            JOIN {self._schema}.director_primary_parallel_batch b USING(task_id)
+            WHERE p.task_id=%s AND p.engine_owner='langgraph' FOR UPDATE OF p,b""",
+            (task_id,)).fetchone()
+
+    def _cancelled_diagnostic(self, connection: Any, task_id: str, held: Any) -> dict[str, Any]:
+        if held is None:
+            raise ParallelDispatchError("cancelled plan binding is unavailable")
+        payload = held["projection"]
+        for value in (held["projection_digest"], held["plan_digest"], payload.get("parallel_plan_digest")):
+            _require_digest(value, "diagnostic binding")
+        # Compare only surviving fields, without model defaults or historical
+        # plan reconstruction. A hash does not reveal its original preimage.
+        rows = connection.execute(f"""SELECT assignment_id, sequence, provider_id,
+            deployment_id, dependencies, write_surfaces, retry_limit, allocation_profile
+            FROM {self._schema}.director_primary_parallel_assignment
+            WHERE task_id=%s ORDER BY sequence FOR UPDATE""", (task_id,)).fetchall()
+        raw = payload.get("application", {}).get("task_record", {}).get("plan")
+        items = raw.get("assignments", []) if isinstance(raw, dict) else []
+        by_sequence = {item["sequence"]: item for item in items
+                       if isinstance(item, dict) and type(item.get("sequence")) is int}
+        identifiers = {row["assignment_id"]: row["sequence"] for row in rows}
+        comparisons = []
+        for row in rows:
+            item = by_sequence.get(row["sequence"], {})
+            pairs = {
+                "provider_id": (item.get("primary_provider_lane"), row["provider_id"]),
+                "deployment_id": (item.get("model_label"), row["deployment_id"]),
+                "dependencies": (item.get("depends_on"),
+                    [identifiers.get(value) for value in row["dependencies"]]),
+                "write_surfaces": ((["repository-write"] if item["allow_draft_pr"] else [])
+                    if "allow_draft_pr" in item else None, row["write_surfaces"]),
+                "retry_limit": (item.get("retry_limit"), row["retry_limit"]),
+                "allocation_profile": (item.get("allocation_profile"), row["allocation_profile"]),
+            }
+            comparisons.append({"sequence": row["sequence"],
+                "different_fields": sorted(key for key, (left, right) in pairs.items()
+                                           if left is not None and left != right),
+                "unavailable_fields": sorted(key for key, (left, _) in pairs.items() if left is None)})
+        writer = connection.execute(f"""SELECT fencing_generation FROM
+            {self._schema}.director_primary_task_writer WHERE task_id=%s""", (task_id,)).fetchone()
+        counts = connection.execute(f"""SELECT
+            count(*) FILTER (WHERE status='PENDING') AS pending_assignment_count,
+            count(*) FILTER (WHERE status IN ('ACTIVE','AMBIGUOUS')) AS active_or_ambiguous_assignment_count
+            FROM {self._schema}.director_primary_parallel_assignment WHERE task_id=%s""", (task_id,)).fetchone()
+        diagnostic = {
+            **counts,
+            "projection_digest": held["projection_digest"],
+            "projection_plan_digest": payload.get("parallel_plan_digest"),
+            "batch_plan_digest": held["plan_digest"],
+            "fencing_generation": writer["fencing_generation"],
+            "terminal_cancelled": payload.get("run_status") == "TERMINAL"
+                and payload.get("terminal_classification") == "CANCELLED",
+            "kill_switch_engaged": held["kill_switch"],
+            "digests_differ": payload.get("parallel_plan_digest") != held["plan_digest"],
+            "assignment_fields_digest": _digest({"assignments": rows}),
+            "surviving_assignment_comparison": comparisons,
+            "sequence_sets_differ": sorted(by_sequence) != sorted(row["sequence"] for row in rows),
+            "historical_digest_preimages_available": False,
+        }
+        return {**diagnostic, "diagnostic_digest": _digest(diagnostic)}
+
+    def cancelled_plan_diagnostic(self, task_id: str) -> dict[str, Any]:
+        # Locks give one consistent snapshot; this diagnostic writes no rows.
+        with self._pool.connection() as connection, connection.transaction():
+            connection.execute("SET LOCAL lock_timeout = '10s'")
+            connection.execute("SET LOCAL statement_timeout = '15s'")
+            connection.execute(f"SELECT task_id FROM {self._schema}.director_primary_task_writer "
+                               "WHERE task_id=%s FOR UPDATE", (task_id,)).fetchone()
+            held = self._cancelled_binding(connection, task_id)
+            diagnostic = self._cancelled_diagnostic(connection, task_id, held)
+            adjudication = connection.execute(f"SELECT evidence,evidence_digest FROM "
+                f"{self._schema}.director_primary_cancelled_plan_adjudication WHERE task_id=%s", (task_id,)).fetchone()
+            return {**diagnostic, "adjudication_recorded": adjudication is not None,
+                "terminal_binding_consistent": self._adjudication_consistent(connection, task_id, held, adjudication)}
+
+    def _adjudication_consistent(self, connection: Any, task_id: str, held: Any, adjudication: Any) -> bool:
+        if held is None or adjudication is None:
+            return False
+        evidence = adjudication["evidence"]
+        payload = held["projection"]
+        if (payload.get("run_status") != "TERMINAL" or payload.get("terminal_classification") != "CANCELLED"
+                or not held["kill_switch"] or _digest(payload) != held["projection_digest"]
+                or evidence.get("task_id") != task_id
+                or evidence.get("projection_digest") != held["projection_digest"]
+                or evidence.get("projection_plan_digest") != payload.get("parallel_plan_digest")
+                or evidence.get("batch_plan_digest") != held["plan_digest"]
+                or evidence.get("adjudication") != "retain_both_digests_close_unstarted"
+                or _digest(evidence) != adjudication["evidence_digest"]):
+            return False
+        diagnostic = self._cancelled_diagnostic(connection, task_id, held)
+        if diagnostic["assignment_fields_digest"] != evidence.get("diagnostic", {}).get("assignment_fields_digest"):
+            return False
+        rows = connection.execute(f"""SELECT assignment_id, status, reason_code,
+            reservation_digest, reserved_at, result_digest, completed_at
+            FROM {self._schema}.director_primary_parallel_assignment WHERE task_id=%s FOR UPDATE""",
+            (task_id,)).fetchall()
+        if any(row["status"] in {"PENDING", "ACTIVE", "AMBIGUOUS"} for row in rows):
+            return False
+        closed = {row["assignment_id"] for row in rows if row["status"] == "FAILED"
+                  and row["reason_code"] == "task_cancelled_before_dispatch"
+                  and row["completed_at"] is not None
+                  and all(row[key] is None for key in ("reservation_digest", "reserved_at", "result_digest"))}
+        if not set(evidence.get("closed_assignment_ids", [])).issubset(closed):
+            return False
+        return connection.execute(f"""SELECT 1 FROM {self._schema}.director_primary_audit_event
+            WHERE task_id=%s AND event_code='cancelled_plan_reconciled' AND payload_digest=%s
+            AND EXISTS (SELECT 1 FROM {self._schema}.director_primary_command_authorization
+                WHERE task_id=%s AND operation='cancelled_plan_reconciliation' AND command_digest=%s)""",
+            (task_id, adjudication["evidence_digest"], task_id, evidence["command_digest"])).fetchone() is not None
+
+    def verify_cancelled_terminal_binding(self, task_id: str) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            held = self._cancelled_binding(connection, task_id)
+            if held is None or held["projection"].get("parallel_plan_digest") == held["plan_digest"]:
+                return
+            adjudication = connection.execute(f"SELECT evidence,evidence_digest FROM "
+                f"{self._schema}.director_primary_cancelled_plan_adjudication WHERE task_id=%s",
+                (task_id,)).fetchone()
+            if not self._adjudication_consistent(connection, task_id, held, adjudication):
+                raise CancelledPlanBindingHold("cancelled task parallel plan binding changed; owner reconciliation required")
+
+    def adjudicate_cancelled_plan(self, *, request: CancelledPlanReconciliationRequest, writer: TaskWriterLease,
+                                 nonce_digest: str) -> dict[str, Any]:
+        """Atomically close unstarted rows and append the exact signed adjudication.
+
+        The caller verifies the same owner HMAC as cancellation. This transaction
+        independently binds that admission to a current same-owner writer, both
+        stored plan digests, the diagnostic, and the unchanged terminal projection.
+        """
+        task_id, schema = request.task_id, self._schema
+        proof = request.gateway_proof
+        if proof is None or writer.task_id != task_id or writer.engine_owner != "langgraph":
+            raise ParallelDispatchError("reconciliation lacks writer or proof authority")
+        with self._pool.connection() as connection, connection.transaction():
+            connection.execute("SET LOCAL lock_timeout = '10s'")
+            connection.execute("SET LOCAL statement_timeout = '15s'")
+            self._writer(connection, task_id=task_id, owner_token=writer.owner_token,
+                         fencing_generation=writer.fencing_generation)
+            connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                               (f"director-primary-parallel:{schema}:{task_id}",))
+            held = self._cancelled_binding(connection, task_id)
+            if held is None:
+                raise ParallelDispatchError("cancelled plan binding is unavailable")
+            request.validate_binding(path_task_id=task_id, current_projection_digest=held["projection_digest"],
+                                     current_fencing_generation=writer.fencing_generation)
+            payload = held["projection"]
+            if (payload.get("run_status") != "TERMINAL" or payload.get("terminal_classification") != "CANCELLED"
+                    or not held["kill_switch"] or _digest(payload) != held["projection_digest"]
+                    or payload.get("parallel_plan_digest") == held["plan_digest"]):
+                raise ParallelDispatchError("reconciliation requires a mismatched killed CANCELLED task")
+            if (request.expected_projection_plan_digest != payload.get("parallel_plan_digest")
+                    or request.expected_batch_plan_digest != held["plan_digest"]):
+                raise ParallelDispatchError("reconciliation targets changed plan digests")
+            existing = connection.execute(f"SELECT evidence,evidence_digest FROM "
+                f"{schema}.director_primary_cancelled_plan_adjudication WHERE task_id=%s", (task_id,)).fetchone()
+            if existing is not None:
+                request.validate_replay(existing["evidence"]["command_digest"])
+                if not self._adjudication_consistent(connection, task_id, held, existing):
+                    raise ParallelDispatchError("adjudicated terminal ledger is no longer consistent")
+                self._assert_reconciliation_live(connection, task_id, writer, proof.issued_at + 300)
+                return {"applied": False, "closed_assignment_count": 0, "evidence_digest": existing["evidence_digest"]}
+            diagnostic = self._cancelled_diagnostic(connection, task_id, held)
+            if diagnostic["diagnostic_digest"] != request.expected_diagnostic_digest:
+                raise ParallelDispatchError("reconciliation diagnostic changed")
+            repaired = self._close_cancelled_pending(connection, task_id=task_id, writer=writer, held=held)
+            if connection.execute(f"""SELECT 1 FROM {schema}.director_primary_parallel_assignment
+                WHERE task_id=%s AND status IN ('PENDING','ACTIVE','AMBIGUOUS') LIMIT 1""", (task_id,)).fetchone():
+                raise ParallelDispatchError("reconciliation preserves execution evidence; ledger remains unresolved")
+            self._assert_reconciliation_live(connection, task_id, writer, proof.issued_at + 300)
+            # Unique nonce and command constraints reject conflicting bound proofs
+            # atomically with cleanup. No raw signature or proof is persisted.
+            connection.execute(f"""INSERT INTO {schema}.director_primary_command_authorization
+                (nonce_digest,task_id,operation,command_id,command_digest,proof_version,actor_id,
+                 writer_fencing_generation,proof_expires_at)
+                VALUES (%s,%s,'cancelled_plan_reconciliation',%s,%s,%s,%s,%s,to_timestamp(%s))""",
+                (nonce_digest,task_id,request.command_id,request.command_digest,proof.version,request.actor_id,
+                 writer.fencing_generation,proof.issued_at + 300))
+            evidence = {"task_id": task_id, "projection_digest": held["projection_digest"],
+                "projection_plan_digest": payload["parallel_plan_digest"], "batch_plan_digest": held["plan_digest"],
+                "diagnostic": diagnostic, "command_id": request.command_id, "command_digest": request.command_digest,
+                "adjudication": request.adjudication, "closed_assignment_ids": repaired,
+                "writer_fencing_generation": writer.fencing_generation}
+            evidence_digest = _digest(evidence)
+            connection.execute(f"""INSERT INTO {schema}.director_primary_cancelled_plan_adjudication
+                (task_id,evidence,evidence_digest) VALUES (%s,%s::jsonb,%s)""",
+                (task_id,json.dumps(evidence),evidence_digest))
+            connection.execute(f"""INSERT INTO {schema}.director_primary_audit_event
+                (task_id,owner_token,fencing_generation,event_code,payload_digest)
+                VALUES (%s,%s,%s,'cancelled_plan_reconciled',%s)""",
+                (task_id,writer.owner_token,writer.fencing_generation,evidence_digest))
+            self._assert_reconciliation_live(connection, task_id, writer, proof.issued_at + 300)
+            return {"applied": True, "closed_assignment_count": len(repaired), "evidence_digest": evidence_digest}
+
+    def _assert_reconciliation_live(self, connection: Any, task_id: str,
+                                    writer: TaskWriterLease, proof_expires_at: int) -> None:
+        if connection.execute(f"""SELECT task_id FROM {self._schema}.director_primary_task_writer
+            WHERE task_id=%s AND owner_token=%s AND fencing_generation=%s AND engine_owner='langgraph'
+            AND lease_expires_at>clock_timestamp() AND to_timestamp(%s)>clock_timestamp()""",
+            (task_id,writer.owner_token,writer.fencing_generation,proof_expires_at)).fetchone() is None:
+            raise ParallelDispatchError("reconciliation writer or proof expired")
 
     def reserve_ready(
         self,
@@ -1633,3 +1870,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]

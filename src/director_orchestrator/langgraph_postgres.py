@@ -1,4 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
@@ -458,6 +460,7 @@ def _search_path_option(schema: str) -> str:
 
 
 _APPEND_ONLY_TABLES = (
+    "director_primary_cancelled_plan_adjudication",
     "director_primary_workload_assignment",
     "director_primary_intake_auth_claim",
     "director_primary_intake_dedup",
@@ -1145,6 +1148,17 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE UNIQUE INDEX IF NOT EXISTS director_primary_provider_attempt_digest
         ON {schema}.director_primary_provider_attempt (attempt_digest, event_sequence)
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_cancelled_plan_adjudication (
+            task_id text PRIMARY KEY
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            evidence jsonb NOT NULL,
+            evidence_digest text NOT NULL CHECK (
+                evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT clock_timestamp()
+        )
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_audit_event (
@@ -5230,4 +5244,6 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
