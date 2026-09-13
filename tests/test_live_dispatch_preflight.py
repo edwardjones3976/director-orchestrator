@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
@@ -41,6 +42,13 @@ _ENTITLEMENT_DIR = Path(tempfile.mkdtemp(prefix="preflight-entitlement-"))
 atexit.register(shutil.rmtree, _ENTITLEMENT_DIR, True)
 
 
+# The one connection target the complete fixture uses for both the primary
+# store and the entitlement DSN file: startup parses both with
+# _parse_connection_target (explicit port, user, dbname, a verifying sslmode
+# with sslrootcert) and requires the same database and role.
+FIXTURE_DSN = "postgresql://fixtureuser:fixturepassword@db:5432/primary?sslmode=verify-full&sslrootcert=/fixture-ca.pem"
+
+
 def _entitlement_file(name: str, content: str) -> str:
     path = _ENTITLEMENT_DIR / name
     path.write_text(content, encoding="utf-8")
@@ -58,11 +66,11 @@ SECRETS = {
     "langgraph_primary_owner_token": "ownertoken" + "5" * 32,
     "claude_callback_secret": "claudecallback" + "6" * 32,
     "shared_secret": "sharedsecret" + "7" * 32,
-    "langgraph_primary_postgres_dsn": "postgresql://fixtureuser:fixturepassword@db/primary",
+    "langgraph_primary_postgres_dsn": FIXTURE_DSN,
     "repository_snapshot_root": "/fixture-snapshot-root",
     "cursor_api_key": "cursorapikeyfixture",
     "entitlement_postgres_dsn_file": _entitlement_file(
-        "dsn", "postgresql://fixtureuser:fixturepassword@db/entitlement"
+        "dsn", FIXTURE_DSN
     ),
     "entitlement_trusted_verifier_secret_file": _entitlement_file(
         "trusted-verifier", "trustedverifierfixture" + "9abcdefghijklmnop" * 2
@@ -422,12 +430,41 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
         self.assertIn("empty", problems[0])
-        multiline = _entitlement_file("dsn-multiline", "postgresql://a:b@db/one\nhost=other")
+        multiline = _entitlement_file("dsn-multiline", FIXTURE_DSN + "\nhost=other")
         problems = self._entitlement_problems(entitlement_postgres_dsn_file=multiline)
         self.assertEqual(len(problems), 1)
         self.assertIn("one line", problems[0])
-        trailing_newline = _entitlement_file("dsn-trailing", "postgresql://a:b@db/one\n")
+        trailing_newline = _entitlement_file("dsn-trailing", FIXTURE_DSN + "\n")
         self.assertEqual(self._entitlement_problems(entitlement_postgres_dsn_file=trailing_newline), [])
+
+    def test_entitlement_dsn_is_parsed_and_compared_exactly_as_startup_does(self):
+        # _parse_connection_target and the storage-identity digest are the
+        # same functions configured_provider_budget_routing applies; the
+        # contents never reach a problem string.
+        junk = _entitlement_file("dsn-junk", "not-a-postgres-dsn")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=junk)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("startup accepts", problems[0])
+        self.assertNotIn("not-a-postgres-dsn", problems[0])
+
+        weak = _entitlement_file("dsn-weak", FIXTURE_DSN.replace("verify-full", "require"))
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=weak)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("startup accepts", problems[0])
+
+        other = _entitlement_file("dsn-other-db", FIXTURE_DSN.replace("/primary?", "/other?"))
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=other)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("share database and role", problems[0])
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN", problems[0])
+        self.assertNotIn("fixturepassword", "\n".join(problems))
+
+        problems = self._entitlement_problems(langgraph_primary_postgres_dsn="postgresql://fixtureuser:fixturepassword@db/primary")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN", problems[0])
+        self.assertNotIn("fixturepassword", problems[0])
 
     def test_unresolvable_home_prefix_reads_as_an_unavailable_file(self):
         # Path.expanduser raises RuntimeError for ~missing-user; that must be
@@ -540,8 +577,18 @@ class ReadOnlyTests(unittest.TestCase):
             {
                 "__future__", "dataclasses", "pathlib", "re", "sys",
                 "director_orchestrator.config",
+                # Pure parsing and digest helpers, the same ones startup
+                # applies to the entitlement DSN; the assertion below pins
+                # that nothing in this file can reach for a connection.
+                "psycopg.conninfo",
+                "director_orchestrator.entitlement_control_plane",
+                "director_orchestrator.langgraph_postgres",
             },
         )
+        names = {node.id for node in ast.walk(self.tree) if isinstance(node, ast.Name)}
+        attributes = {node.attr for node in ast.walk(self.tree) if isinstance(node, ast.Attribute)}
+        for forbidden in ("connect", "connection", "Connection", "ConnectionPool", "Pool", "cursor", "execute"):
+            self.assertNotIn(forbidden, names | attributes, forbidden)
 
     def test_pathlib_is_used_to_read_and_never_to_write(self):
         """pathlib earns its place by reading config.py, and nothing more.
@@ -796,3 +843,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]]
