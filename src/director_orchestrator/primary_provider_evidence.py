@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | BEGIN]]
 """One-shot publication of existing native captures; no execution or signing."""
 from dataclasses import asdict
@@ -232,7 +233,8 @@ def publish_file(path, *, settings, identity):
         raise ActivationEvidenceError("capture verifier generation differs from staged generation")
     with open(path, "rb") as stream:
         requests = read_requests(stream, settings=settings, identity=identity, generation=generation)
-    verifier = capture_verifier_from_environment(candidate=identity.candidate_commit, tree=identity.candidate_tree)
+    verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
+        tree=identity.candidate_tree, require_enabled=False)
     if verifier is None:
         raise ActivationEvidenceError("authenticated capture verification is unavailable")
     verifier.store = _BoundedCaptureReader(verifier.store.dsn)
@@ -244,3 +246,4 @@ def publish_file(path, *, settings, identity):
         result = publish_requests(store, verifier, settings=settings, requests=requests, deadline=deadline)
     return dict(result, generation=generation)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | BEGIN]]
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
@@ -303,6 +304,78 @@ class PublicationTests(unittest.TestCase):
                     publish_file(path, settings=self.settings, identity=self.identity)
                 opener.assert_not_called()
 
+    def test_disabled_validation_can_read_captures_without_enabling_execution(self):
+        from director_orchestrator.provider_validation import CaptureVerifier, ValidationError, capture_verifier_from_environment
+        from director_orchestrator.primary_provider_evidence import _BoundedCaptureReader
+        environment = {
+            "DIRECTOR_ASGI_APP": "director_orchestrator.primary_staging:app",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": self.generation,
+            "DIRECTOR_PROVIDER_VALIDATION_ENABLED": "false",
+            "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": self.identity.candidate_commit,
+            "DIRECTOR_PROVIDER_VALIDATION_TREE": self.identity.candidate_tree,
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION": self.generation,
+            "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "postgresql://fixture.invalid/validation",
+            "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": "fixture-capture-key-" * 3,
+        }
+        def inspect_verifier(store, verifier, **kwargs):
+            self.assertIsInstance(verifier, CaptureVerifier)
+            self.assertIsInstance(verifier.store, _BoundedCaptureReader)
+            self.assertEqual(verifier.store.dsn, environment["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"])
+            self.assertEqual(verifier.candidate, self.identity.candidate_commit)
+            self.assertEqual(verifier.generation, self.generation)
+            self.assertEqual(verifier.key, environment["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"])
+            self.assertEqual(os.environ["DIRECTOR_PROVIDER_VALIDATION_ENABLED"], "false")
+            self.assertEqual(len(kwargs["requests"]), 2)
+            return {"fixture_verified": True}
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "publication.json"
+            path.write_text(json.dumps(self.document), encoding="utf-8")
+            with patch.dict(os.environ, environment, clear=True), \
+                patch("director_orchestrator.primary_generation.require_generation"), \
+                patch("director_orchestrator.primary_generation.require_validation_generation"), \
+                patch("director_orchestrator.primary_activation_evidence.ActivationEvidenceStore"), \
+                patch("director_orchestrator.langgraph_postgres.open_provider_activation_store") as opener, \
+                patch("director_orchestrator.primary_provider_evidence.publish_requests", side_effect=inspect_verifier) as publish, \
+                patch("psycopg.connect", side_effect=AssertionError("factory must not connect")) as connect, \
+                patch("director_orchestrator.provider_validation.PostgresValidationStore.bootstrap") as bootstrap:
+                # Exercise the real environment factory: the runtime's default
+                # stays gated, while staged publication may read existing captures.
+                self.assertIsNone(capture_verifier_from_environment(
+                    candidate=self.identity.candidate_commit, tree=self.identity.candidate_tree))
+                with patch.dict(os.environ, {"DIRECTOR_PROVIDER_VALIDATION_ENABLED": "true"}):
+                    self.assertIsInstance(capture_verifier_from_environment(
+                        candidate=self.identity.candidate_commit, tree=self.identity.candidate_tree), CaptureVerifier)
+                self.assertTrue(publish_file(path, settings=self.settings, identity=self.identity)["fixture_verified"])
+                publish.assert_called_once()
+                self.assertEqual(dict(os.environ), environment)
+                connect.assert_not_called()
+                bootstrap.assert_not_called()
+                for key, value in (
+                    ("DIRECTOR_PROVIDER_VALIDATION_CANDIDATE", "f" * 40),
+                    ("DIRECTOR_PROVIDER_VALIDATION_TREE", "f" * 40),
+                    ("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "f" * 64),
+                    ("DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN", None),
+                    ("DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY", None),
+                    ("DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY", "short"),
+                ):
+                    with self.subTest(key=key, value=value):
+                        invalid = dict(environment)
+                        if value is None:
+                            invalid.pop(key)
+                        else:
+                            invalid[key] = value
+                        opener.reset_mock()
+                        publish.reset_mock()
+                        with patch.dict(os.environ, invalid, clear=True):
+                            with self.assertRaises((ValueError, KeyError, ActivationEvidenceError, ValidationError)):
+                                publish_file(path, settings=self.settings, identity=self.identity)
+                            self.assertEqual(dict(os.environ), invalid)
+                        opener.assert_not_called()
+                        publish.assert_not_called()
+                        connect.assert_not_called()
+                        bootstrap.assert_not_called()
+
 
 class SignedValidationRegressionTests(unittest.TestCase):
     def test_validate_providers_reads_real_signed_restore_without_legacy_hmac_secrets(self):
@@ -478,3 +551,4 @@ class PublicationPostgresTests(unittest.TestCase):
                 accepted_instance_id=instance, allow_insecure_local_transport=True):
                 self.fail("wrong storage identity accepted")
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]
