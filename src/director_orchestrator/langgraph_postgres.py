@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -605,6 +607,11 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE INDEX IF NOT EXISTS director_primary_slack_delivery_pending_idx
         ON {schema}.director_primary_slack_delivery (state, created_at, task_id)
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_slack_delivery
+        ADD COLUMN IF NOT EXISTS owner_decision text
+            CHECK (owner_decision IN ('approve','reject'))
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_dedup (
@@ -1322,6 +1329,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 OR (OLD.slack_ts IS NOT NULL AND NEW.slack_ts IS DISTINCT FROM OLD.slack_ts)
                 OR (OLD.bot_user_id IS NOT NULL AND NEW.bot_user_id IS DISTINCT FROM OLD.bot_user_id)
                 OR (OLD.owner_command_id IS NOT NULL AND NEW.owner_command_id IS DISTINCT FROM OLD.owner_command_id)
+                OR (OLD.owner_decision IS NOT NULL AND NEW.owner_decision IS DISTINCT FROM OLD.owner_decision)
                 OR (OLD.owner_decision_at IS NOT NULL AND NEW.owner_decision_at IS DISTINCT FROM OLD.owner_decision_at) THEN
                 RAISE EXCEPTION 'primary Slack delivery evidence is immutable';
             END IF;
@@ -5237,3 +5245,5 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
