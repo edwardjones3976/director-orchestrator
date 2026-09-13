@@ -213,12 +213,22 @@ _OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
 _STANDING_PROVIDER_LABELS = {
     ProviderName.OPENAI: "ChatGPT/Codex Director",
+    ProviderName.CLAUDE: None,
+    ProviderName.CURSOR: None,
+    ProviderName.GEMINI: None,
+    ProviderName.GROK: None,
+    ProviderName.PERPLEXITY: "Research Programmers",
+    ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.OWNER: None,
+}
+_PROVIDER_LABELS = {
+    ProviderName.OPENAI: "ChatGPT/Codex",
     ProviderName.CLAUDE: "Claude",
     ProviderName.CURSOR: "Cursor",
     ProviderName.GEMINI: "Gemini Antigravity",
     ProviderName.GROK: "Grok",
-    ProviderName.PERPLEXITY: "Research Programmers",
-    ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.PERPLEXITY: "Perplexity",
+    ProviderName.FIRECRAWL: "Firecrawl",
     ProviderName.OWNER: "Owner",
 }
 _STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS
@@ -3158,7 +3168,7 @@ class OrchestrationEngine:
             "provider_identity": {
                 "provider": assignment.agent.value,
                 "standing_role": _STANDING_PROVIDER_LABELS[assignment.agent],
-                "provider_label": _STANDING_PROVIDER_LABELS[assignment.agent],
+                "provider_label": _PROVIDER_LABELS[assignment.agent],
             },
             "current_assignment": {
                 "sequence": assignment.sequence,

@@ -12,13 +12,11 @@ carry standing job assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
-The owner's instruction was: "Make it so that, throughout the project, Claude
-is now the acting director, and Codex/ChatGPT switches everything with Claude,
-and vice versa." The real native Claude provider accepted the handoff on
-2026-09-08 UTC and issued the implementation directive. The native response
-identified Claude Opus 5; this was an actual provider response, not a predicted
-position or a renamed Codex task. Coordination creates no code authorship or
-independent candidate acceptance.
+Historical coordination decisions remain recorded as evidence only. The current
+owner objective is immediate ChatGPT/Codex Director authority for priorities,
+decomposition, routing, review orchestration, completion reporting, and owner
+escalation. This policy update does not claim that a deployed runtime provider
+changed in production.
 
 The owner-visible handoff is recorded in Codex task
 `01a077dc-2e5c-7652-9ae7-1e5aa0e692e5`, evidence set
@@ -36,16 +34,16 @@ provider-v2 acceptance receipt or authority to activate a runtime.
 
 | Responsibility | Current owner |
 | --- | --- |
-| Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane (staged policy target) |
-| Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane (staged policy target) |
-| Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane (staged policy target) |
+| Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane |
+| Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane |
+| Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane |
 | Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority |
 | Independent review | An eligible provider that did not materially author the candidate |
 | Owner-reserved decisions | The owner, under the existing deterministic gates |
 
-Claude delegates substantial implementation work. Codex may act within an
-assigned engineering scope and coordinate its implementation subtasks; it
-does not silently reclaim project priorities or issue instructions as Claude.
+The Director delegates substantial implementation work. OpenAI/Codex may also
+act within a separately assigned engineering scope, but coordination duties do
+not imply material authorship or independent acceptance authority.
 Other providers keep their identities and verified capabilities. Non-exempt
 providers do not carry standing jobs; assignments are capability- and
 authority-scoped for each candidate. Codex
@@ -111,5 +109,3 @@ allocation sources must agree with this decision.
 
 Runtime note: some deployments may still report pre-cutover coordinator identifiers.
 That status is observational only and does not create standing role authority.
-The 2026-09-29 Director-return decision remains staged pending accepted evidence
-and separate owner approval.

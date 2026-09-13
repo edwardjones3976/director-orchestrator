@@ -138,7 +138,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     },
     "director_operating_directive": {
         "workload_policy_version": "v1",
-        "director": "claude",
+        "director": "openai",
         "runtime_director": {
             "default_provider": "openai",
             "activation_from_role_change": False,
@@ -817,7 +817,7 @@ def tally_advisory_votes(
         elif material_risk:
             resolution = "owner_decision_required"
         else:
-            resolution = "claude_director_judgment"
+            resolution = "openai_director_judgment"
     return AdvisoryVoteTally(
         configured_weight_total=configured_total,
         cast_weight_total=cast_total,

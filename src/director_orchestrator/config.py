@@ -2092,8 +2092,8 @@ class Settings:
             },
             "openai": {
                 "team": "primary",
-                "priority": "bounded_engineering_and_independent_review",
-                "project_role": "capability_routed_implementation_and_non_author_review",
+                "priority": "director_control_plane_and_authorized_production",
+                "project_role": "chatgpt_codex_director",
                 "runtime_selection": (
                     "not_selected_as_director" if self.claude_director_enabled
                     else "legacy_responses_api_director"

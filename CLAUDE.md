@@ -8,8 +8,7 @@
 
 This lane has no standing director role. Read `AGENTS.md` and
 `docs/project-leadership.md` for capability-based routing boundaries and
-recorded runtime coordination status. The staged 2026-09-29 Director-return
-decision requires accepted evidence and separate owner approval.
+recorded runtime coordination status.
 
 Lead delivery: establish one concrete next outcome, assign bounded work to
 eligible providers without overlapping writers, resolve design and sequencing

@@ -11,7 +11,7 @@
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
 provider_id: "openai"
-display_name: OpenAI (Codex / ChatGPT engineering)
+display_name: OpenAI (ChatGPT/Codex Director)
 authority_granted: "none"
 
 source_of_truth:
@@ -35,12 +35,11 @@ identifiers:
   standing_role_label: ChatGPT/Codex Director
   config_prefixes: ["OPENAI_", "CHATGPT_"]
   alias_note: Codex production, ChatGPT alias bridge, native Codex host, and Codex Security keep their actual OpenAI identity.
-    The legacy Responses Director is retained for runtime compatibility; Claude holds project leadership. The ordinary legacy
-    worker registry still has no OpenAI adapter.
+    The legacy Responses Director remains a runtime compatibility path, and the ordinary legacy worker registry still has no OpenAI adapter.
 roles:
   team: "primary"
   lane_class: director_control_plane
-  summary: 'ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime rollout remains staged pending accepted evidence and separate owner approval.'
+  summary: 'ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts.'
   charter_workload_lane: chatgpt_codex_director_lane
   strategy_key: "openai"
   strategy_priority: bounded_engineering_and_independent_review

@@ -24,8 +24,7 @@ Only the ChatGPT/Codex Director lane, Perplexity public research lane, and
 Firecrawl public retrieval lane keep explicit standing role descriptions.
 Read `docs/project-leadership.md` before assigning work. Runtime coordination
 status remains a recorded deployment fact and does not create standing role
-authority; a 2026-09-29 Director return decision is staged pending accepted
-evidence and separate owner approval.
+authority.
 
 - The ChatGPT/Codex Director lane is authorized for priorities, decomposition,
   capability-based routing, workload and budget enforcement, evidence synthesis,
