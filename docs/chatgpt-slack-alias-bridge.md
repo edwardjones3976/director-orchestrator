@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]**
@@ -101,6 +102,24 @@ timestamp. Redelivery of the already-consumed event never releases the answer ag
 
 ## Failure behavior
 
+Failed dispatches retain a nullable `failure_diagnostics_json` value on the existing
+`chatgpt_bridge_requests` row. The additive column contains only controlled stage,
+category and exception-class labels, HTTP status, allowlisted provider error
+code/type values, and a request ID matching `req_` plus 32 lowercase hexadecimal
+characters. Unknown codes and IDs are omitted; provider error JSON is inspected
+only for bodies of at most 16 KiB. Prompts, answers, exception messages, raw bodies,
+URLs and header collections are never copied into diagnostics. Diagnostics stay
+in the local store and do not change the HTTP or Slack response contracts.
+
+Empty output and incomplete responses without text have separate failure categories;
+this diagnostic change preserves existing handling of responses containing text.
+Failure metadata is committed with the terminal transition and survives reopening
+the store. It does not release the estimated reservation or authorize another
+dispatch. If diagnostic extraction fails, the terminal transition still runs; if
+the store itself fails, the original exception is preserved and the existing
+`DISPATCHING` reservation still prevents redispatch. Older failures have no new
+metadata: their original provider error cannot be reconstructed by this change.
+
 Non-owner and non-allowlisted alias mentions are not intercepted by the bridge and
 continue through the ordinary Director routing rules. Bot-authored, edited, and
 deleted events are ignored.
@@ -126,3 +145,4 @@ backend request and one Slack response without suppressing unrelated messages.
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]**
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | END]] -->
