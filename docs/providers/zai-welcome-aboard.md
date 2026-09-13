@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]] -->
 # Welcome aboard, Z.ai
@@ -20,10 +21,15 @@ credentials, fabricate tools or evidence, remove approval gates, or approve or m
 your own material work. No deployment, publication, purchase or permission expansion
 is granted by this packet. Attribute actual work to Z.ai and the actual model.
 
-Return the matching task/assignment identifiers, concise outcome, artifacts and
-digests, exact checks and results, risks, blockers, requested decisions, side effects
-and available usage. A proposed test is not an executed test. Unknown usage is unknown,
-not zero. Director validates results and arranges independent exact-revision review.
+Follow the response contract supplied by the active adapter. For this tools-disabled
+trial, return only a JSON object with string `outcome` and explicit `status`
+(`SUCCEEDED`, `FAILED`, or `OWNER_DECISION_REQUIRED`). Put the complete proposed code,
+or the reason work cannot finish, in `outcome`. Do not copy the input work packet
+or invent artifact metadata, digests, checks, or usage. Director constructs the outer
+packet with the matching identifiers; the local harness computes digests and records
+actual test results. A proposed test is not an executed test. Unknown usage is unknown,
+not zero. Future adapters must supply their own response contract. Director validates
+results and arranges independent exact-revision review.
 
 ## Trial and resource rules
 
@@ -65,3 +71,5 @@ rejected field cannot be recovered from its receipt. No live success or actual b
 amount is claimed. The attempt was not repeated. Follow-up code retains sanitized
 diagnostics for future authorized calls. Eleven focused offline tests passed.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]] -->
