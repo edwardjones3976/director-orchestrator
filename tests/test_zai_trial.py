@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
@@ -246,10 +247,19 @@ class ZaiTrialTests(unittest.TestCase):
     def test_tools_budget_and_timeout_fail_closed(self, run):
         for context in (replace(self.context, budget_usd=1),
                         replace(self.context, allowed_tools=("Bash",)),
-                        replace(self.context, timeout_seconds=61)):
+                        replace(self.context, timeout_seconds=70)):
             with self.assertRaises(ValueError):
                 build_zai_trial_adapter(**self.kw).dispatch(self.work, context=context)
         run.assert_not_called()
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_timeout_seconds_sixty_nine_forwarded_to_runner_and_env(self, run):
+        run.return_value = self.native()
+        context = replace(self.context, timeout_seconds=69)
+        build_zai_trial_adapter(**self.kw).dispatch(self.work, context=context)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["timeout"], 69)
+        self.assertEqual(run.call_args.kwargs["env"]["API_TIMEOUT_MS"], "69000")
 
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_malformed_result_retains_attempt(self, run):
@@ -310,6 +320,13 @@ class ZaiTrialTests(unittest.TestCase):
         self.assertEqual(json.loads(diagnostic["result"])["artifacts"], payload["artifacts"])
         self.assertEqual(run.call_count, 1)
 
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_trial_response_contract_clarifies_outer_vs_inner_markdown_fences(self, run):
+        run.return_value = self.native()
+        build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        prompt = run.call_args.kwargs["stdin"].decode()
+        self.assertIn("Do not wrap the outer JSON in Markdown fences; code fences inside the outcome string are allowed when requested.", prompt)
+        self.assertNotIn("No Markdown fences.", prompt)
 
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_single_json_fence_preserves_failed_status(self, run):
@@ -342,3 +359,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | END]]
