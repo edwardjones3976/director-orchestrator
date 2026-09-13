@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -31,7 +32,7 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "openai"
   charter_workload_lane_key: "openai"
-  standing_role_label: Chief Programmer
+  standing_role_label: ChatGPT/Codex Director
   config_prefixes: ["OPENAI_", "CHATGPT_"]
   alias_note: Codex production, ChatGPT alias bridge, native Codex host, and Codex Security keep their actual OpenAI identity.
     The legacy Responses Director is retained for runtime compatibility; Claude holds project leadership. The ordinary legacy
@@ -39,9 +40,7 @@ identifiers:
 roles:
   team: "primary"
   lane_class: full_spectrum_primary
-  summary: 'Chief Programmer: Codex/ChatGPT provides bounded implementation, debugging, repository-scale reasoning, QA, and
-    eligible independent review under Claude''s project direction. The legacy OpenAI runtime remains a separately identified
-    compatibility path while the Claude Director adapter is disabled.'
+  summary: 'ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate.'
   charter_workload_lane: primary_full_spectrum
   strategy_key: "openai"
   strategy_priority: bounded_engineering_and_independent_review
@@ -285,3 +284,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

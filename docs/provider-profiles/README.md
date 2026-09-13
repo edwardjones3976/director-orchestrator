@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -82,14 +83,14 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 Endpoints:
 
-- `openai`: OpenAI lane: Codex/ChatGPT engineering support and eligible review; legacy runtime identity retained.
-- `claude`: Claude lane: acting project Director and explicitly gated native Director adapter.
-- `cursor`: Cursor lane: full-spectrum primary, Project Secretary.
-- `grok`: Grok lane: Cursor-family primary teammate on xAI.
-- `antigravity`: Antigravity lane: Gemini-backed subordinate specialist.
+- `openai`: OpenAI lane: Codex/ChatGPT capability-routed engineering support and eligible review; legacy runtime identity retained.
+- `claude`: Claude lane: capability-routed provider lane with explicitly gated native-adapter paths.
+- `cursor`: Cursor lane: capability-routed provider lane with bounded assignment authority.
+- `grok`: Grok lane: capability-routed provider lane on xAI.
+- `antigravity`: Antigravity lane: Gemini-backed capability-routed lane with bounded fixture-scope authority.
 - `perplexity`: Perplexity lane: evidence-only public research.
 - `firecrawl`: Firecrawl lane: public search transport under the research contract.
-- `github-copilot`: GitHub Copilot lane: supplemental hygiene reviewer, no production authority.
+- `github-copilot`: GitHub Copilot lane: optional bounded hygiene-observation lane with no production authority.
 - `director`: The runtime Director control plane; executing provider is recorded separately from Claude project leadership.
 - `owner`: The human owner, reached only through Slack and signed owner commands.
 - `slack_thread`: The Director-owned Slack thread for one task in its private project channel.
@@ -182,3 +183,4 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

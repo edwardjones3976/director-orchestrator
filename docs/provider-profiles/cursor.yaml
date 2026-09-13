@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -30,17 +31,17 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "cursor"
   charter_workload_lane_key: "cursor"
-  standing_role_label: Project Secretary
+  standing_role_label: null
   config_prefixes: ["CURSOR_"]
   alias_note: "Cursor is reached through the Cursor Cloud Agents API and, for acceptance receipts, a dormant native issuer. GitHub Copilot is a separate lane and is not Cursor; Grok is a Cursor-family teammate on its own lane."
 
 roles:
   team: "primary"
   lane_class: "full_spectrum_primary"
-  summary: "Project Secretary and full-spectrum primary repository partner with full task-capability parity to Claude and OpenAI Codex: technical continuity, canonical records, writer leases, branch, commit, and worktree maps, candidate evidence, and review flow, plus implementation, research, reproduction, QA, and independent review when it did not produce the work."
+  summary: "Capability-routed provider lane for implementation, research, reproduction, QA, and independent exact-SHA review when Cursor did not materially author the candidate. Routing remains bounded by verified capabilities, assignment authority, independence, capacity, and expected information gain."
   charter_workload_lane: "primary_full_spectrum"
   strategy_key: "cursor"
-  strategy_priority: primary_full_spectrum_repository_partner
+  strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -56,12 +57,12 @@ roles:
     - "technical coordination"
   non_substitution_rules:
   - Cursor cannot replace acting Director acceptance.
-  - Cursor does not replace mandatory Codex Security.
+  - Codex Security remains an independent deterministic gate where configured.
   - Cursor cannot review or approve its own work.
   - Capability parity does not bypass assignment scope or deterministic gates.
   family: null
   transport_rule: null
-  routing_rule: "Route Cursor by fit, independence, capacity, and evidence needs."
+  routing_rule: "Route Cursor by verified capabilities, assignment authority, independence, capacity, and evidence needs."
   committee:
     member: true
     voting_power: 1.5
@@ -247,7 +248,7 @@ communication:
   direct_provider_to_provider_channels_exist: false
   notes:
     - "Cursor reaches Claude, Grok, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
-    - "As Project Secretary, Cursor records the logical producer and material contributors with the exact candidate evidence; it does so through the Director's records, not by messaging providers."
+    - "Cursor records logical producer and material contributor evidence through Director-managed records, not direct provider messaging."
     - "Cursor never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
 
 this_profile_does_not_change:
@@ -274,3 +275,4 @@ sources:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:28 UTC | BEGIN]] -->
@@ -78,7 +79,7 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | `antigravity` |
 | Charter workload lane key | `antigravity` |
-| Standing role label | Specialist and Backup Programmer |
+| Standing role label | - |
 | Configuration prefixes | `GEMINI_`, `GOOGLE_` |
 | Alias note | Gemini and Antigravity share one lane. The primary roster names the lane antigravity and requires its backend identity to be gemini; the legacy ProviderName enum, adapter, spend ledger, and standing role are keyed gemini. This is the only lane-to-backend alias the capability validator permits. |
 
@@ -88,10 +89,10 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | --- | --- |
 | Team | supplemental |
 | Lane class | subordinate_specialist |
-| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
-| Charter workload lane | `bounded_subordinate_specialist` |
+| Summary | Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an authorized non-author lane under deterministic gates. |
+| Charter workload lane | `bounded_capability_routed_lane` |
 | Strategy key | `gemini` |
-| Strategy priority | `subordinate_boilerplate_and_alternate_ideation` |
+| Strategy priority | `bounded_capability_routing` |
 | Committee member | yes |
 | Voting power | 1.0 |
 | Seatable in debate | yes |
@@ -120,7 +121,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | - |
 | Comparison peers | - |
 | Family | - |
-| Routing rule | Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing. |
+| Routing rule | Preview routing selects Antigravity only when the assignment matches its verified bounded capabilities; all other work follows cheap-capable-model-first routing. |
 | Transport rule | - |
 
 Elevated work:
@@ -357,5 +358,5 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
-
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

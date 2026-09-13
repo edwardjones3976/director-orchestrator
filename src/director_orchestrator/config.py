@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -2075,8 +2076,8 @@ class Settings:
         return {
             "claude": {
                 "team": "primary",
-                "priority": "acting_director_orchestrator",
-                "project_role": "acting_director",
+                "priority": "capability_routed_assignment",
+                "project_role": "capability_routed_provider",
                 "runtime_selection": (
                     "native_transport_injection_required" if self.claude_director_enabled
                     else "disabled_legacy_openai_runtime"
@@ -2092,7 +2093,7 @@ class Settings:
             "openai": {
                 "team": "primary",
                 "priority": "bounded_engineering_and_independent_review",
-                "project_role": "bounded_implementer_and_non_author_reviewer",
+                "project_role": "capability_routed_implementation_and_non_author_review",
                 "runtime_selection": (
                     "not_selected_as_director" if self.claude_director_enabled
                     else "legacy_responses_api_director"
@@ -2107,7 +2108,7 @@ class Settings:
             },
             "cursor": {
                 "team": "primary",
-                "priority": "primary_full_spectrum_repository_partner",
+                "priority": "capability_routed_assignment",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
@@ -2124,7 +2125,7 @@ class Settings:
             },
             "gemini": {
                 "team": "supplemental",
-                "priority": "subordinate_boilerplate_and_alternate_ideation",
+                "priority": "bounded_capability_routing",
                 "account_context": self.other_provider_account_context,
                 "strengths": [
                     "bounded boilerplate and scaffolding in predefined public fixture lanes",
@@ -2148,7 +2149,7 @@ class Settings:
             "grok": {
                 "team": "primary",
                 "family": "cursor",
-                "priority": "primary_cursor_family_repository_partner",
+                "priority": "capability_routed_assignment",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
@@ -2170,7 +2171,7 @@ class Settings:
                     "technical leadership and coordination",
                 ],
                 "separation_of_duties": [
-                    "cannot independently accept or merge its own candidate",
+                    "cannot replace the executing Director's acceptance role",
                     "cannot replace the executing Director's acceptance role",
                     "external writes still require the assigned execution surface and current deterministic gates",
                 ],
@@ -2182,7 +2183,7 @@ class Settings:
             },
             "perplexity": {
                 "team": "supplemental",
-                "priority": "optional_current_research_specialist",
+                "priority": "optional_public_research",
                 "account_context": self.other_provider_account_context,
                 "strengths": ["current web research", "source gathering", "fact verification"],
             },
@@ -2247,3 +2248,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

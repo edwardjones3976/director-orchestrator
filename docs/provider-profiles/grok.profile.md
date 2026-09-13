@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -35,7 +36,7 @@
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | `grok` |
 | Charter workload lane key | `grok` |
-| Standing role label | Cursor-Family Primary Teammate |
+| Standing role label | - |
 | Configuration prefixes | `GROK_`, `XAI_` |
 | Alias note | The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer. |
 
@@ -45,10 +46,10 @@
 | --- | --- |
 | Team | primary |
 | Lane class | full_spectrum_primary |
-| Summary | Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank. |
+| Summary | Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates. |
 | Charter workload lane | `primary_full_spectrum` |
 | Strategy key | `grok` |
-| Strategy priority | `primary_cursor_family_repository_partner` |
+| Strategy priority | `capability_routed_assignment` |
 | Committee member | yes |
 | Voting power | 1.5 |
 | Seatable in debate | yes |
@@ -77,7 +78,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | 1.0 |
 | Comparison peers | `claude`, `openai_codex`, `cursor` |
 | Family | `cursor` |
-| Routing rule | Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs. |
+| Routing rule | Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs. |
 | Transport rule | The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact. |
 
 Elevated work:
@@ -93,7 +94,7 @@ Elevated work:
 Non-substitution rules:
 
 - Grok cannot replace acting Director acceptance.
-- Grok does not replace mandatory Codex Security.
+- Codex Security remains an independent deterministic gate where configured.
 - Grok cannot review or approve its own work.
 - Capability parity does not bypass assignment scope or deterministic gates.
 
@@ -224,7 +225,7 @@ Strategy constraints:
 
 Separation of duties:
 
-- cannot independently accept or merge its own candidate
+- cannot replace the executing Director's acceptance role
 - cannot replace the executing Director's acceptance role
 - external writes still require the assigned execution surface and current deterministic gates
 
@@ -316,11 +317,11 @@ Separation of duties:
 
 ## Sources
 
-- `docs/team-operating-charter.md`: xAI API, Grok Build CLI, and Grok Bot are distinct contacts
+- `docs/team-operating-charter.md`: xAI API, Grok Build CLI, and Grok Bot are separate contacts
 - `docs/team-operating-charter.md`: Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.
 - `docs/provider-setup.md`: The Grok adapter has two explicit transports.
 - `docs/provider-allocation-profiles.md`: Canonical profile IDs are `mixed`, `engineering`, `public_research`, and
-- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.
+- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: xAI API, Grok Build CLI, and Grok Bot are separate contacts
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
@@ -334,3 +335,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

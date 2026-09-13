@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -92,10 +93,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "cross-platform QA",
                 "technical coordination",
             ],
-            "routing_rule": "Route Cursor by fit, independence, capacity, and evidence needs.",
+            "routing_rule": "Route Cursor by verified capabilities, assignment authority, independence, capacity, and evidence needs.",
             "non_substitution_rules": [
                 "Cursor cannot replace acting Director acceptance.",
-                "Cursor does not replace mandatory Codex Security.",
+                "Codex Security remains an independent deterministic gate where configured.",
                 "Cursor cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
             ],
@@ -125,11 +126,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "cross-platform QA",
                 "technical coordination",
             ],
-            "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+            "routing_rule": "Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs.",
             "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact.",
             "non_substitution_rules": [
                 "Grok cannot replace acting Director acceptance.",
-                "Grok does not replace mandatory Codex Security.",
+                "Codex Security remains an independent deterministic gate where configured.",
                 "Grok cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
             ],
@@ -159,7 +160,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "claude": "control_plane_and_authorized_production",
             "cursor": "primary_full_spectrum",
             "grok": "primary_full_spectrum",
-            "antigravity": "bounded_subordinate_specialist",
+            "antigravity": "bounded_capability_routed_lane",
             "perplexity": "public_research_evidence_only",
             "openai": "primary_full_spectrum",
         },
@@ -848,3 +849,4 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

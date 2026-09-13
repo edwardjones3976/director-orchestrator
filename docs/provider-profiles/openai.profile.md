@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -35,7 +36,7 @@
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | `openai` |
 | Charter workload lane key | `openai` |
-| Standing role label | Chief Programmer |
+| Standing role label | ChatGPT/Codex Director |
 | Configuration prefixes | `OPENAI_`, `CHATGPT_` |
 | Alias note | Codex production, ChatGPT alias bridge, native Codex host, and Codex Security keep their actual OpenAI identity. The legacy Responses Director is retained for runtime compatibility; Claude holds project leadership. The ordinary legacy worker registry still has no OpenAI adapter. |
 
@@ -45,7 +46,7 @@
 | --- | --- |
 | Team | primary |
 | Lane class | full_spectrum_primary |
-| Summary | Chief Programmer: Codex/ChatGPT provides bounded implementation, debugging, repository-scale reasoning, QA, and eligible independent review under Claude's project direction. The legacy OpenAI runtime remains a separately identified compatibility path while the Claude Director adapter is disabled. |
+| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. |
 | Charter workload lane | `primary_full_spectrum` |
 | Strategy key | `openai` |
 | Strategy priority | `bounded_engineering_and_independent_review` |
@@ -314,3 +315,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

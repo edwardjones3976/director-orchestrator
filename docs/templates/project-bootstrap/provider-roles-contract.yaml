@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
@@ -145,7 +146,7 @@ providers:
         - "safety authority"
     non_substitution_rules:
       - "Cursor cannot replace acting Director acceptance."
-      - "Cursor does not replace mandatory Codex Security."
+      - "Codex Security remains an independent deterministic gate where configured."
       - "Cursor cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
 
@@ -171,7 +172,7 @@ providers:
     contact_boundary: "The xAI API, Grok Build CLI, and Grok Bot are separate contacts; use only the capabilities and authority actually available on the assigned contact."
     non_substitution_rules:
       - "Grok cannot replace acting Director acceptance."
-      - "Grok does not replace mandatory Codex Security."
+      - "Codex Security remains an independent deterministic gate where configured."
       - "Grok cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
 
@@ -384,3 +385,4 @@ project_local_bindings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

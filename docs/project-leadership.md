@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -5,8 +6,8 @@
 # Current project leadership
 
 Claude is the acting Director-Orchestrator for this project. Codex, ChatGPT,
-and OpenAI provide the bounded engineering and eligible independent review
-work previously assigned to Claude. This decision applies to new project
+and OpenAI provide bounded capability-routed engineering and eligible
+independent review work previously assigned to Claude. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
@@ -44,8 +45,9 @@ provider-v2 acceptance receipt or authority to activate a runtime.
 Claude delegates substantial implementation work. Codex may act within an
 assigned engineering scope and coordinate its implementation subtasks; it
 does not silently reclaim project priorities or issue instructions as Claude.
-Other providers keep their identities and capabilities. Antigravity remains a
-team participant on its actually qualified and authorized routes. Codex
+Other providers keep their identities and verified capabilities. Non-exempt
+providers do not carry standing jobs; assignments are capability- and
+authority-scoped for each candidate. Codex
 Security remains the named security product and gate.
 
 All provider-led activities keep one active writer per file, isolated
@@ -103,3 +105,4 @@ allocation sources must agree with this decision.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

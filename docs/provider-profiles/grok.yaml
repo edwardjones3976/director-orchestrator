@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
@@ -29,17 +30,17 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "grok"
   charter_workload_lane_key: "grok"
-  standing_role_label: Cursor-Family Primary Teammate
+  standing_role_label: null
   config_prefixes: ["GROK_", "XAI_"]
   alias_note: "The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer."
 
 roles:
   team: "primary"
   lane_class: "full_spectrum_primary"
-  summary: "Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank."
+  summary: "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates."
   charter_workload_lane: "primary_full_spectrum"
   strategy_key: "grok"
-  strategy_priority: primary_cursor_family_repository_partner
+  strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -55,12 +56,12 @@ roles:
     - "technical coordination"
   non_substitution_rules:
   - Grok cannot replace acting Director acceptance.
-  - Grok does not replace mandatory Codex Security.
+  - Codex Security remains an independent deterministic gate where configured.
   - Grok cannot review or approve its own work.
   - Capability parity does not bypass assignment scope or deterministic gates.
   family: "cursor"
   transport_rule: "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
-  routing_rule: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
+  routing_rule: "Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs."
   committee:
     member: true
     voting_power: 1.5
@@ -164,7 +165,7 @@ authority:
   review_requirement: null
   strategy_constraints: []
   separation_of_duties:
-  - cannot independently accept or merge its own candidate
+  - cannot replace the executing Director's acceptance role
   - cannot replace the executing Director's acceptance role
   - external writes still require the assigned execution surface and current deterministic gates
   production_authority_permitted: true
@@ -285,7 +286,7 @@ this_profile_does_not_change:
 
 sources:
   - document: "docs/team-operating-charter.md"
-    anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+    anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
   - document: "docs/team-operating-charter.md"
     anchor: "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex."
   - document: "docs/provider-setup.md"
@@ -293,7 +294,8 @@ sources:
   - document: "docs/provider-allocation-profiles.md"
     anchor: "Canonical profile IDs are `mixed`, `engineering`, `public_research`, and"
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
-    anchor: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
+    anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

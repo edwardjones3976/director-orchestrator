@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -431,7 +432,10 @@ class ProviderRoleHandoffTests(unittest.TestCase):
             handoff = json.loads(engine._handoff_context(record, assignment))
 
         self.assertEqual(handoff["provider_identity"]["provider"], "claude")
-        self.assertEqual(handoff["provider_identity"]["standing_role"], "Director")
+        self.assertEqual(
+            handoff["provider_identity"]["standing_role"],
+            "Capability-routed provider lane",
+        )
         self.assertIn("human-visible", handoff["contribution_attribution"])
         self.assertIn("Do not put tags inside JSON", handoff["contribution_attribution"])
 
@@ -1568,3 +1572,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

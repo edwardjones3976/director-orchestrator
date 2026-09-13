@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: GitHub Copilot (director-provider-profile/v1).
@@ -36,7 +37,7 @@ identifiers:
 roles:
   team: "lane_only"
   lane_class: "supplemental_hygiene_reviewer"
-  summary: "Optional supplemental hygiene reviewer with no assigned workload share, range, or ceiling for Lite observations, plus an enterprise-profile production allocation that no legacy adapter can execute. The primary roster lists the lane among its implementers, but the capability validator refuses production authority for every Copilot lane, so the allocation is accounting, not live capability."
+  summary: "Optional capability-routed lane for bounded hygiene observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation."
   charter_workload_lane: null
   strategy_key: null
   strategy_priority: null
@@ -51,7 +52,7 @@ roles:
     - "A confirmed defect blocks through the existing defect and evidence gates, not because Copilot has gating authority."
   family: null
   transport_rule: null
-  routing_rule: "Request it only after required checks are green and the exact candidate is frozen; never trigger it automatically on every push."
+  routing_rule: "Request it only when the candidate is frozen, required checks are green, and the expected information gain justifies a bounded hygiene observation."
   committee:
     member: false
     voting_power: null
@@ -233,3 +234,4 @@ sources:
     anchor: "github_copilot_lite:"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

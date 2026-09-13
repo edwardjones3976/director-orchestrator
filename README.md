@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -53,7 +54,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=686e4c75c0ae2dd744219e132b65206adb2819af30dd93a9230f126d78f8f5eb -->
 
 I am the Director.
 
@@ -142,7 +143,7 @@ Deeper operational detail lives in `docs/always-on-runbook.md`, `docs/provider-s
 3. n8n passes the normalized event to the orchestrator.
 4. The orchestrator deduplicates it, creates a task record, applies hard limits, and builds a preview or live plan.
 5. I open one persisted collaboration thread, post each bounded delegation, and relay concise structured results — never raw provider output.
-6. Specialist runs dispatch sequentially unless the plan explicitly marks work independent. Medium-to-critical plans may include independent positions and one rebuttal round.
+6. Provider runs dispatch sequentially unless the plan explicitly marks work independent. Medium-to-critical plans may include independent positions and one rebuttal round.
 7. Results are judged against acceptance checks. Revision loops are capped. Advisory votes use fixed weights, and synthesis preserves dissent without creating action authority.
 8. Slack receives collected evidence, a review handoff, completion state, or one narrowly scoped owner decision. Approval-gated plans carry a confirm button; ambiguity requires a written `/director approve DIR-… <clarification>`.
 9. In-progress tasks resume after a restart without redispatching an already-recorded provider run.
@@ -184,7 +185,7 @@ soft-preference rank (never a share-based eligibility gate), then trusted estima
 tie-breaker. Missing cost
 telemetry is unknown, never zero. Paid routing therefore requires an operator-supplied
 `TRUSTED_PROVIDER_COST_RANKS` JSON object with one unique positive rank for every
-configured ready specialist; lower ranks are cheaper, and there is no default order.
+configured ready provider lane; lower ranks are cheaper, and there is no default order.
 Reports distinguish accepted productive units from prospectively guarded total
 effort and categorize rejected, unusable, quota-blocked, duplicate,
 recovery, and ambiguous work as waste. They report estimated ROI, provider-reported
@@ -523,3 +524,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

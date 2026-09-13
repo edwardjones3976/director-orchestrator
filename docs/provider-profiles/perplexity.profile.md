@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -48,7 +49,7 @@
 | Summary | Evidence-only research specialist under the strict public research contract: methodological, theoretical, source-discovery, fact-verification, user-review, and competitor research on one owner-approved bounded public query. Output is untrusted evidence that OpenAI or another authorized primary-team member must evaluate before it influences anything. |
 | Charter workload lane | `public_research_evidence_only` |
 | Strategy key | `perplexity` |
-| Strategy priority | `optional_current_research_specialist` |
+| Strategy priority | `optional_public_research` |
 | Committee member | no |
 | Voting power | - |
 | Seatable in debate | no |
@@ -293,3 +294,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -256,6 +257,7 @@ class IdentityTests(unittest.TestCase):
         self.roles = {_enum_value(key): value for key, value in _STANDING_PROVIDER_ROLES.items()}
 
     def test_identifiers_mirror_runtime(self):
+        non_exempt_provider_enums = {"claude", "cursor", "grok", "gemini", "github-copilot"}
         for lane, profile in self.profiles.items():
             identifiers = profile["identifiers"]
             with self.subTest(lane=lane):
@@ -266,7 +268,10 @@ class IdentityTests(unittest.TestCase):
                 self.assertEqual(identifiers["provider_name_enum"], expected_enum)
                 self.assertEqual(ProviderName(expected_enum).value, expected_enum)
                 self.assertEqual(identifiers["has_legacy_adapter"], expected_enum in self.registry)
-                self.assertEqual(identifiers["standing_role_label"], self.roles.get(expected_enum))
+                if expected_enum in non_exempt_provider_enums:
+                    self.assertIsNone(identifiers["standing_role_label"])
+                else:
+                    self.assertEqual(identifiers["standing_role_label"], self.roles.get(expected_enum))
                 capability = PrimaryProviderCapability(
                     provider_id=lane,
                     backend_identity=identifiers["backend_identity"],
@@ -278,6 +283,27 @@ class IdentityTests(unittest.TestCase):
                 if lane != "antigravity":
                     with self.assertRaises(ValueError):
                         replace(capability, backend_identity="gemini").validate()
+
+    def test_non_exempt_profiles_avoid_prescriptive_role_titles(self):
+        non_exempt_lanes = {"claude", "cursor", "grok", "antigravity", "github-copilot"}
+        banned_terms = (
+            "project secretary",
+            "chief programmer",
+            "subordinate supplemental specialist",
+            "primary teammate",
+            "backup programmer",
+        )
+        for lane in non_exempt_lanes:
+            profile = self.profiles[lane]
+            fields = [
+                profile["roles"]["summary"],
+                profile["roles"]["routing_rule"] or "",
+                profile["identifiers"]["standing_role_label"] or "",
+            ]
+            body = "\n".join(fields).lower()
+            with self.subTest(lane=lane):
+                for term in banned_terms:
+                    self.assertNotIn(term, body)
 
     def test_production_authority_mirrors_capability_validator(self):
         for lane, profile in self.profiles.items():
@@ -935,3 +961,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

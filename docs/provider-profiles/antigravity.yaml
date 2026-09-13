@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -71,17 +72,17 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "antigravity"
   charter_workload_lane_key: "antigravity"
-  standing_role_label: "Specialist and Backup Programmer"
+  standing_role_label: null
   config_prefixes: ["GEMINI_", "GOOGLE_"]
   alias_note: "Gemini and Antigravity share one lane. The primary roster names the lane antigravity and requires its backend identity to be gemini; the legacy ProviderName enum, adapter, spend ledger, and standing role are keyed gemini. This is the only lane-to-backend alias the capability validator permits."
 
 roles:
   team: "supplemental"
   lane_class: "subordinate_specialist"
-  summary: "Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
-  charter_workload_lane: "bounded_subordinate_specialist"
+  summary: "Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an authorized non-author lane under deterministic gates."
+  charter_workload_lane: "bounded_capability_routed_lane"
   strategy_key: "gemini"
-  strategy_priority: "subordinate_boilerplate_and_alternate_ideation"
+  strategy_priority: "bounded_capability_routing"
   eligible_responsibility_areas: []
   excluded_responsibility_areas: []
   eligible_complexity: []
@@ -93,7 +94,7 @@ roles:
     - "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
   family: null
   transport_rule: null
-  routing_rule: "Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing."
+  routing_rule: "Preview routing selects Antigravity only when the assignment matches its verified bounded capabilities; all other work follows cheap-capable-model-first routing."
   committee:
     member: true
     voting_power: 1.0
@@ -327,3 +328,4 @@ sources:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

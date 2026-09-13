@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
@@ -35,7 +36,7 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "claude"
   charter_workload_lane_key: "claude"
-  standing_role_label: Director
+  standing_role_label: null
   config_prefixes: ["CLAUDE_", "ANTHROPIC_"]
   alias_note: "Claude Code Routine, the signed callback, the native Claude CLI on the host bridge, an authenticated Claude UI, and the dormant native security issuer are all contacts of one lane; Claude Cowork is not a synchronous adapter."
 
@@ -47,7 +48,7 @@ roles:
     enabled, genuinely bound native adapter; leadership alone does not activate it.'
   charter_workload_lane: control_plane_and_authorized_production
   strategy_key: "claude"
-  strategy_priority: acting_director_orchestrator
+  strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
   excluded_responsibility_areas: []
   eligible_complexity: [low, medium, high, critical]
@@ -60,7 +61,7 @@ roles:
   - Pure coordination creates no production credit.
   family: null
   transport_rule: null
-  routing_rule: "Claude may be selected by the cheap-capable policy or an exact trusted assignment requirement; workload length alone does not select it."
+  routing_rule: "Route Claude by verified capabilities, assignment authority, independence, availability, budget, and expected information gain."
   committee:
     member: true
     voting_power: 2.0
@@ -344,3 +345,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

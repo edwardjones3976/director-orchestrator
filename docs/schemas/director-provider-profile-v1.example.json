@@ -17,7 +17,7 @@
     "review_requirement": null,
     "self_review": false,
     "separation_of_duties": [
-      "cannot independently accept or merge its own candidate",
+      "cannot replace the executing Director's acceptance role",
       "cannot replace the executing Director's acceptance role",
       "external writes still require the assigned execution surface and current deterministic gates"
     ],
@@ -352,7 +352,7 @@
     "legacy_accounting_agent": "grok",
     "legacy_accounting_note": "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority.",
     "provider_name_enum": "grok",
-    "standing_role_label": "Cursor-Family Primary Teammate"
+    "standing_role_label": null
   },
   "models_and_effort": {
     "catalog_check": "Before the first paid request in a process the adapter authenticates GET /models and requires the configured model ID to be present in the xAI catalog.",
@@ -456,15 +456,15 @@
     "lane_class": "full_spectrum_primary",
     "non_substitution_rules": [
       "Grok cannot replace acting Director acceptance.",
-      "Grok does not replace mandatory Codex Security.",
+      "Codex Security remains an independent deterministic gate where configured.",
       "Grok cannot review or approve its own work.",
       "Capability parity does not bypass assignment scope or deterministic gates."
     ],
     "openai_functions": null,
-    "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+    "routing_rule": "Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs.",
     "strategy_key": "grok",
-    "strategy_priority": "primary_cursor_family_repository_partner",
-    "summary": "Cursor-family primary teammate with full task-capability parity to Cursor, Claude, and OpenAI Codex across all eight responsibility areas and low through critical complexity. Transport-specific limits decide what a particular assignment can actually perform without reducing Grok's team rank.",
+    "strategy_priority": "capability_routed_assignment",
+    "summary": "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates.",
     "team": "primary",
     "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
   },
@@ -480,7 +480,7 @@
   },
   "sources": [
     {
-      "anchor": "xAI API, Grok Build CLI, and Grok Bot are distinct contacts",
+      "anchor": "xAI API, Grok Build CLI, and Grok Bot are separate contacts",
       "document": "docs/team-operating-charter.md"
     },
     {
@@ -496,7 +496,7 @@
       "document": "docs/provider-allocation-profiles.md"
     },
     {
-      "anchor": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
+      "anchor": "xAI API, Grok Build CLI, and Grok Bot are separate contacts",
       "document": "docs/templates/project-bootstrap/provider-roles-contract.yaml"
     }
   ],

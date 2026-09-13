@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -37,7 +38,7 @@
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | `claude` |
 | Charter workload lane key | `claude` |
-| Standing role label | Director |
+| Standing role label | - |
 | Configuration prefixes | `CLAUDE_`, `ANTHROPIC_` |
 | Alias note | Claude Code Routine, the signed callback, the native Claude CLI on the host bridge, an authenticated Claude UI, and the dormant native security issuer are all contacts of one lane; Claude Cowork is not a synchronous adapter. |
 
@@ -50,7 +51,7 @@
 | Summary | Acting project Director: owns priorities, decomposition, routing, workload and budget controls, review orchestration, and delivery reporting. Pure coordination creates no production credit. Runtime Claude planning requires its explicitly enabled, genuinely bound native adapter; leadership alone does not activate it. |
 | Charter workload lane | `control_plane_and_authorized_production` |
 | Strategy key | `claude` |
-| Strategy priority | `acting_director_orchestrator` |
+| Strategy priority | `capability_routed_assignment` |
 | Committee member | yes |
 | Voting power | 2.0 |
 | Seatable in debate | yes |
@@ -79,7 +80,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | - |
 | Comparison peers | - |
 | Family | - |
-| Routing rule | Claude may be selected by the cheap-capable policy or an exact trusted assignment requirement; workload length alone does not select it. |
+| Routing rule | Route Claude by verified capabilities, assignment authority, independence, availability, budget, and expected information gain. |
 | Transport rule | - |
 
 Elevated work:
@@ -328,3 +329,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
