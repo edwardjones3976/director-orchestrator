@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
+# [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
@@ -264,6 +268,7 @@ class IdentityTests(unittest.TestCase):
         self.roles = {_enum_value(key): value for key, value in _STANDING_PROVIDER_ROLES.items()}
 
     def test_identifiers_mirror_runtime(self):
+        non_exempt_provider_enums = {"claude", "cursor", "grok", "gemini", "github-copilot"}
         for lane, profile in self.profiles.items():
             identifiers = profile["identifiers"]
             with self.subTest(lane=lane):
@@ -274,7 +279,10 @@ class IdentityTests(unittest.TestCase):
                 self.assertEqual(identifiers["provider_name_enum"], expected_enum)
                 self.assertEqual(ProviderName(expected_enum).value, expected_enum)
                 self.assertEqual(identifiers["has_legacy_adapter"], expected_enum in self.registry)
-                self.assertEqual(identifiers["standing_role_label"], self.roles.get(expected_enum))
+                if expected_enum in non_exempt_provider_enums:
+                    self.assertIsNone(identifiers["standing_role_label"])
+                else:
+                    self.assertEqual(identifiers["standing_role_label"], self.roles.get(expected_enum))
                 capability = PrimaryProviderCapability(
                     provider_id=lane,
                     backend_identity=identifiers["backend_identity"],
@@ -286,6 +294,38 @@ class IdentityTests(unittest.TestCase):
                 if lane != "antigravity":
                     with self.assertRaises(ValueError):
                         replace(capability, backend_identity="gemini").validate()
+
+    def test_non_exempt_profiles_avoid_prescriptive_role_titles(self):
+        non_exempt_lanes = {"claude", "cursor", "grok", "antigravity", "github-copilot"}
+        banned_terms = (
+            "project secretary",
+            "chief programmer",
+            "subordinate supplemental specialist",
+            "primary teammate",
+            "backup programmer",
+            "acting director",
+            "acting project director",
+            "never a primary-team substitute",
+            "supplemental only",
+        )
+        for lane in non_exempt_lanes:
+            profile = self.profiles[lane]
+            fields = [
+                profile["display_name"],
+                profile["roles"]["summary"],
+                profile["roles"]["routing_rule"] or "",
+                profile["identifiers"]["standing_role_label"] or "",
+                json.dumps(profile["roles"]["non_substitution_rules"]),
+                profile["authority"]["review_requirement"] or "",
+                json.dumps(profile["authority"]["strategy_constraints"]),
+            ]
+            body = "\n".join(fields).lower()
+            with self.subTest(lane=lane):
+                for term in banned_terms:
+                    self.assertNotIn(term, body)
+                self.assertEqual(profile["roles"]["lane_class"], "capability_routed_lane")
+                self.assertIsNone(profile["roles"].get("director_functions"))
+                self.assertIsNone(profile["identifiers"]["standing_role_label"])
 
     def test_production_authority_mirrors_capability_validator(self):
         for lane, profile in self.profiles.items():
@@ -404,7 +444,7 @@ class CharterMirrorTests(unittest.TestCase):
 
     def test_acting_director_functions_mirror_roles_contract_and_charter(self):
         director_lane = self.directive["director"]
-        self.assertEqual(director_lane, "claude")
+        self.assertEqual(director_lane, "openai")
         functions = self.profiles[director_lane]["roles"]["director_functions"]
         expected = self.contract["providers"][director_lane]["functions"]
         self.assertEqual(len(functions), 3)
@@ -548,6 +588,21 @@ class AntigravityModeTests(unittest.TestCase):
         other["execution_modes"] = modes
         with self.assertRaises(pp.ProviderProfileError):
             pp.validate_document(other)
+
+    def test_restricted_contact_rules_do_not_claim_provider_wide_authority(self):
+        profile = pp.load_profiles()["antigravity"]
+        strategy = _settings().provider_strategy()["gemini"]
+        self.assertEqual(strategy["contact_scope"], "restricted_fixture_and_invited_debate")
+        self.assertIn("restricted fixture", profile["roles"]["transport_rule"])
+        self.assertIn("Restricted fixture", profile["authority"]["review_requirement"])
+        contract = yaml.safe_load(ROLES_CONTRACT.read_text(encoding="utf-8"))
+        fixture = contract["providers"]["antigravity"]
+        self.assertEqual(fixture["contact_scope"], strategy["contact_scope"])
+        self.assertTrue(fixture["mandatory_downstream_verification"]["required"])
+        self.assertEqual(fixture["mandatory_downstream_verification"]["assignee"],
+                         "independent_non_author_with_verified_integration_capability")
+        self.assertFalse(profile["execution_modes"]["team"]["enabled_by_default"])
+        self.assertTrue(profile["execution_modes"]["team"]["review_requires_different_material_author_family"])
 
 
 class ConfigMirrorTests(unittest.TestCase):
@@ -914,8 +969,47 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn(phrase, section, phrase)
         claude_instructions = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("@AGENTS.md", claude_instructions.splitlines())
-        self.assertIn("acting Director-Orchestrator", claude_instructions)
+        self.assertIn("no standing director role", claude_instructions.lower())
+        self.assertNotIn("Lead delivery:", claude_instructions)
+        self.assertIn("requires explicit assignment authority", claude_instructions)
         self.assertIn("docs/project-leadership.md", claude_instructions)
+
+    def test_active_surfaces_avoid_non_exempt_standing_role_language(self):
+        files = (
+            ROOT / "AGENTS.md",
+            ROOT / "CLAUDE.md",
+            ROOT / "README.md",
+            ROOT / "docs" / "project-leadership.md",
+            ROOT / "docs" / "provider-allocation-profiles.md",
+            ROOT / "docs" / "contribution-attribution-policy.md",
+            ROOT / "docs" / "team-operating-charter.md",
+            ROOT / "prompts" / "director-system.md",
+            ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml",
+            *sorted((ROOT / "docs" / "provider-profiles").glob("*.yaml")),
+            *sorted((ROOT / "docs" / "provider-profiles").glob("*.md")),
+        )
+        banned = (
+            "project secretary",
+            "subordinate supplemental specialist",
+            "cursor-family primary teammate",
+            "supplemental hygiene reviewer",
+            "acting director-orchestrator",
+            "claude is the acting project director",
+            "claude's direction",
+            "claude project leadership",
+            "claude acting leadership",
+            "staged policy target",
+            "does not retain project leadership after the claude handoff",
+            "acting claude director",
+            "claude leads project coordination",
+            "claude-led",
+            "claude keeps moderator, participant, and director project functions separate",
+        )
+        for path in files:
+            body = path.read_text(encoding="utf-8").lower()
+            with self.subTest(path=path.name):
+                for phrase in banned:
+                    self.assertNotIn(phrase, body)
 
     def test_director_prompt_readme_and_provider_setup_point_at_the_sheets(self):
         prompt = (ROOT / "prompts" / "director-system.md").read_text(encoding="utf-8")
@@ -946,3 +1040,7 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

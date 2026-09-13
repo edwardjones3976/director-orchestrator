@@ -232,7 +232,7 @@
             "team": { "type": "string", "enum": ["primary", "supplemental", "lane_only"] },
             "lane_class": {
               "type": "string",
-              "enum": ["director_control_plane", "full_spectrum_primary", "subordinate_specialist", "evidence_only_research", "public_search_transport", "supplemental_hygiene_reviewer", "blocked_pending_capability_evidence"]
+              "enum": ["director_control_plane", "capability_routed_lane", "evidence_only_research", "public_search_transport", "blocked_pending_capability_evidence"]
             },
             "summary": { "$ref": "#/$defs/longText" },
             "charter_workload_lane": { "type": ["string", "null"], "pattern": "^[a-z_]+$" },

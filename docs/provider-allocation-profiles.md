@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
@@ -78,7 +80,7 @@ reviewed compatibility reconciliation approved by the owner. Fresh plan approval
 alone does not clear this hold. This change provides no migration or automatic
 digest rewrite; do not delete, reseed, relabel, or silently accept old history.
 
-## Capacity, roles, and authority
+## Capacity, capabilities, and authority
 
 The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
 are paid but have materially lower capacity. These owner-reported signals inform
@@ -87,8 +89,8 @@ subscription-backed execution when suitable and authenticated. Separately billed
 API execution requires its own known budget and gates. Unknown remaining quota,
 cost, or usage telemetry is unknown, never zero or assumed entitlement.
 
-Claude is the acting project Director; the default legacy implementation remains
-OpenAI. This role change does not attest deployed provider execution or activate
+ChatGPT/Codex is the acting project Director; actual runtime provider identity
+remains an independently recorded deployment fact. This routing-policy change does not attest deployed provider execution or activate
 providers, and it does not alter historical attribution.
 OpenAI production is separately assigned and attributed; Director coordination,
 Moderator and Participant functions, acceptance supervision, and merge activity
@@ -99,9 +101,11 @@ merge coordination. Reserve a capable different
 non-author reviewer before production; all exact-SHA, security, CI and owner gates
 remain binding.
 
-Antigravity remains a bounded subordinate sandbox specialist, requiring downstream
-primary-provider verification. Its allocation grants no exact-SHA acceptance,
-merge authority, unrestricted context, or broader outbound packet contract.
+Antigravity is capability-routed within the selected authenticated contract. The
+restricted fixture contact requires downstream independent verification before
+integration; the separate team contract requires its explicit grants and host
+qualification. Allocation grants no exact-SHA acceptance, merge authority,
+unrestricted context, or broader outbound packet contract.
 Perplexity receives only explicitly approved public research, never private
 repository context. Firecrawl and enterprise providers require their actual
 capabilities, authorized sources, least privilege, authenticated readiness, and
@@ -141,3 +145,5 @@ selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

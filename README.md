@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -53,7 +56,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=883f7fafa38449c1ddfbeb9570bddb044c56ccd5ca90b82c5a06748cf4b3cb7e -->
 
 I am the Director.
 
@@ -79,8 +82,7 @@ publication, merge, deletion, purchases, credentials, or expanded access, I stop
 That is the design, not a limitation I am working around. No model approves its own work,
 and that includes me: I may write a change or I may accept one, never both.
 
-**Claude is the acting project Director. Codex/ChatGPT provides bounded engineering
-and eligible independent review.** See [current project leadership](docs/project-leadership.md)
+**The policy target is a ChatGPT/Codex Director lane, while non-exempt providers are capability-routed assignment lanes.** See [current project leadership](docs/project-leadership.md)
 and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
 attest that a deployed service has switched its executing provider.
 
@@ -95,7 +97,7 @@ attest that a deployed service has switched its executing provider.
   Agents, and the Perplexity Agent API.
 - A structured Director interface retaining the legacy OpenAI runtime and an explicitly
   enabled Claude adapter that requires a real bound native transport.
-- A Claude-led OpenAI–Claude–Cursor–Grok team, with Gemini/Antigravity eligible for its
+- A ChatGPT/Codex-directed team of capability-routed providers, with Gemini/Antigravity eligible for its
   authorized team mode after enrollment and qualification, and Perplexity supplying bounded
   supplemental research. Membership and allocation attest nothing about whether a provider
   route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
@@ -142,19 +144,19 @@ Deeper operational detail lives in `docs/always-on-runbook.md`, `docs/provider-s
 3. n8n passes the normalized event to the orchestrator.
 4. The orchestrator deduplicates it, creates a task record, applies hard limits, and builds a preview or live plan.
 5. I open one persisted collaboration thread, post each bounded delegation, and relay concise structured results — never raw provider output.
-6. Specialist runs dispatch sequentially unless the plan explicitly marks work independent. Medium-to-critical plans may include independent positions and one rebuttal round.
+6. Provider runs dispatch sequentially unless the plan explicitly marks work independent. Medium-to-critical plans may include independent positions and one rebuttal round.
 7. Results are judged against acceptance checks. Revision loops are capped. Advisory votes use fixed weights, and synthesis preserves dissent without creating action authority.
 8. Slack receives collected evidence, a review handoff, completion state, or one narrowly scoped owner decision. Approval-gated plans carry a confirm button; ambiguity requires a written `/director approve DIR-… <clarification>`.
 9. In-progress tasks resume after a restart without redispatching an already-recorded provider run.
 10. With live execution enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
 
 
-Claude keeps Moderator, Participant, and Director project functions separate. Moderation
+The executing Director provider keeps Moderator, Participant, and Director runtime functions separate. Moderation
 uses neutral framing, gathers independent positions before cross-exposure when
 practical, and performs a counter-bias check that holds the vote back so it cannot
-pre-empt synthesis. Claude then contributes one participant position and casts its one
+pre-empt synthesis. That provider then contributes one participant position and casts its one
 existing advisory vote at full weight or records an explicit abstention. Moderating
-a debate never costs Claude its right to vote; only Claude's own abstention forgoes
+a debate never costs that provider its right to vote; only its own abstention forgoes
 exercising it. Director synthesis and tie handling create no extra vote and never fabricate
 participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
@@ -184,7 +186,7 @@ soft-preference rank (never a share-based eligibility gate), then trusted estima
 tie-breaker. Missing cost
 telemetry is unknown, never zero. Paid routing therefore requires an operator-supplied
 `TRUSTED_PROVIDER_COST_RANKS` JSON object with one unique positive rank for every
-configured ready specialist; lower ranks are cheaper, and there is no default order.
+configured ready provider lane; lower ranks are cheaper, and there is no default order.
 Reports distinguish accepted productive units from prospectively guarded total
 effort and categorize rejected, unusable, quota-blocked, duplicate,
 recovery, and ambiguous work as waste. They report estimated ROI, provider-reported
@@ -523,3 +525,6 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->

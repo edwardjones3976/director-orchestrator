@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -508,15 +509,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertLessEqual(len(canonical_team_charter_json().encode("utf-8")), TEAM_CHARTER_MAX_BYTES)
 
-    def test_acting_leadership_does_not_relabel_the_runtime_or_capacity(self):
+    def test_coordination_status_does_not_relabel_runtime_or_capacity(self):
         directive = team_operating_charter()["director_operating_directive"]
-        self.assertEqual(directive["director"], "claude")
+        self.assertEqual(directive["director"], "openai")
         self.assertEqual(directive["runtime_director"]["default_provider"], "openai")
         self.assertFalse(directive["runtime_director"]["activation_from_role_change"])
         self.assertEqual(directive["capacity_context"], "owner_Pro20x_Max5x_not_API_entitlements")
         self.assertTrue(directive["duties_excluded_from_direct_production_share"])
-        self.assertEqual(directive["workload_lanes"]["openai"], "primary_full_spectrum")
-        self.assertEqual(directive["workload_lanes"]["claude"], "control_plane_and_authorized_production")
+        self.assertEqual(directive["workload_lanes"]["openai"], "chatgpt_codex_director_lane")
+        self.assertEqual(directive["workload_lanes"]["claude"], "capability_routed_lane")
 
     def test_historical_openai_tally_round_trips_without_relabeling(self):
         historical = dict(configured_weight_total=8.5, cast_weight_total=4.0,
@@ -689,7 +690,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Ordinary Antigravity *work*", charter)
         self.assertIn("Ordinary Antigravity work dispatch", setup)
-        self.assertIn("Ordinary Antigravity work", prompt)
+        self.assertIn("restricted Antigravity fixture contact", prompt)
+        self.assertIn("antigravity-team-engineering/v1", prompt)
         self.assertIn("separate typed contract", charter)
         self.assertIn("typed debate contract", setup)
         self.assertIn("separate typed debate contract", prompt)
@@ -842,7 +844,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         material = tally_advisory_votes(votes, material_risk=True)
 
         self.assertEqual(ordinary.option_weights, {"A": 2.5, "B": 2.5})
-        self.assertEqual(ordinary.resolution, "claude_director_judgment")
+        self.assertEqual(ordinary.resolution, "openai_director_judgment")
         self.assertEqual(material.resolution, "owner_decision_required")
         self.assertFalse(ordinary.authorizes_external_action)
         self.assertFalse(material.authorizes_external_action)
@@ -1213,7 +1215,7 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
     def test_contract_encodes_the_antigravity_boundary(self):
         contract = self.contract()
 
-        self.assertIn('lane: "subordinate_supplemental_specialist"', contract)
+        self.assertIn('lane: "capability_routed_lane"', contract)
         for category in (
             "explicit boilerplate",
             "scaffolding",
@@ -1272,10 +1274,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn('artifact_status: "non_authoritative_evidence"', contract)
         self.assertIn("mandatory_downstream_verification:", contract)
         self.assertIn("required: true", contract)
-        self.assertIn('assignee: "openai_claude_cursor_or_grok"', contract)
+        self.assertIn('assignee: "independent_non_author_with_verified_integration_capability"', contract)
         self.assertIn(
-            "must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently "
-            "verifies and integrates or rejects it",
+            "must feed a later independently assigned non-author verification assignment before "
+            "integration or acceptance influence",
             contract,
         )
         for denied in (
@@ -1315,10 +1317,10 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
                 self.assertIn(f'- "{field}"', contract)
         self.assertIn(f'review_requirement: "{charter["review_requirement"]}"', contract)
 
-    def test_contract_keeps_the_three_acting_director_functions_distinct(self):
+    def test_contract_keeps_the_three_coordination_functions_distinct(self):
         contract = self.contract()
-        current = contract.split("\n  claude:\n", 1)[1].split("\n  openai:\n", 1)[0]
-        self.assertIn("Claude as acting Director keeps", current)
+        current = contract.split("\n  openai:\n", 1)[1].split("\nsupplemental_reviewers:", 1)[0]
+        self.assertIn("configured coordinating lane keeps", current)
         self.assertIn("functions:", current)
 
         for function_id in ("moderator", "participant", "director"):
@@ -1336,13 +1338,13 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
         self.assertIn("votes: false", moderator)
         self.assertIn("votes: true", participant)
         self.assertIn("vote_count: 1", participant)
-        self.assertIn("vote_weight: 2.0", participant)
+        self.assertIn("vote_weight: 2.5", participant)
         self.assertIn("votes: false", director)
         # Moderating relocates nothing about the vote: it stays one vote, booked
         # under Participant, and the Moderator function cannot strip it.
         self.assertIn("Moderating never removes, reduces, or defers", moderator)
         self.assertIn("no additional vote", participant)
-        self.assertIn("bars a second Claude vote and never the first", participant)
+        self.assertIn("bars a second OpenAI vote and never the first", participant)
         self.assertIn("does not create a vote", director)
 
         # Coordination, planning, and acceptance survive only as nested duties.
@@ -1613,3 +1615,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

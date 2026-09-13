@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
@@ -23,23 +25,23 @@ lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github
 
 endpoints:
   - id: "openai"
-    description: "OpenAI lane: Codex/ChatGPT engineering support and eligible review; legacy runtime identity retained."
+    description: "OpenAI lane: ChatGPT/Codex project Director, separately assigned engineering and eligible review; actual runtime identity retained."
   - id: "claude"
-    description: "Claude lane: acting project Director and explicitly gated native Director adapter."
+    description: "Claude lane: capability-routed provider lane with explicitly gated native-adapter paths and no standing Director assignment."
   - id: "cursor"
-    description: "Cursor lane: full-spectrum primary, Project Secretary."
+    description: "Cursor lane: capability-routed provider lane with bounded assignment authority."
   - id: "grok"
-    description: "Grok lane: Cursor-family primary teammate on xAI."
+    description: "Grok lane: capability-routed provider lane on xAI."
   - id: "antigravity"
-    description: "Antigravity lane: Gemini-backed subordinate specialist."
+    description: "Antigravity lane: Gemini-backed capability-routed lane with bounded fixture-scope authority."
   - id: "perplexity"
     description: "Perplexity lane: evidence-only public research."
   - id: "firecrawl"
     description: "Firecrawl lane: public search transport under the research contract."
   - id: "github-copilot"
-    description: "GitHub Copilot lane: supplemental hygiene reviewer, no production authority."
+    description: "GitHub Copilot lane: optional bounded quality-observation lane with no production authority."
   - id: "director"
-    description: "The runtime Director control plane; executing provider is recorded separately from Claude project leadership."
+    description: "The runtime Director control plane; executing provider is recorded separately from ChatGPT/Codex project leadership."
   - id: "owner"
     description: "The human owner, reached only through Slack and signed owner commands."
   - id: "slack_thread"
@@ -564,7 +566,7 @@ routes:
       - document: "docs/provider-setup.md"
         anchor: "The Grok adapter has two explicit transports."
       - document: "docs/team-operating-charter.md"
-        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by:
       - "src/director_orchestrator/providers.py:GrokAdapter"
     prohibition_quote: null
@@ -590,7 +592,7 @@ routes:
       - document: "docs/provider-setup.md"
         anchor: "Repository implementation and"
       - document: "docs/team-operating-charter.md"
-        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by:
       - "src/director_orchestrator/providers.py:GrokAdapter"
     prohibition_quote: null
@@ -612,7 +614,7 @@ routes:
     default_config_state: "not_applicable"
     charter_basis:
       - document: "docs/team-operating-charter.md"
-        anchor: "xAI API, Grok Build CLI, and Grok Bot are distinct contacts"
+        anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by: []
     prohibition_quote: null
     config: []
@@ -735,7 +737,7 @@ routes:
     default_config_state: "disabled"
     charter_basis:
       - document: "docs/team-operating-charter.md"
-        anchor: "GitHub Copilot Lite is an optional supplemental hygiene reviewer with no"
+        anchor: "GitHub Copilot Lite is an optional capability-routed quality-observation lane with no"
       - document: "docs/provider-setup.md"
         anchor: "GitHub Copilot Lite is not another provider bridge."
     enforced_by:
@@ -992,3 +994,5 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

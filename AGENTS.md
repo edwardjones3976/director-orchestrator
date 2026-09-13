@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
@@ -19,22 +20,25 @@ These rules apply to every AI coding agent working in this repository.
 
 ## Current project leadership
 
-The owner appointed **Claude as acting Director-Orchestrator** and exchanged
-Claude's and Codex/ChatGPT's project duties on 2026-09-08 UTC. This current
-instruction supersedes earlier OpenAI-as-project-Director wording throughout
-this repository. Read `docs/project-leadership.md` before assigning work.
+The project uses capability-based routing with assignment-scoped authority.
+Only the ChatGPT/Codex Director lane, Perplexity public research lane, and
+Firecrawl public retrieval lane keep explicit standing role descriptions.
+Read `docs/project-leadership.md` before assigning work. Runtime coordination
+status remains a recorded deployment fact and does not create standing role
+authority.
 
-- Claude owns project priorities, decomposition, routing, coordination, budget
-  and workload enforcement, review orchestration, and delivery reporting.
-- Codex/ChatGPT/OpenAI takes the bounded engineering and eligible independent
-  review role previously assigned to Claude. It does not retain discretionary
-  project leadership or manufacture Claude's instructions or approval.
+- The ChatGPT/Codex Director lane is authorized for priorities, decomposition,
+  capability-based routing, workload and budget enforcement, evidence synthesis,
+  review orchestration, completion reporting, and owner escalation.
+- Non-exempt lanes (Claude, Cursor, Grok, Antigravity, GitHub Copilot) have no
+  standing job assignment; route bounded work only by verified capabilities,
+  assignment authority, availability, budget, repository limits, and independence.
 - An agent's actual model and provider identity remain accurate. Historical
   contributions, receipts, credentials, and Codex Security are never renamed.
 - This leadership decision does not attest live provider routing. The deployed
   runtime keeps its recorded provider until a real replacement passes all gates.
 - Work already in flight keeps its writer and evidence; new assignments follow
-  Claude's direction. No provider accepts or merges its own material work.
+  the ChatGPT/Codex Director's direction. No provider accepts or merges its own material work.
 
 1. Treat the owner-authored work order as the task boundary. Do not expand permissions, repositories, data sources, or external actions without owner approval.
 2. Never commit secrets, tokens, passwords, personal identifiers, health data, financial data, or private genealogy evidence. Use documented secret stores and `.env` placeholders.
@@ -150,7 +154,7 @@ merge.
 ## Director and provider authorship
 
 - Work produced or materially authored by a provider stays attributed solely to
-  that provider or those providers. The acting Director/Claude does not inherit
+  that provider or those providers. The acting Director does not inherit
   authorship through delegation, routing, coordination, QA, review, acceptance,
   relay, merge eligibility evaluation, or merge execution; those activities
   create no code authorship.
@@ -216,3 +220,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

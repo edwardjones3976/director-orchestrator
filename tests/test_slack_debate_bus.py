@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | BEGIN]]
@@ -1463,6 +1464,13 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ["delegation", "work_result", "completion"],
             )
             self.assertEqual(len([post for post in notifier.posts if post.get("root_message")]), 1)
+            root_post = next(post for post in notifier.posts if post.get("root_message"))
+            result_post = next(post for post in notifier.posts if "WORK_RESULT" in post["message"])
+            with self.subTest(surface="collaboration roster"):
+                self.assertIn("claude (Claude)=assignment-1", root_post["message"])
+                self.assertNotIn("(None)", root_post["message"])
+            with self.subTest(surface="provider result attribution"):
+                self.assertEqual(result_post["contributor"], "claude (Claude)")
             self.assertTrue(
                 all(
                     turn.correlation_id.startswith("DIR-BUILD")
@@ -2796,3 +2804,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:25 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
