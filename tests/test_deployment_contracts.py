@@ -473,11 +473,22 @@ process.stdout.write(JSON.stringify({outputs, store}));
         activation.live_dependencies.bridge_challenge = bridge_challenge
         return activation
 
+    @staticmethod
+    def _main_module():
+        # Resolve through sys.modules, exactly as mock.patch does. Other test
+        # modules pop director_orchestrator.main to re-import it against a
+        # temporary database; `from director_orchestrator import main` would
+        # hand back the stale package attribute (a store whose temp directory
+        # is gone) while patch() re-imports a fresh module.
+        import importlib
+
+        return importlib.import_module("director_orchestrator.main")
+
     def _health(self, activation, settings=None):
         from fastapi.testclient import TestClient
         from unittest.mock import patch
-        from director_orchestrator import main as main_module
 
+        main_module = self._main_module()
         with patch("director_orchestrator.main.primary_default_activation", activation), \
              patch("director_orchestrator.main.settings", settings or main_module.settings):
             response = TestClient(main_module.app).get("/health")
@@ -486,10 +497,9 @@ process.stdout.write(JSON.stringify({outputs, store}));
 
     def test_health_endpoint_host_bridge_startup_challenge_and_configured(self):
         from dataclasses import replace
-        from director_orchestrator import main as main_module
 
         bridged = replace(
-            main_module.settings,
+            self._main_module().settings,
             langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch",
             langgraph_primary_host_bridge_secret="s" * 40,
         )
