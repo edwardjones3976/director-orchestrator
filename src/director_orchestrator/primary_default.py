@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
@@ -2804,6 +2805,10 @@ class DefaultPrimaryActivation:
                 # or drive a terminal task's historical graph/provider plan.
                 try:
                     self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                    # Empty pending rows alone do not settle a divergent binding.
+                    # Reobserve the durable adjudication and terminal ledger even
+                    # when the coordinator skipped writer renewal for this task.
+                    self.coordinator.parallel.verify_cancelled_terminal_binding(projection.task_id)
                 except CancelledPlanBindingHold:
                     # The ledger committed a specific refusal; keep readiness
                     # false while allowing diagnostics and unrelated tasks up.
@@ -2988,3 +2993,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
