@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
@@ -654,7 +655,7 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         if response.status_code != 202:
             raise ValueError("Intake receipt did not return HTTP 202")
         task_id = _intake_receipt_task_id(response.json())
-        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*{task_id} — ACCEPTED*\nThe Director returned a valid intake receipt. Execution remains subject to the configured safety gates."))
+        client.chat_postMessage(channel=event["channel"], thread_ts=thread_ts, text=_tag(f"*{task_id} — REQUEST RECEIVED*\nThe Director returned a valid intake receipt. Execution remains subject to the configured safety gates."))
     except Exception as exc:
         _log_boundary_failure("Director intake acceptance could not be confirmed", exc)
         client.chat_postMessage(
@@ -910,3 +911,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]
