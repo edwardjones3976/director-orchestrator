@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]]
@@ -24,7 +25,7 @@ lanes: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github
 
 endpoints:
   - id: "openai"
-    description: "OpenAI lane: Codex/ChatGPT capability-routed engineering support and eligible review; legacy runtime identity retained."
+    description: "OpenAI lane: ChatGPT/Codex project Director, separately assigned engineering and eligible review; actual runtime identity retained."
   - id: "claude"
     description: "Claude lane: capability-routed provider lane with explicitly gated native-adapter paths and no standing Director assignment."
   - id: "cursor"
@@ -40,7 +41,7 @@ endpoints:
   - id: "github-copilot"
     description: "GitHub Copilot lane: optional bounded quality-observation lane with no production authority."
   - id: "director"
-    description: "The runtime Director control plane; executing provider is recorded separately from Claude project leadership."
+    description: "The runtime Director control plane; executing provider is recorded separately from ChatGPT/Codex project leadership."
   - id: "owner"
     description: "The human owner, reached only through Slack and signed owner commands."
   - id: "slack_thread"
@@ -994,3 +995,4 @@ provider_to_provider_rule:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

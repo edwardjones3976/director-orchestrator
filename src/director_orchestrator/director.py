@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -100,7 +101,8 @@ class OpenAIDirector:
         self.instructions = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Create a bounded agent plan."
         self.instructions = (
             f"Execution identity: this invocation is {self.provider.value}, model {self.model_name}. "
-            "Claude is the acting project Director; that leadership role does not change this "
+            f"Project Director authority: {team_operating_charter()['director_operating_directive']['director']}; "
+            "that leadership role does not change this "
             "invocation's actual provider identity or authorize impersonation. Apply the shared "
             "policy as the executing runtime planner/reviewer. Preserve historical field names.\n\n"
             + self.instructions
@@ -436,3 +438,4 @@ def build_director(settings: Settings, *, claude_transport=None):
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

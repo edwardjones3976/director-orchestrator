@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
@@ -85,7 +86,7 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 Endpoints:
 
-- `openai`: OpenAI lane: Codex/ChatGPT capability-routed engineering support and eligible review; legacy runtime identity retained.
+- `openai`: OpenAI lane: ChatGPT/Codex project Director, separately assigned engineering and eligible review; actual runtime identity retained.
 - `claude`: Claude lane: capability-routed provider lane with explicitly gated native-adapter paths and no standing Director assignment.
 - `cursor`: Cursor lane: capability-routed provider lane with bounded assignment authority.
 - `grok`: Grok lane: capability-routed provider lane on xAI.
@@ -93,7 +94,7 @@ Endpoints:
 - `perplexity`: Perplexity lane: evidence-only public research.
 - `firecrawl`: Firecrawl lane: public search transport under the research contract.
 - `github-copilot`: GitHub Copilot lane: optional bounded quality-observation lane with no production authority.
-- `director`: The runtime Director control plane; executing provider is recorded separately from Claude project leadership.
+- `director`: The runtime Director control plane; executing provider is recorded separately from ChatGPT/Codex project leadership.
 - `owner`: The human owner, reached only through Slack and signed owner commands.
 - `slack_thread`: The Director-owned Slack thread for one task in its private project channel.
 - `github`: GitHub pull requests, reviews, checks, and label events.
@@ -188,3 +189,4 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->

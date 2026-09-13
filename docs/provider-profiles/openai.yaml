@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
@@ -191,7 +192,7 @@ authority:
   review_requirement: null
   strategy_constraints: []
   separation_of_duties:
-  - Codex/ChatGPT does not retain project leadership after the Claude handoff
+  - ChatGPT/Codex holds project Director authority; that authority does not establish runtime execution or material authorship
   - actual OpenAI material authorship prevents independent acceptance or self-merge
   - legacy runtime calls retain OpenAI identity and create no Claude evidence
   production_authority_permitted: true
@@ -293,7 +294,7 @@ communication:
   relay_rule: "provider_messages_relay_through_director"
   direct_provider_to_provider_channels_exist: false
   notes:
-  - Codex/ChatGPT works under the acting Claude Director; packets, dependency outcomes, and review handoffs stay brokered and
+  - ChatGPT/Codex directs project coordination; packets, dependency outcomes, and review handoffs stay brokered and
     accurately attributed.
   - 'OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate
     review and it cannot merge its own work.'
@@ -322,3 +323,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

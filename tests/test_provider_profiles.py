@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
@@ -984,6 +985,8 @@ class DiscoveryTests(unittest.TestCase):
             ROOT / "docs" / "team-operating-charter.md",
             ROOT / "prompts" / "director-system.md",
             ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml",
+            *sorted((ROOT / "docs" / "provider-profiles").glob("*.yaml")),
+            *sorted((ROOT / "docs" / "provider-profiles").glob("*.md")),
         )
         banned = (
             "project secretary",
@@ -996,6 +999,11 @@ class DiscoveryTests(unittest.TestCase):
             "claude project leadership",
             "claude acting leadership",
             "staged policy target",
+            "does not retain project leadership after the claude handoff",
+            "acting claude director",
+            "claude leads project coordination",
+            "claude-led",
+            "claude keeps moderator, participant, and director project functions separate",
         )
         for path in files:
             body = path.read_text(encoding="utf-8").lower()
@@ -1035,3 +1043,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

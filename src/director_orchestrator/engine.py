@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
@@ -4107,7 +4108,7 @@ class OrchestrationEngine:
             return await self._publish_openai_debate_preamble(record, preamble_turns)
         assignments = {item.sequence: item for item in record.plan.assignments}
         roles = ", ".join(
-            f"{item.agent.value} ({_STANDING_PROVIDER_LABELS[item.agent]})=assignment-{item.sequence}"
+            f"{item.agent.value} ({_STANDING_PROVIDER_LABELS[item.agent] or _PROVIDER_LABELS[item.agent]})=assignment-{item.sequence}"
             for item in sorted(assignments.values(), key=lambda candidate: candidate.sequence)
         )
         debate_limits = (
@@ -4444,7 +4445,7 @@ class OrchestrationEngine:
                 client_msg_id=self._slack_client_id(correlation_id),
                 contributor=(
                     f"{existing.provider.value} "
-                    f"({_STANDING_PROVIDER_LABELS[existing.provider]})"
+                    f"({_STANDING_PROVIDER_LABELS[existing.provider] or _PROVIDER_LABELS[existing.provider]})"
                 ),
                 system_label=f"{existing.provider.value}-provider-run/{run_digest}",
                 contribution_at=existing.recorded_at,
@@ -7017,3 +7018,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

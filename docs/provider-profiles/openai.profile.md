@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
@@ -218,7 +219,7 @@ Strategy constraints:
 
 Separation of duties:
 
-- Codex/ChatGPT does not retain project leadership after the Claude handoff
+- ChatGPT/Codex holds project Director authority; that authority does not establish runtime execution or material authorship
 - actual OpenAI material authorship prevents independent acceptance or self-merge
 - legacy runtime calls retain OpenAI identity and create no Claude evidence
 
@@ -262,7 +263,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Codex/ChatGPT works under the acting Claude Director; packets, dependency outcomes, and review handoffs stay brokered and accurately attributed.
+- ChatGPT/Codex directs project coordination; packets, dependency outcomes, and review handoffs stay brokered and accurately attributed.
 - OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate review and it cannot merge its own work.
 - The ChatGPT alias bridge reaches the owner only; it never delegates to or addresses another provider.
 
@@ -328,3 +329,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->

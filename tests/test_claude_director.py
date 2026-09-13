@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from pydantic import ValidationError
 
 from director_orchestrator.claude_director import (
@@ -26,6 +28,7 @@ from director_orchestrator.interactions import ProviderTransport
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext, RuntimeDispatchTimeout
 from director_orchestrator.models import DirectorPlan, ProviderName, ReviewDecision, ReviewVerdict, SlackIntake, TaskRecord
 from director_orchestrator.packet_contracts import PacketContractError, document_digest
+from director_orchestrator.team_charter import team_operating_charter
 
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "docs" / "schemas"
@@ -128,6 +131,26 @@ class ClaudeDirectorTransportTests(unittest.IsolatedAsyncioTestCase):
     async def call(self):
         return await self.director._structured("fixture request", ReviewDecision, "review_decision")
 
+    async def test_openai_request_binds_project_authority_and_preserves_execution_identity(self):
+        bodies = []
+
+        def respond(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"output_text": json.dumps(REVIEW)})
+
+        director = build_director(Settings(claude_director_enabled=False, openai_model="fixture-openai"))
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        with patch("director_orchestrator.director.httpx.AsyncClient", return_value=client):
+            result = await director._structured("fixture request", ReviewDecision, "review_decision")
+        self.assertEqual(result.verdict, ReviewVerdict.ACCEPT)
+        self.assertEqual(len(bodies), 1)
+        self.assertEqual(bodies[0]["model"], "fixture-openai")
+        instructions = bodies[0]["instructions"]
+        authority = team_operating_charter()["director_operating_directive"]["director"]
+        self.assertIn(f"Project Director authority: {authority}", instructions)
+        self.assertIn("this invocation is openai, model fixture-openai", instructions)
+        self.assertNotIn("Claude is the acting project Director", instructions)
+
     async def test_typed_native_review_preserves_identity_and_verifies_both_stages(self):
         with patch("httpx.AsyncClient", side_effect=AssertionError("no Responses API fallback")):
             result = await self.call()
@@ -141,6 +164,9 @@ class ClaudeDirectorTransportTests(unittest.IsolatedAsyncioTestCase):
         request = json.loads(self.fixture.native.calls[0][0]["objective"])
         self.assertEqual(request["executing_provider"], "claude")
         self.assertIn("this invocation is claude, model fixture-claude-model", request["instructions"])
+        authority = team_operating_charter()["director_operating_directive"]["director"]
+        self.assertIn(f"Project Director authority: {authority}", request["instructions"])
+        self.assertNotIn("Claude is the acting project Director", request["instructions"])
 
     async def test_unauthenticated_admission_never_invokes_native(self):
         self.fixture.reject_stage = "admission"
@@ -290,3 +316,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]

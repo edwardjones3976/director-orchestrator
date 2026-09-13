@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
@@ -258,7 +259,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Claude leads project coordination; runtime messages still pass through the authenticated Director broker with their actual executing provider recorded.
+- Claude receives capability-routed assignments from the ChatGPT/Codex Director; runtime messages pass through the authenticated Director broker with their actual executing provider recorded.
 - The callback is provider-to-Director only; it never addresses another provider or the owner directly.
 - Claude never posts to the Slack thread; the Director relays a concise assignment-correlated summary.
 
@@ -326,3 +327,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->

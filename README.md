@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | BEGIN]] -->
@@ -96,7 +97,7 @@ attest that a deployed service has switched its executing provider.
   Agents, and the Perplexity Agent API.
 - A structured Director interface retaining the legacy OpenAI runtime and an explicitly
   enabled Claude adapter that requires a real bound native transport.
-- A Claude-led OpenAI–Claude–Cursor–Grok team, with Gemini/Antigravity eligible for its
+- A ChatGPT/Codex-directed team of capability-routed providers, with Gemini/Antigravity eligible for its
   authorized team mode after enrollment and qualification, and Perplexity supplying bounded
   supplemental research. Membership and allocation attest nothing about whether a provider
   route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
@@ -150,12 +151,12 @@ Deeper operational detail lives in `docs/always-on-runbook.md`, `docs/provider-s
 10. With live execution enabled, the usage monitor prompts each configured provider no more often than the configured interval and persists its latest status.
 
 
-Claude keeps Moderator, Participant, and Director project functions separate. Moderation
+The executing Director provider keeps Moderator, Participant, and Director runtime functions separate. Moderation
 uses neutral framing, gathers independent positions before cross-exposure when
 practical, and performs a counter-bias check that holds the vote back so it cannot
-pre-empt synthesis. Claude then contributes one participant position and casts its one
+pre-empt synthesis. That provider then contributes one participant position and casts its one
 existing advisory vote at full weight or records an explicit abstention. Moderating
-a debate never costs Claude its right to vote; only Claude's own abstention forgoes
+a debate never costs that provider its right to vote; only its own abstention forgoes
 exercising it. Director synthesis and tie handling create no extra vote and never fabricate
 participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
@@ -526,3 +527,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:54 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
