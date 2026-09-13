@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | BEGIN]] -->
 # The two twenty-point controls
 
@@ -69,7 +70,7 @@ environment and `PYTHONPATH=src`:
 ```powershell
 $env:PYTHONPATH = 'src'
 python scripts/engineering-workload.py --db <existing-journal.sqlite3> --human status
-python scripts/director-scorecard.py --candidate-sha <full-commit-sha> --live --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
+python scripts/director-scorecard.py --candidate-sha <full-commit-sha> --live --gateway <exact-running-container-name> --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
 ```
 
 Reading an absent journal reports unknown history; it does not create or reset a
@@ -77,3 +78,4 @@ database. Follow the ledger document for enrollment and bounded admission, and t
 scorecard document for supported authoritative collectors. Both tools preserve
 existing policy, security, exact-candidate and spending gates.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]] -->
