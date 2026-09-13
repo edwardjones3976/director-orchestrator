@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 import dataclasses
 import json
@@ -19,6 +22,8 @@ SHA = "a" * 40
 OTHER = "b" * 40
 IMAGE = "sha256:" + "c" * 64
 NOW = datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)
+GATEWAY = "director-orchestrator-slackbot-release-879c4eb4a375-pre193-02"
+OLD_GATEWAY = "director-orchestrator-slackbot-explicit-alias"
 
 
 def containers():
@@ -45,7 +50,7 @@ def runtime_observations(payload=None):
     response.read.return_value = json.dumps(payload if payload is not None else health()).encode()
     with patch.object(sc, "_run_json", return_value=containers()), patch.object(sc, "build_opener") as opener:
         opener.return_value.open.return_value = response
-        return sc.collect(SHA, now=NOW, topology=False)
+        return sc.collect(SHA, now=NOW)
 
 
 def run(mode="offline", number=1):
@@ -68,7 +73,7 @@ def topology():
     api = containers()[0]
     api.update(Id="1" * 64, Name="/director-orchestrator-orchestrator-1", State={"Running": True})
     api["Config"].update(Cmd=["uvicorn", "director_orchestrator.main:app"], Env=["SLACK_APP_TOKEN=fixture-app-token"])
-    gateway = {"Id": "2" * 64, "Name": "/director-orchestrator-slackbot-explicit-alias", "State": {"Running": True},
+    gateway = {"Id": "2" * 64, "Image": IMAGE, "Name": "/" + GATEWAY, "State": {"Running": True},
                "Config": {"Cmd": ["python", "-m", "director_orchestrator.slack_bot"],
                           "Env": ["SLACK_APP_TOKEN=fixture-app-token", "SLACK_BOT_TOKEN=fixture-secret-bot",
                                   "SLACK_DIRECTOR_CHANNEL_ID=C0BQ6GSCNLR", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake"]}}
@@ -77,13 +82,14 @@ def topology():
     return [api, gateway, n8n]
 
 
-def collect_topology(rows, host=None, upstream="local", workflow=None):
+def collect_topology(rows, host=None, upstream="local", workflow=None, gateway=GATEWAY, later_rows=None):
     host = {"inspected": 5, "unreadable": 0, "gateway_process_count": 0} if host is None else host
     workflow = {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
                 "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True} if workflow is None else workflow
+    listings = [rows, rows if later_rows is None else later_rows]
     def process(args):
         if args[:2] == ["docker", "ps"]:
-            return "\n".join(row["Id"] for row in rows).encode()
+            return "\n".join(row["Id"] for row in listings.pop(0)).encode()
         if args[:2] == ["docker", "inspect"]:
             return json.dumps(rows).encode()
         if args[:2] == ["docker", "exec"]:
@@ -94,7 +100,7 @@ def collect_topology(rows, host=None, upstream="local", workflow=None):
             raise host
         return json.dumps(host).encode()
     with patch.object(sc, "_run_bytes", side_effect=process):
-        observations = sc._topology_observations(NOW, {"runtime_sha": SHA, "image_id": IMAGE})
+        observations = sc._topology_observations(NOW, {"runtime_sha": SHA, "image_id": IMAGE}, gateway)
     return sc.score(SHA, observations, now=NOW)
 
 
@@ -131,27 +137,106 @@ def native_security_fixture(folder):
 
 
 class CompletionScorecardTests(unittest.TestCase):
-    def test_clear_reconciliation_does_not_depend_on_worker_running(self):
+    def test_zero_hold_counters_are_not_reconciliation_proof(self):
+        # Release 879 reported these exact zeros while authoritative plan digests conflicted.
         payload = health()
         payload["langgraph_primary"]["reconciliation_worker_ready"] = False
         report = sc.score(SHA, runtime_observations(payload), now=NOW)
-        self.assertEqual(report["checks"][6]["status"], "PASS")
+        self.assertEqual(report["checks"][6]["status"], "UNKNOWN")
+        self.assertIn("Missing collector", report["checks"][6]["explanation"])
         self.assertEqual(report["checks"][18]["status"], "FAIL")
+        self.assertIn("negative evidence for 07", json.dumps(report["limitations"]))
+
+    def test_reported_reconciliation_blocker_fails(self):
+        for change in ({"ambiguous_effect_count": 2}, {"reconciliation_hold_reason": "plan digest conflict"},
+                       {"historical_parallel_plan_hold_count": 1}):
+            payload = health()
+            payload["langgraph_primary"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(sc.score(SHA, runtime_observations(payload), now=NOW)["checks"][6]["status"], "FAIL")
+        payload = health()
+        del payload["langgraph_primary"]["reconciliation_hold_reason"]
+        self.assertEqual(sc.score(SHA, runtime_observations(payload), now=NOW)["checks"][6]["status"], "UNKNOWN")
+
+    def test_reported_blocker_still_fails_with_other_health_fields_missing(self):
+        for fields in ({"ambiguous_effect_count": 1}, {"historical_parallel_plan_hold_count": 1},
+                       {"reconciliation_hold_reason": "preserved plan mismatch"}):
+            payload = health()
+            payload["langgraph_primary"] = fields
+            with self.subTest(fields=fields):
+                report = sc.score(SHA, runtime_observations(payload), now=NOW)
+                self.assertEqual(report["checks"][6]["status"], "FAIL")
 
     def test_topology_and_single_gateway_ignore_api_copy_of_token_without_exposure(self):
         report = collect_topology(topology())
         self.assertEqual([row["status"] for row in report["checks"][:2]], ["PASS", "PASS"])
+        for row in report["checks"][:2]:
+            self.assertEqual(row["evidence"][0]["facts"]["expected_gateway"], GATEWAY)
+            self.assertEqual(row["evidence"][0]["facts"]["gateway_container_id"], "2" * 64)
+            self.assertEqual(row["evidence"][0]["facts"]["gateway_image_id"], IMAGE)
         self.assertNotIn("fixture-app-token", json.dumps(report))
         self.assertNotIn("fixture-secret-bot", json.dumps(report))
         self.assertNotIn("SLACK_APP_TOKEN", json.dumps(report))
 
-    def test_unlabelled_duplicate_gateway_is_counted(self):
+    def test_tokenless_gateway_preserves_identity_on_both_observations(self):
+        for empty_token in (False, True):
+            with self.subTest(empty_token=empty_token):
+                rows = topology()
+                gateway_env = rows[1]["Config"]["Env"]
+                gateway_env[:] = [entry for entry in gateway_env if not entry.startswith("SLACK_APP_TOKEN=")]
+                if empty_token:
+                    gateway_env.append("SLACK_APP_TOKEN=")
+                report = collect_topology(rows)
+                self.assertEqual([row["status"] for row in report["checks"][:2]], ["PASS", "UNKNOWN"])
+                self.assertEqual(report["checks"][1]["explanation"], "Canonical gateway app identity unavailable.")
+                for row in report["checks"][:2]:
+                    facts = row["evidence"][0]["facts"]
+                    self.assertEqual(facts["expected_gateway"], GATEWAY)
+                    self.assertEqual(facts["gateway_container_id"], rows[1]["Id"])
+                    self.assertEqual(facts["gateway_image_id"], rows[1]["Image"])
+
+    def test_stopped_missing_or_non_gateway_identity_cannot_pass(self):
         rows = topology()
-        duplicate = json.loads(json.dumps(rows[1]))
-        duplicate.update(Id="4" * 64, Name="/another-session-deliberate-build")
-        rows.append(duplicate)
+        for name in (OLD_GATEWAY, "director-orchestrator-orchestrator-1", "director-orchestrator-n8n-1"):
+            with self.subTest(name=name):
+                report = collect_topology(rows, gateway=name)
+                self.assertEqual([row["status"] for row in report["checks"][:2]], ["UNKNOWN", "UNKNOWN"])
+                self.assertEqual(report["checks"][1]["evidence"][0]["facts"]["expected_gateway"], name)
+        renamed = json.loads(json.dumps(rows))
+        renamed[1]["Name"] = "/" + OLD_GATEWAY
+        self.assertEqual(collect_topology(renamed)["checks"][1]["status"], "UNKNOWN")
+        rows[1]["State"]["Running"] = False
         report = collect_topology(rows)
-        self.assertEqual(report["checks"][1]["status"], "FAIL")
+        self.assertEqual([row["status"] for row in report["checks"][:2]], ["UNKNOWN", "UNKNOWN"])
+        for bad in ("/" + GATEWAY, "", "name with space", "x" * 130):
+            with self.assertRaises(ValueError):
+                sc.collect(SHA, now=NOW, gateway=bad)
+
+    def test_live_without_gateway_leaves_topology_unknown_and_named(self):
+        report = sc.score(SHA, runtime_observations(), now=NOW)
+        self.assertEqual([row["status"] for row in report["checks"][:2]], ["UNKNOWN", "UNKNOWN"])
+        self.assertIn("--gateway", report["checks"][0]["explanation"])
+
+    def test_inventory_race_or_image_change_stops_collection(self):
+        rows = topology()
+        with self.assertRaisesRegex(ValueError, "inventory changed"):
+            collect_topology(rows, later_rows=rows[:2])
+        rows[0]["Image"] = "sha256:" + "d" * 64
+        with self.assertRaisesRegex(ValueError, "image changed"):
+            collect_topology(rows)
+        rows = topology()
+        rows[1]["Image"] = "unverified-tag"
+        with self.assertRaisesRegex(ValueError, "gateway image"):
+            collect_topology(rows)
+
+    def test_unlabelled_duplicate_gateway_is_counted(self):
+        for name in ("/another-session-deliberate-build", "/" + OLD_GATEWAY):
+            rows = topology()
+            duplicate = json.loads(json.dumps(rows[1]))
+            duplicate.update(Id="4" * 64, Name=name)
+            rows.append(duplicate)
+            with self.subTest(name=name):
+                self.assertEqual(collect_topology(rows)["checks"][1]["status"], "FAIL")
 
     def test_host_visibility_or_unknown_same_app_process_prevents_gateway_pass(self):
         for host in ({"unreadable": 1, "gateway_process_count": 0}, {"unreadable": 0, "gateway_process_count": 1}, OSError("hidden host")):
@@ -238,8 +323,8 @@ class CompletionScorecardTests(unittest.TestCase):
 
     def test_runtime_collection_grades_observed_fields_and_keeps_capture_unknown(self):
         report = sc.score(SHA, runtime_observations(), now=NOW, runtime_sha=SHA, image_id=IMAGE)
-        self.assertEqual(report["passed"], 3)
-        self.assertEqual(report["percent"], 15)
+        self.assertEqual(report["passed"], 2)
+        self.assertEqual(report["percent"], 10)
         self.assertEqual(report["checks"][11]["status"], "UNKNOWN")
         self.assertFalse(report["activation_authorized"])
         self.assertEqual(report["checks"][4]["evidence"][0]["runtime_sha"], SHA)
@@ -272,7 +357,7 @@ class CompletionScorecardTests(unittest.TestCase):
         for binding in ({"runtime_sha": OTHER}, {"image_id": "sha256:" + "d" * 64}):
             self.assertEqual(sc.score(SHA, observed, now=NOW, **binding)["passed"], 0)
         # A build candidate and runtime may legitimately differ; they stay separate.
-        self.assertEqual(sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["passed"], 3)
+        self.assertEqual(sc.score(OTHER, observed, now=NOW, runtime_sha=SHA)["passed"], 2)
 
     def test_wrong_project_endpoint_or_container_port_is_not_observed(self):
         wrong = health()
@@ -415,6 +500,9 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertIn("unknown cost is not zero", text.lower())
         self.assertIn("Next:", text)
         self.assertIn("do not contribute points", text)
+        self.assertIn("Next: Collect fresh generation-bound consistency proof over durable projections, "
+                      "batches, assignments and unresolved effects from an authoritative collector. "
+                      "This collector does not exist yet.", text)
 
     def test_bad_candidate_and_naive_score_time_rejected(self):
         with self.assertRaises(ValueError):
@@ -432,8 +520,15 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(report["passed"], 0)
             self.assertTrue((Path(folder) / "completion-scorecard.md").is_file())
             self.assertFalse(json.loads(result.stdout)["activation_authorized"])
+            rejected = subprocess.run([sys.executable, str(script), "--candidate-sha", SHA, "--output-dir", folder, "--gateway", GATEWAY],
+                                      capture_output=True, timeout=15, text=True)
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("--gateway require --live", rejected.stderr)
 
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
