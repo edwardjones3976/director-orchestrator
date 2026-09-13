@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -111,7 +112,8 @@ class ClaudeDirectorConfigTests(unittest.TestCase):
     def test_strategy_separates_leadership_from_runtime_selection_and_accounts(self):
         settings = Settings(claude_director_enabled=False)
         strategy = settings.provider_strategy()
-        self.assertEqual(strategy["claude"]["project_role"], "acting_director")
+        self.assertEqual(strategy["claude"]["project_role"], "capability_routed_provider")
+        self.assertEqual(strategy["openai"]["project_role"], "chatgpt_codex_director")
         self.assertEqual(strategy["claude"]["runtime_selection"], "disabled_legacy_openai_runtime")
         self.assertEqual(strategy["openai"]["runtime_selection"], "legacy_responses_api_director")
         self.assertEqual(strategy["claude"]["account_context"], settings.claude_account_context)
@@ -287,3 +289,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

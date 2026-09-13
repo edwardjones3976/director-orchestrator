@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
@@ -2124,6 +2125,7 @@ class Settings:
                 ],
             },
             "gemini": {
+                "contact_scope": "restricted_fixture_and_invited_debate",
                 "team": "supplemental",
                 "priority": "bounded_capability_routing",
                 "account_context": self.other_provider_account_context,
@@ -2134,7 +2136,7 @@ class Settings:
                     "bounded sandbox execution for the above",
                 ],
                 "constraints": [
-                    "supplemental only; never a primary-team substitute",
+                    "restricted fixture contact only; the separately selected team contract requires its own explicit grants and qualification",
                     "every artifact requires independent downstream verification before integration or acceptance influence",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
@@ -2249,3 +2251,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

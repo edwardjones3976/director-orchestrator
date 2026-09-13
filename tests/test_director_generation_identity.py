@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -89,7 +90,7 @@ class DirectorGenerationIdentityTests(unittest.TestCase):
         engine = self.engine('claude', 'fixture-claude-model')
         record, event, binding = self.materialize(engine)
         identity = record.director_generations[1]
-        self.assertEqual(identity.acting_project_director, 'claude')
+        self.assertEqual(identity.acting_project_director, 'openai')
         self.assertEqual(identity.provider, 'claude')
         self.assertEqual(identity.model_name, 'fixture-claude-model')
         self.assertEqual(event.event_version, 'v3')
@@ -98,11 +99,21 @@ class DirectorGenerationIdentityTests(unittest.TestCase):
         self.assertEqual(json.loads(binding)['director_identity'], identity.model_dump(mode='json'))
         engine._require_verified_plan_materialization(record)
 
-    def test_new_openai_execution_keeps_actual_provider_and_claude_lead_separate(self):
+    def test_new_openai_execution_records_current_project_lead(self):
         record, event, _ = self.materialize(self.engine())
         self.assertEqual(record.director_generations[1].provider, 'openai')
-        self.assertEqual(event.director_identity.acting_project_director, 'claude')
+        self.assertEqual(event.director_identity.acting_project_director, 'openai')
         self.assertEqual(event.transport_evidence.transport, ProviderTransport.OPENAI_RESPONSES_API)
+
+    def test_historical_claude_lead_identity_remains_readable_and_unchanged(self):
+        payload = dict(acting_project_director='claude', provider='openai',
+                       transport=ProviderTransport.OPENAI_RESPONSES_API.value,
+                       model_name='historical-model')
+        identity = DirectorIdentity.model_validate(payload)
+        self.assertEqual(identity.model_dump(mode='json'), payload)
+        legacy = dict(payload)
+        legacy.pop('acting_project_director')
+        self.assertEqual(DirectorIdentity.model_validate(legacy), identity)
 
     def test_historical_openai_replay_ignores_changed_runtime_settings(self):
         record, event, binding = self.materialize(self.engine(), historical=True)
@@ -343,3 +354,4 @@ if __name__ == '__main__':
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:43 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

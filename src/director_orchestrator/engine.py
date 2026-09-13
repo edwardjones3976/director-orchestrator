@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -417,6 +418,7 @@ class OrchestrationEngine:
         self.oracle_merge_service = oracle_merge_service
         self.director = build_director(settings, claude_transport=claude_transport)
         self._runtime_director_identity = DirectorIdentity(
+            acting_project_director=team_operating_charter()["director_operating_directive"]["director"],
             provider=self.director.provider.value,
             transport=self.director.transport,
             model_name=self.director.model_name,
@@ -7014,3 +7016,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

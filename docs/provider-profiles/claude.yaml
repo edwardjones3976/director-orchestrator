@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]]
@@ -15,7 +16,7 @@
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
 provider_id: "claude"
-display_name: Claude (acting Director)
+display_name: Claude
 authority_granted: "none"
 
 source_of_truth:
@@ -43,9 +44,7 @@ identifiers:
 roles:
   team: "primary"
   lane_class: capability_routed_lane
-  summary: 'Acting project Director: owns priorities, decomposition, routing, workload and budget controls, review orchestration,
-    and delivery reporting. Pure coordination creates no production credit. Runtime Claude planning requires its explicitly
-    enabled, genuinely bound native adapter; leadership alone does not activate it.'
+  summary: 'Capability-routed provider with assignment-scoped authority. Select implementation, analysis, planning support or independent review by verified transport capabilities, scope, availability and budget. A runtime Claude planning adapter requires explicit native binding; provider identity grants no standing project leadership.'
   charter_workload_lane: capability_routed_lane
   strategy_key: "claude"
   strategy_priority: capability_routed_assignment
@@ -79,46 +78,10 @@ roles:
     capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
     accounting_basis: "admitted_assignment_count"
     zero_target_rule: "ineligible"
-    accounting_status: control_plane_telemetry_and_authorized_production
+    accounting_status: direct_production_allocation
   hygiene_review: null
   openai_functions: null
-  director_functions:
-  - id: moderator
-    votes: false
-    duties:
-    - frame the question and bounded options neutrally
-    - request positions without leading language
-    - prevent premature cross-exposure
-    - run the counter-bias pass against the favored view
-    boundary: Moderating never removes, reduces, or defers Claude's vote. The counter-bias pass is vote-free only so that it cannot
-      pre-empt synthesis, where Participant casts its one vote or records an explicit abstention.
-    vote_count: null
-    vote_weight: null
-  - id: participant
-    votes: true
-    vote_count: 1
-    vote_weight: 2.0
-    duties:
-    - record an independently formed initial position before specialist conclusions are exposed
-    - cast the single existing Claude advisory vote during synthesis or record an explicit abstention
-    boundary: Participant records the one authenticated Claude position and, at synthesis, its single advisory vote at full weight
-      or an explicit abstention. Claude retains its right to vote in every debate it joins, including every debate it moderates;
-      only Claude's own abstention forgoes exercising it. The votes, vote_count, and vote_weight fields describe entitlement, not
-      mandatory participation. Planning, moderation, synthesis, and acceptance earn no additional vote; that bars a second Claude vote and never the first.
-  - id: director
-    votes: false
-    duties:
-    - plan
-    - decompose
-    - route
-    - coordinate
-    - synthesize
-    - acceptance_review
-    - review_handoff
-    - milestone_reporting
-    boundary: Director authority does not create a vote or a participation record that did not actually occur.
-    vote_count: null
-    vote_weight: null
+  director_functions: null
 capabilities:
   summary: "Repository-scale implementation and review through the Claude Code Routine, with completion reported by the only inbound provider-initiated HTTP route in the system, a bearer-authenticated callback. Eligible independent exact-SHA reviewer for candidates it did not produce."
   strengths:
@@ -346,3 +309,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
+# OpenAI continuation repairs attribution only here; prior material from
+# Copilot branch head 510251c66a78251bd242e8f773a03c51bf65f99b is preserved.
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Firecrawl (director-provider-profile/v1).
@@ -207,3 +210,4 @@ sources:
     anchor: "| Firecrawl | 5% | 0% | 15% | 5% |"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
