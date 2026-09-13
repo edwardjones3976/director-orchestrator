@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -1237,7 +1238,7 @@ class ChatGPTBridgeService:
     def _validate_request(self, request: ChatGPTBridgeRequest) -> str:
         if not self.settings.chatgpt_bridge_enabled:
             raise BridgeRejected("ChatGPT bridge is disabled")
-        if not self.settings.allow_paid_runs:
+        if not (self.settings.allow_paid_runs or self.settings.chatgpt_bridge_allow_paid_runs):
             raise BridgeRejected("paid provider execution is disabled")
         if not self.settings.openai_api_key:
             raise BridgeRejected("OpenAI is not configured")
@@ -1392,3 +1393,4 @@ class ChatGPTBridgeService:
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]

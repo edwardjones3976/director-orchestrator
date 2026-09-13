@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -690,6 +691,7 @@ class Settings:
     n8n_webhook_url: str = os.getenv("N8N_DIRECTOR_WEBHOOK_URL", "")
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     chatgpt_bridge_enabled: bool = _bool("CHATGPT_BRIDGE_ENABLED", False)
+    chatgpt_bridge_allow_paid_runs: bool = _bool("CHATGPT_BRIDGE_ALLOW_PAID_RUNS", False)
     chatgpt_bridge_slack_user_id: str = os.getenv(
         "CHATGPT_BRIDGE_SLACK_USER_ID", "U0B9KFJPST1"
     ).strip()
@@ -1251,7 +1253,7 @@ class Settings:
     def chatgpt_bridge_readiness(self) -> dict[str, bool]:
         return {
             "enabled": self.chatgpt_bridge_enabled,
-            "paid_execution_enabled": self.allow_paid_runs,
+            "paid_execution_enabled": self.allow_paid_runs or self.chatgpt_bridge_allow_paid_runs,
             "slack_transport_configured": self.readiness()["slack"],
             "internal_auth_configured": bool(self.shared_secret),
             "openai_configured": bool(self.openai_api_key),
@@ -2247,3 +2249,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]
