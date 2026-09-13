@@ -343,6 +343,16 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertEqual(len(entitlement), 1)
         self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", entitlement[0])
 
+    def test_dependent_entitlement_checks_run_while_the_plane_is_disabled(self):
+        # One pass reports every prerequisite: the switch AND the file the
+        # operator would otherwise discover one enable later.
+        problems = self._entitlement_problems(
+            entitlement_control_plane_enabled=False, entitlement_postgres_dsn_file=""
+        )
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(any("ENTITLEMENT_CONTROL_PLANE_ENABLED" in p for p in problems))
+        self.assertTrue(any("ENTITLEMENT_POSTGRES_DSN_FILE" in p for p in problems))
+
     def _entitlement_problems(self, **overrides):
         problems = PREFLIGHT.unmet(_complete(**overrides))
         return [p for s, p in problems if s == "entitlement control plane"]
@@ -379,6 +389,58 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertIn("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", problems[0])
         for problem in problems:
             self.assertNotIn(short, problem)
+
+    def test_entitlement_secret_contents_are_validated_like_startup(self):
+        # _read_secret_file / _validate_secret_material: stripped UTF-8 text,
+        # at least 32 bytes, at least 16 distinct byte values. The material is
+        # never echoed.
+        cases = {
+            "blank": " " * 40,
+            "low-entropy": "a" * 40,
+            "short-after-strip": "  " + "9abcdefghijklmnop" + "  ",
+        }
+        for label, content in cases.items():
+            with self.subTest(label=label):
+                path = _entitlement_file(f"secret-{label}", content)
+                problems = self._entitlement_problems(entitlement_owner_authority_secret_file=path)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", problems[0])
+                self.assertNotIn(path, problems[0])
+                self.assertNotIn(content.strip() or "blank", problems[0])
+        invalid = _ENTITLEMENT_DIR / "secret-invalid-utf8"
+        invalid.write_bytes(b"\xff\xfe" + b"x" * 40)
+        problems = self._entitlement_problems(entitlement_owner_authority_secret_file=str(invalid))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("UTF-8", problems[0])
+
+    def test_entitlement_dsn_contents_are_checked_before_startup_parses_them(self):
+        # _parse_connection_target refuses empty input and line breaks before
+        # psycopg ever sees it; the preflight applies those two rules and
+        # leaves the full parse to startup.
+        empty = _entitlement_file("dsn-empty", "   \n")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=empty)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("empty", problems[0])
+        multiline = _entitlement_file("dsn-multiline", "postgresql://a:b@db/one\nhost=other")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=multiline)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("one line", problems[0])
+        trailing_newline = _entitlement_file("dsn-trailing", "postgresql://a:b@db/one\n")
+        self.assertEqual(self._entitlement_problems(entitlement_postgres_dsn_file=trailing_newline), [])
+
+    def test_unresolvable_home_prefix_reads_as_an_unavailable_file(self):
+        # Path.expanduser raises RuntimeError for ~missing-user; that must be
+        # reported as a missing file, not escape as a traceback.
+        problems = self._entitlement_problems(
+            entitlement_route_verifier_secret_file="~preflight-no-such-user-fixture/secret"
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", problems[0])
+        report = PREFLIGHT.report(
+            _complete(entitlement_route_verifier_secret_file="~preflight-no-such-user-fixture/secret"), []
+        )
+        self.assertIn("  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: false", report)
 
     def test_entitlement_schema_uses_the_runtime_ascii_pattern(self):
         # A \\d pattern would admit Unicode digits that entitlement_control_plane rejects.

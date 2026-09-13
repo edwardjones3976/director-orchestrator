@@ -160,17 +160,27 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertTrue(detail["claude"]["configured"])
         self.assertFalse(detail["claude"]["live_ready"])
 
-        # Present and callable
+        # Present and callable but not routed (for example a lane outside
+        # LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS): configured, never live-ready.
         self.assertTrue(detail["openai"]["configured"])
-        self.assertTrue(detail["openai"]["live_ready"])
+        self.assertFalse(detail["openai"]["live_ready"])
 
         # A lane with a composed adapter (for example team-routed antigravity)
         # is configured and live-ready even without a local executable.
-        routed = provider_lane_detail(observed, routed=("github-copilot",))
+        routed = provider_lane_detail(observed, routed=("github-copilot", "openai"))
         self.assertEqual(routed["github-copilot"], {"configured": True, "live_ready": True})
+        self.assertEqual(routed["openai"], {"configured": True, "live_ready": True})
         self.assertEqual(routed["claude"], detail["claude"])
         for lane in routed.values():
             self.assertEqual(set(lane), {"configured", "live_ready"})
+
+        # When the activation service's verdicts are supplied, live_ready also
+        # requires the lane to be dispatchable right now.
+        gated = provider_lane_detail(observed, routed=("github-copilot", "openai"), dispatchable=("openai",))
+        self.assertEqual(gated["openai"], {"configured": True, "live_ready": True})
+        self.assertEqual(gated["github-copilot"], {"configured": True, "live_ready": False})
+        nothing = provider_lane_detail(observed, routed=("openai",), dispatchable=())
+        self.assertEqual(nothing["openai"], {"configured": True, "live_ready": False})
 
     def test_unavailable_lane_cannot_smuggle_a_transport(self):
         with self.assertRaisesRegex(ValueError, "unavailable provider lane"):

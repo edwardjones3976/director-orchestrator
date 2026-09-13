@@ -181,16 +181,20 @@ def _declared_environment_variables() -> frozenset[str]:
 DECLARED_VARIABLES = _declared_environment_variables()
 
 # Startup requirements mirrored read-only. Sources of truth:
-# antigravity_team_routing.configured_provider_budget_routing (DSN file must
-# exist and be at most 65536 bytes; the control plane must be enabled),
-# entitlement_control_plane._read_secret_file / _SCHEMA_PATTERN (each secret
-# file must exist and hold at least 32 bytes of nontrivial material; the schema
-# must match [a-z0-9_]+_v<N>), and oracle_merge.GitHubOracleGateway.from_settings
-# (numeric App and installation ids, strictly base64 private key). Only file
-# metadata is consulted here; no secret material and no DSN is ever read.
+# antigravity_team_routing.configured_provider_budget_routing (the control
+# plane must be enabled; the DSN file must exist, be at most 65536 bytes and,
+# stripped, be non-empty with no interior line break before psycopg parses it),
+# entitlement_control_plane._read_secret_file / _validate_secret_material /
+# _SCHEMA_PATTERN (each secret file must exist and, stripped, hold at least 32
+# UTF-8 bytes with at least 16 distinct byte values; the schema must match
+# [a-z0-9_]+_v<N>), and oracle_merge.GitHubOracleGateway.from_settings (numeric
+# App and installation ids, strictly base64 private key). File contents are
+# read only to apply exactly those rules and never leave the function; the
+# full DSN parse (psycopg conninfo) happens at startup, not here.
 ENTITLEMENT_SCHEMA = re.compile(r"^[a-z0-9_]+_v[0-9]+$")
 ENTITLEMENT_DSN_FILE_LIMIT = 65_536
-ENTITLEMENT_SECRET_FILE_MINIMUM = 32
+ENTITLEMENT_SECRET_MINIMUM_BYTES = 32
+ENTITLEMENT_SECRET_MINIMUM_DISTINCT = 16
 ENTITLEMENT_SECRET_FILES: tuple[tuple[str, str], ...] = (
     ("ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE", "entitlement_trusted_verifier_secret_file"),
     ("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", "entitlement_route_verifier_secret_file"),
@@ -200,13 +204,13 @@ ENTITLEMENT_SECRET_FILES: tuple[tuple[str, str], ...] = (
 STRICT_BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
 
 
-def _file_size(path: str, *, expand: bool) -> int | None:
-    """Byte size of an existing regular file, else None. Metadata only.
+def _regular_file(path: str, *, expand: bool) -> pathlib.Path | None:
+    """The configured path when it names an existing regular file, else None.
 
     `expand` mirrors the caller startup uses: _read_secret_file expands `~`,
     the DSN-file check in configured_provider_budget_routing does not. Any
-    filesystem error (permission, race with removal) reads as unavailable
-    rather than escaping: a traceback here would print the configured path.
+    failure (permission, a race with removal, an unresolvable `~user`) reads
+    as unavailable rather than escaping: a traceback would print the path.
     """
 
     if not path:
@@ -215,11 +219,67 @@ def _file_size(path: str, *, expand: bool) -> int | None:
         resolved = pathlib.Path(path)
         if expand:
             resolved = resolved.expanduser()
-        if not resolved.is_file():
-            return None
+        return resolved if resolved.is_file() else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _file_size(path: str, *, expand: bool) -> int | None:
+    """Byte size of an existing regular file, else None. Metadata only."""
+
+    resolved = _regular_file(path, expand=expand)
+    if resolved is None:
+        return None
+    try:
         return resolved.stat().st_size
     except OSError:
         return None
+
+
+def _dsn_file_problem(path: str) -> str | None:
+    """Why startup would refuse the entitlement DSN file, or None.
+
+    Mirrors configured_provider_budget_routing (existing file, at most 65536
+    bytes) and the first two rules of _parse_connection_target on the stripped
+    contents (non-empty, no interior line break). The contents are never
+    returned; the full conninfo parse is left to startup.
+    """
+
+    size = _file_size(path, expand=False)
+    if size is None or size > ENTITLEMENT_DSN_FILE_LIMIT:
+        return f"must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"
+    try:
+        text = _regular_file(path, expand=False).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError, AttributeError):
+        return "must be readable as UTF-8 connection info"
+    if not text:
+        return "must not be empty"
+    if "\n" in text or "\r" in text:
+        return "must be one line of connection info"
+    return None
+
+
+def _secret_file_problem(path: str) -> str | None:
+    """Why startup would refuse an entitlement secret file, or None.
+
+    Mirrors _read_secret_file and _validate_secret_material exactly: an
+    existing file (after `~` expansion) whose stripped UTF-8 text is at least
+    32 bytes with at least 16 distinct byte values. The material is read only
+    to apply that rule and is never returned or logged.
+    """
+
+    resolved = _regular_file(path, expand=True)
+    if resolved is None:
+        return "must name an existing file"
+    try:
+        material = resolved.read_text(encoding="utf-8").strip().encode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "must be readable as UTF-8 text"
+    if not material:
+        return "must not be empty"
+    if len(material) < ENTITLEMENT_SECRET_MINIMUM_BYTES or len(set(material)) < ENTITLEMENT_SECRET_MINIMUM_DISTINCT:
+        return f"must hold at least {ENTITLEMENT_SECRET_MINIMUM_BYTES} bytes of nontrivial entropy"
+    return None
 
 
 def _github_app_credential_malformed(settings: Settings) -> bool:
@@ -365,19 +425,20 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
                 )
             )
 
+    # The dependent checks run whether or not the plane is enabled: this script
+    # exists to report every prerequisite in one pass, not one enable later.
     stage = "entitlement control plane"
     if not settings.entitlement_control_plane_enabled:
         problems.append((stage, "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
-    else:
-        dsn_size = _file_size(settings.entitlement_postgres_dsn_file, expand=False)
-        if dsn_size is None or dsn_size > ENTITLEMENT_DSN_FILE_LIMIT:
-            problems.append((stage, f"ENTITLEMENT_POSTGRES_DSN_FILE must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"))
-        for name, attribute in ENTITLEMENT_SECRET_FILES:
-            size = _file_size(getattr(settings, attribute), expand=True)
-            if size is None or size < ENTITLEMENT_SECRET_FILE_MINIMUM:
-                problems.append((stage, f"{name} must name an existing file of at least {ENTITLEMENT_SECRET_FILE_MINIMUM} bytes; startup also checks its entropy"))
-        if not ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or ""):
-            problems.append((stage, "ENTITLEMENT_POSTGRES_SCHEMA must match [a-z0-9_]+_v<N>"))
+    dsn_problem = _dsn_file_problem(settings.entitlement_postgres_dsn_file)
+    if dsn_problem is not None:
+        problems.append((stage, f"ENTITLEMENT_POSTGRES_DSN_FILE {dsn_problem}"))
+    for name, attribute in ENTITLEMENT_SECRET_FILES:
+        secret_problem = _secret_file_problem(getattr(settings, attribute))
+        if secret_problem is not None:
+            problems.append((stage, f"{name} {secret_problem}"))
+    if not ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or ""):
+        problems.append((stage, "ENTITLEMENT_POSTGRES_SCHEMA must match [a-z0-9_]+_v<N>"))
 
     slack_configured = bool(settings.slack_bot_token)
     github_configured = bool(settings.oracle_github_credential_configured())

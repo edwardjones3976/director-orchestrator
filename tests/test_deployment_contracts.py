@@ -463,7 +463,10 @@ process.stdout.write(JSON.stringify({outputs, store}));
             recovery,
         )
 
-    def _health_activation(self, *, capabilities=None, adapters=None, bridge_challenge=None):
+    def _health_activation(self, *, capabilities=None, adapters=None, bridge_challenge=None, ready=None):
+        """A stand-in activation. `ready` is the set of lanes the activation
+        service currently reports provider_ready(lane, live=True) for; None
+        models a deployment without an activation service (nothing is live)."""
         from unittest.mock import MagicMock
 
         activation = MagicMock()
@@ -471,6 +474,13 @@ process.stdout.write(JSON.stringify({outputs, store}));
         activation.live_dependencies.capabilities = capabilities or {}
         activation.live_dependencies.adapters = adapters or {}
         activation.live_dependencies.bridge_challenge = bridge_challenge
+        if ready is None:
+            activation.provider_activation = None
+        else:
+            activation.provider_activation = MagicMock()
+            activation.provider_activation.provider_ready = (
+                lambda provider_id, *, live: live and provider_id in ready
+            )
         return activation
 
     @staticmethod
@@ -538,9 +548,14 @@ process.stdout.write(JSON.stringify({outputs, store}));
             "antigravity": capability("antigravity", False, False),
         }
         # antigravity is dispatched through a composed (team) adapter although
-        # no local executable was observed.
-        adapters = {"openai": object(), "antigravity": object()}
-        data = self._health(self._health_activation(capabilities=capabilities, adapters=adapters))
+        # no local executable was observed; claude is installed and callable
+        # but outside the composed adapter set (not a required provider).
+        capabilities["claude"] = capability("claude", True, True)
+        adapters = {"openai": object(), "antigravity": object(), "cursor": object()}
+        activation = self._health_activation(
+            capabilities=capabilities, adapters=adapters, ready={"openai", "antigravity"}
+        )
+        data = self._health(activation)
         lanes = data["providers"]["lanes"]
         self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
         for lane in lanes.values():
@@ -550,7 +565,14 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertEqual(lanes["claude"], {"configured": True, "live_ready": False})
         self.assertEqual(lanes["openai"], {"configured": True, "live_ready": True})
         self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": True})
+        # routed, but the activation service does not currently report it live
+        self.assertEqual(lanes["cursor"], {"configured": True, "live_ready": False})
         self.assertEqual(lanes["github-copilot"], {"configured": False, "live_ready": False})
+
+        # Without an activation service nothing is live, whatever is routed.
+        lanes = self._health(self._health_activation(capabilities=capabilities, adapters=adapters))["providers"]["lanes"]
+        self.assertEqual(lanes["openai"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": False})
 
         for activation in (None, self._health_activation()):
             if activation is not None:

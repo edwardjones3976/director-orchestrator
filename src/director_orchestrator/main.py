@@ -493,7 +493,18 @@ def health() -> dict:
     # dependencies were built; /health never re-challenges (no I/O per request).
     if primary_default_activation is not None and primary_default_activation.live_dependencies is not None:
         deps = primary_default_activation.live_dependencies
-        providers_ready["lanes"] = provider_lane_detail(deps.capabilities, routed=tuple(deps.adapters))
+        routed = tuple(deps.adapters)
+        # live_ready applies the gate dispatch applies: the activation service's
+        # current per-provider evidence. Without the service nothing is live.
+        activation_service = primary_default_activation.provider_activation
+        dispatchable = tuple(
+            lane for lane in routed
+            if activation_service is not None
+            and activation_service.provider_ready(lane, live=True)
+        )
+        providers_ready["lanes"] = provider_lane_detail(
+            deps.capabilities, routed=routed, dispatchable=dispatchable
+        )
         host_bridge_ready = {
             "configured": host_bridge_configured,
             "startup_challenge_ok": deps.bridge_challenge is not None,

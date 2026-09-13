@@ -172,23 +172,35 @@ Reported following main.py's order, additionally running the runtime validator w
    `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
    `CLAUDE_CALLBACK_SECRET`, as listed above.
 9. **Subsystem readiness**, evaluated last, mirroring what live startup
-   requires without connecting to anything: the entitlement control plane
-   (`ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true; the DSN file must exist
-   and be at most 65536 bytes; each of the three secret files must exist and
-   hold at least 32 bytes; the schema must match `[a-z0-9_]+_v<N>` — only file
-   metadata is consulted, contents are never read, material entropy is
-   still verified at startup, a filesystem error reads as an unavailable file,
-   and the DSN path is taken literally while `~` is expanded for the secret
-   files, exactly as their startup readers do), the effect gateways
-   (`SLACK_BOT_TOKEN` or a GitHub credential; when the registry would build
-   the GitHub App gateway, its credential must also pass the constructor's
-   local syntax checks: numeric ids, strict base64 private key — an incomplete
-   App configuration is skipped by startup and therefore not reported), and
-   the host provider bridge (endpoint/secret configuration
-   booleans only; the pairing rule is reported by the langgraph-primary
-   validator above). `/health.providers.lanes.<lane>` reports `configured`
-   (an executable was observed, or the lane has a composed adapter such as the
-   Antigravity team route) and `live_ready` (callable, or routed), booleans only.
+   requires without connecting to anything. The entitlement control plane:
+   `ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true, and its dependent checks
+   run whether or not it is (one pass reports everything): the DSN file must
+   exist at the literal configured path, be at most 65536 bytes and, stripped,
+   be one non-empty line (the full psycopg parse happens at startup); each of
+   the three secret files must exist after `~` expansion and, stripped, hold
+   at least 32 UTF-8 bytes with at least 16 distinct byte values — the same
+   rule `_read_secret_file` applies; the schema must match `[a-z0-9_]+_v<N>`.
+   File contents are read only to apply those rules and never reach the
+   output; any filesystem or `~user` expansion failure reads as an unavailable
+   file. The effect gateways: `SLACK_BOT_TOKEN` or a GitHub credential; when
+   the registry would build the GitHub App gateway, its credential must also
+   pass the constructor's local syntax checks (numeric ids, strict base64
+   private key) — an incomplete App configuration is skipped by startup and
+   therefore not reported. The host provider bridge: endpoint/secret
+   configuration booleans only; the pairing rule is reported by the
+   langgraph-primary validator above.
+
+   `/health.providers.lanes.<lane>` reports two booleans. `configured` is a
+   startup observation: an executable was observed for the lane, or the lane
+   has a composed adapter (the Antigravity team route dispatches without a
+   local executable; an installed lane outside
+   `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS` has no adapter). `live_ready` is the
+   gate dispatch itself applies: the lane has a composed adapter and the
+   activation service currently reports `provider_ready(lane, live=True)`, so
+   a lapsed `LIVE_OK` capture flips it to false on the next read; without an
+   activation service nothing is live. A binary or login that disappears after
+   startup is not re-probed by `/health` (dispatch would fail the same way);
+   that liveness belongs to a bounded monitor, not the health endpoint.
 
 ### Mutual exclusions and pairings
 

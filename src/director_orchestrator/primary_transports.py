@@ -1251,17 +1251,25 @@ def provider_lane_detail(
     capabilities: Mapping[str, PrimaryProviderCapability],
     required_providers: tuple[str, ...] = PRIMARY_PROVIDER_LANES,
     routed: Collection[str] = (),
+    dispatchable: Collection[str] | None = None,
 ) -> dict[str, dict[str, bool]]:
     """Return configured and live_ready booleans for each lane.
 
-    configured: an executable was observed for the lane, or the lane has a
-    composed adapter (``routed``: the keys of the live dependencies' adapter
-    map, which is how a team-routed lane such as antigravity is dispatched
-    without a local executable). live_ready: the local capability is callable,
-    or the lane is routed. Booleans only; no command paths or credentials.
+    configured (a startup observation): an executable was observed for the
+    lane, or the lane has a composed adapter (``routed``: the keys of the live
+    dependencies' adapter map, which is how a team-routed lane such as
+    antigravity is dispatched without a local executable, and which excludes
+    installed lanes outside LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS).
+
+    live_ready: the lane is routed AND, when ``dispatchable`` is given, is in
+    it. Callers pass the lanes the activation service currently reports
+    ``provider_ready(lane, live=True)`` for, the same gate dispatch applies,
+    so a lapsed LIVE_OK capture flips this to false; an installed-but-unrouted
+    lane is never live-ready. Booleans only; no command paths or credentials.
     """
 
     routed_lanes = frozenset(routed)
+    dispatchable_lanes = None if dispatchable is None else frozenset(dispatchable)
     detail: dict[str, dict[str, bool]] = {}
     for provider_id in required_providers:
         capability = capabilities.get(provider_id)
@@ -1269,7 +1277,9 @@ def provider_lane_detail(
         is_routed = provider_id in routed_lanes
         detail[provider_id] = {
             "configured": bool((observed and capability.executable_observed) or is_routed),
-            "live_ready": bool((observed and capability.callable) or is_routed),
+            "live_ready": bool(
+                is_routed and (dispatchable_lanes is None or provider_id in dispatchable_lanes)
+            ),
         }
     return detail
 
