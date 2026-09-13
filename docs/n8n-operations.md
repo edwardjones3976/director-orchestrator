@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]] -->
 <!-- [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
@@ -200,8 +201,7 @@ empty array when nothing changed — which ends the execution without posting.
 been quiet for a day is not a broken workflow.
 
 **It speaks anyway** — regardless of change — on three conditions: the health
-endpoint is unreachable, `ambiguous_effect_count` is above zero, or the parallel
-dispatch kill switch is engaged. The ambiguous-effects alarm matters most:
+endpoint is unreachable, `ambiguous_effect_count` is above zero, or the parallel dispatch kill switch is engaged while parallel dispatch is enabled. An engaged switch with parallel dispatch disabled is the expected offline posture: it posts once as a readiness change and is then silent. The ambiguous-effects alarm matters most:
 rollback is refused while that count is non-zero.
 
 **Every watched key is verified against the `/health` builder in `main.py`.**
@@ -211,7 +211,7 @@ rollback is refused while that count is non-zero.
 absent from that disabled-path literal. The kill switch is
 `parallel_dispatch.kill_switch_open`, from `parallel_dispatch_health_readiness()`
 — **not** a `langgraph_primary` key, and its polarity is inverted: *open* means
-the switch is not engaged, so the alarm fires on `false`.
+the switch is not engaged, so the alarm fires on `false`. Its companion `parallel_dispatch.enabled` comes from the same builder and gates the alarm.
 
 `/health` returns readiness booleans only, but the whitelist means a future field
 cannot leak into Slack without someone adding it deliberately.
@@ -329,3 +329,4 @@ means the request was accepted for planning — not that any work was done.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:43 UTC | END]] -->
 <!-- [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]] -->
