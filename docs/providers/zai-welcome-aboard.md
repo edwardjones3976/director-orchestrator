@@ -40,4 +40,18 @@ controls (normal tolerance ±3 points; hard ceiling target +5 points).
 The initial integration is a tools-disabled packet trial: propose code in your answer;
 the local test harness validates it. Do not claim you ran shell commands. This document
 is injected into every trial call; it is not a claim of persistent provider memory.
+
+## Integration status and operator entry point
+
+`director_orchestrator.zai_trial.build_zai_trial_adapter` wraps the trial transport
+in Director's existing `PacketBoundaryAdapter`. `scripts/zai-lite-smoke.py` runs the
+single owner-invoked fixture using explicit environment-file, executable and evidence
+directory arguments plus an observed-Lite-entitlement acknowledgment. The caller must
+reuse the same evidence directory; never change it to bypass an attempt reservation.
+
+This is a manual fixture adapter, not an enrolled production or general-assignment
+route. Its attempt receipt does not replace the canonical rolling allocation ledger.
+General assignments require the new allocation policy, canonical admission, stable
+journal binding, independent review and applicable activation checks. Tools are disabled
+by client configuration; this is not a claim of an OS security sandbox.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]] -->

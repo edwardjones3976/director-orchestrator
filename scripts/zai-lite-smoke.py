@@ -8,8 +8,14 @@ import time
 from pathlib import Path
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
-from director_orchestrator.packet_contracts import document_digest
+from director_orchestrator.packet_contracts import document_digest, PacketContractError
 from director_orchestrator.zai_trial import build_zai_trial_adapter
+
+
+def require_success(result):
+    if (result["status"] != "SUCCEEDED" or result["blockers"] or
+            result["requested_decisions"] or result["revision_recommended"]):
+        raise ValueError("Provider result is not an unblocked success")
 
 
 def main():
@@ -21,6 +27,8 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip():
+        raise ValueError("Commit the candidate before running a source-bound live test")
     blob = subprocess.check_output(["git", "rev-parse", "HEAD:AGENTS.md"], cwd=root, text=True).strip()
     work = json.loads((root / "docs/schemas/model-work-packet-v1.example.json").read_text())
     work.update(task_id="DIR-ZAI-LITE-ONBOARDING", assignment_id="DIR-ZAI-LITE-ONBOARDING-1",
@@ -49,6 +57,7 @@ def main():
         adapter = build_zai_trial_adapter(executable=args.executable, env_file=args.env_file,
                     journal=args.evidence_dir / "attempts", model="glm-5.3-flash", lite_verified=True)
         result = adapter.dispatch(work, context=context)
+        require_success(result)
         # Validate source shape before executing the fixed, tiny arithmetic fixture.
         tree = ast.parse(result["outcome"])
         expected = ast.parse("def add(a, b): return a + b")
@@ -64,6 +73,8 @@ def main():
         # Exceptions may contain provider output; report the type only.
         report.update(status="FAIL", error_type=type(exc).__name__,
                       detail="Attempt retained. No automatic retry or general-API fallback.")
+        if isinstance(exc, PacketContractError):
+            report["contract_error"] = str(exc)
     report["elapsed_seconds"] = round(time.monotonic() - start, 3)
     (args.evidence_dir / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items() if k != "result"}, indent=2))

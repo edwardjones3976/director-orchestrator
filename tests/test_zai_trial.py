@@ -1,7 +1,9 @@
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 import json
 import sys
+import runpy
 import unittest
+from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -67,6 +69,16 @@ class ZaiTrialTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_zai_trial_adapter(**dict(self.kw, lite_verified=False))
 
+    def test_smoke_refuses_failed_or_blocked_results(self):
+        check = runpy.run_path(str(ROOT / "scripts/zai-lite-smoke.py"))["require_success"]
+        good = dict(status="SUCCEEDED", blockers=[], requested_decisions=[], revision_recommended=False)
+        check(good)
+        for change in (dict(status="FAILED"), dict(status="OWNER_DECISION_REQUIRED"),
+                       dict(blockers=["blocked"]), dict(requested_decisions=["approve"]),
+                       dict(revision_recommended=True)):
+            with self.assertRaises(ValueError):
+                check(dict(good, **change))
+
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_invalid_packet_never_dispatches(self, run):
         self.work.pop("objective")
@@ -101,6 +113,30 @@ class ZaiTrialTests(unittest.TestCase):
             adapter.dispatch(self.work, context=self.context)
         with self.assertRaises(FileExistsError):
             adapter.dispatch(self.work, context=self.context)
+
+    @patch("director_orchestrator.zai_trial.datetime")
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_expired_trial_never_dispatches(self, run, clock):
+        clock.now.return_value = datetime(2026, 9, 29, 7, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        run.assert_not_called()
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_invalid_result_retains_sanitized_diagnostic(self, run):
+        run.return_value = (0, json.dumps({"session_id": "trial-1", "subtype": "success",
+            "result": json.dumps({"outcome": "test.secret", "checks": [42]})}).encode())
+        with self.assertRaises(ValueError):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        receipt = next((self.root / "journal").glob("*.result.json")).read_text()
+        self.assertNotIn("test.secret", receipt)
+        self.assertIn("[REDACTED]", receipt)
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_native_error_does_not_become_success(self, run):
+        run.return_value = (0, b'{"subtype":"error_max_turns","session_id":"x","result":"text"}')
+        with self.assertRaises(RuntimeError):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from pathlib import Path
 from .langgraph_runtime import PacketBoundaryAdapter
 from .native_acceptance_capture import child_environment, pin_native_home, run_bounded
 from .primary_transports import normalize_native_provider_envelope
+from .packet_contracts import validate_packet
 
 ENDPOINT = "https://api.z.ai/api/anthropic"
 TRIAL_END = datetime(2026, 9, 29, 7, tzinfo=timezone.utc)
@@ -85,6 +86,12 @@ class ZaiLiteTrialTransport:
         result["usage"] = None
         if result["side_effects"]:
             raise RuntimeError("Tools-disabled trial reported external effects")
+        # Preserve a receipt before outer linkage validation; never dump native auth
+        # errors or host CLI dollar estimates into the project evidence.
+        safe_result = json.loads(json.dumps(result).replace(self.key, "[REDACTED]"))
+        with attempt.with_suffix(".result.json").open("x", encoding="utf-8") as out:
+            json.dump(safe_result, out)
+        validate_packet("result", result)
         return result
 
 
