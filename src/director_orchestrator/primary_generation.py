@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -197,14 +198,20 @@ def main():
     from .langgraph_postgres import database_binding
     from .primary_activation_evidence import ActivationIdentity
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "reserve", "compose-digest", "validate-providers"))
+    parser.add_argument("command", choices=("verify", "reserve", "compose-digest", "validate-providers", "publish-provider-evidence"))
     parser.add_argument("--image-id")
+    parser.add_argument("--evidence-file")
     args = parser.parse_args()
+    if bool(args.evidence_file) != (args.command == "publish-provider-evidence"):
+        parser.error("--evidence-file is required only for publish-provider-evidence")
     if args.command == "compose-digest":
         import sys
         print(resolved_deployment_digest(json.load(sys.stdin), args.image_id))
         return
     settings = Settings()
+    if args.command == "publish-provider-evidence":
+        from .primary_provider_evidence import require_runtime_off
+        require_runtime_off(settings)
     identity, instance = database_binding(settings.langgraph_primary_postgres_dsn,
         schema=settings.langgraph_primary_postgres_schema,
         allow_insecure_local_transport=settings.langgraph_primary_allow_insecure_local_postgres)
@@ -212,6 +219,10 @@ def main():
         settings.langgraph_primary_pinned_tree_sha, settings.app_env,
         os.environ.get("DIRECTOR_COMPOSE_PROJECT_NAME", ""), identity, instance,
         settings.langgraph_primary_postgres_schema, settings.langgraph_primary_checkpoint_namespace)
+    if args.command == "publish-provider-evidence":
+        from .primary_provider_evidence import publish_file
+        print(json.dumps(publish_file(args.evidence_file, settings=settings, identity=expected), sort_keys=True))
+        return
     require_generation(settings, expected, reserve=args.command == "reserve")
     if args.command == "validate-providers":
         from .primary_activation_evidence import ActivationEvidenceStore
@@ -236,3 +247,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]

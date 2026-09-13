@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -23,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "PrepareOfflineHandoff", "ValidateProviders", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "PrepareOfflineHandoff", "ValidateProviders", "PublishProviderEvidence", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
     [string]$Action,
     [string]$EnvironmentFile,
     [string]$ComposeProject,
@@ -33,6 +34,7 @@ param(
     [string]$IndependentReviewerAllowlistJson,
     [string]$BackupPath,
     [string]$AcceptanceArtifactPath,
+    [string]$ProviderEvidencePath,
     [string]$GenerationManifestPath,
     [string]$GenerationManifestSha256,
     [string]$GitHubRepository,
@@ -45,6 +47,9 @@ Set-StrictMode -Version Latest
 Set-Location (Split-Path -Parent $PSScriptRoot)
 if ($Action -cne "SelectGeneration" -and ($GenerationManifestPath -or $GenerationManifestSha256)) {
     throw "Generation selection inputs are valid only for SelectGeneration."
+}
+if (($Action -ceq "PublishProviderEvidence") -ne (-not [string]::IsNullOrWhiteSpace($ProviderEvidencePath))) {
+    throw "ProviderEvidencePath is required only for PublishProviderEvidence."
 }
 
 function Read-DotEnv {
@@ -791,6 +796,24 @@ if ($Action -eq "ValidateProviders") {
     return
 }
 
+if ($Action -eq "PublishProviderEvidence") {
+    Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"
+    $primary = (Wait-Health).langgraph_primary
+    if (-not $primary.staged_ready -or -not $primary.evidence_only -or $primary.primary_runtime_active) {
+        throw "Evidence publication requires the exact evidence-only staged service."
+    }
+    $source = Get-Item -LiteralPath $ProviderEvidencePath
+    if ($source.PSIsContainer -or $source.Length -gt 131072 -or $source.Length -eq 0) {
+        throw "Provider evidence must be a bounded JSON file."
+    }
+    $providerEvidence = $source.FullName
+    Invoke-Compose run --rm --no-deps --pull never -T `
+        -v "${providerEvidence}:/run/director-provider-evidence.json:ro" `
+        --entrypoint python orchestrator -m director_orchestrator.primary_generation publish-provider-evidence `
+        --evidence-file /run/director-provider-evidence.json
+    return
+}
+
 if ($Action -eq "PrepareOfflineHandoff") {
     Invoke-Evidence -Command require-staged
     Stop-And-Prove-AllIntake
@@ -871,3 +894,4 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
