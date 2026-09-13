@@ -1,4 +1,4 @@
-<!-- [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | BEGIN]] -->
+<!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]] -->
 # OpenAI Responses validation route
 
 Provider validation for `openai` previously always constructed
@@ -38,4 +38,4 @@ JSONL remains the native-host dialect.
   capture/validation route that can produce qualifying Responses evidence.
 - Full CI and independent non-author review remain required.
 
-<!-- [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | END]] -->
+<!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]] -->

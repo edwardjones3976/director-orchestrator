@@ -1,4 +1,4 @@
-# [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | BEGIN]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
 """Explicit OpenAI Responses validation/capture route for LIVE_OK evidence.
 
 Native Codex host validation remains the default Windows bridge path and still
@@ -130,4 +130,4 @@ def normalize_openai_responses_capture(work: Mapping, raw: bytes, *, expected_mo
         "cost_usd": None,
     }
     return validate_packet("result", result)
-# [[Grok Bot | Crock Bot | UNKNOWN model/session/charges | 2026-09-13 | END]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
