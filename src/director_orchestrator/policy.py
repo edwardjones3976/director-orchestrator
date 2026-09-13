@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -915,10 +916,9 @@ def execution_policy_errors(plan: DirectorPlan, settings: Settings) -> list[str]
     allowed_refs = set(settings.allowed_starting_refs)
     for assignment in plan.assignments:
         # IMPLEMENTATION is admitted so OpenAI can hold the integrator role the
-        # Antigravity consumer gate requires (owner decision, 2026-09-08 UTC:
-        # every Antigravity output is proofread by OpenAI, Claude, Cursor, or
-        # Grok, and `_is_antigravity_consumer` types that assignment
-        # IMPLEMENTATION). This gate is the residue of a blanket "OpenAI is the
+        # restricted Antigravity fixture consumer gate requires:
+        # `_is_antigravity_consumer` types the independently assigned verifier
+        # as IMPLEMENTATION. This contact-specific gate is the residue of a blanket "OpenAI is the
         # Director runtime and cannot be an assignment target" ban, already
         # relaxed once when OpenAI became an allocated primary lane; it is a
         # role-typing rule, not the no-self-review bar. Self-review stays barred
@@ -1556,3 +1556,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

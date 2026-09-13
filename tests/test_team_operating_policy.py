@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -565,7 +566,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
     def test_director_duties_are_separate_from_direct_production_share(self):
         self.assertEqual(self.directive["workload_policy_version"], "capacity-allocation-v1")
-        self.assertEqual(self.directive["director"], "claude")
+        self.assertEqual(self.directive["director"], "openai")
         self.assertTrue(
             self.directive["duties_excluded_from_direct_production_share"]
         )
@@ -594,7 +595,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "primary_full_spectrum",
+            "chatgpt_codex_director_lane",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],
@@ -2133,3 +2134,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

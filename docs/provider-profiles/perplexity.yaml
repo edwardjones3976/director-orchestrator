@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | BEGIN]]
 # Provider profile sheet: Perplexity (director-provider-profile/v1).
@@ -38,7 +39,7 @@ roles:
   summary: "Evidence-only research specialist under the strict public research contract: methodological, theoretical, source-discovery, fact-verification, user-review, and competitor research on one owner-approved bounded public query. Output is untrusted evidence that OpenAI or another authorized primary-team member must evaluate before it influences anything."
   charter_workload_lane: "public_research_evidence_only"
   strategy_key: "perplexity"
-  strategy_priority: "optional_current_research_specialist"
+  strategy_priority: "optional_public_research"
   eligible_responsibility_areas: [research, evidence_verification]
   excluded_responsibility_areas: [programming]
   eligible_complexity: []
@@ -255,3 +256,4 @@ sources:
     anchor: "role: \"evidence_only_research_specialist\""
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

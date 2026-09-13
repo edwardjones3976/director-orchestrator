@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]]
@@ -210,15 +213,27 @@ _DRY_RUN_PREVIEW_MESSAGE = (
 )
 _OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
-_STANDING_PROVIDER_ROLES = {
-    ProviderName.OPENAI: "Chief Programmer",
-    ProviderName.CLAUDE: "Director",
-    ProviderName.CURSOR: "Project Secretary",
-    ProviderName.GEMINI: "Specialist and Backup Programmer",
-    ProviderName.GROK: "Cursor-Family Primary Teammate",
+_STANDING_PROVIDER_LABELS = {
+    ProviderName.OPENAI: "ChatGPT/Codex Director",
+    ProviderName.CLAUDE: None,
+    ProviderName.CURSOR: None,
+    ProviderName.GEMINI: None,
+    ProviderName.GROK: None,
     ProviderName.PERPLEXITY: "Research Programmers",
+    ProviderName.FIRECRAWL: "Authorized public web retrieval",
+    ProviderName.OWNER: None,
+}
+_PROVIDER_LABELS = {
+    ProviderName.OPENAI: "ChatGPT/Codex",
+    ProviderName.CLAUDE: "Claude",
+    ProviderName.CURSOR: "Cursor",
+    ProviderName.GEMINI: "Gemini Antigravity",
+    ProviderName.GROK: "Grok",
+    ProviderName.PERPLEXITY: "Perplexity",
+    ProviderName.FIRECRAWL: "Firecrawl",
     ProviderName.OWNER: "Owner",
 }
+_STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS
 
 _TRUSTED_ROUTING_CAPABILITIES: dict[
     WorkloadProvider, frozenset[WorkloadKind]
@@ -404,6 +419,7 @@ class OrchestrationEngine:
         self.oracle_merge_service = oracle_merge_service
         self.director = build_director(settings, claude_transport=claude_transport)
         self._runtime_director_identity = DirectorIdentity(
+            acting_project_director=team_operating_charter()["director_operating_directive"]["director"],
             provider=self.director.provider.value,
             transport=self.director.transport,
             model_name=self.director.model_name,
@@ -3154,7 +3170,8 @@ class OrchestrationEngine:
             },
             "provider_identity": {
                 "provider": assignment.agent.value,
-                "standing_role": _STANDING_PROVIDER_ROLES[assignment.agent],
+                "standing_role": _STANDING_PROVIDER_LABELS[assignment.agent],
+                "provider_label": _PROVIDER_LABELS[assignment.agent],
             },
             "current_assignment": {
                 "sequence": assignment.sequence,
@@ -4091,7 +4108,7 @@ class OrchestrationEngine:
             return await self._publish_openai_debate_preamble(record, preamble_turns)
         assignments = {item.sequence: item for item in record.plan.assignments}
         roles = ", ".join(
-            f"{item.agent.value} ({_STANDING_PROVIDER_ROLES[item.agent]})=assignment-{item.sequence}"
+            f"{item.agent.value} ({_STANDING_PROVIDER_LABELS[item.agent] or _PROVIDER_LABELS[item.agent]})=assignment-{item.sequence}"
             for item in sorted(assignments.values(), key=lambda candidate: candidate.sequence)
         )
         debate_limits = (
@@ -4103,7 +4120,7 @@ class OrchestrationEngine:
         message = (
             f"*[Director] {record.task_id} — COLLABORATION START*\n"
             f"Objective: {self._slack_safe_text(record.plan.normalized_outcome, limit=1_000)}\n"
-            f"Roles: {roles}; OpenAI (Director)=delegation/acceptance"
+            f"Lanes: {roles}; OpenAI (Codex/ChatGPT Director lane)=delegation/acceptance"
             + ("/synthesis" if debate else "")
             + "; Perplexity=evidence only\n"
             f"Limits: {record.plan.max_hops} hops; {record.plan.max_revisions} revisions; "
@@ -4428,7 +4445,7 @@ class OrchestrationEngine:
                 client_msg_id=self._slack_client_id(correlation_id),
                 contributor=(
                     f"{existing.provider.value} "
-                    f"({_STANDING_PROVIDER_ROLES[existing.provider]})"
+                    f"({_STANDING_PROVIDER_LABELS[existing.provider] or _PROVIDER_LABELS[existing.provider]})"
                 ),
                 system_label=f"{existing.provider.value}-provider-run/{run_digest}",
                 contribution_at=existing.recorded_at,
@@ -6999,3 +7016,6 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
