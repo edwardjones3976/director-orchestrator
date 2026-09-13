@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 """Explicit Lite-only, tools-disabled trial route; never a production registration."""
@@ -83,11 +84,18 @@ class ZaiLiteTrialTransport:
                        ANTHROPIC_DEFAULT_OPUS_MODEL=self.model,
                        ANTHROPIC_DEFAULT_SONNET_MODEL=self.model,
                        ANTHROPIC_DEFAULT_HAIKU_MODEL=self.model,
-                       API_TIMEOUT_MS=str(context.timeout_seconds * 1000))
+                       API_TIMEOUT_MS=str(context.timeout_seconds * 1000),
+                       CLAUDE_CODE_MAX_OUTPUT_TOKENS="2000", MAX_THINKING_TOKENS="0")
             command = [str(self.executable), "--print", "--safe-mode",
                        "--setting-sources", "", "--strict-mcp-config",
                        "--mcp-config", '{"mcpServers":{}}', "--tools", "",
                        "--no-session-persistence", "--max-turns", "1",
+                       "--effort", "low", "--system-prompt",
+                       "You are Z.ai serving the Director. Follow the supplied welcome packet. "
+                       "Return exactly one JSON object with string outcome and status. "
+                       "Use SUCCEEDED only when the requested artifact is complete. "
+                       "Put all code in outcome; never append examples outside the JSON. "
+                       "No tools, external effects, or invented test execution.",
                        "--model", self.model, "--output-format", "json"]
             code, raw = run_bounded(command, cwd=home, env=env, stdin=prompt,
                                     timeout=context.timeout_seconds, limit=1048576)
@@ -96,6 +104,20 @@ class ZaiLiteTrialTransport:
         native = json.loads(raw)
         if native.get("is_error") or native.get("subtype") != "success":
             raise RuntimeError("Z.ai did not return terminal success")
+        # Native completion is not contract acceptance. Preserve it for diagnosis.
+        with attempt.with_suffix(".native.json").open("x", encoding="utf-8") as out:
+            json.dump(redact_bound_key(native, self.key), out)
+        payload = native.get("structured_output", native.get("result"))
+        if isinstance(payload, str):
+            text = payload.strip()
+            # Accept one complete JSON fence, never discard trailing content.
+            if text.startswith("```json\n") and text.endswith("\n```") and text.count("```") == 2:
+                text = text[8:-4]
+            payload = json.loads(text)
+        if (not isinstance(payload, dict) or not isinstance(payload.get("outcome"), str)
+                or payload.get("status") not in {"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"}):
+            raise ValueError("Z.ai terminal output must contain explicit outcome and status")
+        native = dict(native, structured_output=payload)
         result = normalize_native_provider_envelope("zai", work, native)
         # Host CLI dollar estimates use Anthropic tariffs, not this subscription.
         result["usage"] = None
@@ -114,3 +136,5 @@ def build_zai_trial_adapter(**kwargs):
     return PacketBoundaryAdapter("zai", ZaiLiteTrialTransport(**kwargs))
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]

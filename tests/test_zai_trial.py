@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 import json
@@ -62,6 +63,9 @@ class ZaiTrialTests(unittest.TestCase):
         sent = run.call_args.kwargs
         assert_isolated_command(self, run.call_args.args[0])
         self.assertEqual(sent["env"]["ANTHROPIC_BASE_URL"], ENDPOINT)
+        self.assertEqual(sent["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "2000")
+        self.assertIn("--system-prompt", run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--effort") + 1], "low")
         self.assertNotIn("OTHER_KEY", sent["env"])
         self.assertNotIn("ANTHROPIC_API_KEY", sent["env"])
         self.assertIn(b"Welcome aboard, Z.ai", sent["stdin"])
@@ -94,7 +98,7 @@ class ZaiTrialTests(unittest.TestCase):
         self.env.write_text("ZAI_API_KEY=" + key + "\n")
         text = "plain=" + key + "; embedded=" + json.dumps({"key": key})
         run.return_value = (0, json.dumps({"session_id": "trial-1", "subtype": "success",
-            "result": json.dumps({"outcome": text, "checks": [{"nested": [text]}]})}).encode())
+            "result": json.dumps({"outcome": text, "status": "SUCCEEDED", "checks": [{"nested": [text]}]})}).encode())
         with self.assertRaises(ValueError):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
         diagnostic = json.loads(next((self.root / "journal").glob("*.result.json")).read_text())
@@ -172,7 +176,7 @@ class ZaiTrialTests(unittest.TestCase):
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_invalid_result_retains_sanitized_diagnostic(self, run):
         run.return_value = (0, json.dumps({"session_id": "trial-1", "subtype": "success",
-            "result": json.dumps({"outcome": "test.secret", "checks": [42]})}).encode())
+            "result": json.dumps({"outcome": "test.secret", "status": "SUCCEEDED", "checks": [42]})}).encode())
         with self.assertRaises(ValueError):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
         receipt = next((self.root / "journal").glob("*.result.json")).read_text()
@@ -186,8 +190,29 @@ class ZaiTrialTests(unittest.TestCase):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
 
 
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_single_json_fence_preserves_failed_status(self, run):
+        native = json.loads(self.native()[1])
+        native["result"] = '```json\n{"outcome":"Unable to complete", "status":"FAILED"}\n```'
+        run.return_value = (0, json.dumps(native).encode())
+        result = build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        self.assertEqual(result["status"], "FAILED")
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_prose_and_missing_status_do_not_become_success(self, run):
+        for index, payload in enumerate(('```json\n{"outcome":"x","status":"SUCCEEDED"}\n``` trailing',
+                                          '{"outcome":"no status"}', 'plain code')):
+            native = json.loads(self.native()[1])
+            native["result"] = payload
+            run.return_value = (0, json.dumps(native).encode())
+            with self.assertRaises(ValueError):
+                build_zai_trial_adapter(**dict(self.kw, journal=self.root / str(index))).dispatch(self.work, context=self.context)
+            self.assertTrue(list((self.root / str(index)).glob('*.native.json')))
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]
 
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]
