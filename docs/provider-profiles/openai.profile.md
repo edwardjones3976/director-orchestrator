@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -163,7 +164,8 @@ Strengths:
 | --- | --- | --- | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | credential_presence | - | `openai_director` | yes | GET /health openai_director | no |
 | `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT` | transport_selector | - | - | no | responses-api or native-codex-host; switching back to Responses is an explicit operator decision | no |
-| `CHATGPT_BRIDGE_ENABLED` | enable_switch | - | - | yes | bridge activates only with ALLOW_PAID_RUNS, a valid key, the configured owner, and an allowlisted channel | no |
+| `CHATGPT_BRIDGE_ENABLED` | enable_switch | - | - | yes | bridge activates only with ALLOW_PAID_RUNS or CHATGPT_BRIDGE_ALLOW_PAID_RUNS, a valid key, the configured owner, and an allowlisted channel | no |
+| `CHATGPT_BRIDGE_ALLOW_PAID_RUNS` | enable_switch | - | - | yes | conversation-only paid opt-in; global provider gates remain unchanged and each request requires exact owner approval | no |
 
 | Allowlist variable | Scope | Value recorded |
 | --- | --- | --- |
@@ -229,7 +231,7 @@ Separation of duties:
 | `openai-responses-api` | http_api | both | `openai_responses_api` | - | implemented | authorized | director_to_provider | `OPENAI_API_KEY`, `OPENAI_DIRECTOR_MODEL`, `OPENAI_REASONING_EFFORT`, `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT` | `openai-responses-api` |
 | `openai-native-codex-host` | host_bridge | langgraph_primary | - | - | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON` | `openai-native-codex-host` |
 | `windows-host-provider-bridge` | host_bridge | langgraph_primary | - | - | implemented_disabled_by_default | authorized | director_to_provider | `LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT`, `LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET`, `DIRECTOR_HOST_PROVIDER_COMMANDS_JSON`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` | `windows-host-provider-bridge` |
-| `chatgpt-slack-alias-bridge` | slack_alias | legacy_engine | - | - | implemented_disabled_by_default | authorized | owner_to_director | `CHATGPT_BRIDGE_ENABLED`, `CHATGPT_BRIDGE_CHANNEL_IDS`, `OPENAI_CHATGPT_BRIDGE_MODEL`, `CHATGPT_BRIDGE_DAILY_BUDGET_USD`, `CHATGPT_BRIDGE_REQUESTS_PER_MINUTE` | `chatgpt-slack-alias-bridge` |
+| `chatgpt-slack-alias-bridge` | slack_alias | legacy_engine | - | - | implemented_disabled_by_default | authorized | owner_to_director | `CHATGPT_BRIDGE_ENABLED`, `CHATGPT_BRIDGE_ALLOW_PAID_RUNS`, `CHATGPT_BRIDGE_CHANNEL_IDS`, `OPENAI_CHATGPT_BRIDGE_MODEL`, `CHATGPT_BRIDGE_DAILY_BUDGET_USD`, `CHATGPT_BRIDGE_REQUESTS_PER_MINUTE` | `chatgpt-slack-alias-bridge` |
 | `codex-security-review` | github_actions | documented_only | - | - | implemented | authorized | github_to_director | - | `codex-security-review-comment` |
 
 - `openai-responses-api`: Director planning and review with Structured Outputs, and packet-only analysis under the primary lane's default transport. Model output can add approval requirements but can never remove one.
@@ -314,3 +316,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | END]] -->

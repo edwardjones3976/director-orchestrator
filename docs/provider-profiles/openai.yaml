@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -132,7 +133,8 @@ gating:
   variables:
     - { variable: "OPENAI_API_KEY", kind: "credential_presence", settings_field: "openai_api_key", default: "", documented_in_env_example: true, values_recorded: false, readiness_key: "openai_director", required_value: null, verify: "GET /health openai_director" }
     - { variable: "LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", kind: "transport_selector", settings_field: "langgraph_primary_openai_transport", default: "responses-api", documented_in_env_example: false, values_recorded: false, readiness_key: null, required_value: null, verify: "responses-api or native-codex-host; switching back to Responses is an explicit operator decision" }
-    - { variable: "CHATGPT_BRIDGE_ENABLED", kind: "enable_switch", settings_field: "chatgpt_bridge_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "bridge activates only with ALLOW_PAID_RUNS, a valid key, the configured owner, and an allowlisted channel" }
+    - { variable: "CHATGPT_BRIDGE_ENABLED", kind: "enable_switch", settings_field: "chatgpt_bridge_enabled", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "bridge activates only with ALLOW_PAID_RUNS or CHATGPT_BRIDGE_ALLOW_PAID_RUNS, a valid key, the configured owner, and an allowlisted channel" }
+    - { variable: "CHATGPT_BRIDGE_ALLOW_PAID_RUNS", kind: "enable_switch", settings_field: "chatgpt_bridge_allow_paid_runs", default: false, documented_in_env_example: true, values_recorded: false, readiness_key: null, required_value: null, verify: "conversation-only paid opt-in; global provider gates remain unchanged and each request requires exact owner approval" }
   allowlist_variables:
     - { variable: "CHATGPT_BRIDGE_CHANNEL_IDS", scope: "slack_channel", values_recorded: false }
     - { variable: "CHATGPT_BRIDGE_SLACK_USER_ID", scope: "slack_user", values_recorded: false }
@@ -233,7 +235,7 @@ transports:
     transport_kind_observed: null
     status: "implemented_disabled_by_default"
     direction: "owner_to_director"
-    config: ["CHATGPT_BRIDGE_ENABLED", "CHATGPT_BRIDGE_CHANNEL_IDS", "OPENAI_CHATGPT_BRIDGE_MODEL", "CHATGPT_BRIDGE_DAILY_BUDGET_USD", "CHATGPT_BRIDGE_REQUESTS_PER_MINUTE"]
+    config: ["CHATGPT_BRIDGE_ENABLED", "CHATGPT_BRIDGE_ALLOW_PAID_RUNS", "CHATGPT_BRIDGE_CHANNEL_IDS", "OPENAI_CHATGPT_BRIDGE_MODEL", "CHATGPT_BRIDGE_DAILY_BUDGET_USD", "CHATGPT_BRIDGE_REQUESTS_PER_MINUTE"]
     authority_note: "An owner convenience that answers a bounded owner question in an allowlisted channel. It cannot create Director work orders, write repositories, delegate providers, or perform any external action."
     current_transport_constraints:
       - "intercepts only the configured owner in an allowlisted channel; other alias mentions are ignored"
@@ -285,3 +287,4 @@ sources:
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:57 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | END]]
