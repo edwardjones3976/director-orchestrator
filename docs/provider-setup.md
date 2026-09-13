@@ -1,3 +1,6 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
@@ -89,7 +92,7 @@ the preflight's own paraphrase of the startup constructor's refusal, because a
 read-only preflight must not construct the activation (it opens a Postgres
 control plane). It removes, relaxes, and defaults nothing. It prints variable
 names and booleans only, never a value —
-the same rule `/health` follows. Exit status is 0 when nothing is outstanding
+the same rule `/health` follows. The preflight reports bridge CONFIGURATION booleans only; the startup challenge result (captured once when the activation built its live dependencies; /health never re-challenges and opens no connection per request) is exposed as `/health.host_bridge.startup_challenge_ok`, named for what it is: startup evidence, not current liveness. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
 not acceptance, not provider activation evidence, and not owner approval.
 
@@ -168,6 +171,36 @@ Reported following main.py's order, additionally running the runtime validator w
 8. **Execution profile**, which fails closed before any provider call:
    `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
    `CLAUDE_CALLBACK_SECRET`, as listed above.
+9. **Subsystem readiness**, evaluated last, mirroring what live startup
+   requires without connecting to anything. The entitlement control plane:
+   `ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true, and its dependent checks
+   run whether or not it is (one pass reports everything): the DSN file must
+   exist at the literal configured path, be at most 65536 bytes and, stripped,
+   be one non-empty line (the full psycopg parse happens at startup); each of
+   the three secret files must exist after `~` expansion and, stripped, hold
+   at least 32 UTF-8 bytes with at least 16 distinct byte values — the same
+   rule `_read_secret_file` applies; the schema must match `[a-z0-9_]+_v<N>`.
+   File contents are read only to apply those rules and never reach the
+   output; any filesystem or `~user` expansion failure reads as an unavailable
+   file. The effect gateways: `SLACK_BOT_TOKEN` or a GitHub credential; when
+   the registry would build the GitHub App gateway, its credential must also
+   pass the constructor's local syntax checks (numeric ids, strict base64
+   private key) — an incomplete App configuration is skipped by startup and
+   therefore not reported. The host provider bridge: endpoint/secret
+   configuration booleans only; the pairing rule is reported by the
+   langgraph-primary validator above.
+
+   `/health.providers.lanes.<lane>` reports two booleans. `configured` is a
+   startup observation: an executable was observed for the lane, or the lane
+   has a composed adapter (the Antigravity team route dispatches without a
+   local executable; an installed lane outside
+   `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS` has no adapter). `live_ready` is the
+   gate dispatch itself applies: the lane has a composed adapter and the
+   activation service currently reports `provider_ready(lane, live=True)`, so
+   a lapsed `LIVE_OK` capture flips it to false on the next read; without an
+   activation service nothing is live. A binary or login that disappears after
+   startup is not re-probed by `/health` (dispatch would fail the same way);
+   that liveness belongs to a bounded monitor, not the health endpoint.
 
 ### Mutual exclusions and pairings
 
@@ -662,3 +695,6 @@ by the client runtime and cover `host.docker.internal`.
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->

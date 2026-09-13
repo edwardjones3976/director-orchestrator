@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
@@ -38,7 +41,7 @@ from time import monotonic
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 import httpx
 
@@ -1244,6 +1247,43 @@ def provider_lane_readiness(
     }
 
 
+def provider_lane_detail(
+    capabilities: Mapping[str, PrimaryProviderCapability],
+    required_providers: tuple[str, ...] = PRIMARY_PROVIDER_LANES,
+    routed: Collection[str] = (),
+    dispatchable: Collection[str] | None = None,
+) -> dict[str, dict[str, bool]]:
+    """Return configured and live_ready booleans for each lane.
+
+    configured (a startup observation): an executable was observed for the
+    lane, or the lane has a composed adapter (``routed``: the keys of the live
+    dependencies' adapter map, which is how a team-routed lane such as
+    antigravity is dispatched without a local executable, and which excludes
+    installed lanes outside LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS).
+
+    live_ready: the lane is routed AND, when ``dispatchable`` is given, is in
+    it. Callers pass the lanes the activation service currently reports
+    ``provider_ready(lane, live=True)`` for, the same gate dispatch applies,
+    so a lapsed LIVE_OK capture flips this to false; an installed-but-unrouted
+    lane is never live-ready. Booleans only; no command paths or credentials.
+    """
+
+    routed_lanes = frozenset(routed)
+    dispatchable_lanes = None if dispatchable is None else frozenset(dispatchable)
+    detail: dict[str, dict[str, bool]] = {}
+    for provider_id in required_providers:
+        capability = capabilities.get(provider_id)
+        observed = capability is not None and capability.provider_id == provider_id
+        is_routed = provider_id in routed_lanes
+        detail[provider_id] = {
+            "configured": bool((observed and capability.executable_observed) or is_routed),
+            "live_ready": bool(
+                is_routed and (dispatchable_lanes is None or provider_id in dispatchable_lanes)
+            ),
+        }
+    return detail
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
@@ -1266,3 +1306,6 @@ def provider_lane_readiness(
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

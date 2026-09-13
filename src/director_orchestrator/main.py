@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -135,6 +138,7 @@ from .primary_activation_commands import (
     ProviderActivationAdvanceRequest,
     verify_provider_activation_advance_proof,
 )
+from director_orchestrator.primary_transports import provider_lane_detail
 from .workload_policy import EnforcementMode
 
 
@@ -483,12 +487,39 @@ def health() -> dict:
         configured_mode=EnforcementMode(settings.workload_policy_mode),
         shadow_assignment_limit=settings.workload_policy_shadow_assignments,
     )
+    providers_ready = settings.readiness()
+    host_bridge_configured = bool(settings.langgraph_primary_host_bridge_endpoint and settings.langgraph_primary_host_bridge_secret)
+    # startup_challenge_ok is the bridge challenge captured once when the live
+    # dependencies were built; /health never re-challenges (no I/O per request).
+    if primary_default_activation is not None and primary_default_activation.live_dependencies is not None:
+        deps = primary_default_activation.live_dependencies
+        routed = tuple(deps.adapters)
+        # live_ready applies the gate dispatch applies: the activation service's
+        # current per-provider evidence. Without the service nothing is live.
+        activation_service = primary_default_activation.provider_activation
+        dispatchable = tuple(
+            lane for lane in routed
+            if activation_service is not None
+            and activation_service.provider_ready(lane, live=True)
+        )
+        providers_ready["lanes"] = provider_lane_detail(
+            deps.capabilities, routed=routed, dispatchable=dispatchable
+        )
+        host_bridge_ready = {
+            "configured": host_bridge_configured,
+            "startup_challenge_ok": deps.bridge_challenge is not None,
+        }
+    else:
+        providers_ready["lanes"] = provider_lane_detail({})
+        host_bridge_ready = {"configured": host_bridge_configured, "startup_challenge_ok": False}
+
     return {
         "ok": True,
         "version": __version__,
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
-        "providers": settings.readiness(),
+        "providers": providers_ready,
+        "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         "primary_slack_delivery": (primary_slack_delivery.health()
@@ -1696,3 +1727,6 @@ def complete_run(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

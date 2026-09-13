@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
@@ -460,6 +463,124 @@ process.stdout.write(JSON.stringify({outputs, store}));
             recovery,
         )
 
+    def _health_activation(self, *, capabilities=None, adapters=None, bridge_challenge=None, ready=None):
+        """A stand-in activation. `ready` is the set of lanes the activation
+        service currently reports provider_ready(lane, live=True) for; None
+        models a deployment without an activation service (nothing is live)."""
+        from unittest.mock import MagicMock
+
+        activation = MagicMock()
+        activation.live_dependencies = MagicMock()
+        activation.live_dependencies.capabilities = capabilities or {}
+        activation.live_dependencies.adapters = adapters or {}
+        activation.live_dependencies.bridge_challenge = bridge_challenge
+        if ready is None:
+            activation.provider_activation = None
+        else:
+            activation.provider_activation = MagicMock()
+            activation.provider_activation.provider_ready = (
+                lambda provider_id, *, live: live and provider_id in ready
+            )
+        return activation
+
+    @staticmethod
+    def _main_module():
+        # Resolve through sys.modules, exactly as mock.patch does. Other test
+        # modules pop director_orchestrator.main to re-import it against a
+        # temporary database; `from director_orchestrator import main` would
+        # hand back the stale package attribute (a store whose temp directory
+        # is gone) while patch() re-imports a fresh module.
+        import importlib
+
+        return importlib.import_module("director_orchestrator.main")
+
+    def _health(self, activation, settings=None):
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch
+
+        main_module = self._main_module()
+        with patch("director_orchestrator.main.primary_default_activation", activation), \
+             patch("director_orchestrator.main.settings", settings or main_module.settings):
+            response = TestClient(main_module.app).get("/health")
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_health_endpoint_host_bridge_startup_challenge_and_configured(self):
+        from dataclasses import replace
+
+        bridged = replace(
+            self._main_module().settings,
+            langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch",
+            langgraph_primary_host_bridge_secret="s" * 40,
+        )
+        # Live branch, challenge failed or not attempted: configured comes from
+        # settings, the startup challenge is not claimed.
+        data = self._health(self._health_activation(bridge_challenge=None), bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        # Live branch, challenge evidence present.
+        data = self._health(self._health_activation(bridge_challenge=object()), bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": True})
+        # Fallback branches (no activation; activation without live dependencies):
+        # configured still follows settings, the challenge is never claimed.
+        data = self._health(None, bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        activation = self._health_activation()
+        activation.live_dependencies = None
+        data = self._health(activation, bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        data = self._health(None)
+        self.assertEqual(data["host_bridge"], {"configured": False, "startup_challenge_ok": False})
+        for value in data["host_bridge"].values():
+            self.assertIsInstance(value, bool)
+
+    def test_health_endpoint_providers_lanes(self):
+        from director_orchestrator.primary_transports import PrimaryProviderCapability, PRIMARY_PROVIDER_LANES
+
+        def capability(provider, executable, authenticated):
+            return PrimaryProviderCapability(
+                provider_id=provider, backend_identity=provider, transport_kind="test",
+                executable_observed=executable, authenticated_observed=authenticated,
+            )
+
+        capabilities = {
+            "claude": capability("claude", True, False),
+            "openai": capability("openai", True, True),
+            "antigravity": capability("antigravity", False, False),
+        }
+        # antigravity is dispatched through a composed (team) adapter although
+        # no local executable was observed; claude is installed and callable
+        # but outside the composed adapter set (not a required provider).
+        capabilities["claude"] = capability("claude", True, True)
+        adapters = {"openai": object(), "antigravity": object(), "cursor": object()}
+        activation = self._health_activation(
+            capabilities=capabilities, adapters=adapters, ready={"openai", "antigravity"}
+        )
+        data = self._health(activation)
+        lanes = data["providers"]["lanes"]
+        self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
+        for lane in lanes.values():
+            self.assertEqual(set(lane), {"configured", "live_ready"})
+            for value in lane.values():
+                self.assertIsInstance(value, bool)
+        self.assertEqual(lanes["claude"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["openai"], {"configured": True, "live_ready": True})
+        self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": True})
+        # routed, but the activation service does not currently report it live
+        self.assertEqual(lanes["cursor"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["github-copilot"], {"configured": False, "live_ready": False})
+
+        # Without an activation service nothing is live, whatever is routed.
+        lanes = self._health(self._health_activation(capabilities=capabilities, adapters=adapters))["providers"]["lanes"]
+        self.assertEqual(lanes["openai"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": False})
+
+        for activation in (None, self._health_activation()):
+            if activation is not None:
+                activation.live_dependencies = None
+            lanes = self._health(activation)["providers"]["lanes"]
+            self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
+            for lane in lanes.values():
+                self.assertEqual(lane, {"configured": False, "live_ready": False})
 
 if __name__ == "__main__":
     unittest.main()
@@ -474,3 +595,6 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
