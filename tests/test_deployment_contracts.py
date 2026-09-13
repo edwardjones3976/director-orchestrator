@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
@@ -80,11 +81,14 @@ process.stdout.write(JSON.stringify({outputs, store}));
                      ambiguous, ambiguous, stopped]
         result = self._run_status_sequence(responses)
         for index, output in enumerate(result["outputs"]):
+            if index in (1, 3):
+                self.assertEqual(output, [])
+                continue
             with self.subTest(response=index):
                 self.assertEqual(len(output), 1)
                 self.assertIs(output[0]["json"]["alarm"], True)
         self.assertIn("unreachable", result["outputs"][0][0]["json"]["text"])
-        self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
+        self.assertIn("ambiguous effects", result["outputs"][2][0]["json"]["text"])
         self.assertIn("kill switch engaged while parallel dispatch is enabled", result["outputs"][4][0]["json"]["text"])
 
     def test_status_treats_engaged_kill_switch_as_expected_while_parallel_dispatch_is_disabled(self):
@@ -122,6 +126,26 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIsNone(watched["provider_gemini_ready"])
         self.assertIsNone(watched["provider_grok_ready"])
         self.assertIs(watched["provider_openai_director_ready"], True)
+
+    def test_status_lease_loss_recovery_and_timestamp_updates(self):
+        import copy
+        healthy = self._status_response()
+        healthy['body']['langgraph_primary'].update(new_intake_requested=True, writer_lease_ready=True, intake_lease_last_renewal_at='2026-09-13T13:40:00+00:00')
+        tick = copy.deepcopy(healthy)
+        tick['body']['langgraph_primary']['intake_lease_last_renewal_at'] = '2026-09-13T13:40:10+00:00'
+        lost = copy.deepcopy(tick)
+        lost['body']['langgraph_primary']['writer_lease_ready'] = False
+        lost['body']['langgraph_primary']['lease_renewal_failure_category'] = 'intake_renewal_failed'
+        outputs = self._run_status_sequence([healthy, tick, lost, lost, tick])['outputs']
+        self.assertEqual(outputs[1], [])
+        self.assertEqual(outputs[3], [])
+        self.assertTrue(outputs[2][0]['json']['alarm'])
+        self.assertIn('13:40:10', outputs[2][0]['json']['text'])
+        self.assertFalse(outputs[4][0]['json']['alarm'])
+        self.assertIn('provider_gemini_configured', outputs[0][0]['json']['text'])
+        lost['body']['langgraph_primary']['intake_lease_last_renewal_at'] = 'secret-token'
+        lost['body']['langgraph_primary']['lease_renewal_failure_category'] = 'secret-token'
+        self.assertNotIn('secret-token', json.dumps(self._run_status_sequence([lost])))
 
     def test_status_connects_schedule_health_diff_and_slack_without_other_routes(self):
         workflow = json.loads(
@@ -598,3 +622,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
