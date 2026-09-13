@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
@@ -40,7 +41,7 @@ from time import monotonic
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 import httpx
 
@@ -1249,24 +1250,28 @@ def provider_lane_readiness(
 def provider_lane_detail(
     capabilities: Mapping[str, PrimaryProviderCapability],
     required_providers: tuple[str, ...] = PRIMARY_PROVIDER_LANES,
+    routed: Collection[str] = (),
 ) -> dict[str, dict[str, bool]]:
-    """Return configured (executable observed) and live_ready booleans for each lane."""
+    """Return configured and live_ready booleans for each lane.
 
-    return {
-        provider_id: {
-            "configured": bool(
-                provider_id in capabilities
-                and capabilities[provider_id].provider_id == provider_id
-                and capabilities[provider_id].executable_observed
-            ),
-            "live_ready": bool(
-                provider_id in capabilities
-                and capabilities[provider_id].provider_id == provider_id
-                and capabilities[provider_id].callable
-            ),
+    configured: an executable was observed for the lane, or the lane has a
+    composed adapter (``routed``: the keys of the live dependencies' adapter
+    map, which is how a team-routed lane such as antigravity is dispatched
+    without a local executable). live_ready: the local capability is callable,
+    or the lane is routed. Booleans only; no command paths or credentials.
+    """
+
+    routed_lanes = frozenset(routed)
+    detail: dict[str, dict[str, bool]] = {}
+    for provider_id in required_providers:
+        capability = capabilities.get(provider_id)
+        observed = capability is not None and capability.provider_id == provider_id
+        is_routed = provider_id in routed_lanes
+        detail[provider_id] = {
+            "configured": bool((observed and capability.executable_observed) or is_routed),
+            "live_ready": bool((observed and capability.callable) or is_routed),
         }
-        for provider_id in required_providers
-    }
+    return detail
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
@@ -1293,3 +1298,4 @@ def provider_lane_detail(
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

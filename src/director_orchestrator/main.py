@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
@@ -488,17 +489,19 @@ def health() -> dict:
     )
     providers_ready = settings.readiness()
     host_bridge_configured = bool(settings.langgraph_primary_host_bridge_endpoint and settings.langgraph_primary_host_bridge_secret)
+    # startup_challenge_ok is the bridge challenge captured once when the live
+    # dependencies were built; /health never re-challenges (no I/O per request).
     if primary_default_activation is not None and primary_default_activation.live_dependencies is not None:
         deps = primary_default_activation.live_dependencies
-        providers_ready["lanes"] = provider_lane_detail(deps.capabilities)
+        providers_ready["lanes"] = provider_lane_detail(deps.capabilities, routed=tuple(deps.adapters))
         host_bridge_ready = {
             "configured": host_bridge_configured,
-            "challenge_ok": deps.bridge_challenge is not None
+            "startup_challenge_ok": deps.bridge_challenge is not None,
         }
     else:
         providers_ready["lanes"] = provider_lane_detail({})
-        host_bridge_ready = {"configured": host_bridge_configured, "challenge_ok": False}
-        
+        host_bridge_ready = {"configured": host_bridge_configured, "startup_challenge_ok": False}
+
     return {
         "ok": True,
         "version": __version__,
@@ -1715,3 +1718,4 @@ def complete_run(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

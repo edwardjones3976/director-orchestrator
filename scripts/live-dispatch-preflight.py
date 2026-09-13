@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
@@ -179,6 +180,52 @@ def _declared_environment_variables() -> frozenset[str]:
 
 DECLARED_VARIABLES = _declared_environment_variables()
 
+# Startup requirements mirrored read-only. Sources of truth:
+# antigravity_team_routing.configured_provider_budget_routing (DSN file must
+# exist and be at most 65536 bytes; the control plane must be enabled),
+# entitlement_control_plane._read_secret_file / _SCHEMA_PATTERN (each secret
+# file must exist and hold at least 32 bytes of nontrivial material; the schema
+# must match [a-z0-9_]+_v<N>), and oracle_merge.GitHubOracleGateway.from_settings
+# (numeric App and installation ids, strictly base64 private key). Only file
+# metadata is consulted here; no secret material and no DSN is ever read.
+ENTITLEMENT_SCHEMA = re.compile(r"^[a-z0-9_]+_v[0-9]+$")
+ENTITLEMENT_DSN_FILE_LIMIT = 65_536
+ENTITLEMENT_SECRET_FILE_MINIMUM = 32
+ENTITLEMENT_SECRET_FILES: tuple[tuple[str, str], ...] = (
+    ("ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE", "entitlement_trusted_verifier_secret_file"),
+    ("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", "entitlement_route_verifier_secret_file"),
+    ("ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", "entitlement_owner_authority_secret_file"),
+)
+# What base64.b64decode(..., validate=True) accepts: alphabet only, correct padding.
+STRICT_BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
+
+
+def _file_size(path: str) -> int | None:
+    """Byte size of an existing regular file, else None. Metadata only."""
+
+    if not path:
+        return None
+    resolved = pathlib.Path(path).expanduser()
+    if not resolved.is_file():
+        return None
+    return resolved.stat().st_size
+
+
+def _github_app_credential_malformed(settings: Settings) -> bool:
+    """True when a GitHub App credential is set but startup would refuse it."""
+
+    app_id = settings.oracle_automerge_github_app_id
+    installation_id = settings.oracle_automerge_github_installation_id
+    private_key = settings.oracle_automerge_github_app_private_key_b64
+    if not any((app_id, installation_id, private_key)):
+        return False
+    return not (
+        app_id.isdigit()
+        and installation_id.isdigit()
+        and bool(private_key)
+        and STRICT_BASE64.fullmatch(private_key) is not None
+    )
+
 # Field names whose value must never reach the output under any drift: no
 # secret, token, endpoint, path, allowlist entry, or owner identifier.
 SENSITIVE_FIELD = re.compile(
@@ -300,26 +347,26 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
                 )
             )
 
+    stage = "entitlement control plane"
     if not settings.entitlement_control_plane_enabled:
-        problems.append(("entitlement control plane", "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
+        problems.append((stage, "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
     else:
-        if not settings.entitlement_postgres_dsn_file:
-            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_POSTGRES_DSN_FILE is missing"))
-        if not settings.entitlement_trusted_verifier_secret_file:
-            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE is missing"))
-        if not settings.entitlement_route_verifier_secret_file:
-            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE is missing"))
-        if not settings.entitlement_owner_authority_secret_file:
-            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE is missing"))
-        
-        schema = settings.entitlement_postgres_schema or ""
-        if not re.fullmatch(r"^[a-z0-9_]+_v\d+$", schema):
-            problems.append(("entitlement control plane", "ENTITLEMENT_POSTGRES_SCHEMA must match [a-z0-9_]+_v<N>"))
+        dsn_size = _file_size(settings.entitlement_postgres_dsn_file)
+        if dsn_size is None or dsn_size > ENTITLEMENT_DSN_FILE_LIMIT:
+            problems.append((stage, f"ENTITLEMENT_POSTGRES_DSN_FILE must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"))
+        for name, attribute in ENTITLEMENT_SECRET_FILES:
+            size = _file_size(getattr(settings, attribute))
+            if size is None or size < ENTITLEMENT_SECRET_FILE_MINIMUM:
+                problems.append((stage, f"{name} must name an existing file of at least {ENTITLEMENT_SECRET_FILE_MINIMUM} bytes; startup also checks its entropy"))
+        if not ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or ""):
+            problems.append((stage, "ENTITLEMENT_POSTGRES_SCHEMA must match [a-z0-9_]+_v<N>"))
 
     slack_configured = bool(settings.slack_bot_token)
     github_configured = bool(settings.oracle_github_credential_configured())
     if not (slack_configured or github_configured):
         problems.append(("effect gateways", "SLACK_BOT_TOKEN or ORACLE_AUTOMERGE_GITHUB_TOKEN (or the ORACLE_AUTOMERGE_GITHUB_APP_ID app credential set) must configure at least one authenticated effect gateway"))
+    if _github_app_credential_malformed(settings):
+        problems.append(("effect gateways", "ORACLE_AUTOMERGE_GITHUB_APP_ID and ORACLE_AUTOMERGE_GITHUB_INSTALLATION_ID must be numeric and ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64 strict base64: startup's GitHub App gateway refuses otherwise"))
 
     return problems
 
@@ -345,18 +392,20 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
         lines.append(f"  {name}: {str(getattr(settings, attribute)).lower()}")
     lines.append("")
 
+    # *_FILE_PRESENT means an existing regular file at the configured path
+    # (metadata only); size and material rules are reported through unmet().
     lines.append("Subsystem readiness:")
     lines.append(f"  ENTITLEMENT_CONTROL_PLANE_ENABLED: {str(bool(settings.entitlement_control_plane_enabled)).lower()}")
-    lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(bool(settings.entitlement_postgres_dsn_file)).lower()}")
-    lines.append(f"  ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_trusted_verifier_secret_file)).lower()}")
-    lines.append(f"  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_route_verifier_secret_file)).lower()}")
-    lines.append(f"  ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_owner_authority_secret_file)).lower()}")
-    lines.append(f"  ENTITLEMENT_SCHEMA_CONFIGURED: {str(bool(settings.entitlement_postgres_schema)).lower()}")
+    lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(_file_size(settings.entitlement_postgres_dsn_file) is not None).lower()}")
+    for name, attribute in ENTITLEMENT_SECRET_FILES:
+        lines.append(f"  {name}_PRESENT: {str(_file_size(getattr(settings, attribute)) is not None).lower()}")
+    lines.append(f"  ENTITLEMENT_SCHEMA_CONFIGURED: {str(ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or '') is not None).lower()}")
 
     slack_configured = bool(settings.slack_bot_token)
     github_configured = bool(settings.oracle_github_credential_configured())
     lines.append(f"  EFFECT_GATEWAY_SLACK_CONFIGURED: {str(slack_configured).lower()}")
     lines.append(f"  EFFECT_GATEWAY_GITHUB_CONFIGURED: {str(github_configured).lower()}")
+    lines.append(f"  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: {str(not _github_app_credential_malformed(settings)).lower()}")
     lines.append(f"  EFFECT_GATEWAY_ANY_CONFIGURED: {str(slack_configured or github_configured).lower()}")
 
     bridge_endpoint = bool(settings.langgraph_primary_host_bridge_endpoint)
@@ -420,3 +469,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

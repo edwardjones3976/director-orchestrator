@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -162,6 +163,14 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         # Present and callable
         self.assertTrue(detail["openai"]["configured"])
         self.assertTrue(detail["openai"]["live_ready"])
+
+        # A lane with a composed adapter (for example team-routed antigravity)
+        # is configured and live-ready even without a local executable.
+        routed = provider_lane_detail(observed, routed=("github-copilot",))
+        self.assertEqual(routed["github-copilot"], {"configured": True, "live_ready": True})
+        self.assertEqual(routed["claude"], detail["claude"])
+        for lane in routed.values():
+            self.assertEqual(set(lane), {"configured", "live_ready"})
 
     def test_unavailable_lane_cannot_smuggle_a_transport(self):
         with self.assertRaisesRegex(ValueError, "unavailable provider lane"):
@@ -835,3 +844,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
@@ -10,9 +11,12 @@
 from __future__ import annotations
 
 import ast
+import atexit
 import importlib.util
 import json
 import os
+import shutil
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +34,19 @@ BINDING_FIELDS = (
     "workspace_version",
     "binding_version",
 )
+# Entitlement prerequisites are real files at startup (an existing DSN file of
+# at most 65536 bytes; three secret files of at least 32 bytes), so the
+# complete fixture provides real files in a private temporary directory.
+_ENTITLEMENT_DIR = Path(tempfile.mkdtemp(prefix="preflight-entitlement-"))
+atexit.register(shutil.rmtree, _ENTITLEMENT_DIR, True)
+
+
+def _entitlement_file(name: str, content: str) -> str:
+    path = _ENTITLEMENT_DIR / name
+    path.write_text(content, encoding="utf-8")
+    return str(path)
+
+
 # Distinctive fixture values. None of them may appear in the output.
 SECRETS = {
     "slack_bot_token": "xoxb-fixture-" + "8" * 32,
@@ -44,10 +61,18 @@ SECRETS = {
     "langgraph_primary_postgres_dsn": "postgresql://fixtureuser:fixturepassword@db/primary",
     "repository_snapshot_root": "/fixture-snapshot-root",
     "cursor_api_key": "cursorapikeyfixture",
-    "entitlement_postgres_dsn_file": "/fixture-entitlement-dsn",
-    "entitlement_trusted_verifier_secret_file": "/fixture-entitlement-trusted-verifier",
-    "entitlement_route_verifier_secret_file": "/fixture-entitlement-route-verifier",
-    "entitlement_owner_authority_secret_file": "/fixture-entitlement-owner-authority",
+    "entitlement_postgres_dsn_file": _entitlement_file(
+        "dsn", "postgresql://fixtureuser:fixturepassword@db/entitlement"
+    ),
+    "entitlement_trusted_verifier_secret_file": _entitlement_file(
+        "trusted-verifier", "trustedverifierfixture" + "9abcdefghijklmnop" * 2
+    ),
+    "entitlement_route_verifier_secret_file": _entitlement_file(
+        "route-verifier", "routeverifierfixture" + "9abcdefghijklmnop" * 2
+    ),
+    "entitlement_owner_authority_secret_file": _entitlement_file(
+        "owner-authority", "ownerauthorityfixture" + "9abcdefghijklmnop" * 2
+    ),
 }
 
 
@@ -270,6 +295,7 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertIn("  ENTITLEMENT_SCHEMA_CONFIGURED: true", lines)
         self.assertIn("  EFFECT_GATEWAY_SLACK_CONFIGURED: true", lines)
         self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: false", lines)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", lines)
         self.assertIn("  EFFECT_GATEWAY_ANY_CONFIGURED: true", lines)
         self.assertIn("  HOST_BRIDGE_ENDPOINT_CONFIGURED: false", lines)
         self.assertIn("  HOST_BRIDGE_SECRET_CONFIGURED: false", lines)
@@ -280,9 +306,7 @@ class SecretDisclosureTests(unittest.TestCase):
 
     def test_incomplete_subsystems_produce_one_problem_each(self):
         settings = _complete(
-            entitlement_control_plane_enabled=True,
             entitlement_postgres_dsn_file="",
-            entitlement_owner_authority_secret_file="/fixture-owner-authority-secret",
             langgraph_primary_host_bridge_endpoint="https://localhost",
             langgraph_primary_host_bridge_secret="",
         )
@@ -318,6 +342,79 @@ class SecretDisclosureTests(unittest.TestCase):
         entitlement = [p for s, p in problems if s == "entitlement control plane"]
         self.assertEqual(len(entitlement), 1)
         self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", entitlement[0])
+
+    def _entitlement_problems(self, **overrides):
+        problems = PREFLIGHT.unmet(_complete(**overrides))
+        return [p for s, p in problems if s == "entitlement control plane"]
+
+    def test_each_entitlement_secret_file_is_required_by_name(self):
+        for attribute, name in (
+            ("entitlement_trusted_verifier_secret_file", "ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE"),
+            ("entitlement_route_verifier_secret_file", "ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE"),
+            ("entitlement_owner_authority_secret_file", "ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE"),
+        ):
+            with self.subTest(attribute=attribute):
+                problems = self._entitlement_problems(**{attribute: ""})
+                self.assertEqual(len(problems), 1)
+                self.assertIn(name, problems[0])
+
+    def test_entitlement_files_must_exist_within_startup_bounds(self):
+        # A configured path is not a file: startup reads these, so the
+        # preflight checks existence and size (never the contents).
+        missing = str(_ENTITLEMENT_DIR / "does-not-exist")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=missing)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        report = PREFLIGHT.report(_complete(entitlement_postgres_dsn_file=missing), [])
+        self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: false", report)
+
+        oversized = _entitlement_file("dsn-oversized", "x" * 65_537)
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=oversized)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+
+        short = _entitlement_file("short-secret", "tooshort")
+        problems = self._entitlement_problems(entitlement_route_verifier_secret_file=short)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", problems[0])
+        for problem in problems:
+            self.assertNotIn(short, problem)
+
+    def test_entitlement_schema_uses_the_runtime_ascii_pattern(self):
+        # A \\d pattern would admit Unicode digits that entitlement_control_plane rejects.
+        problems = self._entitlement_problems(entitlement_postgres_schema="example_v\u0661")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_SCHEMA", problems[0])
+        self.assertEqual(self._entitlement_problems(entitlement_postgres_schema="example_v1"), [])
+
+    def test_github_app_credential_syntax_is_checked_like_startup(self):
+        def gateway_problems(**overrides):
+            problems = PREFLIGHT.unmet(_complete(**overrides))
+            return [p for s, p in problems if s == "effect gateways"]
+
+        valid = dict(
+            oracle_automerge_github_app_id="12345",
+            oracle_automerge_github_installation_id="67890",
+            oracle_automerge_github_app_private_key_b64="QUJDRA==",
+        )
+        self.assertEqual(gateway_problems(**valid), [])
+        report = PREFLIGHT.report(_complete(**valid), [])
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: true", report)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", report)
+
+        for broken in (
+            dict(valid, oracle_automerge_github_app_id="app-id"),
+            dict(valid, oracle_automerge_github_installation_id="12 34"),
+            dict(valid, oracle_automerge_github_app_private_key_b64="not base64!"),
+            dict(valid, oracle_automerge_github_app_private_key_b64="QUJDR"),
+        ):
+            with self.subTest(broken=sorted(k for k in broken if broken[k] != valid[k])):
+                problems = gateway_problems(**broken)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_ID", problems[0])
+                self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64", problems[0])
+                report = PREFLIGHT.report(_complete(**broken), [])
+                self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: false", report)
 
 
 class ReadOnlyTests(unittest.TestCase):
@@ -597,3 +694,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
