@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 """Phase 1 of human-out-of-the-loop operation: schema, validation, readiness.
@@ -92,12 +94,15 @@ class GrantSchemaTests(unittest.TestCase):
         with self.assertRaises(DelegationConfigurationError):
             parse_grant(json.dumps(payload))
 
-    def test_a_grant_must_name_two_eligible_providers(self):
-        """The evidence bar needs two concurring ACCEPTs from different
-        providers, so a one-provider grant can never be satisfied."""
+    def test_a_grant_must_name_one_eligible_provider(self):
+        """The evidence bar needs one ACCEPT from an eligible provider, so a
+        zero-provider grant can never be satisfied, while a one-provider
+        grant parses."""
 
         with self.assertRaises(DelegationConfigurationError):
-            parse_grant(grant_document(providers=["openai"]))
+            parse_grant(grant_document(providers=[]))
+        grant = parse_grant(grant_document(providers=["openai"]))
+        self.assertEqual(frozenset({"openai"}), grant.providers)
 
     def test_every_axis_is_bounded(self):
         for field, value in (
@@ -348,3 +353,5 @@ if __name__ == "__main__":
 
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
