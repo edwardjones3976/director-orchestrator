@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
@@ -48,7 +49,7 @@ CHECKS = (
     Check("04", "Status workflow actually delivers to Slack", "runtime", "Read back a fresh scheduled status message and correlate its workflow execution."),
     Check("05", "Primary owns intake with fencing", "runtime", "Observe LangGraph ownership, disabled legacy intake and a positive fencing generation."),
     Check("06", "Checkpoint survives restart", "runtime", "Resume the same bounded task after restart, preserving checkpoint and unique task identity."),
-    Check("07", "Primary reconciliation is clear", "runtime", "Clear historical holds and unresolved effects, then collect fresh primary readiness."),
+    Check("07", "Primary reconciliation is clear", "runtime", "Collect fresh generation-bound consistency proof over durable projections, batches, assignments and unresolved effects from an authoritative collector. This collector does not exist yet."),
     Check("08", "Owner approval is authenticated and scoped", "runtime", "Verify a real signed owner decision against its delivered prompt and approved work packet."),
     Check("09", "Final reply is durable and unambiguous", "runtime", "Read back exactly one terminal reply; prove duplicate input and ambiguous-post recovery."),
     Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with independent correctness, time and zero-call evidence."),
@@ -285,7 +286,7 @@ def _topology_observations(at: datetime, binding: dict[str, str], expected_gatew
                            "Docker topology and n8n upstream GET /health", facts, at, **binding)]
     app_token = gateway_env.get("SLACK_APP_TOKEN", "")
     if not app_token:
-        return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", {}, at, **binding)]
+        return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)]
     fingerprint = hashlib.sha256(app_token.encode()).digest()
     matches, unknown = [], 0
     for row in containers:
@@ -643,3 +644,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]

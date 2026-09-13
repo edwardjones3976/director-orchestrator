@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
@@ -176,6 +177,23 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertNotIn("fixture-app-token", json.dumps(report))
         self.assertNotIn("fixture-secret-bot", json.dumps(report))
         self.assertNotIn("SLACK_APP_TOKEN", json.dumps(report))
+
+    def test_tokenless_gateway_preserves_identity_on_both_observations(self):
+        for empty_token in (False, True):
+            with self.subTest(empty_token=empty_token):
+                rows = topology()
+                gateway_env = rows[1]["Config"]["Env"]
+                gateway_env[:] = [entry for entry in gateway_env if not entry.startswith("SLACK_APP_TOKEN=")]
+                if empty_token:
+                    gateway_env.append("SLACK_APP_TOKEN=")
+                report = collect_topology(rows)
+                self.assertEqual([row["status"] for row in report["checks"][:2]], ["PASS", "UNKNOWN"])
+                self.assertEqual(report["checks"][1]["explanation"], "Canonical gateway app identity unavailable.")
+                for row in report["checks"][:2]:
+                    facts = row["evidence"][0]["facts"]
+                    self.assertEqual(facts["expected_gateway"], GATEWAY)
+                    self.assertEqual(facts["gateway_container_id"], rows[1]["Id"])
+                    self.assertEqual(facts["gateway_image_id"], rows[1]["Image"])
 
     def test_stopped_missing_or_non_gateway_identity_cannot_pass(self):
         rows = topology()
@@ -482,6 +500,9 @@ class CompletionScorecardTests(unittest.TestCase):
         self.assertIn("unknown cost is not zero", text.lower())
         self.assertIn("Next:", text)
         self.assertIn("do not contribute points", text)
+        self.assertIn("Next: Collect fresh generation-bound consistency proof over durable projections, "
+                      "batches, assignments and unresolved effects from an authoritative collector. "
+                      "This collector does not exist yet.", text)
 
     def test_bad_candidate_and_naive_score_time_rejected(self):
         with self.assertRaises(ValueError):
@@ -510,3 +531,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
