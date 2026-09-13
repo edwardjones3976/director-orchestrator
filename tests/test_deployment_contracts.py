@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
@@ -83,7 +84,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
         self.assertIn("kill switch engaged while parallel dispatch is enabled", result["outputs"][4][0]["json"]["text"])
 
-    def test_status_treats_engaged_kill_switch_as_expected_under_offline_simulation(self):
+    def test_status_treats_engaged_kill_switch_as_expected_while_parallel_dispatch_is_disabled(self):
         healthy = self._status_response()
         engaged = self._status_response()
         engaged["body"]["parallel_dispatch"]["kill_switch_open"] = False
@@ -103,6 +104,9 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertEqual(len(alarmed), 1)
         self.assertIs(alarmed[0]["json"]["alarm"], True)
         self.assertIn("kill switch engaged while parallel dispatch is enabled", alarmed[0]["json"]["text"])
+
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertIn("parallel_dispatch_enabled", watched)
 
     def test_status_only_emits_fixed_boolean_provider_fields(self):
         response = self._status_response(gemini="sensitive-test-value", grok={"key": "sensitive-test-value"})
@@ -469,3 +473,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]]

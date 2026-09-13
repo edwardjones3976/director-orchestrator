@@ -1,0 +1,815 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:director:slack-trial-observations:v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "director-slack-trial-observations/v1"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "read_only": {
+          "const": true
+        },
+        "qualified_run_count": {
+          "type": "null"
+        },
+        "native_source_reads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceRead"
+          },
+          "maxItems": 72
+        },
+        "trials": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/trial"
+              },
+              {
+                "$ref": "#/$defs/unavailableTrial"
+              }
+            ]
+          },
+          "maxItems": 10
+        },
+        "expires_at": {
+          "type": "string"
+        },
+        "requested_trials": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "observed_trials": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "rubric_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "collection_runtime_before": {
+          "$ref": "#/$defs/runtime"
+        },
+        "collection_runtime_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/runtime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_collection_binding_stable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "runtime_health_at_collection": {
+          "type": "object",
+          "properties": {
+            "paid_runs_enabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "ambiguous_effect_count": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "reconciliation_hold_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "primary_runtime_active": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "paid_runs_enabled",
+            "ambiguous_effect_count",
+            "reconciliation_hold_reason",
+            "primary_runtime_active"
+          ],
+          "additionalProperties": false
+        },
+        "collector_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "slack_writes": {
+          "const": 0
+        },
+        "provider_dispatches": {
+          "const": 0
+        },
+        "scorecard_mutations": {
+          "const": 0
+        },
+        "ten_consecutive_runs_verified": {
+          "const": false
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "schema",
+        "observed_at",
+        "read_only",
+        "qualified_run_count",
+        "native_source_reads",
+        "trials",
+        "expires_at",
+        "requested_trials",
+        "observed_trials",
+        "rubric_sha256",
+        "collection_runtime_before",
+        "collection_runtime_after",
+        "runtime_collection_binding_stable",
+        "runtime_health_at_collection",
+        "collector_sha256",
+        "slack_writes",
+        "provider_dispatches",
+        "scorecard_mutations",
+        "ten_consecutive_runs_verified",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "director-slack-trial-observations/v1"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "read_only": {
+          "const": true
+        },
+        "qualified_run_count": {
+          "type": "null"
+        },
+        "native_source_reads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceRead"
+          },
+          "maxItems": 72
+        },
+        "trials": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/trial"
+              },
+              {
+                "$ref": "#/$defs/unavailableTrial"
+              }
+            ]
+          },
+          "maxItems": 10
+        },
+        "collection_failed": {
+          "const": true
+        },
+        "error_type": {
+          "type": "string",
+          "pattern": "^[A-Za-z]+$"
+        },
+        "details_withheld": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema",
+        "observed_at",
+        "read_only",
+        "qualified_run_count",
+        "native_source_reads",
+        "trials",
+        "collection_failed",
+        "error_type",
+        "details_withheld"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "trial": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^DIR-LG-[A-F0-9]+$"
+        },
+        "thread_ts": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{10,}\\.[0-9]{1,6}$"
+        },
+        "task_record_bound": {
+          "type": "boolean"
+        },
+        "task_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_message_ts": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{10,}\\.[0-9]{1,6}$"
+        },
+        "input_client_msg_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_event_id_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "owner_account_input_matched": {
+          "type": "boolean"
+        },
+        "human_typing_attested": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "task_api_gateway_attested": {
+          "type": "boolean"
+        },
+        "projection_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slack_thread_complete_at_read": {
+          "type": "boolean"
+        },
+        "observed_final_message_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "terminal_reply_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "terminal_messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ts": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9]{10,}\\.[0-9]{1,6}$"
+              },
+              "client_msg_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "body_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "simulation_label_present": {
+                "type": "boolean"
+              },
+              "actual_cost_not_recorded_present": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ts",
+              "client_msg_id",
+              "body_sha256",
+              "simulation_label_present",
+              "actual_cost_not_recorded_present"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 500
+        },
+        "final_receipt_matches_native_message": {
+          "type": "boolean"
+        },
+        "delivery_receipt_list_complete": {
+          "type": "boolean"
+        },
+        "delivery_receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "notification_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "projection_digest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "client_msg_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "claimed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "acknowledged_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "delivered_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "slack_ts": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owner_decision_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owner_command_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "readback_attempts": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "owner_decision": {
+                "enum": [
+                  "approve",
+                  "reject",
+                  null
+                ]
+              }
+            },
+            "required": [
+              "notification_key",
+              "projection_digest",
+              "client_msg_id",
+              "state",
+              "claimed_at",
+              "acknowledged_at",
+              "delivered_at",
+              "slack_ts",
+              "owner_decision_at",
+              "owner_command_id",
+              "readback_attempts",
+              "owner_decision"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100
+        },
+        "owner_pause_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "machine_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "owner_decision_record_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "authenticated_scoped_approval_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "wall_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "wall_under_60_seconds": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "all_recorded_outcomes_are_offline_doubles": {
+          "type": "boolean"
+        },
+        "all_provider_result_digests_present": {
+          "type": "boolean"
+        },
+        "zero_calls_in_exposed_task_projection": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "simulation_charge_supported_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "simulation_charge_basis": {
+          "type": "string"
+        },
+        "actual_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "operational_provider_attempts_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "independent_correctness_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "global_task_deduplication_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "execution_image_binding_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "verdict": {
+          "enum": [
+            "EVIDENCE_ONLY_NOT_QUALIFIED"
+          ]
+        },
+        "input_rubric_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "rubric_evaluation": {
+          "type": "object",
+          "properties": {
+            "rubric_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "checks": {
+              "type": "object",
+              "properties": {
+                "predeclared": {
+                  "type": "boolean"
+                },
+                "task_bound": {
+                  "type": "boolean"
+                },
+                "one_terminal": {
+                  "type": "boolean"
+                },
+                "task_done": {
+                  "type": "boolean"
+                },
+                "offline_outcomes": {
+                  "type": "boolean"
+                },
+                "result_digests": {
+                  "type": "boolean"
+                },
+                "terminal_label": {
+                  "type": "boolean"
+                },
+                "terminal_cost_text": {
+                  "type": "boolean"
+                },
+                "native_delivery": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "predeclared",
+                "task_bound",
+                "one_terminal",
+                "task_done",
+                "offline_outcomes",
+                "result_digests",
+                "terminal_label",
+                "terminal_cost_text",
+                "native_delivery"
+              ],
+              "additionalProperties": false
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "rubric_sha256",
+            "checks",
+            "passed"
+          ],
+          "additionalProperties": false
+        },
+        "source_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10
+        },
+        "runtime_collection_binding_stable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task_id",
+        "thread_ts",
+        "task_record_bound",
+        "task_status",
+        "input_message_ts",
+        "input_client_msg_id",
+        "source_event_id_sha256",
+        "owner_account_input_matched",
+        "human_typing_attested",
+        "task_api_gateway_attested",
+        "projection_digest",
+        "slack_thread_complete_at_read",
+        "observed_final_message_count",
+        "terminal_reply_count",
+        "terminal_messages",
+        "final_receipt_matches_native_message",
+        "delivery_receipt_list_complete",
+        "delivery_receipts",
+        "owner_pause_seconds",
+        "machine_seconds",
+        "owner_decision_record_count",
+        "authenticated_scoped_approval_verified",
+        "wall_seconds",
+        "wall_under_60_seconds",
+        "all_recorded_outcomes_are_offline_doubles",
+        "all_provider_result_digests_present",
+        "zero_calls_in_exposed_task_projection",
+        "simulation_charge_supported_usd",
+        "simulation_charge_basis",
+        "actual_cost_usd",
+        "operational_provider_attempts_verified",
+        "independent_correctness_verified",
+        "global_task_deduplication_verified",
+        "execution_image_binding_verified",
+        "verdict",
+        "input_rubric_sha256",
+        "rubric_evaluation",
+        "source_errors",
+        "runtime_collection_binding_stable"
+      ],
+      "additionalProperties": false
+    },
+    "unavailableTrial": {
+      "type": "object",
+      "properties": {
+        "thread_ts": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{10,}\\.[0-9]{1,6}$"
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^DIR-LG-[A-F0-9]+$"
+        },
+        "verdict": {
+          "const": "COLLECTION_UNAVAILABLE"
+        },
+        "source_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10
+        },
+        "runtime_collection_binding_stable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "thread_ts",
+        "task_id",
+        "verdict"
+      ],
+      "additionalProperties": false
+    },
+    "sourceRead": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^original-[0-9]{3}\\.json$"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^(https://slack\\.com/api/(auth\\.test|conversations\\.replies)|http://127\\.0\\.0\\.1:8080/(health|v1/tasks/DIR-LG-[A-F0-9]+|v1/primary/tasks/DIR-LG-[A-F0-9]+/deliveries))$"
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "body_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "original_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "finished_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "source",
+        "http_status",
+        "body_sha256",
+        "original_sha256",
+        "started_at",
+        "finished_at"
+      ],
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "container_id": {
+          "type": "string"
+        },
+        "image_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "runtime_head": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offline_configured": {
+          "type": "boolean"
+        },
+        "paid_configured": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "container_id",
+        "image_id",
+        "runtime_head",
+        "started_at",
+        "offline_configured",
+        "paid_configured"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

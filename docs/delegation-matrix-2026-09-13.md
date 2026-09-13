@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
@@ -200,6 +201,7 @@ change a credential.
 > effects, kill switch, or unreachable health. Validate both with
 > `python -m json.tool`. Workflow JSON carries no inline contribution tag; it is
 > attributed through the pull request. Cursor reviews.
+> *(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)*
 
 ### A-11 — Grok — adversarial negative-path analysis
 
@@ -369,3 +371,4 @@ documented route is not an authorized one.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
