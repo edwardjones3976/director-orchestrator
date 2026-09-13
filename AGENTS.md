@@ -19,16 +19,20 @@ These rules apply to every AI coding agent working in this repository.
 
 ## Current project leadership
 
-The owner appointed **Claude as acting Director-Orchestrator** and exchanged
-Claude's and Codex/ChatGPT's project duties on 2026-09-08 UTC. This current
-instruction supersedes earlier OpenAI-as-project-Director wording throughout
-this repository. Read `docs/project-leadership.md` before assigning work.
+The project uses capability-based routing with assignment-scoped authority.
+Only the ChatGPT/Codex Director lane, Perplexity public research lane, and
+Firecrawl public retrieval lane keep explicit standing role descriptions.
+Read `docs/project-leadership.md` before assigning work. Runtime coordination
+status remains a recorded deployment fact and does not create standing role
+authority; a 2026-09-29 Director return decision is staged pending accepted
+evidence and separate owner approval.
 
-- Claude owns project priorities, decomposition, routing, coordination, budget
-  and workload enforcement, review orchestration, and delivery reporting.
-- Codex/ChatGPT/OpenAI takes the bounded engineering and eligible independent
-  review role previously assigned to Claude. It does not retain discretionary
-  project leadership or manufacture Claude's instructions or approval.
+- The ChatGPT/Codex Director lane is authorized for priorities, decomposition,
+  capability-based routing, workload and budget enforcement, evidence synthesis,
+  review orchestration, completion reporting, and owner escalation.
+- Non-exempt lanes (Claude, Cursor, Grok, Antigravity, GitHub Copilot) have no
+  standing job assignment; route bounded work only by verified capabilities,
+  assignment authority, availability, budget, repository limits, and independence.
 - An agent's actual model and provider identity remain accurate. Historical
   contributions, receipts, credentials, and Codex Security are never renamed.
 - This leadership decision does not attest live provider routing. The deployed

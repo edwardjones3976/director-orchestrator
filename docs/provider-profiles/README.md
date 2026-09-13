@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -32,14 +33,14 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 
 | Lane | Sheet | ProviderName enum | Backend identity | Legacy accounting agent | Team | Lane class | Committee weight | Health key |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `openai` | [openai.profile.md](openai.profile.md) | `openai` | `openai` | `openai` | primary | full_spectrum_primary | 2.5 | `openai_director` |
-| `claude` | [claude.profile.md](claude.profile.md) | `claude` | `claude` | `claude` | primary | director_control_plane | 2.0 | `claude` |
-| `cursor` | [cursor.profile.md](cursor.profile.md) | `cursor` | `cursor` | `cursor` | primary | full_spectrum_primary | 1.5 | `cursor` |
-| `grok` | [grok.profile.md](grok.profile.md) | `grok` | `grok` | `grok` | primary | full_spectrum_primary | 1.5 | `grok` |
-| `antigravity` | [antigravity.profile.md](antigravity.profile.md) | `gemini` | `gemini` | `gemini` | supplemental | subordinate_specialist | 1.0 | `gemini` |
+| `openai` | [openai.profile.md](openai.profile.md) | `openai` | `openai` | `openai` | primary | director_control_plane | 2.5 | `openai_director` |
+| `claude` | [claude.profile.md](claude.profile.md) | `claude` | `claude` | `claude` | primary | capability_routed_lane | 2.0 | `claude` |
+| `cursor` | [cursor.profile.md](cursor.profile.md) | `cursor` | `cursor` | `cursor` | primary | capability_routed_lane | 1.5 | `cursor` |
+| `grok` | [grok.profile.md](grok.profile.md) | `grok` | `grok` | `grok` | primary | capability_routed_lane | 1.5 | `grok` |
+| `antigravity` | [antigravity.profile.md](antigravity.profile.md) | `gemini` | `gemini` | `gemini` | supplemental | capability_routed_lane | 1.0 | `gemini` |
 | `perplexity` | [perplexity.profile.md](perplexity.profile.md) | `perplexity` | `perplexity` | `perplexity` | supplemental | evidence_only_research | - | `perplexity` |
 | `firecrawl` | [firecrawl.profile.md](firecrawl.profile.md) | `firecrawl` | `firecrawl` | `firecrawl` | lane_only | public_search_transport | - | - |
-| `github-copilot` | [github-copilot.profile.md](github-copilot.profile.md) | `github-copilot` | `github-copilot` | `github-copilot` | lane_only | supplemental_hygiene_reviewer | - | - |
+| `github-copilot` | [github-copilot.profile.md](github-copilot.profile.md) | `github-copilot` | `github-copilot` | `github-copilot` | lane_only | capability_routed_lane | - | - |
 
 ## Route catalog
 
@@ -84,13 +85,13 @@ Antigravity has two distinct modes: the roster below mirrors the retained restri
 Endpoints:
 
 - `openai`: OpenAI lane: Codex/ChatGPT capability-routed engineering support and eligible review; legacy runtime identity retained.
-- `claude`: Claude lane: capability-routed provider lane with explicitly gated native-adapter paths.
+- `claude`: Claude lane: capability-routed provider lane with explicitly gated native-adapter paths and no standing Director assignment.
 - `cursor`: Cursor lane: capability-routed provider lane with bounded assignment authority.
 - `grok`: Grok lane: capability-routed provider lane on xAI.
 - `antigravity`: Antigravity lane: Gemini-backed capability-routed lane with bounded fixture-scope authority.
 - `perplexity`: Perplexity lane: evidence-only public research.
 - `firecrawl`: Firecrawl lane: public search transport under the research contract.
-- `github-copilot`: GitHub Copilot lane: optional bounded hygiene-observation lane with no production authority.
+- `github-copilot`: GitHub Copilot lane: optional bounded quality-observation lane with no production authority.
 - `director`: The runtime Director control plane; executing provider is recorded separately from Claude project leadership.
 - `owner`: The human owner, reached only through Slack and signed owner commands.
 - `slack_thread`: The Director-owned Slack thread for one task in its private project channel.
@@ -184,3 +185,4 @@ Endpoints:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

@@ -36,8 +36,8 @@ identifiers:
 
 roles:
   team: "lane_only"
-  lane_class: "supplemental_hygiene_reviewer"
-  summary: "Optional capability-routed lane for bounded hygiene observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation."
+  lane_class: "capability_routed_lane"
+  summary: "Optional capability-routed lane for bounded quality observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation."
   charter_workload_lane: null
   strategy_key: null
   strategy_priority: null
@@ -225,7 +225,7 @@ this_profile_does_not_change:
 
 sources:
   - document: "docs/team-operating-charter.md"
-    anchor: "GitHub Copilot Lite is an optional supplemental hygiene reviewer with no"
+    anchor: "GitHub Copilot Lite is an optional capability-routed quality-observation lane with no"
   - document: "docs/provider-setup.md"
     anchor: "GitHub Copilot Lite is not another provider bridge."
   - document: "docs/provider-allocation-profiles.md"

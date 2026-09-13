@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -45,8 +46,8 @@
 | Field | Value |
 | --- | --- |
 | Team | lane_only |
-| Lane class | supplemental_hygiene_reviewer |
-| Summary | Optional capability-routed lane for bounded hygiene observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation. |
+| Lane class | capability_routed_lane |
+| Summary | Optional capability-routed lane for bounded quality observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation. |
 | Charter workload lane | - |
 | Strategy key | - |
 | Strategy priority | - |
@@ -280,7 +281,7 @@ Separation of duties:
 
 ## Sources
 
-- `docs/team-operating-charter.md`: GitHub Copilot Lite is an optional supplemental hygiene reviewer with no
+- `docs/team-operating-charter.md`: GitHub Copilot Lite is an optional capability-routed quality-observation lane with no
 - `docs/provider-setup.md`: GitHub Copilot Lite is not another provider bridge.
 - `docs/provider-allocation-profiles.md`: GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;
 - `docs/templates/project-bootstrap/provider-roles-contract.yaml`: github_copilot_lite:
@@ -298,3 +299,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

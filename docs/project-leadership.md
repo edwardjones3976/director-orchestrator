@@ -5,9 +5,10 @@
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | BEGIN]] -->
 # Current project leadership
 
-Claude is the acting Director-Orchestrator for this project. Codex, ChatGPT,
-and OpenAI provide bounded capability-routed engineering and eligible
-independent review work previously assigned to Claude. This decision applies to new project
+The project uses capability-based routing with assignment-scoped authority.
+ChatGPT/Codex keeps the explicit Director lane description; Perplexity and
+Firecrawl keep explicit public-research lane descriptions. Other lanes do not
+carry standing job assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
@@ -31,14 +32,14 @@ observed tool use, and completed process cleanup. These are referenceable
 host observation artifacts for the coordination handoff, not a signed
 provider-v2 acceptance receipt or authority to activate a runtime.
 
-## Responsibilities
+## Runtime coordination status and responsibilities
 
 | Responsibility | Current owner |
 | --- | --- |
-| Project priorities, scope, sequence, and design decisions | Claude |
-| Work decomposition, allocation, bounded dispatch, and overlap prevention | Claude |
-| Review orchestration, evidence reconciliation, and delivery reporting | Claude |
-| Bounded implementation, debugging, testing, and verification | Codex/ChatGPT and other capable assigned providers |
+| Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane (staged policy target) |
+| Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane (staged policy target) |
+| Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane (staged policy target) |
+| Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority |
 | Independent review | An eligible provider that did not materially author the candidate |
 | Owner-reserved decisions | The owner, under the existing deterministic gates |
 
@@ -106,3 +107,9 @@ allocation sources must agree with this decision.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+
+
+Runtime note: some deployments may still report pre-cutover coordinator identifiers.
+That status is observational only and does not create standing role authority.
+The 2026-09-29 Director-return decision remains staged pending accepted evidence
+and separate owner approval.

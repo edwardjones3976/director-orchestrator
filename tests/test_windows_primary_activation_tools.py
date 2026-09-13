@@ -572,7 +572,7 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         visible = [line.strip() for line in claude.splitlines() if line.strip() and "[[" not in line]
         self.assertIn("@AGENTS.md", visible)
-        self.assertIn("acting Director-Orchestrator", claude)
+        self.assertIn("no standing director role", claude.lower())
         self.assertIn("docs/project-leadership.md", claude)
 
 

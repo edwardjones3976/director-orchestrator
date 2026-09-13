@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
@@ -88,8 +89,8 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | Field | Value |
 | --- | --- |
 | Team | supplemental |
-| Lane class | subordinate_specialist |
-| Summary | Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an authorized non-author lane under deterministic gates. |
+| Lane class | capability_routed_lane |
+| Summary | Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an independently assigned non-author lane under deterministic gates. |
 | Charter workload lane | `bounded_capability_routed_lane` |
 | Strategy key | `gemini` |
 | Strategy priority | `bounded_capability_routing` |
@@ -246,7 +247,7 @@ Strengths:
 Strategy constraints:
 
 - supplemental only; never a primary-team substitute
-- work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment
+- every artifact requires independent downstream verification before integration or acceptance influence
 - cannot issue review, acceptance, or merge verdicts
 - cannot define contract or methodology truth
 - cannot initiate, self-route, widen, or autonomously continue a conversation
@@ -360,3 +361,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

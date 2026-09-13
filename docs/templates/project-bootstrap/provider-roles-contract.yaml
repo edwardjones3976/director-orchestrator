@@ -145,7 +145,7 @@ providers:
         - "merge, deployment, or publication authority"
         - "safety authority"
     non_substitution_rules:
-      - "Cursor cannot replace acting Director acceptance."
+      - "Cursor cannot substitute for assignment-scoped acceptance authority."
       - "Codex Security remains an independent deterministic gate where configured."
       - "Cursor cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
@@ -171,14 +171,14 @@ providers:
       statement: "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs."
     contact_boundary: "The xAI API, Grok Build CLI, and Grok Bot are separate contacts; use only the capabilities and authority actually available on the assigned contact."
     non_substitution_rules:
-      - "Grok cannot replace acting Director acceptance."
+      - "Grok cannot substitute for assignment-scoped acceptance authority."
       - "Codex Security remains an independent deterministic gate where configured."
       - "Grok cannot review or approve its own work."
       - "Capability parity does not bypass assignment scope or deterministic gates."
 
   antigravity:
     provider: "gemini"
-    lane: "subordinate_supplemental_specialist"
+    lane: "capability_routed_lane"
     never_a_primary_team_substitute: true
     # Charter-exact bounded work categories. Nothing broader is in scope.
     allowed_work:
@@ -195,7 +195,7 @@ providers:
     mandatory_downstream_verification:
       required: true
       assignee: "openai_claude_cursor_or_grok"
-      rule: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+      rule: "Every Antigravity work assignment must feed a later independently assigned non-author verification assignment before integration or acceptance influence."
       planner_rule: "A plan that routes work to Antigravity without that later verifying assignment is incomplete."
     outbound_work_packet:
       permitted_value_kinds:
@@ -285,7 +285,7 @@ providers:
     # prompts/director-system.md. Coordination, planning, and acceptance are
     # duties nested under these identities; they never replace or blur them,
     # because only the identity carries the voting boundary.
-    function_separation_rule: "Claude as acting Director keeps Moderator, Participant, and Director separate in every project-local record; they are never collapsed or renamed into duty buckets."
+    function_separation_rule: "The configured coordinating lane keeps Moderator, Participant, and Director functions separate in every project-local record; they are never collapsed or renamed into duty buckets."
     functions:
       - id: "moderator"
         votes: false
@@ -325,7 +325,7 @@ providers:
   openai:
     team: "primary"
     standing_role: "bounded_implementer_and_independent_reviewer"
-    assignment_target: "OpenAI production may be separately assigned under the frozen profile; actual material authorship requires different-provider exact-candidate review."
+    assignment_target: "ChatGPT/Codex Director lane may be separately assigned under the frozen profile; actual material authorship requires different-provider exact-candidate review."
     leadership_authority: "none_from_provider_identity"
 
 supplemental_reviewers:

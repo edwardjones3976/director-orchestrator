@@ -17,8 +17,8 @@
     "review_requirement": null,
     "self_review": false,
     "separation_of_duties": [
-      "cannot replace the executing Director's acceptance role",
-      "cannot replace the executing Director's acceptance role",
+      "cannot independently accept or merge its own candidate",
+      "cannot replace assignment-scoped acceptance authority",
       "external writes still require the assigned execution surface and current deterministic gates"
     ],
     "strategy_constraints": [],
@@ -412,7 +412,7 @@
       "zero_target_rule": "ineligible"
     },
     "capability_parity_target": 1.0,
-    "charter_workload_lane": "primary_full_spectrum",
+    "charter_workload_lane": "capability_routed_lane",
     "committee": {
       "may_initiate_debate": false,
       "member": true,
@@ -453,20 +453,20 @@
     "excluded_responsibility_areas": [],
     "family": "cursor",
     "hygiene_review": null,
-    "lane_class": "full_spectrum_primary",
+    "lane_class": "capability_routed_lane",
     "non_substitution_rules": [
-      "Grok cannot replace acting Director acceptance.",
+      "Grok cannot substitute for assignment-scoped acceptance authority.",
       "Codex Security remains an independent deterministic gate where configured.",
       "Grok cannot review or approve its own work.",
       "Capability parity does not bypass assignment scope or deterministic gates."
     ],
     "openai_functions": null,
-    "routing_rule": "Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs.",
+    "routing_rule": "Route Grok by capability, authority, independence, and capacity.",
     "strategy_key": "grok",
     "strategy_priority": "capability_routed_assignment",
     "summary": "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates.",
     "team": "primary",
-    "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
+    "transport_rule": "xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact."
   },
   "schema_version": "director-provider-profile/v1",
   "source_of_truth": {

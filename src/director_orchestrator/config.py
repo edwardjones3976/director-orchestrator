@@ -2135,7 +2135,7 @@ class Settings:
                 ],
                 "constraints": [
                     "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment",
+                    "every artifact requires independent downstream verification before integration or acceptance influence",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",
@@ -2171,8 +2171,8 @@ class Settings:
                     "technical leadership and coordination",
                 ],
                 "separation_of_duties": [
-                    "cannot replace the executing Director's acceptance role",
-                    "cannot replace the executing Director's acceptance role",
+                    "cannot independently accept or merge its own candidate",
+                    "cannot replace assignment-scoped acceptance authority",
                     "external writes still require the assigned execution surface and current deterministic gates",
                 ],
                 "current_transport_constraints": [

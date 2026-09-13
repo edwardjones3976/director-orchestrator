@@ -304,6 +304,7 @@ class IdentityTests(unittest.TestCase):
             with self.subTest(lane=lane):
                 for term in banned_terms:
                     self.assertNotIn(term, body)
+                self.assertEqual(profile["roles"]["lane_class"], "capability_routed_lane")
 
     def test_production_authority_mirrors_capability_validator(self):
         for lane, profile in self.profiles.items():
@@ -932,8 +933,32 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn(phrase, section, phrase)
         claude_instructions = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("@AGENTS.md", claude_instructions.splitlines())
-        self.assertIn("acting Director-Orchestrator", claude_instructions)
+        self.assertIn("no standing director role", claude_instructions.lower())
         self.assertIn("docs/project-leadership.md", claude_instructions)
+
+    def test_active_surfaces_avoid_non_exempt_standing_role_language(self):
+        files = (
+            ROOT / "AGENTS.md",
+            ROOT / "CLAUDE.md",
+            ROOT / "README.md",
+            ROOT / "docs" / "project-leadership.md",
+            ROOT / "docs" / "provider-allocation-profiles.md",
+            ROOT / "docs" / "team-operating-charter.md",
+            ROOT / "prompts" / "director-system.md",
+            ROOT / "docs" / "templates" / "project-bootstrap" / "provider-roles-contract.yaml",
+        )
+        banned = (
+            "project secretary",
+            "subordinate supplemental specialist",
+            "cursor-family primary teammate",
+            "supplemental hygiene reviewer",
+            "acting director-orchestrator",
+        )
+        for path in files:
+            body = path.read_text(encoding="utf-8").lower()
+            with self.subTest(path=path.name):
+                for phrase in banned:
+                    self.assertNotIn(phrase, body)
 
     def test_director_prompt_readme_and_provider_setup_point_at_the_sheets(self):
         prompt = (ROOT / "prompts" / "director-system.md").read_text(encoding="utf-8")

@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -47,9 +48,9 @@
 | Field | Value |
 | --- | --- |
 | Team | primary |
-| Lane class | director_control_plane |
+| Lane class | capability_routed_lane |
 | Summary | Acting project Director: owns priorities, decomposition, routing, workload and budget controls, review orchestration, and delivery reporting. Pure coordination creates no production credit. Runtime Claude planning requires its explicitly enabled, genuinely bound native adapter; leadership alone does not activate it. |
-| Charter workload lane | `control_plane_and_authorized_production` |
+| Charter workload lane | `capability_routed_lane` |
 | Strategy key | `claude` |
 | Strategy priority | `capability_routed_assignment` |
 | Committee member | yes |
@@ -310,7 +311,7 @@ Separation of duties:
 
 ## Sources
 
-- `docs/team-operating-charter.md`: Claude is the acting Director-Orchestrator for project leadership
+- `docs/team-operating-charter.md`: The policy target is a ChatGPT/Codex Director lane for priorities,
 - `docs/provider-setup.md`: The supported programmable bridge here is a **Claude Code Routine** with an API trigger.
 - `docs/provider-allocation-profiles.md`: The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
 - `docs/native-acceptance-issuers.md`: Claude owns the security role; Cursor owns independent
@@ -330,3 +331,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

@@ -39,9 +39,9 @@ identifiers:
     worker registry still has no OpenAI adapter.
 roles:
   team: "primary"
-  lane_class: full_spectrum_primary
-  summary: 'ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate.'
-  charter_workload_lane: primary_full_spectrum
+  lane_class: director_control_plane
+  summary: 'ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime rollout remains staged pending accepted evidence and separate owner approval.'
+  charter_workload_lane: chatgpt_codex_director_lane
   strategy_key: "openai"
   strategy_priority: bounded_engineering_and_independent_review
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
@@ -272,13 +272,13 @@ this_profile_does_not_change:
 
 sources:
 - document: docs/team-operating-charter.md
-  anchor: Codex/OpenAI is a bounded implementer and independent
+  anchor: The policy target is a ChatGPT/Codex Director lane for priorities,
 - document: docs/provider-setup.md
   anchor: OpenAI Responses API with Structured Outputs
 - document: docs/native-codex-packet-transport.md
   anchor: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
 - document: docs/templates/project-bootstrap/provider-roles-contract.yaml
-  anchor: Claude as acting Director keeps Moderator, Participant, and Director separate
+  anchor: The configured coordinating lane keeps Moderator, Participant, and Director functions separate
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]

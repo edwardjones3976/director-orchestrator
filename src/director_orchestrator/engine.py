@@ -213,11 +213,12 @@ _OPENAI_KEY_BLOCK_MESSAGE = "OPENAI_API_KEY is not configured"
 
 _STANDING_PROVIDER_LABELS = {
     ProviderName.OPENAI: "ChatGPT/Codex Director",
-    ProviderName.CLAUDE: "Capability-routed provider lane",
-    ProviderName.CURSOR: "Capability-routed provider lane",
-    ProviderName.GEMINI: "Capability-routed provider lane",
-    ProviderName.GROK: "Capability-routed provider lane",
+    ProviderName.CLAUDE: "Claude",
+    ProviderName.CURSOR: "Cursor",
+    ProviderName.GEMINI: "Gemini Antigravity",
+    ProviderName.GROK: "Grok",
     ProviderName.PERPLEXITY: "Research Programmers",
+    ProviderName.FIRECRAWL: "Authorized public web retrieval",
     ProviderName.OWNER: "Owner",
 }
 _STANDING_PROVIDER_ROLES = _STANDING_PROVIDER_LABELS

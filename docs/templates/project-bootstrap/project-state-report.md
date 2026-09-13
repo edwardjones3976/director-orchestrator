@@ -27,7 +27,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=686e4c75c0ae2dd744219e132b65206adb2819af30dd93a9230f126d78f8f5eb -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=f8a73bb850ea104869812eb13bd3b6eb94a9fa5dd783352d870280e09da4532f -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,

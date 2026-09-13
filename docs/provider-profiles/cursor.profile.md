@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -46,9 +47,9 @@
 | Field | Value |
 | --- | --- |
 | Team | primary |
-| Lane class | full_spectrum_primary |
+| Lane class | capability_routed_lane |
 | Summary | Capability-routed provider lane for implementation, research, reproduction, QA, and independent exact-SHA review when Cursor did not materially author the candidate. Routing remains bounded by verified capabilities, assignment authority, independence, capacity, and expected information gain. |
-| Charter workload lane | `primary_full_spectrum` |
+| Charter workload lane | `capability_routed_lane` |
 | Strategy key | `cursor` |
 | Strategy priority | `capability_routed_assignment` |
 | Committee member | yes |
@@ -79,7 +80,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | 1.0 |
 | Comparison peers | `claude`, `openai_codex` |
 | Family | - |
-| Routing rule | Route Cursor by verified capabilities, assignment authority, independence, capacity, and evidence needs. |
+| Routing rule | Route Cursor by capability, authority, independence, and capacity. |
 | Transport rule | - |
 
 Elevated work:
@@ -94,7 +95,7 @@ Elevated work:
 
 Non-substitution rules:
 
-- Cursor cannot replace acting Director acceptance.
+- Cursor cannot substitute for assignment-scoped acceptance authority.
 - Codex Security remains an independent deterministic gate where configured.
 - Cursor cannot review or approve its own work.
 - Capability parity does not bypass assignment scope or deterministic gates.
@@ -301,7 +302,7 @@ Separation of duties:
 ## Sources
 
 - `docs/team-operating-charter.md`: Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex.
-- `docs/team-operating-charter.md`: Cursor, as Project Secretary, records the
+- `docs/team-operating-charter.md`: Cursor records the
 - `docs/provider-setup.md`: Cursor Cloud Agents API v1
 - `docs/native-acceptance-issuers.md`: Claude owns the security role; Cursor owns independent
 - `docs/templates/project-bootstrap/provider-roles-contract.yaml`: Route Cursor at full task-capability parity with Claude and Codex, by fit, independence, capacity, and evidence needs.
@@ -320,3 +321,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

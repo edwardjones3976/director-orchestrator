@@ -26,7 +26,7 @@ endpoints:
   - id: "openai"
     description: "OpenAI lane: Codex/ChatGPT capability-routed engineering support and eligible review; legacy runtime identity retained."
   - id: "claude"
-    description: "Claude lane: capability-routed provider lane with explicitly gated native-adapter paths."
+    description: "Claude lane: capability-routed provider lane with explicitly gated native-adapter paths and no standing Director assignment."
   - id: "cursor"
     description: "Cursor lane: capability-routed provider lane with bounded assignment authority."
   - id: "grok"
@@ -38,7 +38,7 @@ endpoints:
   - id: "firecrawl"
     description: "Firecrawl lane: public search transport under the research contract."
   - id: "github-copilot"
-    description: "GitHub Copilot lane: optional bounded hygiene-observation lane with no production authority."
+    description: "GitHub Copilot lane: optional bounded quality-observation lane with no production authority."
   - id: "director"
     description: "The runtime Director control plane; executing provider is recorded separately from Claude project leadership."
   - id: "owner"
@@ -736,7 +736,7 @@ routes:
     default_config_state: "disabled"
     charter_basis:
       - document: "docs/team-operating-charter.md"
-        anchor: "GitHub Copilot Lite is an optional supplemental hygiene reviewer with no"
+        anchor: "GitHub Copilot Lite is an optional capability-routed quality-observation lane with no"
       - document: "docs/provider-setup.md"
         anchor: "GitHub Copilot Lite is not another provider bridge."
     enforced_by:

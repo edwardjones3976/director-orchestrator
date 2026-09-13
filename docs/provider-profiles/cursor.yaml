@@ -37,9 +37,9 @@ identifiers:
 
 roles:
   team: "primary"
-  lane_class: "full_spectrum_primary"
+  lane_class: "capability_routed_lane"
   summary: "Capability-routed provider lane for implementation, research, reproduction, QA, and independent exact-SHA review when Cursor did not materially author the candidate. Routing remains bounded by verified capabilities, assignment authority, independence, capacity, and expected information gain."
-  charter_workload_lane: "primary_full_spectrum"
+  charter_workload_lane: "capability_routed_lane"
   strategy_key: "cursor"
   strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
@@ -56,13 +56,13 @@ roles:
     - "cross-platform QA"
     - "technical coordination"
   non_substitution_rules:
-  - Cursor cannot replace acting Director acceptance.
+  - Cursor cannot substitute for assignment-scoped acceptance authority.
   - Codex Security remains an independent deterministic gate where configured.
   - Cursor cannot review or approve its own work.
   - Capability parity does not bypass assignment scope or deterministic gates.
   family: null
   transport_rule: null
-  routing_rule: "Route Cursor by verified capabilities, assignment authority, independence, capacity, and evidence needs."
+  routing_rule: "Route Cursor by capability, authority, independence, and capacity."
   committee:
     member: true
     voting_power: 1.5
@@ -263,7 +263,7 @@ sources:
   - document: "docs/team-operating-charter.md"
     anchor: "Cursor and Grok have full task-capability parity with Claude and OpenAI/Codex."
   - document: "docs/team-operating-charter.md"
-    anchor: "Cursor, as Project Secretary, records the"
+    anchor: "Cursor records the"
   - document: "docs/provider-setup.md"
     anchor: "Cursor Cloud Agents API v1"
   - document: "docs/native-acceptance-issuers.md"

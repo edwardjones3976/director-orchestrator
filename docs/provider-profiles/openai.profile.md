@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -45,9 +46,9 @@
 | Field | Value |
 | --- | --- |
 | Team | primary |
-| Lane class | full_spectrum_primary |
-| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. |
-| Charter workload lane | `primary_full_spectrum` |
+| Lane class | director_control_plane |
+| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime rollout remains staged pending accepted evidence and separate owner approval. |
+| Charter workload lane | `chatgpt_codex_director_lane` |
 | Strategy key | `openai` |
 | Strategy priority | `bounded_engineering_and_independent_review` |
 | Committee member | yes |
@@ -298,10 +299,10 @@ Separation of duties:
 
 ## Sources
 
-- `docs/team-operating-charter.md`: Codex/OpenAI is a bounded implementer and independent
+- `docs/team-operating-charter.md`: The policy target is a ChatGPT/Codex Director lane for priorities,
 - `docs/provider-setup.md`: OpenAI Responses API with Structured Outputs
 - `docs/native-codex-packet-transport.md`: The default remains `LANGGRAPH_PRIMARY_OPENAI_TRANSPORT=responses-api`
-- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: Claude as acting Director keeps Moderator, Participant, and Director separate
+- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: The configured coordinating lane keeps Moderator, Participant, and Director functions separate
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
@@ -316,3 +317,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

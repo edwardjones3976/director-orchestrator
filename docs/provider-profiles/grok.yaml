@@ -36,9 +36,9 @@ identifiers:
 
 roles:
   team: "primary"
-  lane_class: "full_spectrum_primary"
+  lane_class: "capability_routed_lane"
   summary: "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates."
-  charter_workload_lane: "primary_full_spectrum"
+  charter_workload_lane: "capability_routed_lane"
   strategy_key: "grok"
   strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
@@ -55,13 +55,13 @@ roles:
     - "cross-platform QA"
     - "technical coordination"
   non_substitution_rules:
-  - Grok cannot replace acting Director acceptance.
+  - Grok cannot substitute for assignment-scoped acceptance authority.
   - Codex Security remains an independent deterministic gate where configured.
   - Grok cannot review or approve its own work.
   - Capability parity does not bypass assignment scope or deterministic gates.
   family: "cursor"
-  transport_rule: "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact."
-  routing_rule: "Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs."
+  transport_rule: "xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact."
+  routing_rule: "Route Grok by capability, authority, independence, and capacity."
   committee:
     member: true
     voting_power: 1.5
@@ -165,8 +165,8 @@ authority:
   review_requirement: null
   strategy_constraints: []
   separation_of_duties:
-  - cannot replace the executing Director's acceptance role
-  - cannot replace the executing Director's acceptance role
+  - cannot independently accept or merge its own candidate
+  - cannot replace assignment-scoped acceptance authority
   - external writes still require the assigned execution surface and current deterministic gates
   production_authority_permitted: true
   external_effects:

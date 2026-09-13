@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -45,9 +46,9 @@
 | Field | Value |
 | --- | --- |
 | Team | primary |
-| Lane class | full_spectrum_primary |
+| Lane class | capability_routed_lane |
 | Summary | Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates. |
-| Charter workload lane | `primary_full_spectrum` |
+| Charter workload lane | `capability_routed_lane` |
 | Strategy key | `grok` |
 | Strategy priority | `capability_routed_assignment` |
 | Committee member | yes |
@@ -78,8 +79,8 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | 1.0 |
 | Comparison peers | `claude`, `openai_codex`, `cursor` |
 | Family | `cursor` |
-| Routing rule | Route Grok by verified capabilities, assignment authority, independence, capacity, and evidence needs. |
-| Transport rule | The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact. |
+| Routing rule | Route Grok by capability, authority, independence, and capacity. |
+| Transport rule | xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact. |
 
 Elevated work:
 
@@ -93,7 +94,7 @@ Elevated work:
 
 Non-substitution rules:
 
-- Grok cannot replace acting Director acceptance.
+- Grok cannot substitute for assignment-scoped acceptance authority.
 - Codex Security remains an independent deterministic gate where configured.
 - Grok cannot review or approve its own work.
 - Capability parity does not bypass assignment scope or deterministic gates.
@@ -225,8 +226,8 @@ Strategy constraints:
 
 Separation of duties:
 
-- cannot replace the executing Director's acceptance role
-- cannot replace the executing Director's acceptance role
+- cannot independently accept or merge its own candidate
+- cannot replace assignment-scoped acceptance authority
 - external writes still require the assigned execution surface and current deterministic gates
 
 ## Platform limitations
@@ -336,3 +337,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->

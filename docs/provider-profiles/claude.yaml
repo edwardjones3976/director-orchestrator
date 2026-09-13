@@ -42,11 +42,11 @@ identifiers:
 
 roles:
   team: "primary"
-  lane_class: director_control_plane
+  lane_class: capability_routed_lane
   summary: 'Acting project Director: owns priorities, decomposition, routing, workload and budget controls, review orchestration,
     and delivery reporting. Pure coordination creates no production credit. Runtime Claude planning requires its explicitly
     enabled, genuinely bound native adapter; leadership alone does not activate it.'
-  charter_workload_lane: control_plane_and_authorized_production
+  charter_workload_lane: capability_routed_lane
   strategy_key: "claude"
   strategy_priority: capability_routed_assignment
   eligible_responsibility_areas: [research, evidence_verification, programming, deep_reasoning, innovation, development, quality_assurance, leadership]
@@ -329,7 +329,7 @@ this_profile_does_not_change:
 
 sources:
 - document: docs/team-operating-charter.md
-  anchor: Claude is the acting Director-Orchestrator for project leadership
+  anchor: The policy target is a ChatGPT/Codex Director lane for priorities,
 - document: docs/provider-setup.md
   anchor: The supported programmable bridge here is a **Claude Code Routine** with an API trigger.
 - document: docs/provider-allocation-profiles.md

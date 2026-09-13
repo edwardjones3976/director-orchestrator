@@ -78,8 +78,8 @@ identifiers:
 
 roles:
   team: "supplemental"
-  lane_class: "subordinate_specialist"
-  summary: "Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an authorized non-author lane under deterministic gates."
+  lane_class: "capability_routed_lane"
+  summary: "Capability-routed lane with assignment-scoped authority in closed fixture lanes. Work remains limited to bounded artifacts whose downstream use requires independent verification and integration by an independently assigned non-author lane under deterministic gates."
   charter_workload_lane: "bounded_capability_routed_lane"
   strategy_key: "gemini"
   strategy_priority: "bounded_capability_routing"
@@ -216,7 +216,7 @@ authority:
   review_requirement: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
   strategy_constraints:
     - "supplemental only; never a primary-team substitute"
-    - "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment"
+    - "every artifact requires independent downstream verification before integration or acceptance influence"
     - "cannot issue review, acceptance, or merge verdicts"
     - "cannot define contract or methodology truth"
     - "cannot initiate, self-route, widen, or autonomously continue a conversation"

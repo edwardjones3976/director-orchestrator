@@ -594,7 +594,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             self.directive["workload_lanes"]["openai"],
-            "primary_full_spectrum",
+            "chatgpt_codex_director_lane",
         )
         self.assertEqual(
             self.directive["openai_direct_production_boundary"],

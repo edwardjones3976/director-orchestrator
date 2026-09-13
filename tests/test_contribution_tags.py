@@ -434,7 +434,7 @@ class ProviderRoleHandoffTests(unittest.TestCase):
         self.assertEqual(handoff["provider_identity"]["provider"], "claude")
         self.assertEqual(
             handoff["provider_identity"]["standing_role"],
-            "Capability-routed provider lane",
+            "Claude",
         )
         self.assertIn("human-visible", handoff["contribution_attribution"])
         self.assertIn("Do not put tags inside JSON", handoff["contribution_attribution"])

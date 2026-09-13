@@ -421,14 +421,14 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(strategy["grok"]["team"], "primary")
         self.assertEqual(
             strategy["grok"]["priority"],
-            "primary_cursor_family_repository_partner",
+            "capability_routed_assignment",
         )
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
         self.assertEqual(strategy["cursor"]["capability_parity_target"], 1.0)
         self.assertEqual(strategy["grok"]["capability_parity_target"], 1.0)
         self.assertEqual(strategy["grok"]["family"], "cursor")
         self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
-        self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
+        self.assertEqual(strategy["cursor"]["priority"], "capability_routed_assignment")
         self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
