@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | BEGIN]]
@@ -66,6 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
 from .antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
 from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
@@ -2207,6 +2209,7 @@ class DefaultPrimaryActivation:
         self.services: DefaultDryRunServices | None = None
         self.provider_activation: PrimaryProviderActivationService | None = None
         self.live_dependencies: DefaultPrimaryLiveDependencies | None = None
+        self._lease_diagnostics = LeaseRenewalDiagnostics()
         self._reconciliation_worker_ready = False
         self._live_dependencies_ready = False
         if (effect_mutation is None) != (effect_readback is None):
@@ -2804,9 +2807,20 @@ class DefaultPrimaryActivation:
         if not self.enabled:
             return
         assert self.coordinator is not None
-        self.coordinator.heartbeat_active_task_writers()
+        try:
+            self.coordinator.heartbeat_active_task_writers(
+                on_renewal_outcome=self._lease_diagnostics.task_completed
+            )
+        except Exception:
+            self._lease_diagnostics.failed("task_writer_renewal_failed")
+            raise
         if self.settings.langgraph_primary_new_intake_enabled:
-            self.coordinator.renew_new_intake()
+            try:
+                self.coordinator.renew_new_intake()
+            except Exception:
+                self._lease_diagnostics.failed("intake_renewal_failed")
+                raise
+            self._lease_diagnostics.succeeded()
 
     def reconcile_once(self) -> int:
         if not self.enabled:
@@ -2875,6 +2889,7 @@ class DefaultPrimaryActivation:
 
     def health(self) -> dict[str, Any]:
         configured = self.settings.langgraph_primary_configuration_readiness()
+        configured.update(self._lease_diagnostics.health())
         provider_activation = (
             self.provider_activation.health()
             if self.provider_activation is not None
@@ -3020,3 +3035,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
