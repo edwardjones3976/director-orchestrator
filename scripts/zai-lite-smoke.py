@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 """Owner-invoked one-shot Lite trial. No tools, deployment or general API calls."""
 import argparse
@@ -9,7 +10,13 @@ from pathlib import Path
 
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.packet_contracts import document_digest, PacketContractError
-from director_orchestrator.zai_trial import build_zai_trial_adapter
+from director_orchestrator.zai_trial import build_zai_trial_adapter, load_key, redact_bound_key
+
+
+def write_report(report, path, key):
+    safe = redact_bound_key(report, key)
+    path.write_text(json.dumps(safe, indent=2), encoding="utf-8")
+    return safe
 
 
 def require_success(result):
@@ -76,7 +83,7 @@ def main():
         if isinstance(exc, PacketContractError):
             report["contract_error"] = str(exc)
     report["elapsed_seconds"] = round(time.monotonic() - start, 3)
-    (args.evidence_dir / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report = write_report(report, args.evidence_dir / "result.json", load_key(args.env_file))
     print(json.dumps({k: v for k, v in report.items() if k != "result"}, indent=2))
     return 0 if report["status"] == "PASS" else 1
 
@@ -84,3 +91,4 @@ def main():
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]

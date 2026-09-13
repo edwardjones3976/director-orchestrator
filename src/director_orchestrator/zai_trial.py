@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 """Explicit Lite-only, tools-disabled trial route; never a production registration."""
 from __future__ import annotations
@@ -16,6 +17,20 @@ from .packet_contracts import validate_packet
 ENDPOINT = "https://api.z.ai/api/anthropic"
 TRIAL_END = datetime(2026, 9, 29, 7, tzinfo=timezone.utc)
 WELCOME = Path(__file__).resolve().parents[2] / "docs/providers/zai-welcome-aboard.md"
+
+
+def redact_bound_key(value, key):
+    """Redact decoded strings before serialization, including embedded JSON text."""
+    if isinstance(value, str):
+        for form in (json.dumps(key)[1:-1], json.dumps(key, ensure_ascii=False)[1:-1], key):
+            value = value.replace(form, "[REDACTED]")
+        return value
+    if isinstance(value, list):
+        return [redact_bound_key(item, key) for item in value]
+    if isinstance(value, dict):
+        return {redact_bound_key(name, key): redact_bound_key(item, key)
+                for name, item in value.items()}
+    return value
 
 
 def load_key(env_file: Path) -> str:
@@ -88,7 +103,7 @@ class ZaiLiteTrialTransport:
             raise RuntimeError("Tools-disabled trial reported external effects")
         # Preserve a receipt before outer linkage validation; never dump native auth
         # errors or host CLI dollar estimates into the project evidence.
-        safe_result = json.loads(json.dumps(result).replace(self.key, "[REDACTED]"))
+        safe_result = redact_bound_key(result, self.key)
         with attempt.with_suffix(".result.json").open("x", encoding="utf-8") as out:
             json.dump(safe_result, out)
         validate_packet("result", result)
@@ -98,3 +113,4 @@ class ZaiLiteTrialTransport:
 def build_zai_trial_adapter(**kwargs):
     return PacketBoundaryAdapter("zai", ZaiLiteTrialTransport(**kwargs))
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
 import json
 import sys
@@ -14,6 +15,15 @@ from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.zai_trial import build_zai_trial_adapter, load_key, ENDPOINT
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def assert_isolated_command(test, command):
+    for flag in ("--safe-mode", "--strict-mcp-config", "--no-session-persistence"):
+        test.assertIn(flag, command)
+    for flag, value in (("--tools", ""), ("--setting-sources", ""),
+                        ("--max-turns", "1"), ("--mcp-config", '{"mcpServers":{}}')):
+        test.assertIn(flag, command)
+        test.assertEqual(command[command.index(flag) + 1], value)
 
 
 def fixture():
@@ -50,6 +60,7 @@ class ZaiTrialTests(unittest.TestCase):
         self.assertEqual(result["provider"], "zai")
         self.assertIsNone(result["usage"])
         sent = run.call_args.kwargs
+        assert_isolated_command(self, run.call_args.args[0])
         self.assertEqual(sent["env"]["ANTHROPIC_BASE_URL"], ENDPOINT)
         self.assertNotIn("OTHER_KEY", sent["env"])
         self.assertNotIn("ANTHROPIC_API_KEY", sent["env"])
@@ -58,6 +69,42 @@ class ZaiTrialTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
         self.assertEqual(run.call_count, 1)
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_isolation_assertions_detect_removed_or_weakened_flags(self, run):
+        run.return_value = self.native()
+        build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        command = run.call_args.args[0]
+        for flag in ("--safe-mode", "--strict-mcp-config", "--no-session-persistence",
+                     "--tools", "--setting-sources", "--max-turns", "--mcp-config"):
+            removed = list(command)
+            removed.remove(flag)
+            with self.assertRaises(AssertionError):
+                assert_isolated_command(self, removed)
+        for flag, value in (("--tools", "default"), ("--max-turns", "2"),
+                            ("--setting-sources", "user"), ("--mcp-config", '{"mcpServers":{"unsafe":{}}}')):
+            weakened = list(command)
+            weakened[weakened.index(flag) + 1] = value
+            with self.assertRaises(AssertionError):
+                assert_isolated_command(self, weakened)
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_both_receipts_redact_plain_and_escaped_nested_credentials(self, run):
+        key = 'test."secret\\tail'
+        self.env.write_text("ZAI_API_KEY=" + key + "\n")
+        text = "plain=" + key + "; embedded=" + json.dumps({"key": key})
+        run.return_value = (0, json.dumps({"session_id": "trial-1", "subtype": "success",
+            "result": json.dumps({"outcome": text, "checks": [{"nested": [text]}]})}).encode())
+        with self.assertRaises(ValueError):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        diagnostic = json.loads(next((self.root / "journal").glob("*.result.json")).read_text())
+        writer = runpy.run_path(str(ROOT / "scripts/zai-lite-smoke.py"))["write_report"]
+        final = writer({"status": "PASS", "result": {"outcome": text, "nested": [text]}},
+                       self.root / "result.json", key)
+        for receipt in (diagnostic, final):
+            serialized = json.dumps(receipt)
+            self.assertNotIn("secret", serialized)
+            self.assertIn("[REDACTED]", serialized)
 
     def test_missing_or_duplicate_credentials(self):
         for text in ("", "ZAI_API_KEY=\n", "ZAI_API_KEY=a\nZAI_API_KEY=b\n"):
@@ -142,4 +189,5 @@ class ZaiTrialTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]
 
