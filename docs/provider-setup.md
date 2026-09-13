@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
@@ -84,7 +85,7 @@ the preflight's own paraphrase of the startup constructor's refusal, because a
 read-only preflight must not construct the activation (it opens a Postgres
 control plane). It removes, relaxes, and defaults nothing. It prints variable
 names and booleans only, never a value —
-the same rule `/health` follows. The preflight reports bridge CONFIGURATION booleans only; the live challenge result is exposed by `/health.host_bridge.challenge_ok`. Exit status is 0 when nothing is outstanding
+the same rule `/health` follows. The preflight reports bridge CONFIGURATION booleans only; the startup challenge result (captured once when the activation built its live dependencies; /health never opens a connection) is exposed by `/health.host_bridge.challenge_ok`. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
 not acceptance, not provider activation evidence, and not owner approval.
 
@@ -661,3 +662,4 @@ by the client runtime and cover `host.docker.internal`.
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->

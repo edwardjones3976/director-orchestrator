@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | BEGIN]]
@@ -43,6 +44,10 @@ SECRETS = {
     "langgraph_primary_postgres_dsn": "postgresql://fixtureuser:fixturepassword@db/primary",
     "repository_snapshot_root": "/fixture-snapshot-root",
     "cursor_api_key": "cursorapikeyfixture",
+    "entitlement_postgres_dsn_file": "/fixture-entitlement-dsn",
+    "entitlement_trusted_verifier_secret_file": "/fixture-entitlement-trusted-verifier",
+    "entitlement_route_verifier_secret_file": "/fixture-entitlement-route-verifier",
+    "entitlement_owner_authority_secret_file": "/fixture-entitlement-owner-authority",
 }
 
 
@@ -85,6 +90,7 @@ def _complete(**overrides) -> Settings:
         langgraph_primary_enabled=True,
         langgraph_primary_new_intake_enabled=True,
         langgraph_primary_live_provider_dispatch_enabled=True,
+        entitlement_control_plane_enabled=True,
         trusted_provider_cost_ranks_json=json.dumps({"cursor": 1, "claude": 2, "openai": 3}),
         langgraph_primary_provider_activation_bindings_json=json.dumps(bindings),
         langgraph_primary_completion_evidence_actor_allowlist_json=json.dumps(
@@ -255,10 +261,22 @@ class SecretDisclosureTests(unittest.TestCase):
 
     def test_the_report_prints_subsystem_readiness_stages(self):
         lines = PREFLIGHT.report(_complete(), [])
-        body = "\n".join(lines)
-        self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", body)
-        self.assertIn("EFFECT_GATEWAY_SLACK_CONFIGURED", body)
-        self.assertIn("HOST_BRIDGE_ENDPOINT_CONFIGURED", body)
+        
+        self.assertIn("  ENTITLEMENT_CONTROL_PLANE_ENABLED: true", lines)
+        self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_SCHEMA_CONFIGURED: true", lines)
+        self.assertIn("  EFFECT_GATEWAY_SLACK_CONFIGURED: true", lines)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: false", lines)
+        self.assertIn("  EFFECT_GATEWAY_ANY_CONFIGURED: true", lines)
+        self.assertIn("  HOST_BRIDGE_ENDPOINT_CONFIGURED: false", lines)
+        self.assertIn("  HOST_BRIDGE_SECRET_CONFIGURED: false", lines)
+
+        no_slack = PREFLIGHT.report(_complete(slack_bot_token=""), [])
+        self.assertIn("  EFFECT_GATEWAY_SLACK_CONFIGURED: false", no_slack)
+        self.assertIn("  EFFECT_GATEWAY_ANY_CONFIGURED: false", no_slack)
 
     def test_incomplete_subsystems_produce_one_problem_each(self):
         settings = _complete(
@@ -273,9 +291,33 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertEqual(len(entitlement), 1)
         self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", entitlement[0])
         
-        bridge = [p for s, p in problems if s == "host provider bridge"]
+        bridge = [p for _, p in problems if "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET" in PREFLIGHT.variables(p)]
         self.assertEqual(len(bridge), 1)
-        self.assertIn("LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", bridge[0])
+        self.assertIn("configured together", bridge[0])
+
+    def test_effect_gateway_missing_names_slack_bot_token(self):
+        problems = PREFLIGHT.unmet(_complete(slack_bot_token=""))
+        gateway = [p for s, p in problems if s == "effect gateways"]
+        self.assertEqual(len(gateway), 1)
+        self.assertIn("SLACK_BOT_TOKEN", gateway[0])
+
+    def test_entitlement_owner_authority_missing_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_owner_authority_secret_file=""))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", entitlement[0])
+
+    def test_entitlement_postgres_schema_invalid_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_postgres_schema="Bad-Schema"))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_SCHEMA", entitlement[0])
+
+    def test_entitlement_control_plane_disabled_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_control_plane_enabled=False))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", entitlement[0])
 
 
 class ReadOnlyTests(unittest.TestCase):
@@ -554,3 +596,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

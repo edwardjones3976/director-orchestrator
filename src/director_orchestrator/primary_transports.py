@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
@@ -1249,13 +1250,14 @@ def provider_lane_detail(
     capabilities: Mapping[str, PrimaryProviderCapability],
     required_providers: tuple[str, ...] = PRIMARY_PROVIDER_LANES,
 ) -> dict[str, dict[str, bool]]:
-    """Return configured and live_ready booleans for each lane."""
+    """Return configured (executable observed) and live_ready booleans for each lane."""
 
     return {
         provider_id: {
             "configured": bool(
                 provider_id in capabilities
                 and capabilities[provider_id].provider_id == provider_id
+                and capabilities[provider_id].executable_observed
             ),
             "live_ready": bool(
                 provider_id in capabilities
@@ -1290,3 +1292,4 @@ def provider_lane_detail(
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

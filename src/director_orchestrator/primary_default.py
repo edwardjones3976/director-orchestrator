@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
@@ -1084,6 +1085,7 @@ def build_automatic_primary_live_dependencies(
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
         budget_routing=budget_routing,
+        # capabilities is the full discovery map (all PRIMARY_PROVIDER_LANES), not the required-provider subset used for adapters
         capabilities=capabilities,
         bridge_challenge=bridge_challenge,
         packet_result_resolver=packet_result,
@@ -3017,3 +3019,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

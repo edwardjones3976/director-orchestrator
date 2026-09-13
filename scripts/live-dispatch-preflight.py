@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
@@ -299,25 +300,26 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
                 )
             )
 
-    if settings.entitlement_control_plane_enabled:
+    if not settings.entitlement_control_plane_enabled:
+        problems.append(("entitlement control plane", "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
+    else:
         if not settings.entitlement_postgres_dsn_file:
             problems.append(("entitlement control plane", "enabled but ENTITLEMENT_POSTGRES_DSN_FILE is missing"))
+        if not settings.entitlement_trusted_verifier_secret_file:
+            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE is missing"))
+        if not settings.entitlement_route_verifier_secret_file:
+            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE is missing"))
         if not settings.entitlement_owner_authority_secret_file:
             problems.append(("entitlement control plane", "enabled but ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE is missing"))
-        if not settings.entitlement_postgres_schema:
-            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_POSTGRES_SCHEMA is empty"))
+        
+        schema = settings.entitlement_postgres_schema or ""
+        if not re.fullmatch(r"^[a-z0-9_]+_v\d+$", schema):
+            problems.append(("entitlement control plane", "ENTITLEMENT_POSTGRES_SCHEMA must match [a-z0-9_]+_v<N>"))
 
     slack_configured = bool(settings.slack_bot_token)
     github_configured = bool(settings.oracle_github_credential_configured())
     if not (slack_configured or github_configured):
         problems.append(("effect gateways", "SLACK_BOT_TOKEN or ORACLE_AUTOMERGE_GITHUB_TOKEN (or the ORACLE_AUTOMERGE_GITHUB_APP_ID app credential set) must configure at least one authenticated effect gateway"))
-
-    bridge_endpoint = bool(settings.langgraph_primary_host_bridge_endpoint)
-    bridge_secret = bool(settings.langgraph_primary_host_bridge_secret)
-    if bridge_endpoint and not bridge_secret:
-        problems.append(("host provider bridge", "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"))
-    elif bridge_secret and not bridge_endpoint:
-        problems.append(("host provider bridge", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT"))
 
     return problems
 
@@ -346,6 +348,8 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
     lines.append("Subsystem readiness:")
     lines.append(f"  ENTITLEMENT_CONTROL_PLANE_ENABLED: {str(bool(settings.entitlement_control_plane_enabled)).lower()}")
     lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(bool(settings.entitlement_postgres_dsn_file)).lower()}")
+    lines.append(f"  ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_trusted_verifier_secret_file)).lower()}")
+    lines.append(f"  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_route_verifier_secret_file)).lower()}")
     lines.append(f"  ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_owner_authority_secret_file)).lower()}")
     lines.append(f"  ENTITLEMENT_SCHEMA_CONFIGURED: {str(bool(settings.entitlement_postgres_schema)).lower()}")
 
@@ -415,3 +419,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

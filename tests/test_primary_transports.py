@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
@@ -138,7 +139,6 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
     def test_provider_lane_detail_returns_configured_and_callable(self):
         observed = capabilities(unavailable="github-copilot")
-        observed.pop("github-copilot", None)
         
         # Make one lane configured but not callable
         observed["claude"] = PrimaryProviderCapability(
@@ -151,7 +151,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
         detail = provider_lane_detail(observed)
 
-        # Absent lane
+        # Present but not configured (executable_observed False)
         self.assertFalse(detail["github-copilot"]["configured"])
         self.assertFalse(detail["github-copilot"]["live_ready"])
 
@@ -834,3 +834,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

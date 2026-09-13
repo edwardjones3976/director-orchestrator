@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
@@ -457,23 +458,86 @@ process.stdout.write(JSON.stringify({outputs, store}));
             recovery,
         )
 
-    def test_health_endpoint_failed_bridge_returns_challenge_ok_false(self):
+    def test_health_endpoint_host_bridge_challenge_and_configured(self):
         from fastapi.testclient import TestClient
-        from director_orchestrator.main import app, primary_default_activation
+        from director_orchestrator.main import app
         from unittest.mock import patch, MagicMock
+        from dataclasses import replace
+        from director_orchestrator import main as main_module
 
         mock_activation = MagicMock()
         mock_activation.live_dependencies = MagicMock()
         mock_activation.live_dependencies.bridge_challenge = None
-        mock_activation.live_dependencies.capabilities = {}
+        
+        bridged = replace(main_module.settings, langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch", langgraph_primary_host_bridge_secret="s" * 40)
+
+        with patch("director_orchestrator.main.primary_default_activation", mock_activation):
+            with patch("director_orchestrator.main.settings", bridged):
+                client = TestClient(app)
+                response = client.get("/health")
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertIs(data["host_bridge"]["challenge_ok"], False)
+                self.assertIs(data["host_bridge"]["configured"], True)
+
+        mock_activation.live_dependencies.bridge_challenge = object()
+        with patch("director_orchestrator.main.primary_default_activation", mock_activation):
+            with patch("director_orchestrator.main.settings", bridged):
+                client = TestClient(app)
+                response = client.get("/health")
+                data = response.json()
+                self.assertIs(data["host_bridge"]["challenge_ok"], True)
+                self.assertIs(data["host_bridge"]["configured"], True)
+
+    def test_health_endpoint_providers_lanes(self):
+        from fastapi.testclient import TestClient
+        from director_orchestrator.main import app
+        from director_orchestrator.primary_transports import PrimaryProviderCapability, PRIMARY_PROVIDER_LANES
+        from unittest.mock import patch, MagicMock
+
+        capabilities = {
+            "claude": PrimaryProviderCapability(
+                provider_id="claude",
+                backend_identity="claude",
+                transport_kind="test",
+                executable_observed=True,
+                authenticated_observed=False,
+            ),
+            "openai": PrimaryProviderCapability(
+                provider_id="openai",
+                backend_identity="openai",
+                transport_kind="test",
+                executable_observed=True,
+                authenticated_observed=True,
+            )
+        }
+
+        mock_activation = MagicMock()
+        mock_activation.live_dependencies = MagicMock()
+        mock_activation.live_dependencies.capabilities = capabilities
+        mock_activation.live_dependencies.bridge_challenge = None
 
         with patch("director_orchestrator.main.primary_default_activation", mock_activation):
             client = TestClient(app)
             response = client.get("/health")
-            self.assertEqual(response.status_code, 200)
             data = response.json()
-            self.assertIn("host_bridge", data)
-            self.assertIs(data["host_bridge"]["challenge_ok"], False)
+            lanes = data["providers"]["lanes"]
+            self.assertEqual(set(lanes.keys()), set(PRIMARY_PROVIDER_LANES))
+            self.assertEqual(set(lanes["claude"].keys()), {"configured", "live_ready"})
+            self.assertEqual(lanes["claude"]["configured"], True)
+            self.assertEqual(lanes["claude"]["live_ready"], False)
+            self.assertEqual(lanes["openai"]["configured"], True)
+            self.assertEqual(lanes["openai"]["live_ready"], True)
+
+        with patch("director_orchestrator.main.primary_default_activation", None):
+            client = TestClient(app)
+            response = client.get("/health")
+            data = response.json()
+            lanes = data["providers"]["lanes"]
+            self.assertEqual(set(lanes.keys()), set(PRIMARY_PROVIDER_LANES))
+            for v in lanes.values():
+                self.assertEqual(v["configured"], False)
+                self.assertEqual(v["live_ready"], False)
 
 
 if __name__ == "__main__":
@@ -489,3 +553,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
