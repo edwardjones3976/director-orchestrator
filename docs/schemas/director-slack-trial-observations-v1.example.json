@@ -1,0 +1,122 @@
+{
+  "schema": "director-slack-trial-observations/v1",
+  "observed_at": "2026-09-13T12:00:32Z",
+  "expires_at": "2026-09-13T12:05:32Z",
+  "requested_trials": 1,
+  "observed_trials": 1,
+  "rubric_sha256": "22efb215f9531adbe07597b75fffdd5a400285674c62d71d5e16a05584ab7506",
+  "collection_runtime_before": {
+    "container_id": "synthetic-container",
+    "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "runtime_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "started_at": "2026-09-13T11:00:00Z",
+    "offline_configured": true,
+    "paid_configured": false
+  },
+  "collection_runtime_after": {
+    "container_id": "synthetic-container",
+    "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "runtime_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "started_at": "2026-09-13T11:00:00Z",
+    "offline_configured": true,
+    "paid_configured": false
+  },
+  "runtime_collection_binding_stable": true,
+  "runtime_health_at_collection": {
+    "paid_runs_enabled": false,
+    "ambiguous_effect_count": 0,
+    "reconciliation_hold_reason": null,
+    "primary_runtime_active": true
+  },
+  "collector_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "read_only": true,
+  "slack_writes": 0,
+  "provider_dispatches": 0,
+  "scorecard_mutations": 0,
+  "qualified_run_count": null,
+  "ten_consecutive_runs_verified": false,
+  "native_source_reads": [],
+  "trials": [
+    {
+      "task_id": "DIR-LG-AB12",
+      "thread_ts": "1789300800.100000",
+      "task_record_bound": true,
+      "task_status": "DONE",
+      "input_message_ts": "1789300800.100000",
+      "input_client_msg_id": "synthetic-source-event",
+      "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "owner_account_input_matched": true,
+      "human_typing_attested": null,
+      "task_api_gateway_attested": true,
+      "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "slack_thread_complete_at_read": true,
+      "observed_final_message_count": 1,
+      "terminal_reply_count": 1,
+      "terminal_messages": [
+        {
+          "ts": "1789300830.100000",
+          "client_msg_id": "synthetic-terminal-message",
+          "body_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "simulation_label_present": true,
+          "actual_cost_not_recorded_present": true
+        }
+      ],
+      "final_receipt_matches_native_message": true,
+      "delivery_receipt_list_complete": true,
+      "delivery_receipts": [
+        {
+          "notification_key": "terminal",
+          "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "client_msg_id": "synthetic-terminal-message",
+          "state": "DELIVERED",
+          "claimed_at": "2026-09-13T12:00:29Z",
+          "acknowledged_at": "2026-09-13T12:00:30Z",
+          "delivered_at": "2026-09-13T12:00:31Z",
+          "slack_ts": "1789300830.100000",
+          "readback_attempts": 1,
+          "owner_decision": null,
+          "owner_decision_at": null,
+          "owner_command_id": null
+        }
+      ],
+      "owner_pause_seconds": 0,
+      "machine_seconds": 30,
+      "owner_decision_record_count": 0,
+      "authenticated_scoped_approval_verified": null,
+      "wall_seconds": 30,
+      "wall_under_60_seconds": true,
+      "all_recorded_outcomes_are_offline_doubles": true,
+      "all_provider_result_digests_present": true,
+      "zero_calls_in_exposed_task_projection": true,
+      "simulation_charge_supported_usd": 0,
+      "simulation_charge_basis": "Offline double outcomes and exposed empty lists; complete operational attempts remain unknown.",
+      "actual_cost_usd": null,
+      "operational_provider_attempts_verified": null,
+      "independent_correctness_verified": null,
+      "global_task_deduplication_verified": null,
+      "execution_image_binding_verified": null,
+      "input_rubric_sha256": "22efb215f9531adbe07597b75fffdd5a400285674c62d71d5e16a05584ab7506",
+      "source_errors": [],
+      "runtime_collection_binding_stable": true,
+      "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED",
+      "rubric_evaluation": {
+        "rubric_sha256": "22efb215f9531adbe07597b75fffdd5a400285674c62d71d5e16a05584ab7506",
+        "passed": true,
+        "checks": {
+          "predeclared": true,
+          "task_bound": true,
+          "one_terminal": true,
+          "task_done": true,
+          "offline_outcomes": true,
+          "result_digests": true,
+          "terminal_label": true,
+          "terminal_cost_text": true,
+          "native_delivery": true
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic documentation example, not a collected trial. Complete attempts, historical image and global uniqueness remain unknown."
+  ]
+}
