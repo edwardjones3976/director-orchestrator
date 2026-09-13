@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_FILE
+file:///workspace/responses-validation-patch/src/director_orchestrator/provider_validation.py
