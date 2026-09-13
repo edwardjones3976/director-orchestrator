@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]] -->
 # Welcome aboard, Z.ai
 
@@ -55,3 +56,12 @@ General assignments require the new allocation policy, canonical admission, stab
 journal binding, independent review and applicable activation checks. Tools are disabled
 by client configuration; this is not a claim of an OS security sandbox.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]] -->
+
+## First qualification result
+
+The September 13 UTC owner-invoked trial failed Director packet validation after
+47.234 seconds. The original harness retained only the exception class, so the exact
+rejected field cannot be recovered from its receipt. No live success or actual billing
+amount is claimed. The attempt was not repeated. Follow-up code retains sanitized
+diagnostics for future authorized calls. Eleven focused offline tests passed.
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | END]] -->
