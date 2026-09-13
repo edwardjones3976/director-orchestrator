@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
@@ -176,6 +177,14 @@ The container invokes `primary_generation publish-provider-evidence
 provider, start the normal application, run migrations or adopt intake. The
 staged ASGI service remains GET-only.
 
+Publication reads already captured validation records while
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` remains unchanged in the
+generation-bound offline-handoff profile. Only this staged reader opts out of
+the verifier loader's execution-switch check; it retains the configured
+validation DSN, capture key, candidate/tree/generation checks and read-only
+database connection. The normal runtime loader still requires validation to be
+enabled. Do not change the flag to publish evidence from an existing generation.
+
 The file is the closed object `{"version":"director-staged-provider-evidence/v1",
 "generation":"<selected manifest SHA256>","requests":[...]}`. Each item has
 `provider_id` and `request`; `request` is the existing signed
@@ -254,3 +263,4 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->
