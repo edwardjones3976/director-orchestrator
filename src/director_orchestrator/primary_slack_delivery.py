@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 """Bounded primary lifecycle notifications; a claimed post is never retried.
@@ -317,7 +318,10 @@ class PrimarySlackDelivery:
                     if (isinstance(item, dict) and item.get("client_msg_id") == row["client_msg_id"]
                             and row.get("bot_user_id") is not None
                             and item.get("user") == row["bot_user_id"]
-                            and item.get("text") == payload["text"]
+                            # Slack can flatten LF in fallback text; visible blocks
+                            # and all other content/identity checks remain exact.
+                            and item.get("text") in (payload["text"], payload["text"].replace("\n", " "))
+                            and item.get("thread_ts") == payload["thread_ts"]
                             and _visible_blocks(item.get("blocks", [])) == _visible_blocks(payload["blocks"])
                             and isinstance(item.get("ts"), str)
                             and re.fullmatch(r"\d{10,}\.\d{1,6}", item["ts"])
@@ -375,3 +379,4 @@ class PrimarySlackDelivery:
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | END]]
