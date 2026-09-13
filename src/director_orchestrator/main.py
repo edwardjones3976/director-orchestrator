@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
@@ -133,6 +134,7 @@ from .primary_activation_commands import (
     ProviderActivationAdvanceRequest,
     verify_provider_activation_advance_proof,
 )
+from director_orchestrator.primary_transports import provider_lane_detail
 from .workload_policy import EnforcementMode
 
 
@@ -481,12 +483,25 @@ def health() -> dict:
         configured_mode=EnforcementMode(settings.workload_policy_mode),
         shadow_assignment_limit=settings.workload_policy_shadow_assignments,
     )
+    providers_ready = settings.readiness()
+    if primary_default_activation is not None and primary_default_activation.live_dependencies is not None:
+        deps = primary_default_activation.live_dependencies
+        providers_ready["lanes"] = provider_lane_detail(deps.capabilities)
+        host_bridge_ready = {
+            "configured": bool(settings.langgraph_primary_host_bridge_endpoint and settings.langgraph_primary_host_bridge_secret),
+            "challenge_ok": deps.bridge_challenge is not None
+        }
+    else:
+        providers_ready["lanes"] = provider_lane_detail({})
+        host_bridge_ready = {"configured": False, "challenge_ok": False}
+        
     return {
         "ok": True,
         "version": __version__,
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
-        "providers": settings.readiness(),
+        "providers": providers_ready,
+        "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         "primary_slack_delivery": (primary_slack_delivery.health()
@@ -1660,3 +1675,5 @@ def complete_run(
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

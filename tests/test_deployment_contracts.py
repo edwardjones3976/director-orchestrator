@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
@@ -456,6 +457,24 @@ process.stdout.write(JSON.stringify({outputs, store}));
             recovery,
         )
 
+    def test_health_endpoint_failed_bridge_returns_challenge_ok_false(self):
+        from fastapi.testclient import TestClient
+        from director_orchestrator.main import app, primary_default_activation
+        from unittest.mock import patch, MagicMock
+
+        mock_activation = MagicMock()
+        mock_activation.live_dependencies = MagicMock()
+        mock_activation.live_dependencies.bridge_challenge = None
+        mock_activation.live_dependencies.capabilities = {}
+
+        with patch("director_orchestrator.main.primary_default_activation", mock_activation):
+            client = TestClient(app)
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertIn("host_bridge", data)
+            self.assertIs(data["host_bridge"]["challenge_ok"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -469,3 +488,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

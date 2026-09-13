@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
@@ -47,6 +48,7 @@ from director_orchestrator.primary_transports import (
     PrimaryProviderCapability,
     build_graph_native_packet_adapters,
     provider_lane_readiness,
+    provider_lane_detail,
     discover_local_primary_command_transports,
 )
 
@@ -133,6 +135,33 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
         self.assertNotIn("github-copilot", adapters)
         self.assertFalse(provider_lane_readiness(observed)["github-copilot"])
+
+    def test_provider_lane_detail_returns_configured_and_callable(self):
+        observed = capabilities(unavailable="github-copilot")
+        observed.pop("github-copilot", None)
+        
+        # Make one lane configured but not callable
+        observed["claude"] = PrimaryProviderCapability(
+            provider_id="claude",
+            backend_identity="claude",
+            transport_kind="test-observation",
+            executable_observed=True,
+            authenticated_observed=False,
+        )
+
+        detail = provider_lane_detail(observed)
+
+        # Absent lane
+        self.assertFalse(detail["github-copilot"]["configured"])
+        self.assertFalse(detail["github-copilot"]["live_ready"])
+
+        # Present but not callable
+        self.assertTrue(detail["claude"]["configured"])
+        self.assertFalse(detail["claude"]["live_ready"])
+
+        # Present and callable
+        self.assertTrue(detail["openai"]["configured"])
+        self.assertTrue(detail["openai"]["live_ready"])
 
     def test_unavailable_lane_cannot_smuggle_a_transport(self):
         with self.assertRaisesRegex(ValueError, "unavailable provider lane"):
@@ -804,3 +833,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

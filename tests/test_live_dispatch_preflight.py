@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
@@ -30,6 +31,7 @@ BINDING_FIELDS = (
 )
 # Distinctive fixture values. None of them may appear in the output.
 SECRETS = {
+    "slack_bot_token": "xoxb-fixture-" + "8" * 32,
     "langgraph_primary_adapter_callback_secret": "adaptercallback" + "0" * 32,
     "langgraph_primary_independent_review_evidence_secret": "review" + "1" * 32,
     "langgraph_primary_ci_evidence_secret": "cievidence" + "2" * 32,
@@ -250,6 +252,30 @@ class SecretDisclosureTests(unittest.TestCase):
         for line in lines:
             if line.startswith("  ") and ": " in line and line.strip()[0].isupper():
                 self.assertRegex(line.strip(), r"^[A-Z][A-Z0-9_]+: (true|false)$")
+
+    def test_the_report_prints_subsystem_readiness_stages(self):
+        lines = PREFLIGHT.report(_complete(), [])
+        body = "\n".join(lines)
+        self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", body)
+        self.assertIn("EFFECT_GATEWAY_SLACK_CONFIGURED", body)
+        self.assertIn("HOST_BRIDGE_ENDPOINT_CONFIGURED", body)
+
+    def test_incomplete_subsystems_produce_one_problem_each(self):
+        settings = _complete(
+            entitlement_control_plane_enabled=True,
+            entitlement_postgres_dsn_file="",
+            entitlement_owner_authority_secret_file="/fixture-owner-authority-secret",
+            langgraph_primary_host_bridge_endpoint="https://localhost",
+            langgraph_primary_host_bridge_secret="",
+        )
+        problems = PREFLIGHT.unmet(settings)
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", entitlement[0])
+        
+        bridge = [p for s, p in problems if s == "host provider bridge"]
+        self.assertEqual(len(bridge), 1)
+        self.assertIn("LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", bridge[0])
 
 
 class ReadOnlyTests(unittest.TestCase):
@@ -527,3 +553,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | BEGIN]]
@@ -297,6 +298,27 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
                     "fails closed before any provider call",
                 )
             )
+
+    if settings.entitlement_control_plane_enabled:
+        if not settings.entitlement_postgres_dsn_file:
+            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_POSTGRES_DSN_FILE is missing"))
+        if not settings.entitlement_owner_authority_secret_file:
+            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE is missing"))
+        if not settings.entitlement_postgres_schema:
+            problems.append(("entitlement control plane", "enabled but ENTITLEMENT_POSTGRES_SCHEMA is empty"))
+
+    slack_configured = bool(settings.slack_bot_token)
+    github_configured = bool(settings.oracle_github_credential_configured())
+    if not (slack_configured or github_configured):
+        problems.append(("effect gateways", "SLACK_BOT_TOKEN or ORACLE_AUTOMERGE_GITHUB_TOKEN (or the ORACLE_AUTOMERGE_GITHUB_APP_ID app credential set) must configure at least one authenticated effect gateway"))
+
+    bridge_endpoint = bool(settings.langgraph_primary_host_bridge_endpoint)
+    bridge_secret = bool(settings.langgraph_primary_host_bridge_secret)
+    if bridge_endpoint and not bridge_secret:
+        problems.append(("host provider bridge", "LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"))
+    elif bridge_secret and not bridge_endpoint:
+        problems.append(("host provider bridge", "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET is configured without LANGGRAPH_PRIMARY_HOST_BRIDGE_ENDPOINT"))
+
     return problems
 
 
@@ -320,6 +342,25 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
     ):
         lines.append(f"  {name}: {str(getattr(settings, attribute)).lower()}")
     lines.append("")
+
+    lines.append("Subsystem readiness:")
+    lines.append(f"  ENTITLEMENT_CONTROL_PLANE_ENABLED: {str(bool(settings.entitlement_control_plane_enabled)).lower()}")
+    lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(bool(settings.entitlement_postgres_dsn_file)).lower()}")
+    lines.append(f"  ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE_PRESENT: {str(bool(settings.entitlement_owner_authority_secret_file)).lower()}")
+    lines.append(f"  ENTITLEMENT_SCHEMA_CONFIGURED: {str(bool(settings.entitlement_postgres_schema)).lower()}")
+
+    slack_configured = bool(settings.slack_bot_token)
+    github_configured = bool(settings.oracle_github_credential_configured())
+    lines.append(f"  EFFECT_GATEWAY_SLACK_CONFIGURED: {str(slack_configured).lower()}")
+    lines.append(f"  EFFECT_GATEWAY_GITHUB_CONFIGURED: {str(github_configured).lower()}")
+    lines.append(f"  EFFECT_GATEWAY_ANY_CONFIGURED: {str(slack_configured or github_configured).lower()}")
+
+    bridge_endpoint = bool(settings.langgraph_primary_host_bridge_endpoint)
+    bridge_secret = bool(settings.langgraph_primary_host_bridge_secret)
+    lines.append(f"  HOST_BRIDGE_ENDPOINT_CONFIGURED: {str(bridge_endpoint).lower()}")
+    lines.append(f"  HOST_BRIDGE_SECRET_CONFIGURED: {str(bridge_secret).lower()}")
+    lines.append("")
+
     if not problems:
         lines.append("No unmet prerequisite. Configuration is not authority:")
         lines.append("acceptance, evidence, and owner approval are separate gates.")
@@ -373,3 +414,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 05:36 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

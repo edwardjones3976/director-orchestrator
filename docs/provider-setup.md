@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
@@ -83,7 +84,7 @@ the preflight's own paraphrase of the startup constructor's refusal, because a
 read-only preflight must not construct the activation (it opens a Postgres
 control plane). It removes, relaxes, and defaults nothing. It prints variable
 names and booleans only, never a value —
-the same rule `/health` follows. Exit status is 0 when nothing is outstanding
+the same rule `/health` follows. The preflight reports bridge CONFIGURATION booleans only; the live challenge result is exposed by `/health.host_bridge.challenge_ok`. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
 not acceptance, not provider activation evidence, and not owner approval.
 
@@ -162,6 +163,10 @@ Reported following main.py's order, additionally running the runtime validator w
 8. **Execution profile**, which fails closed before any provider call:
    `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
    `CLAUDE_CALLBACK_SECRET`, as listed above.
+9. **Subsystem readiness**, evaluated last for health-check transparency:
+   Entitlement control plane (schema presence requires only the configuration
+   string, no database connection is opened), effect gateways, and host
+   provider bridge.
 
 ### Mutual exclusions and pairings
 
@@ -655,3 +660,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
@@ -159,6 +160,22 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+    def test_default_primary_live_dependencies_exposes_capabilities_and_bridge_challenge(self):
+        from director_orchestrator.primary_default import DefaultPrimaryLiveDependencies
+        deps = DefaultPrimaryLiveDependencies(
+            adapters={},
+            candidate_sha_resolver=lambda: "",
+            packet_result_resolver=lambda ctx: None,
+            completion_evidence_resolver=lambda ctx: None,
+            external_effect_resolver=lambda ctx, intent: None,
+            evidence_debate_handler=lambda ctx: None,
+            acceptance_handler=lambda ctx: None,
+            capabilities={"openai": {}},
+            bridge_challenge="challenge_digest"
+        )
+        self.assertEqual(deps.capabilities, {"openai": {}})
+        self.assertEqual(deps.bridge_challenge, "challenge_digest")
 
     def test_one_format_success_invokes_only_the_primary_attempt(self) -> None:
         invoked: list[int] = []
@@ -3108,3 +3125,4 @@ if __name__ == "__main__":
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]

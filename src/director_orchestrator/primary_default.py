@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
@@ -659,6 +660,8 @@ class DefaultPrimaryLiveDependencies:
     ] = field(default_factory=dict)
     team_routing: Any | None = None
     budget_routing: PrimaryProviderBudgetRouting | None = None
+    capabilities: Mapping[str, Any] = field(default_factory=dict)
+    bridge_challenge: Any | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -1068,6 +1071,8 @@ def build_automatic_primary_live_dependencies(
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
         budget_routing=budget_routing,
+        capabilities=capabilities,
+        bridge_challenge=bridge_challenge,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -2186,6 +2191,7 @@ class DefaultPrimaryActivation:
         self.application: DefaultPrimaryApplication | None = None
         self.services: DefaultDryRunServices | None = None
         self.provider_activation: PrimaryProviderActivationService | None = None
+        self.live_dependencies: DefaultPrimaryLiveDependencies | None = None
         self._reconciliation_worker_ready = False
         self._live_dependencies_ready = False
         if (effect_mutation is None) != (effect_readback is None):
@@ -2274,6 +2280,7 @@ class DefaultPrimaryActivation:
                     live_dependencies = build_automatic_primary_live_dependencies(
                         settings, handle, services, team_routing=team_routing
                     )
+                self.live_dependencies = live_dependencies
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -2988,3 +2995,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
