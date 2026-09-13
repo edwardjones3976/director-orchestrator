@@ -1,0 +1,13 @@
+{
+  "schema": "director-offline-structural-rubric/v1",
+  "rubric_id": "offline-slack-structural-v1",
+  "declared_at": "2026-09-12T22:40:00+00:00",
+  "requirements": {
+    "terminal_reply_count": 1,
+    "task_status": "DONE",
+    "all_recorded_outcomes_are_offline_doubles": true,
+    "all_provider_result_digests_present": true,
+    "terminal_simulation_label": "SIMULATION — NO PROVIDER INTERACTION",
+    "terminal_cost_text": "Actual USD cost: not recorded"
+  }
+}

@@ -1,6 +1,13 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]] -->
 # Primary Slack lifecycle delivery
+
+The receipt API returns nullable `owner_decision` (`approve` or `reject`)
+alongside its command identity and timestamp. Startup adds the column
+idempotently. A matching durable command sets it once; `deny` maps to `reject`
+and legacy rows remain unknown. See [offline trial tooling](collect-offline-slack-trials.md)
+for approved-pause arithmetic and its evidence limits.
 
 Primary tasks now send an approval request and a terminal result to the original
 owner Slack thread. The FastAPI lifespan starts the delivery worker when primary
@@ -95,3 +102,4 @@ deployment are part of those tests.
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->

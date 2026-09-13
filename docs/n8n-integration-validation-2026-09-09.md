@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | BEGIN]] -->
@@ -173,6 +174,7 @@ From `/health`, recorded because it changes earlier findings:
 - `parallel_dispatch.kill_switch_open: false` — the kill switch is **engaged**.
   The corrected status workflow alarms on this; the previous revision watched a
   key `/health` does not return and would have stayed silent.
+  *(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)*
 - `ambiguous_effect_count: 0`. Rollback is not blocked.
 - `provider_activation.combined_live_ready: false`. Live activation remains shut.
 
@@ -189,3 +191,4 @@ review or accept it. The probes above are testing, not review.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 21:55 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->

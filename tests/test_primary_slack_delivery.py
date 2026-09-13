@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 11:53 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from director_orchestrator.approvals import build_slack_intake_attestation
 from director_orchestrator.langgraph_primary import ApprovalDecision, ApprovalKind, ApprovalResume
+from director_orchestrator.langgraph_postgres import _base_control_plane_ddl
 from director_orchestrator.models import IntakeAuthentication, TaskStatus
 from director_orchestrator.primary_default import build_offline_parallel_dispatcher
 from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
@@ -163,6 +165,7 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                 self.assertEqual(200, receipts.status_code)
                 self.assertEqual(["DELIVERED", "DELIVERED"], [r["state"] for r in receipts.json()])
                 self.assertIsNotNone(receipts.json()[0]["owner_decision_at"])
+                self.assertEqual("approve", receipts.json()[0]["owner_decision"])
                 self.assertEqual(401, api.get(f"/v1/primary/tasks/{task_id}/deliveries").status_code)
                 self.assertNotIn("payload", receipts.text)
                 # A displayed old request cannot approve a new/current decision.
@@ -171,6 +174,62 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                         "user": {"id": "UOWNER"}, "channel": {"id": "CDEFAULT"},
                         "actions": [{**button, "action_ts": "1720000002.000002"}]}, client)
                     post.assert_not_called()
+
+    def decision_receipt(self, record, decision="approve", command="fixture-command"):
+        projection = self.fixture.coordinator.get_projection(record.task_id)
+        pending = projection.projection["pending_approval"]
+        request = SimpleNamespace(task_id=record.task_id, decision=decision, command_id=command,
+            command_digest="sha256:" + "c" * 64, request_digest=pending["request_digest"],
+            expected_projection_digest=projection.projection_digest)
+        self.fixture.coordinator.record_command_receipt(task_id=record.task_id, operation="approval_resume",
+            command_id=request.command_id, command_digest=request.command_digest, projection=projection)
+        return request
+
+    def test_owner_approve_and_deny_are_recorded_once_with_command_binding(self):
+        for decision, stored in (("approve", "approve"), ("deny", "reject")):
+            # A fresh event selects a fresh task for each decision.
+            payload = self.fixture.intake().model_copy(update={"source_event_id": "fixture-" + decision})
+            record = self.fixture.application.create_intake(payload,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+            self.drain()
+            request = self.decision_receipt(record, decision, "command-" + decision)
+            self.delivery.record_owner_decision(request)
+            before = self.delivery.receipts(record.task_id)[0]
+            self.assertEqual(stored, before["owner_decision"])
+            self.assertIsNotNone(before["owner_decision_at"])
+            self.delivery.record_owner_decision(request)
+            self.assertEqual(before, self.delivery.receipts(record.task_id)[0])
+            with self.assertRaisesRegex(Exception, "evidence is immutable"):
+                with self.fixture.handle.pool.connection() as connection:
+                    connection.execute(f"UPDATE {self.fixture.schema}.director_primary_slack_delivery "
+                        "SET owner_decision=%s WHERE task_id=%s", ("reject" if stored == "approve" else "approve", record.task_id))
+
+    def test_missing_or_mismatched_command_receipt_cannot_record_decision(self):
+        record = self.intake()
+        self.drain()
+        request = self.decision_receipt(record)
+        request.command_digest = "sha256:" + "e" * 64
+        self.delivery.record_owner_decision(request)
+        self.assertIsNone(self.delivery.receipts(record.task_id)[0]["owner_decision"])
+        request.command_id = "absent-command"
+        self.delivery.record_owner_decision(request)
+        self.assertIsNone(self.delivery.receipts(record.task_id)[0]["owner_decision_at"])
+
+    def test_owner_decision_migration_is_additive_idempotent_and_keeps_legacy_unknown(self):
+        record = self.intake()
+        self.drain()
+        before = self.delivery.receipts(record.task_id)[0]
+        with self.fixture.handle.pool.connection() as connection:
+            # Disposable fixture only: reproduce the pre-column table shape.
+            connection.execute(f"ALTER TABLE {self.fixture.schema}.director_primary_slack_delivery DROP COLUMN owner_decision")
+            for _ in range(2):
+                for statement in _base_control_plane_ddl(self.fixture.schema):
+                    connection.execute(statement)
+        self.assertEqual(before, self.delivery.receipts(record.task_id)[0])
+        self.assertIsNone(self.delivery.receipts(record.task_id)[0]["owner_decision"])
+        with self.assertRaises(Exception):
+            with self.fixture.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.fixture.schema}.director_primary_slack_delivery SET owner_decision='deny'")
 
     def test_unsigned_canary_and_wrong_channel_do_not_post(self):
         record = self.intake(authenticated=False)
@@ -435,3 +494,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 11:53 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
