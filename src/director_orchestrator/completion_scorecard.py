@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """A read-only, evidence-derived product scorecard; never an activation gate.
 
@@ -460,6 +461,50 @@ def collect(candidate_sha: str, *, now: datetime | None = None, github: bool = F
     return result
 
 
+RUN_RECORD_FIELDS = frozenset({
+    "run_id", "mode", "actual_owner_event", "correctness_verified", "task_count",
+    "terminal_reply_count", "wall_seconds", "owner_pause_seconds", "machine_seconds",
+    "ambiguous_effects", "delivery_ambiguous", "operational_provider_attempts", "actual_cost_usd",
+    "runtime_sha", "image_id", "cost_basis",
+})
+OFFLINE_RUN_RECORD_FIELDS = RUN_RECORD_FIELDS | {"simulation_label"}
+
+
+def evaluate_run_record(row: dict[str, Any], *, mode: str,
+                        runtime_sha: str, image_id: str) -> tuple[bool | None, str]:
+    """Validate one measured row without inventing a ten-run sequence."""
+    _sha(runtime_sha)
+    if mode not in {"offline", "paid"} or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise ValueError("Invalid run mode or immutable image")
+    if not RUN_RECORD_FIELDS <= row.keys() or row["actual_cost_usd"] is None:
+        return None, "Missing measured evidence or actual cost; unknown is not zero."
+    if not isinstance(row["run_id"], str) or not row["run_id"]:
+        return False, "Run IDs must be distinct."
+    try:
+        values = [row[key] for key in ("wall_seconds", "owner_pause_seconds", "machine_seconds", "actual_cost_usd")]
+        if any(type(value) not in {int, float} for value in values):
+            return None, "Measurements must be finite numeric values."
+        wall, pause, machine, cost = values
+        if not (0 <= pause <= wall < 60 and 0 <= machine < 60 and abs(wall - pause - machine) < 0.001 and 0 <= cost < 1):
+            return False, "Actual wall time, pause accounting or actual cost misses the standard."
+    except (ValueError, TypeError):
+        return None, "Invalid measurements."
+    expected = {"mode": mode, "actual_owner_event": True, "correctness_verified": True,
+                "task_count": 1, "terminal_reply_count": 1, "ambiguous_effects": 0,
+                "delivery_ambiguous": False, "runtime_sha": runtime_sha, "image_id": image_id,
+                "cost_basis": "simulation_zero_calls" if mode == "offline" else "correlated_actual_charges"}
+    if _all_fields(row, expected) is not True:
+        return False, "Wrong origin/mode, incorrect result, duplicate or ambiguous delivery."
+    attempts = row["operational_provider_attempts"]
+    if type(attempts) is not int or attempts < 0:
+        return None, "Actual provider attempt count is unavailable."
+    if mode == "offline" and (attempts != 0 or cost != 0 or row.get("simulation_label") != "SIMULATION — NO PROVIDER INTERACTION"):
+        return False, "Offline qualification requires zero operational calls and an explicit simulation label."
+    if mode == "paid" and attempts < 1:
+        return False, "A simulation cannot qualify real paid execution."
+    return True, "Measured run facts meet the standard; source authentication remains a separate collector requirement."
+
+
 def evaluate_run_records(records: list[dict[str, Any]], *, mode: str,
                          runtime_sha: str, image_id: str) -> tuple[bool | None, str]:
     """Validate facts AFTER a future authoritative run collector verifies receipts.
@@ -477,38 +522,15 @@ def evaluate_run_records(records: list[dict[str, Any]], *, mode: str,
         return None, f"Exactly {required_count} independently verified runs required."
     seen: set[str] = set()
     for row in records:
-        fields = {"run_id", "mode", "actual_owner_event", "correctness_verified", "task_count",
-                  "terminal_reply_count", "wall_seconds", "owner_pause_seconds", "machine_seconds",
-                  "ambiguous_effects", "delivery_ambiguous", "operational_provider_attempts", "actual_cost_usd",
-                  "runtime_sha", "image_id", "cost_basis"}
-        if not fields <= row.keys() or row["actual_cost_usd"] is None:
+        if not RUN_RECORD_FIELDS <= row.keys() or row["actual_cost_usd"] is None:
             return None, "Missing measured evidence or actual cost; unknown is not zero."
         run_id = row["run_id"]
         if not isinstance(run_id, str) or not run_id or run_id in seen:
             return False, "Run IDs must be distinct."
         seen.add(run_id)
-        try:
-            values = [row[key] for key in ("wall_seconds", "owner_pause_seconds", "machine_seconds", "actual_cost_usd")]
-            if any(type(value) not in {int, float} for value in values):
-                return None, "Measurements must be finite numeric values."
-            wall, pause, machine, cost = values
-            if not (0 <= pause <= wall < 60 and 0 <= machine < 60 and abs(wall - pause - machine) < 0.001 and 0 <= cost < 1):
-                return False, "Actual wall time, pause accounting or actual cost misses the standard."
-        except (ValueError, TypeError):
-            return None, "Invalid measurements."
-        expected = {"mode": mode, "actual_owner_event": True, "correctness_verified": True,
-                    "task_count": 1, "terminal_reply_count": 1, "ambiguous_effects": 0,
-                    "delivery_ambiguous": False, "runtime_sha": runtime_sha, "image_id": image_id,
-                    "cost_basis": "simulation_zero_calls" if mode == "offline" else "correlated_actual_charges"}
-        if _all_fields(row, expected) is not True:
-            return False, "Wrong origin/mode, incorrect result, duplicate or ambiguous delivery."
-        attempts = row["operational_provider_attempts"]
-        if type(attempts) is not int or attempts < 0:
-            return None, "Actual provider attempt count is unavailable."
-        if mode == "offline" and (attempts != 0 or cost != 0 or row.get("simulation_label") != "SIMULATION — NO PROVIDER INTERACTION"):
-            return False, "Offline qualification requires zero operational calls and an explicit simulation label."
-        if mode == "paid" and attempts < 1:
-            return False, "A simulation cannot qualify real paid execution."
+        verdict = evaluate_run_record(row, mode=mode, runtime_sha=runtime_sha, image_id=image_id)
+        if verdict[0] is not True:
+            return verdict
     return True, "Measured run facts meet the standard; source authentication remains a separate collector requirement."
 
 
@@ -598,3 +620,4 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines += ["", "## Limits", "", *("- " + item for item in report["limitations"]), ""]
     return "\n".join(lines)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]

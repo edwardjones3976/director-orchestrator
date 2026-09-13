@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 # Twenty checks for a completed Director
 
@@ -150,6 +151,20 @@ Machine time excluding an owner pause is shown separately and cannot substitute
 for the required under-60-second wall time. Actual Grok Bot is distinct from
 direct xAI Grok and Cursor Grok, regardless of shared branding or quota labels.
 
+## Offline trial records
+
+[Offline trial tooling](collect-offline-slack-trials.md) checks a rubric declared
+in the original source message. Its JSONL recorder uses exactly
+`OFFLINE_RUN_RECORD_FIELDS` (`RUN_RECORD_FIELDS` plus `simulation_label`) and
+shares `evaluate_run_record`. The ten-run evaluator keeps its count, distinct-ID,
+wall-time, origin, image, cost, ambiguity and zero-call requirements.
+
+A zero-call-verified offline run maps to `actual_cost_usd: 0` with
+`cost_basis: simulation_zero_calls`; incomplete operational-attempt authority
+stays null. The recorder retains a non-qualifying row and stops further appends.
+Saved receipts do not become scored observations, and the in-process check-10
+collector remains a separate work order.
+
 ## Validation
 
 ```powershell
@@ -165,3 +180,4 @@ visibility, altered native seals and incomplete changed-path coverage. Native
 SQLite fixtures verify read-only evidence consumption. No live provider or
 Postgres lane is needed.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
