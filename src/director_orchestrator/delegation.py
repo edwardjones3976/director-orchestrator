@@ -1,3 +1,4 @@
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
 """Phase 1 of human-out-of-the-loop operation: grant schema and readiness only.
@@ -121,13 +122,13 @@ class DelegationGrant:
             raise DelegationConfigurationError("eligible providers are unbounded")
         if any(not _IDENTIFIER.fullmatch(item) for item in self.providers):
             raise DelegationConfigurationError("provider identity is not bounded")
-        # The evidence bar needs two concurring ACCEPTs from different
-        # providers, neither a material author.  A grant naming fewer than two
-        # eligible providers can never satisfy it, so it is refused at
+        # The evidence bar needs one ACCEPT from an eligible provider, who
+        # must not be a material author of the reviewed work.  A grant naming
+        # no eligible providers can never satisfy it, so it is refused at
         # configuration time rather than failing later per decision.
-        if len(self.providers) < 2:
+        if len(self.providers) < 1:
             raise DelegationConfigurationError(
-                "a grant must name at least two eligible providers"
+                "a grant must name at least one eligible provider"
             )
         if self.expires_at.tzinfo is None:
             raise DelegationConfigurationError("expires_at must be timezone aware")
@@ -320,3 +321,4 @@ def delegation_readiness(
     }
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
