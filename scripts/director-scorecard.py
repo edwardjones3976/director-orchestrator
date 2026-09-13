@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Render the read-only twenty-check Director scorecard."""
 import argparse
@@ -13,14 +15,15 @@ def main() -> int:
     parser.add_argument("--evidence-dir", type=Path, help="Explicit directory of unverified reference files; not recursively scanned")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--live", action="store_true", help="Read the named Director container and localhost:8080 health once")
+    parser.add_argument("--gateway", help="Exact running container name of the expected Slack gateway; requires --live and is needed for checks 01 and 02")
     parser.add_argument("--github", action="store_true", help="Also verify CI through authenticated gh; no provider calls")
     parser.add_argument("--ledger", type=Path, help="Reopen the actual workload journal read-only; requires --live")
     parser.add_argument("--security-scan", help="Verify this scan ID through the native Security workbench index; requires --live")
     args = parser.parse_args()
     try:
-        if (args.github or args.ledger or args.security_scan) and not args.live:
-            parser.error("--github, --ledger and --security-scan require --live")
-        observations = collect(args.candidate_sha, github=args.github, ledger_path=args.ledger,
+        if (args.github or args.ledger or args.security_scan or args.gateway) and not args.live:
+            parser.error("--github, --ledger, --security-scan and --gateway require --live")
+        observations = collect(args.candidate_sha, github=args.github, ledger_path=args.ledger, gateway=args.gateway,
                                security_scan_id=args.security_scan) if args.live else []
         runtime = next((item for item in observations if item.runtime_sha and item.image_id), None)
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
@@ -40,3 +43,5 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]]
+# [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
