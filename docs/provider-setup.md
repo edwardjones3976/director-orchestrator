@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
@@ -176,7 +177,14 @@ Reported following main.py's order, additionally running the runtime validator w
    `ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true, and its dependent checks
    run whether or not it is (one pass reports everything): the DSN file must
    exist at the literal configured path, be at most 65536 bytes and, stripped,
-   be one non-empty line (the full psycopg parse happens at startup); each of
+   be one non-empty line that the same `_parse_connection_target` startup
+   uses accepts (explicit dbname, port, user, a verifying sslmode with
+   sslrootcert, no delegated identity) and that names the same database and
+   role as `LANGGRAPH_PRIMARY_POSTGRES_DSN` under the entitlement schema —
+   the identical storage-identity digest startup compares; only the
+   database-side accepted identity, which needs the live handle, is left to
+   startup. The parser and digest are imported as pure functions; the file
+   still opens no connection, which its tests pin by name; each of
    the three secret files must exist after `~` expansion and, stripped, hold
    at least 32 UTF-8 bytes with at least 16 distinct byte values — the same
    rule `_read_secret_file` applies; the schema must match `[a-z0-9_]+_v<N>`.
@@ -698,3 +706,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
