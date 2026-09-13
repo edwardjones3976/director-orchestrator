@@ -1,0 +1,93 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
+"""Explicit Lite-only, tools-disabled trial route; never a production registration."""
+from __future__ import annotations
+
+import hashlib
+import json
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .langgraph_runtime import PacketBoundaryAdapter
+from .native_acceptance_capture import child_environment, pin_native_home, run_bounded
+from .primary_transports import normalize_native_provider_envelope
+
+ENDPOINT = "https://api.z.ai/api/anthropic"
+TRIAL_END = datetime(2026, 9, 29, 7, tzinfo=timezone.utc)
+WELCOME = Path(__file__).resolve().parents[2] / "docs/providers/zai-welcome-aboard.md"
+
+
+def load_key(env_file: Path) -> str:
+    """Read only the named key; never export other project credentials."""
+    matches = [line.partition("=")[2].strip() for line in
+               env_file.read_text(encoding="utf-8-sig").splitlines()
+               if line.startswith("ZAI_API_KEY=")]
+    if len(matches) != 1 or not matches[0] or any(c.isspace() for c in matches[0]):
+        raise ValueError("Exactly one nonempty ZAI_API_KEY binding is required")
+    return matches[0]
+
+
+class ZaiLiteTrialTransport:
+    def __init__(self, *, executable: Path, env_file: Path, journal: Path,
+                 model: str, lite_verified: bool):
+        if lite_verified is not True:
+            raise ValueError("Verified Lite entitlement is required")
+        if not model.lower().startswith("glm-") or any(c.isspace() for c in model):
+            raise ValueError("An explicit GLM model is required")
+        self.executable = executable.resolve(strict=True)
+        self.key = load_key(env_file)
+        self.journal = journal.resolve()
+        self.model = model
+
+    def send(self, work_packet_json, *, context):
+        work = json.loads(work_packet_json)
+        if datetime.now(timezone.utc) >= TRIAL_END:
+            raise ValueError("Lite trial expired; separate owner decision required")
+        if (context.allowed_tools or context.allowed_external_effects or
+                work["allowed_tools"] or work["allowed_external_effects"] or
+                context.budget_usd != 0 or work["limits"]["budget_usd"] != 0):
+            raise ValueError("Trial requires no tools, external effects, or API budget")
+        if not 0 < context.timeout_seconds <= 60:
+            raise ValueError("Trial timeout must be between 1 and 60 seconds")
+        prompt = (WELCOME.read_text(encoding="utf-8") +
+                  "\nReturn a JSON object with outcome and status. No Markdown fences.\n" +
+                  work_packet_json.decode("utf-8")).encode()
+        if len(prompt) > 24000:
+            raise ValueError("Trial packet exceeds input limit")
+        self.journal.mkdir(parents=True, exist_ok=True)
+        attempt = self.journal / (hashlib.sha256(context.idempotency_key.encode()).hexdigest() + ".json")
+        # Exclusive reservation survives crashes: uncertainty never authorizes retry.
+        with attempt.open("x", encoding="utf-8") as out:
+            json.dump({"provider": "zai", "assignment_id": context.assignment_id,
+                       "work_packet_digest": context.work_packet_digest,
+                       "status": "ATTEMPT_RESERVED", "production_credit": False}, out)
+        with tempfile.TemporaryDirectory(prefix="director-zai-") as home:
+            env = pin_native_home(child_environment(), home)
+            env.update(ANTHROPIC_AUTH_TOKEN=self.key, ANTHROPIC_BASE_URL=ENDPOINT,
+                       ANTHROPIC_DEFAULT_OPUS_MODEL=self.model,
+                       ANTHROPIC_DEFAULT_SONNET_MODEL=self.model,
+                       ANTHROPIC_DEFAULT_HAIKU_MODEL=self.model,
+                       API_TIMEOUT_MS=str(context.timeout_seconds * 1000))
+            command = [str(self.executable), "--print", "--safe-mode",
+                       "--setting-sources", "", "--strict-mcp-config",
+                       "--mcp-config", '{"mcpServers":{}}', "--tools", "",
+                       "--no-session-persistence", "--max-turns", "1",
+                       "--model", self.model, "--output-format", "json"]
+            code, raw = run_bounded(command, cwd=home, env=env, stdin=prompt,
+                                    timeout=context.timeout_seconds, limit=1048576)
+        if code != 0:
+            raise RuntimeError("Z.ai trial failed; attempt retained, no automatic retry")
+        native = json.loads(raw)
+        if native.get("is_error") or native.get("subtype") != "success":
+            raise RuntimeError("Z.ai did not return terminal success")
+        result = normalize_native_provider_envelope("zai", work, native)
+        # Host CLI dollar estimates use Anthropic tariffs, not this subscription.
+        result["usage"] = None
+        if result["side_effects"]:
+            raise RuntimeError("Tools-disabled trial reported external effects")
+        return result
+
+
+def build_zai_trial_adapter(**kwargs):
+    return PacketBoundaryAdapter("zai", ZaiLiteTrialTransport(**kwargs))
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]]
