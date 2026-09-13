@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
@@ -33,6 +34,11 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
+
+For editor-hosted agents, consult the [VS Code contact methods and Director
+integration guide](providers/vscode-contact-methods.md). It separates GitHub
+Copilot, provider-specific credentials, extension APIs, MCP, and workspace
+transports, with the evidence required before a route can accept assignments.
 
 The cross-provider responsibility, debate, advisory-voting, and strict
 Perplexity evidence boundaries are defined in
@@ -655,3 +661,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | END]] -->
