@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
@@ -15,6 +16,9 @@ from unittest.mock import patch
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.packet_contracts import document_digest
 from director_orchestrator.zai_trial import build_zai_trial_adapter, load_key, ENDPOINT
+from director_orchestrator.native_acceptance_capture import run_bounded, child_environment
+from director_orchestrator.native_acceptance_issuer import IssuerError
+from director_orchestrator.zai_trial import failure_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,6 +58,87 @@ class ZaiTrialTests(unittest.TestCase):
     def native(self):
         return (0, json.dumps({"session_id": "trial-1", "subtype": "success",
                               "result": '{"outcome":"def add(a, b): return a + b", "status":"SUCCEEDED"}'}).encode())
+
+    def test_failure_stdout_redacts_full_escaped_and_partial_key(self):
+        key = 'test."secret\\tail'
+        for form in (key.encode(), json.dumps(key)[1:-1].encode(),
+                     json.dumps(json.dumps(key)[1:-1])[1:-1].encode()):
+            for raw in (b"partial " + form, b"partial " + form[:-2]):
+                safe = failure_stdout(raw, key)
+                self.assertNotIn("secret", safe)
+                self.assertIn("[REDACTED]", safe)
+        self.assertEqual(failure_stdout(b"", key), "")
+
+    def test_offline_failure_capture_preserves_bounds_and_default_behavior(self):
+        cases = [('', 0.2, 100),
+                 ('print("partial", flush=True);', 1, 100),
+                 ('print("x"*10000, flush=True);', 1, 20)]
+        for prefix, timeout, limit in cases:
+            with self.subTest(prefix=prefix):
+                captured = []
+                with self.assertRaises(IssuerError):
+                    run_bounded([sys.executable, "-c", prefix + "import time; time.sleep(5)"],
+                        cwd=self.root, env=child_environment(), timeout=timeout, limit=limit,
+                        failure_capture=lambda raw, truncated: captured.append((raw, truncated)))
+                self.assertEqual(len(captured), 1)
+                self.assertLessEqual(len(captured[0][0]), limit)
+                if prefix.startswith('print("partial'):
+                    self.assertEqual(captured[0], (b"partial\r\n" if sys.platform == "win32" else b"partial\n", False))
+                if prefix.startswith('print("x'):
+                    self.assertTrue(captured[0][1])
+        self.assertEqual(run_bounded([sys.executable, "-c", "import sys; sys.stdout.write('bad'); sys.exit(7)"],
+                         cwd=self.root, env=child_environment()), (7, b"bad"))
+        captured = []
+        self.assertEqual(run_bounded([sys.executable, "-c", "import sys; sys.stdout.write('bad'); sys.exit(7)"],
+                         cwd=self.root, env=child_environment(),
+                         failure_capture=lambda raw, truncated: captured.append((raw, truncated))), (7, b"bad"))
+        self.assertEqual(captured, [(b"bad", False)])
+        with self.assertRaises(IssuerError):
+            run_bounded([sys.executable, "-c", "print('x'*100)"],
+                        cwd=self.root, env=child_environment(), limit=10)
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_failed_trial_keeps_sanitized_exclusive_evidence_and_never_retries(self, run):
+        def fail(*args, **kwargs):
+            kwargs["failure_capture"](b"partial test.secret", True)
+            raise IssuerError("native attempt ambiguous: timeout or capture limit")
+        run.side_effect = fail
+        adapter = build_zai_trial_adapter(**self.kw)
+        with self.assertRaisesRegex(IssuerError, "native attempt ambiguous"):
+            adapter.dispatch(self.work, context=self.context)
+        path = next((self.root / "journal").glob("*.failure.json"))
+        raw = path.read_bytes()
+        receipt = json.loads(raw)
+        self.assertEqual(receipt["stdout"], "partial [REDACTED]")
+        self.assertEqual(receipt["status"], "FAILED_OR_AMBIGUOUS")
+        self.assertIsNone(receipt["actual_cost_usd"])
+        self.assertTrue(receipt["truncated"])
+        with self.assertRaises(FileExistsError):
+            adapter.dispatch(self.work, context=self.context)
+        self.assertEqual(path.read_bytes(), raw)
+        self.assertEqual(run.call_count, 1)
+        self.assertFalse(list((self.root / "journal").glob("*.result.json")))
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_nonzero_trial_keeps_empty_failure_capture(self, run):
+        def fail(*args, **kwargs):
+            kwargs["failure_capture"](b"", False)
+            return 2, b""
+        run.side_effect = fail
+        with self.assertRaisesRegex(RuntimeError, "Z.ai trial failed"):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        receipt = json.loads(next((self.root / "journal").glob("*.failure.json")).read_text())
+        self.assertEqual(receipt["stdout"], "")
+        self.assertFalse(receipt["truncated"])
+
+    def test_evidence_write_error_does_not_replace_timeout(self):
+        def cannot_save(*args):
+            raise OSError("private-path-and-key")
+        with self.assertRaisesRegex(IssuerError, "native attempt ambiguous") as caught:
+            run_bounded([sys.executable, "-c", "import time; time.sleep(5)"],
+                        cwd=self.root, env=child_environment(), timeout=.2, failure_capture=cannot_save)
+        self.assertNotIn("private-path", str(caught.exception))
+        self.assertEqual(caught.exception.__notes__, ["Failure evidence could not be retained."])
 
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_bound_identity_and_isolated_subscription_environment(self, run):
@@ -235,3 +320,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]

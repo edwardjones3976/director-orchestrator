@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from .langgraph_runtime import PacketBoundaryAdapter
 from .native_acceptance_capture import child_environment, pin_native_home, run_bounded
+from .native_acceptance_issuer import write_new
 from .primary_transports import normalize_native_provider_envelope
 from .packet_contracts import validate_packet
 
@@ -43,6 +45,20 @@ def load_key(env_file: Path) -> str:
     if len(matches) != 1 or not matches[0] or any(c.isspace() for c in matches[0]):
         raise ValueError("Exactly one nonempty ZAI_API_KEY binding is required")
     return matches[0]
+
+
+def failure_stdout(raw: bytes, key: str) -> str:
+    """Redact the bound key and any incomplete key at a stopped output boundary."""
+    forms = {key, json.dumps(key)[1:-1], json.dumps(key, ensure_ascii=False)[1:-1]}
+    # Native JSON may contain a JSON-encoded result string.
+    forms.update(json.dumps(form)[1:-1] for form in tuple(forms))
+    for form in sorted((form.encode() for form in forms), key=len, reverse=True):
+        raw = raw.replace(form, b"[REDACTED]")
+        for size in range(min(len(form) - 1, len(raw)), 0, -1):
+            if raw.endswith(form[:size]):
+                raw = raw[:-size] + b"[REDACTED]"
+                break
+    return raw.decode("utf-8", errors="replace")
 
 
 class ZaiLiteTrialTransport:
@@ -87,6 +103,13 @@ class ZaiLiteTrialTransport:
             json.dump({"provider": "zai", "assignment_id": context.assignment_id,
                        "work_packet_digest": context.work_packet_digest,
                        "status": "ATTEMPT_RESERVED", "production_credit": False}, out)
+        def retain_failure(raw, truncated):
+            write_new(attempt.with_suffix(".failure.json"), {
+                "provider": "zai", "assignment_id": context.assignment_id,
+                "work_packet_digest": context.work_packet_digest,
+                "status": "FAILED_OR_AMBIGUOUS", "production_credit": False,
+                "stdout": failure_stdout(raw, self.key), "truncated": truncated,
+                "actual_cost_usd": None})
         with tempfile.TemporaryDirectory(prefix="director-zai-") as home:
             env = pin_native_home(child_environment(), home)
             env.update(ANTHROPIC_AUTH_TOKEN=self.key, ANTHROPIC_BASE_URL=ENDPOINT,
@@ -107,7 +130,8 @@ class ZaiLiteTrialTransport:
                        "No tools, external effects, or invented test execution.",
                        "--model", self.model, "--output-format", "json"]
             code, raw = run_bounded(command, cwd=home, env=env, stdin=prompt,
-                                    timeout=context.timeout_seconds, limit=1048576)
+                                    timeout=context.timeout_seconds, limit=1048576,
+                                    failure_capture=retain_failure)
         if code != 0:
             raise RuntimeError("Z.ai trial failed; attempt retained, no automatic retry")
         native = json.loads(raw)
@@ -149,3 +173,4 @@ def build_zai_trial_adapter(**kwargs):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
