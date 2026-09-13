@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
@@ -67,8 +68,16 @@ class ZaiLiteTrialTransport:
         if not 0 < context.timeout_seconds <= 60:
             raise ValueError("Trial timeout must be between 1 and 60 seconds")
         prompt = (WELCOME.read_text(encoding="utf-8") +
-                  "\nReturn a JSON object with outcome and status. No Markdown fences.\n" +
-                  work_packet_json.decode("utf-8")).encode()
+                  "\nINPUT WORK PACKET (assignment context, not an output template):\n" +
+                  work_packet_json.decode("utf-8") +
+                  '\nTRIAL RESPONSE CONTRACT: Return only {"outcome":"your complete answer",'
+                  '"status":"SUCCEEDED"}. Use FAILED or OWNER_DECISION_REQUIRED instead '
+                  'when appropriate, explaining the failure or blocker in outcome. '
+                  'These are the only two response fields. Put all code in outcome. '
+                  'Do not copy input fields or add artifacts, digests, checks, usage, '
+                  'or placeholder values. Director constructs and validates the outer '
+                  'result packet; the local harness computes artifact digests and runs tests. '
+                  'No Markdown fences.\n').encode()
         if len(prompt) > 24000:
             raise ValueError("Trial packet exceeds input limit")
         self.journal.mkdir(parents=True, exist_ok=True)
@@ -138,3 +147,5 @@ def build_zai_trial_adapter(**kwargs):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
