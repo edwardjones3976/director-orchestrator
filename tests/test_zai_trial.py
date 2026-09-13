@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]]
@@ -189,6 +190,22 @@ class ZaiTrialTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
 
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_trial_response_contract_follows_input_and_rejects_invented_artifact(self, run):
+        native = json.loads(self.native()[1])
+        payload = json.loads(native["result"])
+        payload["artifacts"] = [{"artifact": "corrected_assess.py", "sha256": "tbd-by-harness"}]
+        native["result"] = json.dumps(payload)
+        run.return_value = (0, json.dumps(native).encode())
+        with self.assertRaises(ValueError):
+            build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        prompt = run.call_args.kwargs["stdin"].decode()
+        self.assertGreater(prompt.index("TRIAL RESPONSE CONTRACT:"), prompt.index(self.work["objective"]))
+        self.assertIn("These are the only two response fields", prompt)
+        diagnostic = json.loads(next((self.root / "journal").glob("*.native.json")).read_text())
+        self.assertEqual(json.loads(diagnostic["result"])["artifacts"], payload["artifacts"])
+        self.assertEqual(run.call_count, 1)
+
 
     @patch("director_orchestrator.zai_trial.run_bounded")
     def test_single_json_fence_preserves_failed_status(self, run):
@@ -216,3 +233,5 @@ if __name__ == "__main__":
 
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
