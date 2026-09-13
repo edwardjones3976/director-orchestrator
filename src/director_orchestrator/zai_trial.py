@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
@@ -82,8 +83,8 @@ class ZaiLiteTrialTransport:
                 work["allowed_tools"] or work["allowed_external_effects"] or
                 context.budget_usd != 0 or work["limits"]["budget_usd"] != 0):
             raise ValueError("Trial requires no tools, external effects, or API budget")
-        if not 0 < context.timeout_seconds <= 60:
-            raise ValueError("Trial timeout must be between 1 and 60 seconds")
+        if not 0 < context.timeout_seconds <= 69:
+            raise ValueError("Trial timeout must be between 1 and 69 seconds")
         prompt = (WELCOME.read_text(encoding="utf-8") +
                   "\nINPUT WORK PACKET (assignment context, not an output template):\n" +
                   work_packet_json.decode("utf-8") +
@@ -94,7 +95,7 @@ class ZaiLiteTrialTransport:
                   'Do not copy input fields or add artifacts, digests, checks, usage, '
                   'or placeholder values. Director constructs and validates the outer '
                   'result packet; the local harness computes artifact digests and runs tests. '
-                  'No Markdown fences.\n').encode()
+                  'Do not wrap the outer JSON in Markdown fences; code fences inside the outcome string are allowed when requested.\n').encode()
         if len(prompt) > 24000:
             raise ValueError("Trial packet exceeds input limit")
         self.journal.mkdir(parents=True, exist_ok=True)
@@ -176,3 +177,4 @@ def build_zai_trial_adapter(**kwargs):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | END]]
