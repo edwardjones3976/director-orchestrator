@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
@@ -141,6 +143,23 @@ class ZaiTrialTests(unittest.TestCase):
         self.assertEqual(caught.exception.__notes__, ["Failure evidence could not be retained."])
 
     @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_medium_effort_and_thinking_tokens_are_configured(self, run):
+        run.return_value = self.native()
+        build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        env = run.call_args.kwargs["env"]
+        self.assertEqual(env["MAX_THINKING_TOKENS"], "1024")
+        self.assertIn("--effort", command)
+        self.assertEqual(command[command.index("--effort") + 1], "medium")
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
+    def test_accepts_fenced_json_with_internal_backticks(self, run):
+        payload = '```json\n{"outcome":"code: ```python\\npass\\n```", "status":"SUCCEEDED"}\n```'
+        run.return_value = (0, json.dumps({"session_id": "trial-2", "subtype": "success", "structured_output": payload}).encode())
+        build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
+
+    @patch("director_orchestrator.zai_trial.run_bounded")
     def test_bound_identity_and_isolated_subscription_environment(self, run):
         run.return_value = self.native()
         result = build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)
@@ -151,7 +170,7 @@ class ZaiTrialTests(unittest.TestCase):
         self.assertEqual(sent["env"]["ANTHROPIC_BASE_URL"], ENDPOINT)
         self.assertEqual(sent["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "2000")
         self.assertIn("--system-prompt", run.call_args.args[0])
-        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--effort") + 1], "low")
+        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--effort") + 1], "medium")
         self.assertNotIn("OTHER_KEY", sent["env"])
         self.assertNotIn("ANTHROPIC_API_KEY", sent["env"])
         self.assertIn(b"Welcome aboard, Z.ai", sent["stdin"])
@@ -321,3 +340,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 07:07 UTC | END]]

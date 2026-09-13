@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:43 UTC | BEGIN]]
@@ -117,12 +118,12 @@ class ZaiLiteTrialTransport:
                        ANTHROPIC_DEFAULT_SONNET_MODEL=self.model,
                        ANTHROPIC_DEFAULT_HAIKU_MODEL=self.model,
                        API_TIMEOUT_MS=str(context.timeout_seconds * 1000),
-                       CLAUDE_CODE_MAX_OUTPUT_TOKENS="2000", MAX_THINKING_TOKENS="0")
+                       CLAUDE_CODE_MAX_OUTPUT_TOKENS="2000", MAX_THINKING_TOKENS="1024")
             command = [str(self.executable), "--print", "--safe-mode",
                        "--setting-sources", "", "--strict-mcp-config",
                        "--mcp-config", '{"mcpServers":{}}', "--tools", "",
                        "--no-session-persistence", "--max-turns", "1",
-                       "--effort", "low", "--system-prompt",
+                       "--effort", "medium", "--system-prompt",
                        "You are Z.ai serving the Director. Follow the supplied welcome packet. "
                        "Return exactly one JSON object with string outcome and status. "
                        "Use SUCCEEDED only when the requested artifact is complete. "
@@ -144,7 +145,7 @@ class ZaiLiteTrialTransport:
         if isinstance(payload, str):
             text = payload.strip()
             # Accept one complete JSON fence, never discard trailing content.
-            if text.startswith("```json\n") and text.endswith("\n```") and text.count("```") == 2:
+            if text.startswith("```json\n") and text.endswith("\n```"):
                 text = text[8:-4]
             payload = json.loads(text)
         if (not isinstance(payload, dict) or not isinstance(payload.get("outcome"), str)
@@ -174,3 +175,4 @@ def build_zai_trial_adapter(**kwargs):
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
