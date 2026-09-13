@@ -48,6 +48,22 @@ except Exception:  # pragma: no cover - exercised by subprocess, not import
     # inside the guard; main() reports it without the message.
     Settings = None
 
+try:
+    # The exact DSN parser and storage-identity digest startup applies to the
+    # entitlement DSN file (antigravity_team_routing.configured_provider_budget_routing).
+    # Pure functions: conninfo_to_dict parses text, nothing here opens a
+    # connection, and the ReadOnlyTests pin that no connect/pool/cursor name
+    # is ever referenced in this file.
+    from psycopg.conninfo import conninfo_to_dict
+    from director_orchestrator.entitlement_control_plane import (
+        _storage_identity as entitlement_storage_identity,
+    )
+    from director_orchestrator.langgraph_postgres import _parse_connection_target
+except Exception:  # pragma: no cover - exercised only where psycopg is absent
+    conninfo_to_dict = None
+    entitlement_storage_identity = None
+    _parse_connection_target = None
+
 
 # The switches that must be on together for live provider dispatch. The
 # preflight evaluates the rest of the configuration as though these were
@@ -236,27 +252,50 @@ def _file_size(path: str, *, expand: bool) -> int | None:
         return None
 
 
-def _dsn_file_problem(path: str) -> str | None:
-    """Why startup would refuse the entitlement DSN file, or None.
+def _dsn_file_problems(settings: Settings) -> list[str]:
+    """Why startup would refuse the entitlement DSN file, as problem texts.
 
-    Mirrors configured_provider_budget_routing (existing file, at most 65536
-    bytes) and the first two rules of _parse_connection_target on the stripped
-    contents (non-empty, no interior line break). The contents are never
-    returned; the full conninfo parse is left to startup.
+    Mirrors configured_provider_budget_routing step by step: an existing file
+    at the literal path, at most 65536 bytes; its stripped contents parsed by
+    the same _parse_connection_target startup uses (explicit dbname, port,
+    user and a verifying sslmode, no delegated identity); and the same
+    storage-identity digest as LANGGRAPH_PRIMARY_POSTGRES_DSN under the
+    entitlement schema. The contents never leave this function and no
+    connection is opened; the one check left to startup is the database-side
+    accepted identity, which needs the live handle.
     """
 
-    size = _file_size(path, expand=False)
+    size = _file_size(settings.entitlement_postgres_dsn_file, expand=False)
     if size is None or size > ENTITLEMENT_DSN_FILE_LIMIT:
-        return f"must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"
+        return [f"ENTITLEMENT_POSTGRES_DSN_FILE must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"]
     try:
-        text = _regular_file(path, expand=False).read_text(encoding="utf-8").strip()
+        text = _regular_file(settings.entitlement_postgres_dsn_file, expand=False).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError, AttributeError):
-        return "must be readable as UTF-8 connection info"
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE must be readable as UTF-8 connection info"]
     if not text:
-        return "must not be empty"
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE must not be empty"]
     if "\n" in text or "\r" in text:
-        return "must be one line of connection info"
-    return None
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE must be one line of connection info"]
+    if conninfo_to_dict is None or _parse_connection_target is None:
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE could not be validated: psycopg is not importable here"]
+    try:
+        entitlement = _parse_connection_target(
+            text, conninfo_to_dict=conninfo_to_dict,
+            allow_insecure_local_transport=settings.entitlement_allow_insecure_local_postgres,
+        )
+    except Exception:
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE must hold connection info startup accepts: explicit dbname, port, user and a verifying sslmode, no delegated identity"]
+    try:
+        primary = _parse_connection_target(
+            settings.langgraph_primary_postgres_dsn, conninfo_to_dict=conninfo_to_dict,
+            allow_insecure_local_transport=settings.langgraph_primary_allow_insecure_local_postgres,
+        )
+    except Exception:
+        return ["LANGGRAPH_PRIMARY_POSTGRES_DSN must parse as connection info startup accepts before the entitlement identity can be compared"]
+    schema = settings.entitlement_postgres_schema or ""
+    if entitlement_storage_identity(entitlement, schema=schema) != entitlement_storage_identity(primary, schema=schema):
+        return ["ENTITLEMENT_POSTGRES_DSN_FILE and LANGGRAPH_PRIMARY_POSTGRES_DSN must share database and role"]
+    return []
 
 
 def _secret_file_problem(path: str) -> str | None:
@@ -430,9 +469,7 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
     stage = "entitlement control plane"
     if not settings.entitlement_control_plane_enabled:
         problems.append((stage, "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
-    dsn_problem = _dsn_file_problem(settings.entitlement_postgres_dsn_file)
-    if dsn_problem is not None:
-        problems.append((stage, f"ENTITLEMENT_POSTGRES_DSN_FILE {dsn_problem}"))
+    problems.extend((stage, text) for text in _dsn_file_problems(settings))
     for name, attribute in ENTITLEMENT_SECRET_FILES:
         secret_problem = _secret_file_problem(getattr(settings, attribute))
         if secret_problem is not None:
