@@ -200,20 +200,39 @@ ENTITLEMENT_SECRET_FILES: tuple[tuple[str, str], ...] = (
 STRICT_BASE64 = re.compile(r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
 
 
-def _file_size(path: str) -> int | None:
-    """Byte size of an existing regular file, else None. Metadata only."""
+def _file_size(path: str, *, expand: bool) -> int | None:
+    """Byte size of an existing regular file, else None. Metadata only.
+
+    `expand` mirrors the caller startup uses: _read_secret_file expands `~`,
+    the DSN-file check in configured_provider_budget_routing does not. Any
+    filesystem error (permission, race with removal) reads as unavailable
+    rather than escaping: a traceback here would print the configured path.
+    """
 
     if not path:
         return None
-    resolved = pathlib.Path(path).expanduser()
-    if not resolved.is_file():
+    try:
+        resolved = pathlib.Path(path)
+        if expand:
+            resolved = resolved.expanduser()
+        if not resolved.is_file():
+            return None
+        return resolved.stat().st_size
+    except OSError:
         return None
-    return resolved.stat().st_size
 
 
 def _github_app_credential_malformed(settings: Settings) -> bool:
-    """True when a GitHub App credential is set but startup would refuse it."""
+    """True when startup would construct the GitHub App gateway and refuse it.
 
+    The effect registry builds the GitHub gateway only when
+    oracle_github_credential_configured() is true (all three App values and
+    no static token, or the token alone); an incomplete App configuration is
+    simply skipped there, so it is not a problem here either.
+    """
+
+    if not settings.oracle_github_credential_configured():
+        return False
     app_id = settings.oracle_automerge_github_app_id
     installation_id = settings.oracle_automerge_github_installation_id
     private_key = settings.oracle_automerge_github_app_private_key_b64
@@ -222,7 +241,6 @@ def _github_app_credential_malformed(settings: Settings) -> bool:
     return not (
         app_id.isdigit()
         and installation_id.isdigit()
-        and bool(private_key)
         and STRICT_BASE64.fullmatch(private_key) is not None
     )
 
@@ -351,11 +369,11 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
     if not settings.entitlement_control_plane_enabled:
         problems.append((stage, "ENTITLEMENT_CONTROL_PLANE_ENABLED must be enabled: live primary requires enrolled daily provider budget authority"))
     else:
-        dsn_size = _file_size(settings.entitlement_postgres_dsn_file)
+        dsn_size = _file_size(settings.entitlement_postgres_dsn_file, expand=False)
         if dsn_size is None or dsn_size > ENTITLEMENT_DSN_FILE_LIMIT:
             problems.append((stage, f"ENTITLEMENT_POSTGRES_DSN_FILE must name an existing file of at most {ENTITLEMENT_DSN_FILE_LIMIT} bytes"))
         for name, attribute in ENTITLEMENT_SECRET_FILES:
-            size = _file_size(getattr(settings, attribute))
+            size = _file_size(getattr(settings, attribute), expand=True)
             if size is None or size < ENTITLEMENT_SECRET_FILE_MINIMUM:
                 problems.append((stage, f"{name} must name an existing file of at least {ENTITLEMENT_SECRET_FILE_MINIMUM} bytes; startup also checks its entropy"))
         if not ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or ""):
@@ -396,9 +414,9 @@ def report(settings: Settings, problems: list[tuple[str, str]]) -> list[str]:
     # (metadata only); size and material rules are reported through unmet().
     lines.append("Subsystem readiness:")
     lines.append(f"  ENTITLEMENT_CONTROL_PLANE_ENABLED: {str(bool(settings.entitlement_control_plane_enabled)).lower()}")
-    lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(_file_size(settings.entitlement_postgres_dsn_file) is not None).lower()}")
+    lines.append(f"  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: {str(_file_size(settings.entitlement_postgres_dsn_file, expand=False) is not None).lower()}")
     for name, attribute in ENTITLEMENT_SECRET_FILES:
-        lines.append(f"  {name}_PRESENT: {str(_file_size(getattr(settings, attribute)) is not None).lower()}")
+        lines.append(f"  {name}_PRESENT: {str(_file_size(getattr(settings, attribute), expand=True) is not None).lower()}")
     lines.append(f"  ENTITLEMENT_SCHEMA_CONFIGURED: {str(ENTITLEMENT_SCHEMA.fullmatch(settings.entitlement_postgres_schema or '') is not None).lower()}")
 
     slack_configured = bool(settings.slack_bot_token)

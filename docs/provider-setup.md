@@ -170,11 +170,15 @@ Reported following main.py's order, additionally running the runtime validator w
    (`ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true; the DSN file must exist
    and be at most 65536 bytes; each of the three secret files must exist and
    hold at least 32 bytes; the schema must match `[a-z0-9_]+_v<N>` — only file
-   metadata is consulted, contents are never read and material entropy is
-   still verified at startup), the effect gateways (`SLACK_BOT_TOKEN` or a
-   GitHub credential; a GitHub App credential must also pass the same local
-   syntax checks the gateway constructor applies: numeric ids, strict base64
-   private key), and the host provider bridge (endpoint/secret configuration
+   metadata is consulted, contents are never read, material entropy is
+   still verified at startup, a filesystem error reads as an unavailable file,
+   and the DSN path is taken literally while `~` is expanded for the secret
+   files, exactly as their startup readers do), the effect gateways
+   (`SLACK_BOT_TOKEN` or a GitHub credential; when the registry would build
+   the GitHub App gateway, its credential must also pass the constructor's
+   local syntax checks: numeric ids, strict base64 private key — an incomplete
+   App configuration is skipped by startup and therefore not reported), and
+   the host provider bridge (endpoint/secret configuration
    booleans only; the pairing rule is reported by the langgraph-primary
    validator above). `/health.providers.lanes.<lane>` reports `configured`
    (an executable was observed, or the lane has a composed adapter such as the

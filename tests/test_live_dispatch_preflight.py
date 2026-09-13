@@ -387,6 +387,37 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertIn("ENTITLEMENT_POSTGRES_SCHEMA", problems[0])
         self.assertEqual(self._entitlement_problems(entitlement_postgres_schema="example_v1"), [])
 
+    def test_filesystem_errors_read_as_unavailable_files_and_never_escape(self):
+        # A permission failure or a removal between the two metadata calls must
+        # neither abort the report nor print the configured path.
+        from pathlib import Path
+
+        for method in ("is_file", "stat"):
+            with self.subTest(method=method):
+                def refuse(self_, *args, **kwargs):
+                    raise PermissionError(13, "denied", "/never-printed")
+                with patch.object(Path, method, refuse):
+                    all_problems = PREFLIGHT.unmet(_complete())
+                    report = PREFLIGHT.report(_complete(), all_problems)
+                problems = [p for s, p in all_problems if s == "entitlement control plane"]
+                self.assertEqual(len(problems), 4)
+                self.assertTrue(all("must name an existing file" in p for p in problems))
+                self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: false", report)
+                self.assertNotIn("never-printed", "\n".join(report))
+                self.assertNotIn(SECRETS["entitlement_postgres_dsn_file"], "\n".join(report))
+
+    def test_dsn_path_is_not_expanded_but_secret_paths_are(self):
+        # configured_provider_budget_routing opens Path(dsn_file) literally;
+        # _read_secret_file expands ~. The preflight mirrors each caller.
+        home = {"HOME": str(_ENTITLEMENT_DIR), "USERPROFILE": str(_ENTITLEMENT_DIR)}
+        with patch.dict(os.environ, home):
+            problems = self._entitlement_problems(
+                entitlement_postgres_dsn_file="~/dsn",
+                entitlement_trusted_verifier_secret_file="~/trusted-verifier",
+            )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+
     def test_github_app_credential_syntax_is_checked_like_startup(self):
         def gateway_problems(**overrides):
             problems = PREFLIGHT.unmet(_complete(**overrides))
@@ -400,6 +431,14 @@ class SecretDisclosureTests(unittest.TestCase):
         self.assertEqual(gateway_problems(**valid), [])
         report = PREFLIGHT.report(_complete(**valid), [])
         self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: true", report)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", report)
+
+        # An incomplete App configuration is skipped by the effect registry when
+        # Slack is configured (startup builds Slack only), so it is not a problem.
+        partial = dict(valid, oracle_automerge_github_installation_id="", oracle_automerge_github_app_private_key_b64="")
+        self.assertEqual(gateway_problems(**partial), [])
+        report = PREFLIGHT.report(_complete(**partial), [])
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: false", report)
         self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", report)
 
         for broken in (
