@@ -1,3 +1,4 @@
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]] -->
 <!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]] -->
 <!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]] -->
 # OpenAI Responses validation route
@@ -38,12 +39,26 @@ JSONL remains the native-host dialect.
   `ProviderActivationBinding` contract; the earlier `model`/`account_id` keys
   were never binding fields. Hexadecimal generation/tree fixtures and the
   native Codex hard-cap refusal regression are preserved.
-- A bridge exercise now runs the configured Responses factory end to end with a
-  real signed budget reservation, an enrolled meter, mocked HTTP, and real
-  capture verification; a successful `MagicMock` admission alone proves nothing.
-- The whole-operation deadline starts before admission, is tightened by the
-  canary packet's own ceiling, and bounds reservation, network, capture and
-  settlement; deterministic pre-dispatch expiry tests prove no unintended HTTP.
+- One whole-operation deadline, measured from a single start reading taken
+  before admission, bounds store connection acquisition, admission, monetary
+  reservation, claim, fence, transport, capture, settlement and COMMIT alike.
+  The canary packet's own ceiling tightens that same deadline from the shared
+  start; a post-admission reading never extends it. Store calls receive the
+  shared deadline, so connection waits and transaction-local statement/lock
+  timeouts -- including commit-time deferred-trigger lock waits -- are bounded:
+  a blocked settlement or COMMIT aborts and rolls back instead of persisting
+  eligible evidence after expiry, while real provider results, usage and
+  charges are never treated as reversed and remain reconcilable facts.
+- The bridge regression now exercises the configured factory
+  (`responses_route_from_file`) end to end with the entitlement fixtures' real
+  DSN and secret files, one authoritative reservation performed by the bridge
+  itself through `reserve_monetary_admission`, real capture verification, and a
+  durable no-replay refusal; a successful mocked admission alone proves
+  nothing. Deterministic expiry regressions prove no dispatch and no
+  settlement after expiry and that the packet ceiling is measured from the
+  operation start; PostgreSQL-backed regressions cover bounded admission and
+  settlement row locks, an exhausted deadline refusing before any store
+  effect, and a blocked COMMIT that cannot persist late settlement.
 
 Host suites `tests.test_openai_responses_validation`, `tests.test_provider_validation`,
 `tests.test_response_meter` and `tests.test_primary_transports` (Postgres-backed
@@ -62,3 +77,4 @@ tools-disabled proposal; trusted CI and a non-author reviewer must confirm them.
 
 <!-- [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]] -->
 <!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]] -->
+<!-- [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]] -->

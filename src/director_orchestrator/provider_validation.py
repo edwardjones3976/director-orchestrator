@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
@@ -81,9 +82,33 @@ class PostgresValidationStore:
             raise ValueError("validation DSN is required")
         self.dsn = dsn
 
-    def connect(self):
+    def connect(self, connect_timeout: int = 5):
         import psycopg
-        return psycopg.connect(self.dsn, connect_timeout=5)
+        return psycopg.connect(self.dsn, connect_timeout=connect_timeout)
+
+    def _connect_bounded(self, remaining_seconds=None):
+        """Open one store connection bounded by the shared whole-operation deadline."""
+        if remaining_seconds is None:
+            return self.connect()
+        remaining = remaining_seconds()
+        if remaining <= 0:
+            raise ValidationError("validation deadline exhausted before connecting")
+        return self.connect(connect_timeout=max(1, min(5, int(remaining))))
+
+    @staticmethod
+    def _bind_deadline(db, remaining_seconds) -> None:
+        """Scope this transaction's statement and lock waits to the shared deadline.
+
+        The transaction-local timeouts also bound commit-time deferred-trigger
+        lock waits, so a blocked COMMIT aborts and rolls back instead of
+        persisting settlement after expiry. Such a rollback never reverses an
+        external provider effect; real results, usage and charges remain
+        reconcilable facts.
+        """
+        remaining = remaining_seconds()
+        milliseconds = str(max(1, int(remaining * 1000)))
+        db.execute("SELECT set_config('statement_timeout',%s,true), set_config('lock_timeout',%s,true)",
+                   (milliseconds, milliseconds))
 
     def bootstrap(self) -> None:
         """Explicit migration of the fixed validation schema only."""
@@ -140,9 +165,12 @@ class PostgresValidationStore:
                        (generation,candidate,tree,digest(owner_token.encode()),expires_at,
                         budget_units,json.dumps(dict(lanes))))
 
-    def admit(self, request: ValidationRequest, owner_token: str, *, preserve_canary_identity: bool = False) -> dict:
+    def admit(self, request: ValidationRequest, owner_token: str, *, preserve_canary_identity: bool = False,
+              remaining_seconds=None) -> dict:
         """One transaction locks eligibility, budget and replay admission."""
-        with self.connect() as db:
+        with self._connect_bounded(remaining_seconds) as db:
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
             row = db.execute(f"SELECT candidate,tree,owner_digest,expires_at,budget_units,"
                              f"reserved_units,revoked,configuration FROM {SCHEMA}.generations "
                              "WHERE generation=%s FOR UPDATE", (request.generation,)).fetchone()
@@ -155,6 +183,8 @@ class PostgresValidationStore:
                 raise ValidationError("attempt already admitted; reconcile without redispatch")
             if row[5] + spec["cost_units"] > row[4]:
                 raise ValidationError("validation budget exhausted")
+            if remaining_seconds is not None:
+                remaining_seconds()
             reservation, nonce = secrets.token_hex(32), secrets.token_hex(32)
             work = dict(spec["work_packet"])
             # Unique canary identity prevents accidental reuse of a production task.
@@ -176,8 +206,10 @@ class PostgresValidationStore:
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
                         packet=raw,owner_digest=row[2])
 
-    def claim_execution(self, admission: dict) -> None:
-        with self.connect() as db:
+    def claim_execution(self, admission: dict, *, remaining_seconds=None) -> None:
+        with self._connect_bounded(remaining_seconds) as db:
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
             row = db.execute(f"SELECT a.state,a.nonce,a.fence,a.input_digest,g.revoked,g.expires_at "
                              f"FROM {SCHEMA}.attempts a JOIN {SCHEMA}.generations g USING(generation) "
                              "WHERE a.reservation=%s AND a.generation=%s AND a.provider=%s FOR UPDATE",
@@ -186,14 +218,18 @@ class PostgresValidationStore:
                     or row[2] != admission["fence"] or row[3] != digest(admission["packet"])
                     or row[4] or row[5] <= int(time.time())):
                 raise ValidationError("validation fence or attempt is not eligible")
+            if remaining_seconds is not None:
+                remaining_seconds()
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='running' WHERE reservation=%s", (admission["reservation"],))
             db.execute(f"INSERT INTO {SCHEMA}.checkpoints VALUES (%s,%s,2,'running')",
                        (admission["reservation"],CHECKPOINT_NAMESPACE))
 
-    def verify_fence(self, request) -> None:
+    def verify_fence(self, request, *, remaining_seconds=None) -> None:
         """Called by the same native executor directly before I/O."""
         reservation = request.task_id.removeprefix("VALIDATION-")
-        with self.connect() as db:
+        with self._connect_bounded(remaining_seconds) as db:
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
             row = db.execute(f"SELECT a.state,a.fence,a.nonce,a.input_digest,g.owner_digest,"
                              f"g.expires_at,g.revoked,a.provider FROM {SCHEMA}.attempts a "
                              f"JOIN {SCHEMA}.generations g USING(generation) WHERE reservation=%s",
@@ -210,15 +246,19 @@ class PostgresValidationStore:
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='ambiguous' WHERE reservation=%s AND state IN ('admitted','running')",
                        (reservation,))
 
-    def settle(self, admission: dict, output: bytes, capture: ValidationCapture) -> str:
+    def settle(self, admission: dict, output: bytes, capture: ValidationCapture, *, remaining_seconds=None) -> str:
         encoded = canonical_json_bytes(asdict(capture))
         evidence_digest = digest(encoded)
-        with self.connect() as db:
+        with self._connect_bounded(remaining_seconds) as db:
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
             row = db.execute(f"SELECT a.state,g.revoked,g.expires_at FROM {SCHEMA}.attempts a "
                              f"JOIN {SCHEMA}.generations g USING(generation) WHERE reservation=%s FOR UPDATE",
                              (admission["reservation"],)).fetchone()
             if row is None or row[0] != "running" or row[1] or row[2] <= int(time.time()):
                 raise ValidationError("completion revoked or expired")
+            if remaining_seconds is not None:
+                remaining_seconds()
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='succeeded',output=%s,capture=%s::jsonb,"
                        "capture_digest=%s WHERE reservation=%s", (output,encoded.decode(),evidence_digest,admission["reservation"]))
             db.execute(f"INSERT INTO {SCHEMA}.checkpoints VALUES (%s,%s,3,'succeeded')",
@@ -488,20 +528,25 @@ class ValidationBridgeService:
     def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
         """Explicit Responses API validation; never falls back to native Codex.
 
-        The whole-operation deadline starts before admission and covers the
-        admission transaction, monetary reservation, network, capture and
-        settlement.  Synchronous post-HTTP steps are bounded at entry; they
-        cannot be preempted mid-call, and the meter's own database steps stay
-        statement/lock-timeout bounded by the same remaining time.
+        One whole-operation deadline, measured from a single start reading taken
+        before admission, governs connection acquisition, admission, monetary
+        reservation, claim, fence, network, capture, settlement and COMMIT alike.
+        The canary packet's own ceiling tightens that same deadline from the shared
+        start; a post-admission reading may never extend it.  Store calls receive
+        the shared deadline so connection waits and transaction-local statement
+        and lock timeouts -- including commit-time deferred-trigger lock waits --
+        are bounded, and a late COMMIT rolls back instead of persisting eligible
+        settlement after expiry.  A timeout or rollback never pretends to reverse
+        an external provider action: actual results, usage and charges remain
+        reconcilable facts.
         """
         from .host_provider_bridge import BridgeRequest
         route = self.openai_responses_route
         transport_ceiling = int(getattr(route.transport, "maximum_timeout_seconds", 180))
         if transport_ceiling < 1:
             raise ValidationError("Responses validation timeout is exhausted")
-        # One shared deadline for admission, reservation, network, capture and
-        # settlement; the packet ceiling tightens it after admission.
-        deadline = time.monotonic() + transport_ceiling
+        started = time.monotonic()
+        deadline = started + transport_ceiling
 
         def remaining_seconds() -> float:
             rem = deadline - time.monotonic()
@@ -509,12 +554,13 @@ class ValidationBridgeService:
                 raise ValidationError("Responses validation timeout is exhausted")
             return rem
 
-        admission = self.store.admit(request, owner_token, preserve_canary_identity=True)
+        admission = self.store.admit(request, owner_token, preserve_canary_identity=True,
+                                     remaining_seconds=remaining_seconds)
         raw_captures: list[bytes] = []
         try:
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration digest drift")
-            self.store.claim_execution(admission)
+            self.store.claim_execution(admission, remaining_seconds=remaining_seconds)
             bridge = BridgeRequest(
                 provider="openai",
                 task_id="VALIDATION-" + admission["reservation"],
@@ -528,20 +574,19 @@ class ValidationBridgeService:
                 signature="",
                 packet=admission["packet"],
             )
-            self.store.verify_fence(bridge)
+            self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
             work = json.loads(admission["packet"])
             route.validate_canary(work, admission["packet"])
 
-            # Tighten the shared pre-admission deadline with the packet's own
-            # ceiling; both bounds apply and the earlier expiry wins.
-            packet_ceiling = min(int(work["limits"]["timeout_seconds"]), transport_ceiling)
+            # Tighten the shared deadline from the same operation start, never
+            # from a post-admission reading; the earlier expiry wins.
+            packet_ceiling = int(work["limits"]["timeout_seconds"])
             if packet_ceiling < 1:
                 raise ValidationError("Responses validation timeout is exhausted")
-            deadline = min(deadline, time.monotonic() + packet_ceiling)
-
-            route.reserve_monetary_admission(remaining_seconds=remaining_seconds)
+            deadline = min(deadline, started + packet_ceiling)
             remaining_seconds()
-            self.store.verify_fence(bridge)
+            route.reserve_monetary_admission(remaining_seconds=remaining_seconds)
+            self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
 
             def observe(provider, raw, result):
                 if provider != "openai" or raw_captures:
@@ -569,19 +614,23 @@ class ValidationBridgeService:
             route.transport.send(admission["packet"], context=context)
             if len(raw_captures) != 1:
                 raise ValidationError("Responses transport discarded its execution capture")
-            remaining_seconds()
-            self.store.verify_fence(bridge)
+            self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration changed during execution")
             remaining_seconds()
             capture = make_capture(admission, raw_captures[0], capture_key=self.capture_key, openai_responses_route=route)
-            remaining_seconds()
-            evidence = self.store.settle(admission, raw_captures[0], capture)
+            evidence = self.store.settle(admission, raw_captures[0], capture,
+                                         remaining_seconds=remaining_seconds)
             return {"evidence_digest": evidence, "evidence_id": admission["reservation"],
                     "expires_at": capture.expires_at, "surfaces": ["app", "runtime_adapter"],
                     "transport": "responses-api"}
         except Exception:
-            self.store.fail(admission["reservation"])
+            # Best-effort durable reconciliation marker; the original refusal must
+            # keep propagating even if the marker itself cannot be written.
+            try:
+                self.store.fail(admission["reservation"])
+            except Exception:
+                pass
             raise
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
@@ -592,3 +641,4 @@ class ValidationBridgeService:
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]

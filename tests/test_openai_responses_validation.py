@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 23:04 UTC | BEGIN]]
@@ -386,11 +387,16 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
             service.owner_token,
         )
 
+        # Exactly one admission, one claim and one settlement; the fence calls
+        # are read-only and share the operation deadline.
         store.admit.assert_called_once_with(
             ValidationRequest(generation=generation_hex, provider="openai"),
             service.owner_token,
             preserve_canary_identity=True,
+            remaining_seconds=ANY,
         )
+        self.assertEqual(1, store.claim_execution.call_count)
+        self.assertEqual(1, store.settle.call_count)
         self.assertEqual(len(captured_context), 1)
         ctx = captured_context[0]
         self.assertEqual(ctx.task_id, work["task_id"])
@@ -479,18 +485,44 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
 
     def test_expired_whole_operation_deadline_never_reaches_http_or_settlement(self):
         transport, route, admission, store, service = self._mocked_responses_bridge()
-        # Clock ticks: deadline start, packet-ceiling tightening, then the
-        # reservation-time check observes a spent deadline. Admission may have
-        # happened, but no HTTP, capture or settlement may follow it.
-        with patch("director_orchestrator.provider_validation.time.monotonic",
-                   side_effect=[100.0, 100.0, 1_000.0]):
+        # The single start reading budgets the whole operation; every later
+        # clock reading observes an already-spent deadline. Admission may have
+        # happened, but no HTTP, capture or settlement may follow it, and the
+        # durable reconciliation marker is still written.
+        readings = iter([100.0])
+        def fake_monotonic():
+            return next(readings, 1_000.0)
+        with patch("director_orchestrator.provider_validation.time.monotonic", fake_monotonic):
             with self.assertRaisesRegex(ValidationError, "timeout"):
                 service._run_openai_responses(
                     ValidationRequest(generation=admission["generation"], provider="openai"),
                     service.owner_token)
+        self.assertEqual(1, store.admit.call_count)
         transport.send.assert_not_called()
         store.settle.assert_not_called()
         store.fail.assert_called_once_with(admission["reservation"])
+
+    def test_packet_ceiling_is_measured_from_operation_start_not_admission(self):
+        transport, route, admission, store, service = self._mocked_responses_bridge()
+        seen = []
+        def send(packet, context=None):
+            seen.append(context)
+            raise RuntimeError("stop-after-context")
+        transport.send = send
+        # Admission appears to consume ten seconds; the canary packet's own 30
+        # second ceiling is still measured from the shared start (130), so a
+        # post-admission reading can never extend the whole-operation budget.
+        readings = iter([100.0])
+        def fake_monotonic():
+            return next(readings, 110.0)
+        with patch("director_orchestrator.provider_validation.time.monotonic", fake_monotonic):
+            with self.assertRaisesRegex(RuntimeError, "stop-after-context"):
+                service._run_openai_responses(
+                    ValidationRequest(generation=admission["generation"], provider="openai"),
+                    service.owner_token)
+        self.assertEqual(130.0, seen[0].deadline)
+        self.assertEqual(1, store.admit.call_count)
+        store.settle.assert_not_called()
 
     def test_transport_refuses_expired_deadline_before_any_http(self):
         from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
@@ -532,3 +564,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 23:04 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]

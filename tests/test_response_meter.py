@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
@@ -281,29 +282,28 @@ class ResponseMeterTests(unittest.TestCase):
                 self.assertEqual(self.budget.attempt_reservation_microusd,reservation["reserved_microusd"])
 
     def test_responses_validation_bridge_runs_configured_factory_reservation_and_capture(self):
-        """Real store/factory/meter; only HTTP is mocked; capture really verified.
+        """Real configured factory, store, meter and budget; only HTTP is mocked.
 
         Requires the documented disposable Windows PostgreSQL lane through the
-        inherited team fixtures.  setUp funding stays untouched; this canary
-        registers and reserves its own owner-signed 30 micro-USD budget under a
-        dedicated VALIDATION- task identity, so every monetary admission here is
-        real.  Proposed by this tools-disabled repair; NOT executed by it.
+        inherited team fixtures.  The entitlement fixtures supply the DSN and
+        secret files, so responses_route_from_file builds its own real budget
+        authority and pool from on-disk configuration, and the route derives its
+        canary pins from the single enrolled admission.  setUp for this test
+        only registers the owner-signed canary budget; the bridge performs the
+        single authoritative reservation through
+        route.reserve_monetary_admission.  Proposed by this tools-disabled
+        repair; NOT executed by it.
         """
-        import os
         import secrets
         import time
         from dataclasses import asdict
-        from director_orchestrator.packet_contracts import (
-            canonical_json_bytes as canonical_packet_bytes,
-        )
-        from director_orchestrator.openai_responses_validation import (
-            OpenAIResponsesValidationRoute,
-        )
+        from director_orchestrator.openai_responses_validation import responses_route_from_file
         from director_orchestrator.provider_activation import ProviderActivationBinding
         from director_orchestrator.provider_validation import (
             CaptureVerifier,
             PostgresValidationStore,
             ValidationBridgeService,
+            ValidationError,
             ValidationRequest,
         )
 
@@ -313,14 +313,12 @@ class ResponseMeterTests(unittest.TestCase):
             task_id=task_id, attempt_reservation_microusd=30), team.fixtures.OWNER_SECRET)
         with self.store._pool.connection() as c, c.transaction():
             self.authority.budgets.register(c, budget)
-            self.authority.budgets.reserve(c, authority_digest=budget.grant_digest,
-                provider="openai", task_id=task_id, attempt_digest=attempt)
         work = json.loads((Path(__file__).resolve().parents[1] /
             "docs/schemas/model-work-packet-v1.example.json").read_text())
         work.update(task_id=task_id, assignment_id=task_id, starting_ref="a" * 40,
             allowed_tools=[], allowed_external_effects=[], idempotency_key=attempt)
         work["limits"].update(max_hops=1, max_revisions=0, timeout_seconds=30)
-        packet = canonical_packet_bytes(work)
+        packet = canonical_json_bytes(work)
         packet_digest = "sha256:" + hashlib.sha256(packet).hexdigest()
         enrollment = team.signed(ResponseMeterEnrollment(
             schema_version="responses-meter-enrollment/v1", authority_digest=budget.grant_digest,
@@ -333,28 +331,6 @@ class ResponseMeterTests(unittest.TestCase):
             output_microusd_per_million=8_000_000, valid_from=self.now - timedelta(seconds=10),
             expires_at=self.now + timedelta(minutes=5), owner_signature="0" * 64),
             team.fixtures.OWNER_SECRET)
-        registry = ResponseMeterRegistry(enrollments=(enrollment,),
-            authority=self.authority.budgets, pool=self.store._pool)
-        transport = OpenAIResponsesPacketTransport(api_key="test-key", model=enrollment.model,
-            api_url="https://api.openai.com/v1/responses", response_meter=registry,
-            maximum_timeout_seconds=60)
-        route = OpenAIResponsesValidationRoute(transport=transport, total_token_limit=1000,
-            expected_model=enrollment.model, meter_enrollment_digest="f" * 64,
-            budget_authority=self.authority.budgets, budget_authority_digest=budget.grant_digest)
-        binding = asdict(ProviderActivationBinding(
-            "openai", "workspace", "v1", "v1", "v1", "v1", "v1"))
-        owner = "owner-fixture-" + "o" * 40
-        capture_key = "bridge-fixture-" + "k" * 40
-        store = PostgresValidationStore(os.environ["LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"])
-        store.bootstrap()
-        generation = secrets.token_hex(32)
-        store.create_generation(generation=generation, candidate="a" * 40, tree="b" * 40,
-            owner_token=owner, expires_at=int(time.time()) + 600, budget_units=1,
-            lanes={"openai": {"binding": binding, "configuration_digest": route.configuration_digest,
-                              "cost_units": 1, "work_packet": work}})
-        service = ValidationBridgeService(store=store, production_executor=None,
-            capture_key=capture_key, owner_token=owner, account_files={},
-            openai_responses_route=route)
         native = dict(object="response", id="resp-validation-canary",
             created_at=int(self.now.timestamp()), status="completed", model=enrollment.model,
             service_tier="default",
@@ -372,22 +348,70 @@ class ResponseMeterTests(unittest.TestCase):
                     if request.url.path.endswith("input_tokens") else native)
             return httpx.Response(200, json=body, headers=headers)
         original = httpx.AsyncClient
-        with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
-                side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)):
-            result = service.run(ValidationRequest(generation=generation, provider="openai"), owner)
-        self.assertEqual(2, len(requests))
-        self.assertTrue(all(r.headers["OpenAI-Project"] == "proj-test" for r in requests))
-        self.assertEqual("responses-api", result["transport"])
-        verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40,
-            generation=generation, openai_responses_route=route)
-        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding), result["evidence_digest"]))
-        with self.store._pool.connection() as c:
-            spend = c.execute(f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend "
-                "WHERE attempt_digest=%s", (attempt,)).fetchone()
-        self.assertEqual(30, spend["reserved_microusd"])
-        self.assertEqual(1, self.count_rows())
+        binding = asdict(ProviderActivationBinding(
+            "openai", "workspace", "v1", "v1", "v1", "v1", "v1"))
+        owner = "owner-fixture-" + "o" * 40
+        capture_key = "bridge-fixture-" + "k" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            enrollment_path = Path(directory) / "enrollments.json"
+            enrollment_path.write_text(json.dumps([enrollment.model_dump(mode="json")]))
+            config_path = Path(directory) / "responses-validation.json"
+            config_path.write_text(json.dumps({
+                "model": enrollment.model,
+                "api_url": "https://api.openai.com/v1/responses",
+                "total_token_limit": 1000,
+                "api_key": "test-key",
+                "enrollment_file": str(enrollment_path.resolve()),
+                "entitlements_postgres_dsn": team.fixtures.TEST_DSN,
+                "entitlements_schema": self.schema,
+                "primary_postgres_schema": self.schema,
+                "trusted_verifier_secret_file": team.fixtures.VERIFIER_SECRET_FILE,
+                "route_verifier_secret_file": team.fixtures.ROUTE_SECRET_FILE,
+                "owner_authority_secret_file": team.fixtures.OWNER_SECRET_FILE,
+                "allow_insecure_local_postgres": True,
+                "maximum_timeout_seconds": 60,
+            }))
+            route = responses_route_from_file(config_path)
+            meter_pool = route.transport.response_meter.pool
+            try:
+                store = PostgresValidationStore(team.fixtures.TEST_DSN)
+                store.bootstrap()
+                generation = secrets.token_hex(32)
+                store.create_generation(generation=generation, candidate="a" * 40, tree="b" * 40,
+                    owner_token=owner, expires_at=int(time.time()) + 600, budget_units=1,
+                    lanes={"openai": {"binding": binding, "configuration_digest": route.configuration_digest,
+                                      "cost_units": 1, "work_packet": work}})
+                service = ValidationBridgeService(store=store, production_executor=None,
+                    capture_key=capture_key, owner_token=owner, account_files={},
+                    openai_responses_route=route)
+                request = ValidationRequest(generation=generation, provider="openai")
+                verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40,
+                    generation=generation, openai_responses_route=route)
+                with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                        side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)):
+                    result = service.run(request, owner)
+                self.assertEqual(2, len(requests))
+                self.assertTrue(all(r.headers["OpenAI-Project"] == "proj-test" for r in requests))
+                self.assertEqual("default", json.loads(requests[1].content)["service_tier"])
+                self.assertEqual("responses-api", result["transport"])
+                self.assertTrue(verifier.verify(
+                    ProviderActivationBinding(**binding), result["evidence_digest"]))
+                # Exactly one authoritative reservation, made by the bridge.
+                with self.store._pool.connection() as c:
+                    spend = c.execute(f"SELECT count(*) AS n, reserved_microusd "
+                        f"FROM {self.schema}.director_primary_provider_spend "
+                        "WHERE attempt_digest=%s GROUP BY reserved_microusd", (attempt,)).fetchone()
+                self.assertIsNotNone(spend)
+                self.assertEqual((1, 30), (spend["n"], spend["reserved_microusd"]))
+                self.assertEqual(1, self.count_rows())
+                # Durable no-replay refusal for the same admitted attempt.
+                with self.assertRaisesRegex(ValidationError, "already admitted"):
+                    service.run(request, owner)
+            finally:
+                meter_pool.close()
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]

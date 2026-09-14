@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
@@ -381,6 +382,22 @@ class PostgresValidationTests(unittest.TestCase):
             raise RuntimeError("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required; use sanctioned Windows lane")
         cls.store=PostgresValidationStore(dsn)
         cls.store.bootstrap()
+        # Deferred commit-time gate: a settlement must also survive a blocked
+        # COMMIT. The gate takes the same advisory lock the QA harness uses, so
+        # a commit-time lock wait is real and the shared deadline must bound it.
+        # Elsewhere the lock is uncontended and costs nothing.
+        with cls.store.connect() as db:
+            db.execute(f"""CREATE OR REPLACE FUNCTION {SCHEMA}.qa_settle_commit_gate() RETURNS trigger
+                LANGUAGE plpgsql AS $gate$ BEGIN
+                IF NEW.sequence = 3 AND NEW.state = 'succeeded' THEN
+                    PERFORM pg_advisory_xact_lock(hashtextextended(NEW.reservation, 20260914));
+                END IF;
+                RETURN NEW;
+                END $gate$""")
+            db.execute(f"DROP TRIGGER IF EXISTS qa_settle_commit_gate ON {SCHEMA}.checkpoints")
+            db.execute(f"""CREATE CONSTRAINT TRIGGER qa_settle_commit_gate
+                AFTER INSERT ON {SCHEMA}.checkpoints DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.qa_settle_commit_gate()""")
 
     def generation(self,*,budget=2,providers=("claude",)):
         generation=secrets.token_hex(32)
@@ -403,6 +420,35 @@ class PostgresValidationTests(unittest.TestCase):
         evidence=self.store.settle(admission,raw,capture)
         verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
         return admission,capture,evidence,verifier
+
+    def _admitted_and_claimed(self):
+        generation=self.generation()
+        admission=self.admit(generation)
+        self.store.claim_execution(admission)
+        return generation,admission
+
+    def _hold_lock(self, statement, parameters):
+        import threading
+        release=threading.Event();held=threading.Event()
+        def blocker():
+            with self.store.connect() as db:
+                db.execute("SELECT set_config('statement_timeout','10000',true),set_config('lock_timeout','10000',true)")
+                db.execute(statement,parameters).fetchone()
+                held.set()
+                release.wait(15)
+        thread=threading.Thread(target=blocker,daemon=True)
+        thread.start()
+        self.assertTrue(held.wait(10))
+        return release,thread
+
+    def _bounded_deadline(self,started,budget_seconds=2.0):
+        import time
+        def remaining_seconds():
+            remaining=budget_seconds-(time.monotonic()-started)
+            if remaining<=0:
+                raise ValidationError("shared validation deadline exhausted")
+            return remaining
+        return remaining_seconds
 
     def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
         import time
@@ -534,6 +580,91 @@ class PostgresValidationTests(unittest.TestCase):
         store=PostgresValidationStore(self.store.dsn)
         self.assertIsNone(store.load_capture("f"*64))
 
+    def test_shared_deadline_settlement_succeeds_without_contention(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        started=time.monotonic()
+        evidence=self.store.settle(admission,raw,capture,remaining_seconds=lambda:30.0)
+        self.assertLess(time.monotonic()-started,10)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+        self.assertTrue(verifier.verify(binding(),evidence))
+
+    def test_exhausted_deadline_refuses_before_any_store_effect(self):
+        generation=self.generation()
+        for call in (lambda: self.store.admit(ValidationRequest(generation=generation,provider="claude"),OWNER,
+                            remaining_seconds=lambda:0.0),
+                lambda: self.store.claim_execution({"reservation":"f"*64,"generation":generation,
+                    "provider":"claude","nonce":"n"*64,"fence":1,"packet":b"{}"},
+                    remaining_seconds=lambda:0.0),
+                lambda: self.store.settle({"reservation":"f"*64},b"{}",None,remaining_seconds=lambda:0.0)):
+            with self.subTest(call=call),self.assertRaisesRegex(ValidationError,"deadline"):
+                call()
+        with self.store.connect() as db:
+            self.assertEqual(0,db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",
+                (generation,)).fetchone()[0])
+            self.assertIsNone(db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s",
+                (generation,)).fetchone())
+
+    def test_admission_row_lock_is_bounded_and_reserves_nothing(self):
+        import time
+        generation=self.generation()
+        release,thread=self._hold_lock(
+            f"SELECT 1 FROM {SCHEMA}.generations WHERE generation=%s FOR UPDATE",(generation,))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception) as caught:
+                self.store.admit(ValidationRequest(generation=generation,provider="claude"),OWNER,
+                    remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+            self.assertNotIsInstance(caught.exception,ValidationError)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            self.assertEqual(0,db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",
+                (generation,)).fetchone()[0])
+            self.assertIsNone(db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s",
+                (generation,)).fetchone())
+
+    def test_settlement_row_lock_is_bounded_and_rolls_back(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        release,thread=self._hold_lock(
+            f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",(admission["reservation"],))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception):
+                self.store.settle(admission,raw,capture,remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest,output FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1]);self.assertIsNone(row[2])
+
+    def test_commit_time_lock_cannot_persist_late_settlement(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        release,thread=self._hold_lock(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",(admission["reservation"],))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception) as caught:
+                self.store.settle(admission,raw,capture,remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+            self.assertNotIsInstance(caught.exception,ValidationError)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s AND state='succeeded'",
+                (admission["reservation"],)).fetchone()[0]
+        self.assertNotEqual("succeeded",row[0]);self.assertIsNone(row[1]);self.assertEqual(0,succeeded)
+
     def test_real_subprocess_capture_uses_dedicated_fence_and_no_production_writer(self):
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
         import time
@@ -582,3 +713,4 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
