@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | BEGIN]]
@@ -277,6 +278,38 @@ class PrimaryTaskCoordinatorIntegrationTests(unittest.TestCase):
         self.assertEqual("langgraph", readiness["new_intake_owner"])
         self.assertTrue(readiness["legacy_new_intake_disabled"])
 
+    def test_expired_intake_refuses_renewal_until_fresh_start_without_dispatch(self):
+        initial = self.coordinator.activate_new_intake(expected_generation=0)
+        task_id = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        before = self.coordinator.create_intake(request(task_id))
+        self.assertEqual("PAUSED", before.projection["run_status"])
+        # Synthetic host-interruption analogue in this disposable test schema.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_intake_authority "
+                "SET lease_expires_at = now() - interval '1 second'"
+            )
+        for _ in range(2):
+            with self.assertRaises((PrimaryCoordinatorError, PostgresControlPlaneError)):
+                self.coordinator.renew_new_intake()
+        observed = self.handle.claim_store.current_intake_authority()
+        self.assertEqual(initial.fencing_generation, observed.fencing_generation)
+        self.assertFalse(observed.lease_live)
+        test_handlers = handlers()
+        from dataclasses import replace
+        test_handlers = replace(test_handlers, provider_subgraph=Mock(side_effect=AssertionError("no dispatch")))
+        restarted = PrimaryTaskCoordinator(
+            self.handle, test_handlers, owner_token="default-director-owner",
+            checkpoint_namespace="default-director-primary-v1",
+        )
+        successor = restarted.adopt_or_activate_new_intake()
+        self.assertGreater(successor.fencing_generation, initial.fencing_generation)
+        self.assertTrue(successor.lease_live)
+        restarted.recover(task_id)
+        after = self.handle.claim_store.read_primary_task_projection(task_id)
+        self.assertEqual(before, after)
+        test_handlers.provider_subgraph.assert_not_called()
+
     def test_restart_reacquires_expired_writer_and_recovers_approval_task(self):
         self.coordinator.activate_new_intake(expected_generation=0)
         task_id = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
@@ -447,3 +480,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 22:55 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:15 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:33 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | END]]

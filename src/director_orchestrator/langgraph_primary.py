@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -939,6 +941,7 @@ class PrimaryOutcome:
     parallel_terminal: bool = False
     parallel_succeeded: bool = False
     parallel_ambiguous_slot_count: int = 0
+    setup_hold_reasons: tuple[str, ...] = ()
 
 
 class PrimaryGraphInput(TypedDict, total=False):
@@ -1000,6 +1003,7 @@ class PrimaryGraphOutput(TypedDict, total=False):
     parallel_terminal: bool
     parallel_succeeded: bool
     parallel_ambiguous_slot_count: int
+    setup_hold_reasons: tuple[str, ...]
 
 
 class PrimaryGraphState(TypedDict, total=False):
@@ -1050,6 +1054,7 @@ class PrimaryGraphState(TypedDict, total=False):
     parallel_terminal: bool
     parallel_succeeded: bool
     parallel_ambiguous_slot_count: int
+    setup_hold_reasons: tuple[str, ...]
     scheduled_producer_id: str | None
     provider_dispatch_status: str
     provider_attempt_digest: str | None
@@ -2469,6 +2474,7 @@ class PrimaryWorkflowRuntime:
             parallel_ambiguous_slot_count=int(
                 state.get("parallel_ambiguous_slot_count", 0)
             ),
+            setup_hold_reasons=tuple(state.get("setup_hold_reasons", ())),
         )
 
     def record_parallel_aggregate(
@@ -2480,9 +2486,14 @@ class PrimaryWorkflowRuntime:
         terminal: bool,
         succeeded: bool,
         ambiguous_slot_count: int,
+        setup_hold_reasons: tuple[str, ...] = (),
     ) -> PrimaryOutcome:
         """Checkpoint deterministic Postgres aggregation without performing I/O."""
 
+        if any(reason != "paid_setup_required" for reason in setup_hold_reasons):
+            raise ValueError("unknown setup hold reason")
+        if setup_hold_reasons and terminal:
+            raise ValueError("setup hold requires nonterminal wave")
         _require_digest(plan_digest, "parallel_plan_digest")
         _require_digest(aggregate_digest, "parallel_aggregate_digest")
         if type(terminal) is not bool or type(succeeded) is not bool:
@@ -2518,6 +2529,7 @@ class PrimaryWorkflowRuntime:
                 "parallel_terminal": terminal,
                 "parallel_succeeded": succeeded,
                 "parallel_ambiguous_slot_count": ambiguous_slot_count,
+                "setup_hold_reasons": setup_hold_reasons,
             },
         )
         return self._outcome(task_id)
@@ -3274,3 +3286,6 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:06 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]

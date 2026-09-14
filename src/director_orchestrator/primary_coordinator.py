@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -119,6 +122,7 @@ def _outcome_projection(outcome: PrimaryOutcome) -> dict[str, Any]:
         "parallel_terminal": outcome.parallel_terminal,
         "parallel_succeeded": outcome.parallel_succeeded,
         "parallel_ambiguous_slot_count": outcome.parallel_ambiguous_slot_count,
+        "setup_hold_reasons": list(outcome.setup_hold_reasons),
     }
 
 
@@ -270,10 +274,11 @@ class PrimaryTaskCoordinator:
             self._active_task_ids = active
         active.add(task_id)
 
-    def heartbeat_active_task_writers(self) -> int:
+    def heartbeat_active_task_writers(self, *, on_renewal_outcome: Callable[[bool], None] | None = None) -> int:
         """Renew only tasks this process actually touched since startup."""
 
         renewed = 0
+        failed = False
         active = getattr(self, "_active_task_ids", set())
         for task_id in tuple(active):
             current = self._store.current_task_writer(task_id)
@@ -282,6 +287,7 @@ class PrimaryTaskCoordinator:
                 or not current.lease_live
                 or not hmac.compare_digest(current.owner_token, self._owner_token)
             ):
+                failed = True
                 active.discard(task_id)
                 continue
             try:
@@ -291,9 +297,12 @@ class PrimaryTaskCoordinator:
                     fencing_generation=current.fencing_generation,
                 )
             except PostgresControlPlaneError:
+                failed = True
                 active.discard(task_id)
                 continue
             renewed += 1
+        if on_renewal_outcome is not None:
+            on_renewal_outcome(not failed)
         return renewed
 
     def _persist_outcome(
@@ -658,6 +667,7 @@ class PrimaryTaskCoordinator:
                 terminal=aggregate.terminal,
                 succeeded=aggregate.succeeded,
                 ambiguous_slot_count=aggregate.ambiguous_slot_count,
+                setup_hold_reasons=aggregate.setup_hold_reasons,
             ),
             writer,
         )
@@ -952,3 +962,7 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]

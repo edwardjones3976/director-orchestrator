@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from director_orchestrator.lease_diagnostics import LeaseRenewalDiagnostics
 from director_orchestrator.primary_default import DefaultPrimaryActivation, _digest
 from director_orchestrator.config import Settings
 from director_orchestrator.primary_parallel import ParallelAssignment, ParallelDispatchError, ParallelDispatchPolicy
@@ -92,6 +94,7 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
 
     def activation(self):
         activation=object.__new__(DefaultPrimaryActivation)
+        activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.coordinator=self.coordinator
         activation.services=SimpleNamespace(available_provider_lanes=())
         activation.application=SimpleNamespace(recover=self.coordinator.recover)
@@ -226,6 +229,7 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
         before = self.coordinator.get_projection(self.task)
         receipts = self.receipts()
         activation = object.__new__(DefaultPrimaryActivation)
+        activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.coordinator = self.coordinator
         activation.services = object()
         activation.application = Mock()
@@ -461,3 +465,4 @@ if __name__ == '__main__':
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]
