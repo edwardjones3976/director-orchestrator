@@ -1,3 +1,5 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]**
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]**
@@ -43,10 +45,15 @@ It does not impersonate the OpenAI-managed Slack identity.
 
 ## Configuration
 
-Set these values in the ignored deployment environment file:
+For bridge-only paid answers while the main provider runtime stays offline, use
+the following settings in the ignored deployment environment file. See
+[ChatGPT bridge activation](chatgpt-bridge-activation.md) for switch behavior,
+disable instructions, and release verification.
 
 ```dotenv
+ALLOW_PAID_RUNS=false
 CHATGPT_BRIDGE_ENABLED=true
+CHATGPT_BRIDGE_ALLOW_PAID_RUNS=true
 CHATGPT_BRIDGE_SLACK_USER_ID=U0B9KFJPST1
 CHATGPT_BRIDGE_CHANNEL_IDS=C0BQ6GSCNLR,C0BAV9CMC80
 CHATGPT_BRIDGE_MAX_PROMPT_CHARS=4000
@@ -56,9 +63,14 @@ CHATGPT_BRIDGE_ESTIMATED_COST_USD=0.10
 CHATGPT_BRIDGE_DAILY_BUDGET_USD=2.00
 ```
 
-`ALLOW_PAID_RUNS=true`, a valid `OPENAI_API_KEY`, the configured owner ID, and
-membership of the Aesop Director app in every allowlisted private channel are also
-required. Keep the bridge disabled until provider-side billing controls are set.
+`CHATGPT_BRIDGE_ALLOW_PAID_RUNS` defaults to `false`. Paid bridge execution
+requires either this bridge-specific opt-in or the existing global
+`ALLOW_PAID_RUNS=true`; the global switch is not required for bridge-only answers.
+The bridge-specific flag leaves the main provider runtime gates unchanged. A valid
+`OPENAI_API_KEY`, the configured owner ID, and membership of the Aesop Director app
+in every allowlisted private channel remain required. Keep the bridge disabled
+until provider-side billing controls are set. Neither paid switch replaces the
+exact signed owner approval required for each request.
 
 Recreate the orchestrator and Slack gateway after changing the environment. Check
 `GET /health`: every `chatgpt_bridge` readiness field must be true. Then send one
@@ -101,6 +113,24 @@ timestamp. Redelivery of the already-consumed event never releases the answer ag
 
 ## Failure behavior
 
+Failed dispatches retain a nullable `failure_diagnostics_json` value on the existing
+`chatgpt_bridge_requests` row. The additive column contains only controlled stage,
+category and exception-class labels, HTTP status, allowlisted provider error
+code/type values, and a request ID matching `req_` plus 32 lowercase hexadecimal
+characters. Unknown codes and IDs are omitted; provider error JSON is inspected
+only for bodies of at most 16 KiB. Prompts, answers, exception messages, raw bodies,
+URLs and header collections are never copied into diagnostics. Diagnostics stay
+in the local store and do not change the HTTP or Slack response contracts.
+
+Empty output and incomplete responses without text have separate failure categories;
+this diagnostic change preserves existing handling of responses containing text.
+Failure metadata is committed with the terminal transition and survives reopening
+the store. It does not release the estimated reservation or authorize another
+dispatch. If diagnostic extraction fails, the terminal transition still runs; if
+the store itself fails, the original exception is preserved and the existing
+`DISPATCHING` reservation still prevents redispatch. Older failures have no new
+metadata: their original provider error cannot be reconstructed by this change.
+
 Non-owner and non-allowlisted alias mentions are not intercepted by the bridge and
 continue through the ordinary Director routing rules. Bot-authored, edited, and
 deleted events are ignored.
@@ -126,3 +156,5 @@ backend request and one Slack response without suppressing unrelated messages.
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]**
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | END]] -->
