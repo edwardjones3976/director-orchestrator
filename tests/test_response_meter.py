@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
@@ -459,13 +460,21 @@ class ResponseMeterTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValidationError, "already admitted"):
                     service.run(request, owner)
         finally:
-            if meter_pool is not None:
-                meter_pool.close()
-            if handle is not None:
-                with handle.pool.connection() as c:
-                    c.execute(f"DROP SCHEMA IF EXISTS {route_schema} CASCADE")
-                    c.execute(f"DROP SCHEMA IF EXISTS {primary_schema} CASCADE")
-                handle.close()
+            # Best-effort, but every resource must still get a close attempt
+            # even if an earlier one raises: meter_pool.close() raising must
+            # not skip dropping the schemas or closing the control-plane
+            # handle, and the schema drop raising must not skip handle.close().
+            try:
+                if meter_pool is not None:
+                    meter_pool.close()
+            finally:
+                if handle is not None:
+                    try:
+                        with handle.pool.connection() as c:
+                            c.execute(f"DROP SCHEMA IF EXISTS {route_schema} CASCADE")
+                            c.execute(f"DROP SCHEMA IF EXISTS {primary_schema} CASCADE")
+                    finally:
+                        handle.close()
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
@@ -474,3 +483,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]

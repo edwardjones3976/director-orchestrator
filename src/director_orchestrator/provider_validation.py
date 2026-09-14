@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
@@ -33,18 +34,23 @@ SCHEMA = "director_provider_validation_v1"
 CHECKPOINT_NAMESPACE = "director-provider-validation/v1"
 MAX_CAPTURE_BYTES = 1_048_576
 # Explicit bounded cleanup allowance for the best-effort ambiguity marker in
-# PostgresValidationStore.fail. The allowance is anchored once per cleanup and
-# then only decreases: it never resets, restarts, or extends the authoritative
-# operation deadline, funds no second dispatch, erases no retained usage, and
-# treats no rollback as undoing provider work. It only bounds an otherwise
-# indefinite wait on a row the timed-out primary operation, a concurrent
-# settlement, or maintenance may still be holding.
+# PostgresValidationStore.fail. It only bounds an otherwise indefinite wait on
+# a row the timed-out primary operation, a concurrent settlement, or
+# maintenance may still be holding; it funds no second dispatch, erases no
+# retained usage, and treats no rollback as undoing provider work.
 #
-# This allowance stacks after the operation deadline has already expired, so
-# it must stay small: it is the same one-second scheduler grace the caller's
-# packet-timeout boundary already budgets for, not a second independent
-# cleanup window. A larger value would let a timed-out request finish well
-# past its documented operation-budget-plus-grace ceiling.
+# Callers that share an absolute operation deadline (the Responses lane) must
+# pass a `remaining_seconds` that already measures time left against that
+# same deadline plus this fixed grace -- an absolute point in time, not a
+# fresh window re-anchored at whatever moment cleanup happens to start. A
+# primary operation that already consumed the whole packet budget must not
+# then receive a full, fresh CLEANUP_ALLOWANCE_SECONDS on top of it; if the
+# absolute deadline-plus-grace is already spent, cleanup is refused outright
+# (the attempt stays exactly as the aborted primary operation left it --
+# admitted or running -- which is still reconcilable). Callers with no shared
+# deadline at all (the native lane) get a fresh CLEANUP_ALLOWANCE_SECONDS
+# anchored at the first reading, since there is no absolute boundary to tie
+# into.
 CLEANUP_ALLOWANCE_SECONDS = 1.0
 
 
@@ -143,33 +149,31 @@ class PostgresValidationStore:
             PostgresValidationStore._bind_deadline(db, remaining_seconds)
 
     def _cleanup_remaining(self, remaining_seconds):
-        """Return one anchored, strictly decreasing cleanup budget source.
+        """Return one strictly decreasing cleanup budget source.
 
-        The allowance is fixed on the first reading: the documented fixed
-        grace, tightened to the shared operation deadline's remaining time
-        when that source is still live. Every later reading counts down the
-        same anchored deadline, so per-statement refreshes inside the cleanup
-        -- including the refresh immediately before the implicit COMMIT -- can
-        never restart or extend the allowance after the original deadline has
-        raised or expired. A spent or failing budget source anchors the plain
-        grace; it never unbounds the marker.
+        With no caller deadline (the native lane has none), the allowance is
+        the fixed grace, anchored fresh at the first reading -- there is no
+        absolute boundary to tie into, so a fresh window is the only option.
+
+        With a caller-supplied `remaining_seconds` (the Responses lane), that
+        callable is trusted to already measure time left against the SAME
+        absolute deadline the primary operation used, extended by the fixed
+        grace -- it is used directly, unwrapped. A primary operation that
+        already consumed the whole shared budget must not then receive a
+        second, fresh CLEANUP_ALLOWANCE_SECONDS window measured from whatever
+        moment cleanup happens to start: that would silently push completion
+        past the documented operation-budget-plus-grace boundary. If the
+        caller's deadline-plus-grace is already spent, cleanup is refused
+        outright and the attempt stays exactly as the aborted primary
+        operation left it (admitted or running), which is still reconcilable.
         """
+        if remaining_seconds is not None:
+            return remaining_seconds
         anchored: dict = {}
 
         def remaining() -> float:
             if "deadline" not in anchored:
-                budget = CLEANUP_ALLOWANCE_SECONDS
-                if remaining_seconds is not None:
-                    try:
-                        left = float(remaining_seconds())
-                    except Exception:
-                        # A spent budget source must not unbound the marker;
-                        # the fixed grace then applies and any marker failure
-                        # stays best-effort for the caller.
-                        left = 0.0
-                    if left > 0:
-                        budget = min(budget, left)
-                anchored["deadline"] = time.monotonic() + max(budget, 0.0)
+                anchored["deadline"] = time.monotonic() + CLEANUP_ALLOWANCE_SECONDS
             left = anchored["deadline"] - time.monotonic()
             if left <= 0:
                 raise ValidationError("validation cleanup allowance is exhausted")
@@ -309,19 +313,23 @@ class PostgresValidationStore:
                 raise ValidationError("dedicated validation writer fence rejected")
 
     def fail(self, reservation: str, *, remaining_seconds=None) -> None:
-        """Best-effort durable ambiguity marker under one anchored allowance.
+        """Best-effort durable ambiguity marker under one bounded allowance.
 
-        The cleanup deadline is anchored on the first reading: it starts at
-        the fixed grace, tightened to the shared operation deadline's
-        remaining time while that budget is still live. Later readings in the
-        same cleanup count down that anchored deadline, so a refresh can
-        never restart or extend the allowance after the primary deadline has
-        raised or expired. This writes no second dispatch, resets no
-        operation budget, erases no retained usage, and treats no rollback as
-        undoing provider work. If the bounded marker cannot be written, the
-        caller's original refusal keeps propagating and the attempt stays
-        exactly as the aborted primary operation left it: admitted or
-        running, still ineligible for redispatch, still reconcilable.
+        With no caller deadline (the native lane), the allowance is the fixed
+        grace anchored fresh at the first reading. With a caller-supplied
+        `remaining_seconds` (the Responses lane), it must already measure
+        time left against the SAME absolute deadline the primary operation
+        used, extended by the fixed grace -- never a fresh window re-anchored
+        at whatever moment cleanup starts, which would let a primary timeout
+        that already spent the whole shared budget push total elapsed time
+        past the documented boundary. If that deadline-plus-grace is already
+        spent, cleanup is refused outright. This writes no second dispatch,
+        resets no operation budget, erases no retained usage, and treats no
+        rollback as undoing provider work. If the bounded marker cannot be
+        written (or cleanup is refused outright), the caller's original
+        refusal keeps propagating and the attempt stays exactly as the
+        aborted primary operation left it: admitted or running, still
+        ineligible for redispatch, still reconcilable.
         """
         bounded = self._cleanup_remaining(remaining_seconds)
         with self._connect_bounded(bounded) as db:
@@ -634,9 +642,12 @@ class ValidationBridgeService:
         immediately before the implicit COMMIT, including commit-time
         deferred-trigger lock waits -- are bounded, and a late COMMIT rolls back
         instead of persisting eligible settlement after expiry.  Failure cleanup
-        obeys one anchored allowance: the ambiguity marker is bounded by the
-        shared deadline's remaining time or, once that is spent, the fixed
-        anchored grace, and a refresh can never restart it.  A timeout or
+        obeys one absolute deadline-plus-grace: the ambiguity marker is bounded
+        by the SAME shared deadline extended by the fixed grace, not a fresh
+        grace window re-anchored at whenever cleanup starts, so a primary
+        timeout that already spent the whole packet budget cannot push total
+        elapsed time past the documented boundary; if that deadline-plus-grace
+        is already spent, the marker write is refused outright.  A timeout or
         rollback never pretends to reverse an external provider action: actual
         results, usage and charges remain reconcilable facts.
         """
@@ -652,6 +663,19 @@ class ValidationBridgeService:
             rem = deadline - time.monotonic()
             if rem <= 0:
                 raise ValidationError("Responses validation timeout is exhausted")
+            return rem
+
+        def cleanup_remaining_seconds() -> float:
+            # Anchored to the SAME shared deadline (read fresh here, so it
+            # reflects the packet-ceiling tightening below once that has
+            # happened) plus the fixed grace, as an absolute point in time --
+            # never a fresh window measured from whenever cleanup starts. A
+            # primary operation that already spent the whole shared budget
+            # gets only whatever of the fixed grace is left, not a full,
+            # fresh CLEANUP_ALLOWANCE_SECONDS on top of it.
+            rem = (deadline + CLEANUP_ALLOWANCE_SECONDS) - time.monotonic()
+            if rem <= 0:
+                raise ValidationError("Responses validation cleanup allowance is exhausted")
             return rem
 
         admission = self.store.admit(request, owner_token, preserve_canary_identity=True,
@@ -730,11 +754,14 @@ class ValidationBridgeService:
                     "expires_at": capture.expires_at, "surfaces": ["app", "runtime_adapter"],
                     "transport": "responses-api"}
         except Exception:
-            # Best-effort durable reconciliation marker under the anchored
-            # cleanup allowance; the original refusal must keep propagating
-            # even if the marker itself cannot be written.
+            # Best-effort durable reconciliation marker bounded by the same
+            # absolute deadline plus its fixed grace (see
+            # cleanup_remaining_seconds above); the original refusal must
+            # keep propagating even if the marker itself cannot be written
+            # or is refused outright because that deadline-plus-grace is
+            # already spent.
             try:
-                self.store.fail(admission["reservation"], remaining_seconds=remaining_seconds)
+                self.store.fail(admission["reservation"], remaining_seconds=cleanup_remaining_seconds)
             except Exception:
                 pass
             raise
@@ -750,3 +777,4 @@ class ValidationBridgeService:
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
