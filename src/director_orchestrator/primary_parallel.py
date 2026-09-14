@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
@@ -349,6 +352,26 @@ class ParallelReservation:
     reservation_digest: str
 
 
+class PaidSetupHold(ParallelDispatchError):
+    """Read-only setup refusal; no attempt has been admitted."""
+    reason_code = "paid_setup_required"
+
+
+def provider_attempt_idempotency(assignment_key, ordinal, roster):
+    return _digest(dict(assignment_idempotency_key=str(assignment_key),
+                        attempt_ordinal=ordinal, format_roster=roster))
+
+
+def provider_attempt_digest(*, task_id, assignment_id, attempt_ordinal,
+                            provider_id, format_id, transport_id,
+                            idempotency_key_digest, budget_evidence_digest):
+    return _digest(dict(task_id=task_id, assignment_id=assignment_id,
+        attempt_ordinal=attempt_ordinal, provider_id=provider_id,
+        format_id=format_id, transport_id=transport_id,
+        idempotency_key_digest=idempotency_key_digest,
+        budget_evidence_digest=budget_evidence_digest))
+
+
 @dataclass(frozen=True, slots=True)
 class ParallelAggregate:
     task_id: str
@@ -359,6 +382,7 @@ class ParallelAggregate:
     succeeded: bool
     ambiguous_slot_count: int
     workload_hold_reasons: tuple[str, ...] = ()
+    setup_hold_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,7 +751,8 @@ class PostgresParallelDispatch:
             SET status='FAILED', reason_code='task_cancelled_before_dispatch', completed_at=clock_timestamp()
             WHERE a.task_id=%s AND a.status='PENDING'
               AND a.reservation_digest IS NULL AND a.reserved_at IS NULL
-              AND a.result_digest IS NULL AND a.completed_at IS NULL AND a.reason_code IS NULL
+              AND a.result_digest IS NULL AND a.completed_at IS NULL
+              AND (a.reason_code IS NULL OR a.reason_code = 'paid_setup_required')
               AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_provider_attempt e
                   WHERE e.task_id=a.task_id AND e.assignment_id=a.assignment_id)
               AND NOT EXISTS (SELECT 1 FROM {schema}.director_primary_result_packet_artifact e
@@ -949,6 +974,7 @@ class PostgresParallelDispatch:
         task_id: str,
         writer: TaskWriterLease,
         policy: ParallelDispatchPolicy,
+        preflight=None,
     ) -> tuple[ParallelReservation, ...]:
         """Atomically reserve every dependency-ready, cap-safe assignment."""
 
@@ -1045,40 +1071,44 @@ class PostgresParallelDispatch:
                             "plan_generation": writer.fencing_generation,
                         }
                     )
-                    updated = self._row(
-                        connection,
-                        f"""
-                        UPDATE {schema}.director_primary_parallel_assignment
-                        SET status = 'ACTIVE', reservation_digest = %(reservation)s,
-                            reserved_at = now()
-                        WHERE task_id = %(task_id)s
-                          AND assignment_id = %(assignment_id)s
-                          AND status = 'PENDING'
-                        RETURNING assignment_id
-                        """,
-                        {
-                            "task_id": task_id,
-                            "assignment_id": str(row["assignment_id"]),
-                            "reservation": reservation,
-                        },
-                    )
-                    if updated is None:
-                        raise ParallelDispatchError("parallel reservation lost its row lock")
-                    reserved.append(
-                        ParallelReservation(
-                            task_id=task_id,
-                            assignment_id=str(row["assignment_id"]),
-                            sequence=int(row["sequence"]),
-                            provider_id=provider,
-                            deployment_id=deployment,
-                            reservation_digest=reservation,
-                        )
-                    )
+                    reserved.append(ParallelReservation(
+                        task_id=task_id, assignment_id=str(row["assignment_id"]),
+                        sequence=int(row["sequence"]), provider_id=provider,
+                        deployment_id=deployment, reservation_digest=reservation))
+                    # Selection counters only; no ACTIVE rows exist yet.
                     status[str(row["assignment_id"])] = "ACTIVE"
                     provider_use[provider] = provider_use.get(provider, 0) + 1
                     deployment_use[deployment] = deployment_use.get(deployment, 0) + 1
                     active_surfaces.extend(surfaces)
                     available -= 1
+                held = []
+                wave_budget_usage = {}
+                if preflight is not None:
+                    for candidate in reserved:
+                        try:
+                            preflight(candidate, writer=writer, connection=connection,
+                                      wave_budget_usage=wave_budget_usage)
+                        except PaidSetupHold:
+                            held.append(candidate)
+                if held:
+                    for candidate in held:
+                        connection.execute(
+                            f"UPDATE {schema}.director_primary_parallel_assignment "
+                            "SET reason_code = 'paid_setup_required' "
+                            "WHERE task_id=%s AND assignment_id=%s AND status='PENDING'",
+                            (task_id, candidate.assignment_id))
+                    return ()
+                for candidate in reserved:
+                    updated = self._row(connection, f"""
+                        UPDATE {schema}.director_primary_parallel_assignment
+                        SET status='ACTIVE', reason_code=NULL,
+                            reservation_digest=%(reservation)s, reserved_at=now()
+                        WHERE task_id=%(task_id)s AND assignment_id=%(assignment_id)s
+                          AND status='PENDING' RETURNING assignment_id
+                        """, dict(task_id=task_id, assignment_id=candidate.assignment_id,
+                                  reservation=candidate.reservation_digest))
+                    if updated is None:
+                        raise ParallelDispatchError("parallel reservation lost its row lock")
         return tuple(reserved)
 
     def reserve_provider_attempt(
@@ -1111,18 +1141,12 @@ class PostgresParallelDispatch:
             budget_evidence_digest = "sha256:" + budget_admission.authority_digest
         _require_digest(idempotency_key_digest, "idempotency_key_digest")
         _require_digest(budget_evidence_digest, "budget_evidence_digest")
-        attempt_digest = _digest(
-            {
-                "task_id": reservation.task_id,
-                "assignment_id": reservation.assignment_id,
-                "attempt_ordinal": attempt_ordinal,
-                "provider_id": reservation.provider_id,
-                "format_id": format_id,
-                "transport_id": transport_id,
-                "idempotency_key_digest": idempotency_key_digest,
-                "budget_evidence_digest": budget_evidence_digest,
-            }
-        )
+        attempt_digest = provider_attempt_digest(
+            task_id=reservation.task_id, assignment_id=reservation.assignment_id,
+            attempt_ordinal=attempt_ordinal, provider_id=reservation.provider_id,
+            format_id=format_id, transport_id=transport_id,
+            idempotency_key_digest=idempotency_key_digest,
+            budget_evidence_digest=budget_evidence_digest)
         schema = self._schema
         with self._pool.connection() as connection:
             with connection.transaction():
@@ -1733,7 +1757,8 @@ class PostgresParallelDispatch:
 
         if not callable(dispatcher):
             raise ParallelDispatchError("dispatcher must be callable")
-        reservations = self.reserve_ready(task_id=task_id, writer=writer, policy=policy)
+        reservations = self.reserve_ready(task_id=task_id, writer=writer, policy=policy,
+                                          preflight=getattr(dispatcher, "preflight", None))
         if not reservations:
             return ()
 
@@ -1829,6 +1854,9 @@ class PostgresParallelDispatch:
                 "statuses": sorted(projected.items()),
                 "results": sorted(results.items()),
                 "attempt_events": attempt_rows,
+                **({"setup_holds": sorted(str(row["assignment_id"]) for row in rows
+                    if row["status"] == "PENDING" and row["reason_code"] == "paid_setup_required")}
+                   if any(row["status"] == "PENDING" and row["reason_code"] == "paid_setup_required" for row in rows) else {}),
                 **({"workload_holds": sorted(
                     (str(row["assignment_id"]), str(row["reason_code"]))
                     for row in rows if row["status"] == "OWNER_DECISION_REQUIRED"
@@ -1844,6 +1872,9 @@ class PostgresParallelDispatch:
             terminal=terminal,
             succeeded=terminal and all(value == "SUCCEEDED" for value in projected.values()),
             ambiguous_slot_count=sum(value == "AMBIGUOUS" for value in projected.values()),
+            setup_hold_reasons=("paid_setup_required",) if any(
+                row["status"] == "PENDING" and row["reason_code"] == "paid_setup_required"
+                for row in rows) else (),
             workload_hold_reasons=tuple(sorted({
                 str(row["reason_code"]) for row in rows
                 if row["status"] == "OWNER_DECISION_REQUIRED"
@@ -1871,3 +1902,7 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
