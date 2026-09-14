@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
@@ -120,6 +122,7 @@ def _outcome_projection(outcome: PrimaryOutcome) -> dict[str, Any]:
         "parallel_terminal": outcome.parallel_terminal,
         "parallel_succeeded": outcome.parallel_succeeded,
         "parallel_ambiguous_slot_count": outcome.parallel_ambiguous_slot_count,
+        "setup_hold_reasons": list(outcome.setup_hold_reasons),
     }
 
 
@@ -664,6 +667,7 @@ class PrimaryTaskCoordinator:
                 terminal=aggregate.terminal,
                 succeeded=aggregate.succeeded,
                 ambiguous_slot_count=aggregate.ambiguous_slot_count,
+                setup_hold_reasons=aggregate.setup_hold_reasons,
             ),
             writer,
         )
@@ -959,3 +963,6 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]

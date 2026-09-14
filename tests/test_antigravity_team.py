@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -219,6 +221,12 @@ class TeamPostgresTests(unittest.TestCase):
         with self.primary_budget_fixture() as (fixture, routing):
             funded = self.funded_task(fixture, routing)
             writer, reservation, packet = funded
+            from director_orchestrator.primary_paid_preflight import check_budget_setup
+            with fixture.handle.pool.connection() as connection:
+                check_budget_setup(connection=connection,routing=routing,settings=Settings(),
+                    provider="openai",packet=packet,attempt_usd=0.00006)
+            self.assertEqual(fixture.count("director_primary_provider_attempt"),0)
+            self.assertEqual(fixture.count("director_primary_provider_spend"),0)
             admission = live_provider_admissions(settings=Settings(), budget_routing=routing,
                 team_routing=None, provider="openai", packet=packet, attempt_usd=0.00006)
             tomorrow = datetime.now(timezone.utc)+timedelta(days=1)
@@ -448,3 +456,6 @@ class TeamPostgresTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
