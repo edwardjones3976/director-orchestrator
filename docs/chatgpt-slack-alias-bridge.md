@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]] -->
 **[[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]**
@@ -44,10 +45,15 @@ It does not impersonate the OpenAI-managed Slack identity.
 
 ## Configuration
 
-Set these values in the ignored deployment environment file:
+For bridge-only paid answers while the main provider runtime stays offline, use
+the following settings in the ignored deployment environment file. See
+[ChatGPT bridge activation](chatgpt-bridge-activation.md) for switch behavior,
+disable instructions, and release verification.
 
 ```dotenv
+ALLOW_PAID_RUNS=false
 CHATGPT_BRIDGE_ENABLED=true
+CHATGPT_BRIDGE_ALLOW_PAID_RUNS=true
 CHATGPT_BRIDGE_SLACK_USER_ID=U0B9KFJPST1
 CHATGPT_BRIDGE_CHANNEL_IDS=C0BQ6GSCNLR,C0BAV9CMC80
 CHATGPT_BRIDGE_MAX_PROMPT_CHARS=4000
@@ -57,9 +63,14 @@ CHATGPT_BRIDGE_ESTIMATED_COST_USD=0.10
 CHATGPT_BRIDGE_DAILY_BUDGET_USD=2.00
 ```
 
-`ALLOW_PAID_RUNS=true`, a valid `OPENAI_API_KEY`, the configured owner ID, and
-membership of the Aesop Director app in every allowlisted private channel are also
-required. Keep the bridge disabled until provider-side billing controls are set.
+`CHATGPT_BRIDGE_ALLOW_PAID_RUNS` defaults to `false`. Paid bridge execution
+requires either this bridge-specific opt-in or the existing global
+`ALLOW_PAID_RUNS=true`; the global switch is not required for bridge-only answers.
+The bridge-specific flag leaves the main provider runtime gates unchanged. A valid
+`OPENAI_API_KEY`, the configured owner ID, and membership of the Aesop Director app
+in every allowlisted private channel remain required. Keep the bridge disabled
+until provider-side billing controls are set. Neither paid switch replaces the
+exact signed owner approval required for each request.
 
 Recreate the orchestrator and Slack gateway after changing the environment. Check
 `GET /health`: every `chatgpt_bridge` readiness field must be true. Then send one
@@ -146,3 +157,4 @@ backend request and one Slack response without suppressing unrelated messages.
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:03 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-14 | 03:39 UTC | END]] -->
