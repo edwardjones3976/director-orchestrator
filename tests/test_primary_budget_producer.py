@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]]
 """Tests for unsigned primary-provider-budget/v1 preparation and import."""
 import hashlib
@@ -315,6 +316,25 @@ class PrepareCliTests(unittest.TestCase):
         self.assertIn("day", err)
         self.assertNotIn("2026-02-30", err)
 
+    def test_inspect_extra_field_error_never_echoes_key_or_value(self):
+        key_sentinel = "SYNTHETIC_PRIVATE_UNKNOWN_FIELD_NAME"
+        value_sentinel = "SYNTHETIC_PRIVATE_UNKNOWN_FIELD_VALUE"
+        document = dict(
+            _valid_fields(), schema_version="primary-provider-budget/v1",
+            owner_signature="0" * 64,
+        )
+        document[key_sentinel] = value_sentinel
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "extra.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            exit_code, out, err = self._run_capturing_both(
+                ["--action", "inspect", "--input", str(path)]
+            )
+        self.assertEqual(exit_code, 1)
+        for sentinel in (key_sentinel, value_sentinel):
+            self.assertNotIn(sentinel, out)
+            self.assertNotIn(sentinel, err)
+
 
 class ProviderBudgetImportPostgresTests(unittest.TestCase):
     @classmethod
@@ -589,3 +609,4 @@ class ProviderBudgetImportPostgresTests(unittest.TestCase):
         self.assertEqual(len(waiter_errors), 1)
         self.assertEqual(self._row_count(), 1)
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]]

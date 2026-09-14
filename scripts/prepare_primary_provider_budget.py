@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]]
 """Prepare an unsigned primary-provider-budget/v1 intent, or structurally
 inspect an already-signed document.
@@ -133,18 +135,29 @@ def _safe_error_message(exc: Exception) -> str:
 
     ``ValidationError.__str__`` includes each offending field's actual input
     value by default; a malformed or forged signed document is exactly the
-    kind of input this CLI must never echo back. Only the error type and
-    field location are reported, and only for ``ValidationError``: every
-    other caught exception here already carries one of this script's own
-    static, non-interpolated messages.
+    kind of input this CLI must never echo back. Only ``ValidationError`` is
+    reported this way: the error type and, for a known model field, its
+    field location, or the generic ``<extra_field>`` location for an unknown
+    top-level property -- never the offending value either way. Every other
+    caught exception (``ValueError``, ``TeamAuthorizationError``,
+    ``OSError``, ``json.JSONDecodeError``) is returned as its own
+    ``str(exc)``, unredacted: an ``OSError`` reading ``--input`` can include
+    the caller-supplied path.
     """
     if isinstance(exc, ValidationError):
         details = []
         for error in exc.errors(
             include_url=False, include_context=False, include_input=False
         ):
-            location = ".".join(str(part) for part in error.get("loc", ())) or "<document>"
-            details.append(f"{location}: {error.get('type', 'invalid')}")
+            error_type = error.get("type", "invalid")
+            if error_type == "extra_forbidden":
+                # Pydantic's own loc for this error IS the unknown key the
+                # caller supplied, so joining loc here would echo exactly
+                # the untrusted input this function exists to withhold.
+                location = "<extra_field>"
+            else:
+                location = ".".join(str(part) for part in error.get("loc", ())) or "<document>"
+            details.append(f"{location}: {error_type}")
         return "invalid document structure (" + "; ".join(details) + ")"
     return str(exc)
 
@@ -171,3 +184,5 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | END]]

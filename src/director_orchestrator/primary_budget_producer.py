@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]]
 """Unsigned primary-provider-budget/v1 preparation and already-signed import.
 
@@ -400,3 +401,4 @@ def import_signed_budget(
         day=verification.day,
     )
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]]

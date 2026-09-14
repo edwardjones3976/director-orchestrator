@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]] -->
 
 # Primary provider budget production: unsigned preparation and already-signed import
@@ -147,11 +149,19 @@ and does **not** register anything; the output says so explicitly. This is
 the "CLI may prepare/inspect documents" affordance; it is not a live import
 path.
 
-Every error path, in both actions, prints a safe categorical summary --
-error type and field location only, via `ValidationError.errors(include_url=False,
-include_context=False, include_input=False)` -- never the raw exception
-text, so a malformed or forged input value (including a signed document's
-`owner_signature`) is never echoed to stdout or stderr.
+For a `ValidationError` -- the case that can carry attacker-supplied
+structure, such as an inspect document's fields or an unexpected top-level
+property -- every reported detail comes only from
+`ValidationError.errors(include_url=False, include_context=False,
+include_input=False)`: a known model field's location and error type, or,
+for an unknown top-level property (`extra_forbidden`), the generic
+`<extra_field>` location instead of the actual key. Neither branch ever
+includes the offending value. This is the CLI's redaction boundary
+specifically for `ValidationError`; the other exception types this CLI
+catches (`ValueError`, `TeamAuthorizationError`, `OSError`,
+`json.JSONDecodeError`) are reported as `str(exc)`, unredacted, and are not
+run through this categorical redaction: for example, an `OSError` from a
+missing or unreadable `--input` file can include the caller-supplied path.
 
 ## Tests
 
@@ -199,6 +209,10 @@ Three real-PostgreSQL defects and one CLI echo defect, reported in
 3. The CLI previously printed the raw `ValidationError` text, including a
    rejected field's actual value, to stderr. It now prints only the error
    type and field location.
+4. That CLI fix still echoed an unknown top-level property's own name: since
+   Pydantic's `extra_forbidden` location IS the offending key, joining `loc`
+   reflected exactly the untrusted input being withheld. `_safe_error_message`
+   now reports that case under the generic `<extra_field>` location instead.
 
 An independently reported, offline (fake-connection, no database) structural
 gap is also closed: `verify_signed_budget`/`import_signed_budget` previously
@@ -218,3 +232,5 @@ there either), so this proposal does not edit it. A future change in scope
 to touch that file should add this module to the list.
 
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | END]] -->
