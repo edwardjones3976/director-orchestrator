@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:05 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | BEGIN]]
@@ -131,7 +132,8 @@ def _run_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _safe_error_message(exc: Exception) -> str:
-    """A safe, categorical summary. Never the raw exception text.
+    """A safe, categorical summary for a ValidationError; every other
+    caught exception is returned as str(exc).
 
     ``ValidationError.__str__`` includes each offending field's actual input
     value by default; a malformed or forged signed document is exactly the
@@ -186,3 +188,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 08:50 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 18:50 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 19:08 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:05 UTC | END]]
