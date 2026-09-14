@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
@@ -428,6 +429,26 @@ class PostgresValidationTests(unittest.TestCase):
         self.store.claim_execution(admission)
         return generation,admission
 
+    def test_claim_execution_reads_back_running_state_and_checkpoint(self):
+        """Regression for a dropped fetchone(): claim_execution must actually
+        read the locked row, not index the live cursor object, before it can
+        decide the attempt is eligible and advance it to 'running'.
+
+        A single running checkpoint at sequence 2 is the correct outcome; it
+        is distinct from the admitted checkpoint at sequence 1, not a second
+        copy of it.
+        """
+        generation,admission=self._admitted_and_claimed()
+        with self.store.connect() as db:
+            state=db.execute(f"SELECT state FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()[0]
+            checkpoints=db.execute(f"SELECT sequence,state FROM {SCHEMA}.checkpoints "
+                "WHERE reservation=%s ORDER BY sequence",(admission["reservation"],)).fetchall()
+        self.assertEqual("running",state)
+        self.assertEqual([(1,"admitted"),(2,"running")],[tuple(row) for row in checkpoints])
+        with self.assertRaises(ValidationError):
+            self.store.claim_execution(admission)
+
     def _hold_lock(self, statement, parameters):
         import threading
         release=threading.Event();held=threading.Event()
@@ -695,7 +716,6 @@ class PostgresValidationTests(unittest.TestCase):
             release.set();thread.join(10)
         with self.store.connect() as db:
             row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
-                (admission["reservation",]).fetchone() if False else
                 (admission["reservation"],)).fetchone()
             succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s AND state='succeeded'",
                 (admission["reservation"],)).fetchone()[0]
@@ -746,17 +766,23 @@ class PostgresValidationTests(unittest.TestCase):
         return {"service":service,"generation":generation,"sends":sends}
 
     def _run_service_contention_case(self, phase):
-        """Service-level cleanup under real SQL contention (finding A5).
+        """Service-level cleanup under real SQL contention.
 
         A real PostgreSQL session holds the conflicting lock from inside the
         wrapped store call and keeps holding it across the primary refusal AND
-        the except-path fail cleanup, so the anchored cleanup allowance is what
-        lets the service finish. The blocker-held event plus the lock/deadline
-        SQL state witness the contention. Completion must land inside the
-        original 2s packet budget plus 1s scheduler grace plus the documented
-        2s anchored cleanup allowance, and strictly before the blocker is
-        released. After draining, no late eligible success, no stored capture
-        digest, and no duplicate dispatch may exist.
+        the except-path fail cleanup, so the SQL state and elapsed time witness
+        real contention, not a mocked timeout. The blocker self-releases after
+        3 seconds as a safety net only: the 2s packet budget plus the 1s
+        scheduler grace is the whole boundary, and the anchored cleanup
+        allowance in PostgresValidationStore.fail is that same 1s grace, not a
+        second, additional window stacked on top of it. Completion must land
+        strictly inside 2s+1s and strictly before the blocker's own 3s
+        self-release. After draining, no late eligible success, no stored
+        capture digest, and no duplicate dispatch may exist. The blocker
+        thread/connection handle is recorded before it starts or waits, and
+        any blocker setup failure is propagated (not silently swallowed) and
+        still joined in a finally so a failed setup cannot leak a thread,
+        connection or held lock.
         """
         import threading
         import time as time_module
@@ -769,57 +795,84 @@ class PostgresValidationTests(unittest.TestCase):
                 elif phase=="verify_fence":
                     box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
                 release,held=threading.Event(),threading.Event()
+                errors=[]
                 def blocker():
-                    with self.store.connect() as db:
-                        db.execute("SELECT set_config('statement_timeout','15000',true),"
-                            "set_config('lock_timeout','15000',true)")
-                        if phase=="verify_fence":
-                            db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
-                        else:
-                            db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
-                                       (box["reservation"],)).fetchone()
+                    try:
+                        with self.store.connect() as db:
+                            db.execute("SELECT set_config('statement_timeout','15000',true),"
+                                "set_config('lock_timeout','15000',true)")
+                            if phase=="verify_fence":
+                                db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
+                            else:
+                                db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
+                                           (box["reservation"],)).fetchone()
+                            held.set()
+                            # Self-release at 3s (2s packet budget + 1s scheduler
+                            # grace) is a safety net; the service is expected to
+                            # finish well before this fires.
+                            release.wait(3.0)
+                    except BaseException as error:
+                        errors.append(error)
                         held.set()
-                        release.wait(20)
                 thread=threading.Thread(target=blocker,daemon=True)
-                thread.start()
-                self.assertTrue(held.wait(10),"contention blocker never acquired its lock")
+                # Recorded before the thread starts or any wait, so a setup
+                # failure below can still be released and joined.
                 box["release"]=release;box["thread"]=thread
+                thread.start()
+                acquired=held.wait(10)
+                if errors:
+                    release.set();thread.join(5)
+                    raise AssertionError(f"contention blocker setup failed: {errors[0]!r}") from errors[0]
+                if not acquired:
+                    release.set();thread.join(5)
+                    raise AssertionError("contention blocker never acquired its lock")
                 return original(*args,**kwargs)
             return wrapped
-        with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
-            started=time_module.monotonic()
-            with self.assertRaises(Exception) as caught:
+        try:
+            with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
+                started=time_module.monotonic()
+                with self.assertRaises(Exception) as caught:
+                    fixture["service"].run(ValidationRequest(
+                        generation=fixture["generation"],provider="openai"),OWNER)
+                elapsed=time_module.monotonic()-started
+            error=caught.exception
+            sqlstate=getattr(error,"sqlstate",None)
+            self.assertTrue(sqlstate in ("55P03","57014")
+                            or "timeout" in str(error).lower()
+                            or "deadline" in str(error).lower(),
+                            f"unexpected refusal: {error!r}")
+            # The 2s packet budget plus 1s scheduler grace is the whole
+            # boundary; no extra cleanup budget may push completion past it.
+            self.assertLess(elapsed,2.0+1.0,
+                            f"service overran the 2s budget plus 1s scheduler grace: {elapsed:.2f}s")
+            self.assertFalse(box["release"].is_set(),
+                             "blocker released before the service completed")
+            expected_sends=1 if phase=="settle" else 0
+            self.assertEqual(expected_sends,len(fixture["sends"]),
+                             "duplicate or missing dispatch under contention")
+            box["release"].set();box["thread"].join(5)
+            with self.store.connect() as db:
+                row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                               (box["reservation"],)).fetchone()
+                succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s "
+                                     "AND state='succeeded'",(box["reservation"],)).fetchone()[0]
+            # claim_execution's own SELECT ... FOR UPDATE blocks before it ever
+            # writes 'running', so a claim-phase timeout must leave 'admitted'
+            # (or the cleanup marker); later phases already reached 'running'
+            # before their own contention, so they never regress to 'admitted'.
+            expected_states=("admitted","ambiguous") if phase=="claim_execution" else ("running","ambiguous")
+            self.assertIn(row[0],expected_states)
+            self.assertIsNone(row[1])
+            self.assertEqual(0,succeeded)
+            with self.assertRaisesRegex(ValidationError,"already admitted"):
                 fixture["service"].run(ValidationRequest(
                     generation=fixture["generation"],provider="openai"),OWNER)
-            elapsed=time_module.monotonic()-started
-        error=caught.exception
-        sqlstate=getattr(error,"sqlstate",None)
-        self.assertTrue(sqlstate in ("55P03","57014")
-                        or "timeout" in str(error).lower()
-                        or "deadline" in str(error).lower(),
-                        f"unexpected refusal: {error!r}")
-        # Original C3 boundary preserved: 2s packet budget + 1s scheduler grace;
-        # the anchored cleanup allowance (2s) is additional and bounded. The
-        # service returned strictly before the blocker was released.
-        self.assertLess(elapsed,2.0+1.0+2.0,
-                        f"service overran deadline plus cleanup allowance: {elapsed:.2f}s")
-        self.assertFalse(box["release"].is_set(),
-                         "blocker released before the service completed")
-        expected_sends=1 if phase=="settle" else 0
-        self.assertEqual(expected_sends,len(fixture["sends"]),
-                         "duplicate or missing dispatch under contention")
-        box["release"].set();box["thread"].join(5)
-        with self.store.connect() as db:
-            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
-                           (box["reservation"],)).fetchone()
-            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s "
-                                 "AND state='succeeded'",(box["reservation"],)).fetchone()[0]
-        self.assertIn(row[0],("running","ambiguous"))
-        self.assertIsNone(row[1])
-        self.assertEqual(0,succeeded)
-        with self.assertRaisesRegex(ValidationError,"already admitted"):
-            fixture["service"].run(ValidationRequest(
-                generation=fixture["generation"],provider="openai"),OWNER)
+        finally:
+            release=box.get("release");thread=box.get("thread")
+            if release is not None:
+                release.set()
+            if thread is not None:
+                thread.join(5)
 
     def test_service_claim_timeout_blocks_dispatch_and_stays_reconcilable(self):
         self._run_service_contention_case("claim_execution")
@@ -829,6 +882,33 @@ class PostgresValidationTests(unittest.TestCase):
 
     def test_service_settle_timeout_keeps_no_late_eligible_success(self):
         self._run_service_contention_case("settle")
+
+    def test_service_openai_responses_control_uncontended_success(self):
+        """The C3 control case: an uncontended run through the real service,
+        store and capture verifier reaches 'succeeded' with exactly one
+        transport call and a verifiable evidence digest. This is the baseline
+        the claim/fence/settle contention cases above are refused against.
+        """
+        fixture=self._responses_service_fixture()
+        result=fixture["service"].run(ValidationRequest(
+            generation=fixture["generation"],provider="openai"),OWNER)
+        self.assertTrue(result.get("evidence_digest"))
+        self.assertEqual(1,len(fixture["sends"]))
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,
+            generation=fixture["generation"],openai_responses_route=fixture["service"].openai_responses_route)
+        binding=asdict(ProviderActivationBinding("openai","workspace","v1","v1","v1","v1","v1"))
+        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state FROM {SCHEMA}.attempts WHERE generation=%s",
+                (fixture["generation"],)).fetchone()
+            checkpoints=[r[0] for r in db.execute(f"SELECT state FROM {SCHEMA}.checkpoints c "
+                f"JOIN {SCHEMA}.attempts a USING(reservation) WHERE a.generation=%s ORDER BY c.sequence",
+                (fixture["generation"],)).fetchall()]
+        self.assertEqual("succeeded",row[0])
+        self.assertEqual(["admitted","running","succeeded"],checkpoints)
+        with self.assertRaisesRegex(ValidationError,"already admitted"):
+            fixture["service"].run(ValidationRequest(
+                generation=fixture["generation"],provider="openai"),OWNER)
 
     def test_real_subprocess_capture_uses_dedicated_fence_and_no_production_writer(self):
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
@@ -879,3 +959,4 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]

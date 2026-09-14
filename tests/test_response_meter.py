@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
@@ -294,13 +295,14 @@ class ResponseMeterTests(unittest.TestCase):
         caps are unchanged.  setUp for this test only registers the owner-signed
         canary budget in the route's own authority; the bridge performs the
         single authoritative reservation through route.reserve_monetary_admission.
-        Proposed by this tools-disabled repair; NOT executed by it.
+        Requires the documented disposable PostgreSQL lane; not executed in an
+        environment without that lane.
         """
         import secrets
         import time
         import uuid
         from dataclasses import asdict
-        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority, team_ddl
         from director_orchestrator.entitlement_control_plane import (
             entitlement_store_from_handle,
             open_entitlement_control_plane,
@@ -388,6 +390,14 @@ class ResponseMeterTests(unittest.TestCase):
             route_authority = PrimaryProviderBudgetAuthority(
                 route_store, primary_schema=primary_schema)
             with handle.pool.connection() as c, c.transaction():
+                # PrimaryProviderBudgetAuthority.__init__ only validates the
+                # schema identifier via team_ddl; it runs no DDL itself. The
+                # isolated primary schema and its team spend/usage tables must
+                # be created explicitly, before the attempt ledger and before
+                # any registration touches them.
+                c.execute(f"CREATE SCHEMA {primary_schema}")
+                for statement in team_ddl(primary_schema):
+                    c.execute(statement)
                 c.execute(f"CREATE TABLE {primary_schema}.director_primary_provider_attempt"
                           "(attempt_digest text PRIMARY KEY)")
                 route_authority.register(c, budget)
@@ -463,3 +473,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]

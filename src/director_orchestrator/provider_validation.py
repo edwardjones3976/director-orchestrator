@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
@@ -38,7 +39,13 @@ MAX_CAPTURE_BYTES = 1_048_576
 # treats no rollback as undoing provider work. It only bounds an otherwise
 # indefinite wait on a row the timed-out primary operation, a concurrent
 # settlement, or maintenance may still be holding.
-CLEANUP_ALLOWANCE_SECONDS = 2.0
+#
+# This allowance stacks after the operation deadline has already expired, so
+# it must stay small: it is the same one-second scheduler grace the caller's
+# packet-timeout boundary already budgets for, not a second independent
+# cleanup window. A larger value would let a timed-out request finish well
+# past its documented operation-budget-plus-grace ceiling.
+CLEANUP_ALLOWANCE_SECONDS = 1.0
 
 
 class ValidationError(RuntimeError):
@@ -273,7 +280,7 @@ class PostgresValidationStore:
             row = db.execute(f"SELECT a.state,a.nonce,a.fence,a.input_digest,g.revoked,g.expires_at "
                              f"FROM {SCHEMA}.attempts a JOIN {SCHEMA}.generations g USING(generation) "
                              "WHERE a.reservation=%s AND a.generation=%s AND a.provider=%s FOR UPDATE",
-                             (admission["reservation"],admission["generation"],admission["provider"]))
+                             (admission["reservation"],admission["generation"],admission["provider"])).fetchone()
             if (row is None or row[0] != "admitted" or row[1] != admission["nonce"]
                     or row[2] != admission["fence"] or row[3] != digest(admission["packet"])
                     or row[4] or row[5] <= int(time.time())):
@@ -653,6 +660,21 @@ class ValidationBridgeService:
         try:
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration digest drift")
+            work = json.loads(admission["packet"])
+            route.validate_canary(work, admission["packet"])
+
+            # Tighten the shared deadline from the same operation start, never
+            # from a post-admission reading; the earlier expiry wins. This must
+            # happen before claim/fence/reservation, not only before settlement,
+            # so every remaining store call -- including claim and the earlier
+            # fence checks -- is bounded by the packet's own ceiling and not by
+            # the much looser transport ceiling alone.
+            packet_ceiling = int(work["limits"]["timeout_seconds"])
+            if packet_ceiling < 1:
+                raise ValidationError("Responses validation timeout is exhausted")
+            deadline = min(deadline, started + packet_ceiling)
+            remaining_seconds()
+
             self.store.claim_execution(admission, remaining_seconds=remaining_seconds)
             bridge = BridgeRequest(
                 provider="openai",
@@ -668,16 +690,6 @@ class ValidationBridgeService:
                 packet=admission["packet"],
             )
             self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
-            work = json.loads(admission["packet"])
-            route.validate_canary(work, admission["packet"])
-
-            # Tighten the shared deadline from the same operation start, never
-            # from a post-admission reading; the earlier expiry wins.
-            packet_ceiling = int(work["limits"]["timeout_seconds"])
-            if packet_ceiling < 1:
-                raise ValidationError("Responses validation timeout is exhausted")
-            deadline = min(deadline, started + packet_ceiling)
-            remaining_seconds()
             route.reserve_monetary_admission(remaining_seconds=remaining_seconds)
             self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
 
@@ -737,3 +749,4 @@ class ValidationBridgeService:
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
