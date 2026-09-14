@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
@@ -279,6 +280,114 @@ class ResponseMeterTests(unittest.TestCase):
                     reservation=c.execute(f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend WHERE attempt_digest=%s",(self.attempt,)).fetchone()
                 self.assertEqual(self.budget.attempt_reservation_microusd,reservation["reserved_microusd"])
 
+    def test_responses_validation_bridge_runs_configured_factory_reservation_and_capture(self):
+        """Real store/factory/meter; only HTTP is mocked; capture really verified.
+
+        Requires the documented disposable Windows PostgreSQL lane through the
+        inherited team fixtures.  setUp funding stays untouched; this canary
+        registers and reserves its own owner-signed 30 micro-USD budget under a
+        dedicated VALIDATION- task identity, so every monetary admission here is
+        real.  Proposed by this tools-disabled repair; NOT executed by it.
+        """
+        import os
+        import secrets
+        import time
+        from dataclasses import asdict
+        from director_orchestrator.packet_contracts import (
+            canonical_json_bytes as canonical_packet_bytes,
+        )
+        from director_orchestrator.openai_responses_validation import (
+            OpenAIResponsesValidationRoute,
+        )
+        from director_orchestrator.provider_activation import ProviderActivationBinding
+        from director_orchestrator.provider_validation import (
+            CaptureVerifier,
+            PostgresValidationStore,
+            ValidationBridgeService,
+            ValidationRequest,
+        )
+
+        attempt = "sha256:" + "4" * 64
+        task_id = "VALIDATION-meter-canary"
+        budget = team.signed(team.budget(self.g, grant_digest="d" * 64, provider_id="openai",
+            task_id=task_id, attempt_reservation_microusd=30), team.fixtures.OWNER_SECRET)
+        with self.store._pool.connection() as c, c.transaction():
+            self.authority.budgets.register(c, budget)
+            self.authority.budgets.reserve(c, authority_digest=budget.grant_digest,
+                provider="openai", task_id=task_id, attempt_digest=attempt)
+        work = json.loads((Path(__file__).resolve().parents[1] /
+            "docs/schemas/model-work-packet-v1.example.json").read_text())
+        work.update(task_id=task_id, assignment_id=task_id, starting_ref="a" * 40,
+            allowed_tools=[], allowed_external_effects=[], idempotency_key=attempt)
+        work["limits"].update(max_hops=1, max_revisions=0, timeout_seconds=30)
+        packet = canonical_packet_bytes(work)
+        packet_digest = "sha256:" + hashlib.sha256(packet).hexdigest()
+        enrollment = team.signed(ResponseMeterEnrollment(
+            schema_version="responses-meter-enrollment/v1", authority_digest=budget.grant_digest,
+            attempt_digest=attempt, task_id=task_id, assignment_id=task_id,
+            project_id=self.g.project_id, work_packet_digest=packet_digest,
+            credential_digest=hashlib.sha256(b"test-key").hexdigest(), organization_id="org-test",
+            api_project_id="proj-test", model="synthetic-model-snapshot", service_tier="default",
+            origin="https://api.openai.com", tariff_id="synthetic-test-only",
+            input_microusd_per_million=4_000_000, cached_input_microusd_per_million=1_000_000,
+            output_microusd_per_million=8_000_000, valid_from=self.now - timedelta(seconds=10),
+            expires_at=self.now + timedelta(minutes=5), owner_signature="0" * 64),
+            team.fixtures.OWNER_SECRET)
+        registry = ResponseMeterRegistry(enrollments=(enrollment,),
+            authority=self.authority.budgets, pool=self.store._pool)
+        transport = OpenAIResponsesPacketTransport(api_key="test-key", model=enrollment.model,
+            api_url="https://api.openai.com/v1/responses", response_meter=registry,
+            maximum_timeout_seconds=60)
+        route = OpenAIResponsesValidationRoute(transport=transport, total_token_limit=1000,
+            expected_model=enrollment.model, meter_enrollment_digest="f" * 64,
+            budget_authority=self.authority.budgets, budget_authority_digest=budget.grant_digest)
+        binding = asdict(ProviderActivationBinding(
+            "openai", "workspace", "v1", "v1", "v1", "v1", "v1"))
+        owner = "owner-fixture-" + "o" * 40
+        capture_key = "bridge-fixture-" + "k" * 40
+        store = PostgresValidationStore(os.environ["LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"])
+        store.bootstrap()
+        generation = secrets.token_hex(32)
+        store.create_generation(generation=generation, candidate="a" * 40, tree="b" * 40,
+            owner_token=owner, expires_at=int(time.time()) + 600, budget_units=1,
+            lanes={"openai": {"binding": binding, "configuration_digest": route.configuration_digest,
+                              "cost_units": 1, "work_packet": work}})
+        service = ValidationBridgeService(store=store, production_executor=None,
+            capture_key=capture_key, owner_token=owner, account_files={},
+            openai_responses_route=route)
+        native = dict(object="response", id="resp-validation-canary",
+            created_at=int(self.now.timestamp()), status="completed", model=enrollment.model,
+            service_tier="default",
+            output=[dict(type="message", role="assistant", status="completed",
+                content=[dict(type="output_text", text="Validation canary captured.")])],
+            usage=dict(input_tokens=8, output_tokens=4, total_tokens=12,
+                input_tokens_details=dict(cached_tokens=2),
+                output_tokens_details=dict(reasoning_tokens=3)))
+        headers = {"openai-organization": "org-test", "openai-project": "proj-test",
+                   "x-request-id": "req-validation-canary"}
+        requests = []
+        def respond(request):
+            requests.append(request)
+            body = ({"object": "response.input_tokens", "input_tokens": 8}
+                    if request.url.path.endswith("input_tokens") else native)
+            return httpx.Response(200, json=body, headers=headers)
+        original = httpx.AsyncClient
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)):
+            result = service.run(ValidationRequest(generation=generation, provider="openai"), owner)
+        self.assertEqual(2, len(requests))
+        self.assertTrue(all(r.headers["OpenAI-Project"] == "proj-test" for r in requests))
+        self.assertEqual("responses-api", result["transport"])
+        verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40,
+            generation=generation, openai_responses_route=route)
+        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding), result["evidence_digest"]))
+        with self.store._pool.connection() as c:
+            spend = c.execute(f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend "
+                "WHERE attempt_digest=%s", (attempt,)).fetchone()
+        self.assertEqual(30, spend["reserved_microusd"])
+        self.assertEqual(1, self.count_rows())
+
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]

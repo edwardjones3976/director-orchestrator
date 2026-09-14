@@ -1,3 +1,5 @@
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
@@ -341,7 +343,11 @@ class OpenAIResponsesPacketTransport:
         token_limit = context.total_token_limit
         if type(token_limit) is not int or token_limit < 1:
             raise RuntimeError("OpenAI transport lacks an authoritative total token allowance")
-        deadline = monotonic() + timeout
+        deadline = getattr(context, "deadline", None)
+        if deadline is None:
+            deadline = monotonic() + timeout
+        elif deadline - monotonic() <= 0:
+            raise RuntimeError("OpenAI transport timeout is exhausted")
         work = json.loads(work_packet_json)
         body: dict[str, Any] = {
             "model": self.model,
@@ -467,6 +473,19 @@ class OpenAIResponsesPacketTransport:
         result["usage"] = {"model": self.model, "input_tokens": usage["input_tokens"],
                            "output_tokens": usage["output_tokens"],
                            "total_tokens": usage["total_tokens"], "cost_usd": None}
+        observer = getattr(context, "execution_observer", None)
+        if observer is not None:
+            # Authenticated native Responses bytes and filtered non-secret response headers for validation capture.
+            safe_headers = {
+                k: response_headers[k]
+                for k in ("openai-organization", "openai-project", "x-request-id")
+                if k in response_headers
+            }
+            capture_bundle = {
+                "response": native,
+                "response_headers": safe_headers,
+            }
+            observer("openai", canonical_json_bytes(capture_bundle), result)
         return result
 
 
@@ -1309,3 +1328,5 @@ def provider_lane_detail(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]

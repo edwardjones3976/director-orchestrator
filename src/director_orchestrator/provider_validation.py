@@ -1,3 +1,6 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
@@ -137,7 +140,7 @@ class PostgresValidationStore:
                        (generation,candidate,tree,digest(owner_token.encode()),expires_at,
                         budget_units,json.dumps(dict(lanes))))
 
-    def admit(self, request: ValidationRequest, owner_token: str) -> dict:
+    def admit(self, request: ValidationRequest, owner_token: str, *, preserve_canary_identity: bool = False) -> dict:
         """One transaction locks eligibility, budget and replay admission."""
         with self.connect() as db:
             row = db.execute(f"SELECT candidate,tree,owner_digest,expires_at,budget_units,"
@@ -155,7 +158,8 @@ class PostgresValidationStore:
             reservation, nonce = secrets.token_hex(32), secrets.token_hex(32)
             work = dict(spec["work_packet"])
             # Unique canary identity prevents accidental reuse of a production task.
-            if request.provider != "antigravity":
+            preserve_canary = preserve_canary_identity if request.provider == "openai" else (request.provider == "antigravity")
+            if not preserve_canary:
                 work.update(task_id="VALIDATION-"+reservation, assignment_id="VALIDATION-"+reservation,
                             idempotency_key="VALIDATION-"+reservation)
             raw = canonical_json_bytes(work)
@@ -230,11 +234,12 @@ class PostgresValidationStore:
 
 class CaptureVerifier:
     def __init__(self, store: PostgresValidationStore, *, capture_key: str,
-                 candidate: str, generation: str, team_route=None):
+                 candidate: str, generation: str, team_route=None, openai_responses_route=None):
         if len(capture_key) < 32:
             raise ValueError("dedicated bridge capture key is required")
         self.store,self.key,self.candidate,self.generation=store,capture_key,candidate,generation
         self.team_route=team_route
+        self.openai_responses_route=openai_responses_route
 
     def verify(self, binding: ProviderActivationBinding, evidence_digest: str, *, expires_at=None) -> bool:
         try:
@@ -252,7 +257,8 @@ class CaptureVerifier:
                 return False
             if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
                 return False
-            result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),team_route=self.team_route)
+            result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),
+                                       team_route=self.team_route, openai_responses_route=self.openai_responses_route)
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
                 return False
             expected = hmac.new(self.key.encode(),canonical_json_bytes(capture.payload()),hashlib.sha256).hexdigest()
@@ -275,20 +281,23 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
     if not tree or tree != os.environ["DIRECTOR_PROVIDER_VALIDATION_TREE"]:
         raise ValidationError("validation tree differs from runtime pin")
     from .provider_validation_team import team_route_from_environment
+    from .openai_responses_validation import responses_route_from_environment
     return CaptureVerifier(PostgresValidationStore(os.environ["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"]),
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
-        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],team_route=team_route_from_environment())
+        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],
+        team_route=team_route_from_environment(),
+        openai_responses_route=responses_route_from_environment())
 
 
-def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None) -> ValidationCapture:
+def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route=None, openai_responses_route=None) -> ValidationCapture:
     """Only the bridge calls this after configured native execution returns."""
     if len(capture_key) < 32 or not output or len(output) > MAX_CAPTURE_BYTES:
         raise ValidationError("missing bounded execution capture")
     work = validate_packet("work", json.loads(admission["packet"]))
     if admission["provider"] == "antigravity" and json.loads(output).get("attempt_digest") != "sha256:"+admission["reservation"]:
         raise ValidationError("team capture belongs to another reservation")
-    result = normalize_capture(admission["provider"],work,output,team_route=team_route)
+    result = normalize_capture(admission["provider"],work,output,team_route=team_route,openai_responses_route=openai_responses_route)
     from .packet_contracts import build_replay_run
     build_replay_run(work,result)
     if result["provider"] != admission["provider"] or result["status"] != "SUCCEEDED" or result["side_effects"]:
@@ -305,7 +314,7 @@ def make_capture(admission: dict, output: bytes, *, capture_key: str, team_route
     return ValidationCapture(**fields,signature=signature)
 
 
-def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None) -> dict:
+def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None, openai_responses_route=None) -> dict:
     """Require native terminal capture, never a caller-authored result packet."""
     if provider == "antigravity":
         if team_route is None:
@@ -314,6 +323,8 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None)
     if not raw or len(raw) > MAX_CAPTURE_BYTES:
         raise ValidationError("native capture size invalid")
     if provider == "openai":
+        if openai_responses_route is not None:
+            return openai_responses_route.normalize(work, raw)
         from .native_codex_transport import normalize_codex_jsonl
         return normalize_codex_jsonl(work,raw,requested_model="binding-pinned")
     from .primary_transports import normalize_native_provider_envelope, grok_terminal_success
@@ -415,12 +426,18 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
 class ValidationBridgeService:
     """Dedicated endpoint; the production executor configuration is reused exactly."""
     def __init__(self, *, store: PostgresValidationStore, production_executor,
-                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]], team_route=None):
+                 capture_key: str, owner_token: str, account_files: Mapping[str,tuple[str,...]],
+                 team_route=None, openai_responses_route=None):
         if len(capture_key)<32 or len(owner_token)<32 or hmac.compare_digest(capture_key,owner_token):
             raise ValueError("distinct validation owner and capture keys required")
         self.store,self.production,self.capture_key,self.owner_token=store,production_executor,capture_key,owner_token
         self.account_files=dict(account_files)
         self.team_route=team_route
+        if openai_responses_route is not None:
+            from .openai_responses_validation import OpenAIResponsesValidationRoute
+            if not isinstance(openai_responses_route, OpenAIResponsesValidationRoute):
+                raise ValueError("openai_responses_route must be OpenAIResponsesValidationRoute")
+        self.openai_responses_route=openai_responses_route
 
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
@@ -429,6 +446,8 @@ class ValidationBridgeService:
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
             return self.team_route.run(self,request,owner_token)
+        if request.provider == "openai" and self.openai_responses_route is not None:
+            return self._run_openai_responses(request, owner_token)
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
@@ -465,9 +484,111 @@ class ValidationBridgeService:
         except Exception:
             self.store.fail(admission["reservation"])
             raise
+
+    def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
+        """Explicit Responses API validation; never falls back to native Codex.
+
+        The whole-operation deadline starts before admission and covers the
+        admission transaction, monetary reservation, network, capture and
+        settlement.  Synchronous post-HTTP steps are bounded at entry; they
+        cannot be preempted mid-call, and the meter's own database steps stay
+        statement/lock-timeout bounded by the same remaining time.
+        """
+        from .host_provider_bridge import BridgeRequest
+        route = self.openai_responses_route
+        transport_ceiling = int(getattr(route.transport, "maximum_timeout_seconds", 180))
+        if transport_ceiling < 1:
+            raise ValidationError("Responses validation timeout is exhausted")
+        # One shared deadline for admission, reservation, network, capture and
+        # settlement; the packet ceiling tightens it after admission.
+        deadline = time.monotonic() + transport_ceiling
+
+        def remaining_seconds() -> float:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                raise ValidationError("Responses validation timeout is exhausted")
+            return rem
+
+        admission = self.store.admit(request, owner_token, preserve_canary_identity=True)
+        raw_captures: list[bytes] = []
+        try:
+            if route.configuration_digest != admission["configuration_digest"]:
+                raise ValidationError("Responses validation configuration digest drift")
+            self.store.claim_execution(admission)
+            bridge = BridgeRequest(
+                provider="openai",
+                task_id="VALIDATION-" + admission["reservation"],
+                assignment_id="VALIDATION-" + admission["reservation"],
+                idempotency_digest=digest(("VALIDATION-" + admission["reservation"]).encode()),
+                writer_generation=admission["fence"],
+                packet_digest=digest(admission["packet"]),
+                writer_owner_token_digest="sha256:" + admission["owner_digest"],
+                timestamp=int(time.time()),
+                nonce=admission["nonce"],
+                signature="",
+                packet=admission["packet"],
+            )
+            self.store.verify_fence(bridge)
+            work = json.loads(admission["packet"])
+            route.validate_canary(work, admission["packet"])
+
+            # Tighten the shared pre-admission deadline with the packet's own
+            # ceiling; both bounds apply and the earlier expiry wins.
+            packet_ceiling = min(int(work["limits"]["timeout_seconds"]), transport_ceiling)
+            if packet_ceiling < 1:
+                raise ValidationError("Responses validation timeout is exhausted")
+            deadline = min(deadline, time.monotonic() + packet_ceiling)
+
+            route.reserve_monetary_admission(remaining_seconds=remaining_seconds)
+            remaining_seconds()
+            self.store.verify_fence(bridge)
+
+            def observe(provider, raw, result):
+                if provider != "openai" or raw_captures:
+                    raise ValidationError("duplicate or mismatched native capture")
+                if not isinstance(raw, (bytes, bytearray)) or not raw:
+                    raise ValidationError("Responses validation capture bytes are required")
+                raw_captures.append(bytes(raw))
+
+            from types import SimpleNamespace
+            context = SimpleNamespace(
+                fencing_generation=admission["fence"],
+                timeout_seconds=remaining_seconds(),
+                deadline=deadline,
+                total_token_limit=route.total_token_limit,
+                max_hops=int(work["limits"]["max_hops"]),
+                allowed_external_effects=tuple(work["allowed_external_effects"]),
+                execution_observer=observe,
+                task_id=work["task_id"],
+                assignment_id=work["assignment_id"],
+                idempotency_key=work["idempotency_key"],
+                work_packet_digest="sha256:" + digest(admission["packet"]),
+            )
+            # Meter prepare/settle run inside the transport before LIVE_OK evidence
+            # is minted. Missing provider account headers refuse here.
+            route.transport.send(admission["packet"], context=context)
+            if len(raw_captures) != 1:
+                raise ValidationError("Responses transport discarded its execution capture")
+            remaining_seconds()
+            self.store.verify_fence(bridge)
+            if route.configuration_digest != admission["configuration_digest"]:
+                raise ValidationError("Responses validation configuration changed during execution")
+            remaining_seconds()
+            capture = make_capture(admission, raw_captures[0], capture_key=self.capture_key, openai_responses_route=route)
+            remaining_seconds()
+            evidence = self.store.settle(admission, raw_captures[0], capture)
+            return {"evidence_digest": evidence, "evidence_id": admission["reservation"],
+                    "expires_at": capture.expires_at, "surfaces": ["app", "runtime_adapter"],
+                    "transport": "responses-api"}
+        except Exception:
+            self.store.fail(admission["reservation"])
+            raise
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]
+# [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
