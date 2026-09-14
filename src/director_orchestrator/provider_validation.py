@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
@@ -52,6 +53,17 @@ MAX_CAPTURE_BYTES = 1_048_576
 # anchored at the first reading, since there is no absolute boundary to tie
 # into.
 CLEANUP_ALLOWANCE_SECONDS = 1.0
+# Reserved out of CLEANUP_ALLOWANCE_SECONDS, never handed to the SQL-level
+# statement/lock timeout itself. A lock_timeout computed to fill the ENTIRE
+# remaining allowance leaves no room for connection handshake, the implicit
+# ROLLBACK round trip Postgres requires after a canceled statement, or
+# ordinary thread/OS scheduling jitter -- none of which lock_timeout bounds,
+# since they happen before it starts or after it has already fired. Real
+# PostgreSQL 17 evidence (Linux CI and local) observed wall-clock overshoot
+# of the documented 2s-budget-plus-1s-grace boundary by 0.3-16ms when the
+# full allowance was handed to lock_timeout with no margin reserved; this
+# constant is sized well above that observed overshoot.
+CLEANUP_OVERHEAD_MARGIN_SECONDS = 0.25
 
 
 class ValidationError(RuntimeError):
@@ -109,13 +121,34 @@ class PostgresValidationStore:
         return psycopg.connect(self.dsn, connect_timeout=connect_timeout)
 
     def _connect_bounded(self, remaining_seconds=None):
-        """Open one store connection bounded by the shared whole-operation deadline."""
+        """Open one store connection bounded by the shared whole-operation deadline.
+
+        Returned as a guarded context manager, not the bare connection:
+        psycopg.Connection.__exit__ commits on a clean exit but does not
+        itself guard against that commit raising (only a rollback failure on
+        the exception path is guarded), so a blocked implicit COMMIT that
+        itself times out -- e.g. a deferred trigger contending on a lock a
+        caller still holds -- propagates out of `__exit__` before it reaches
+        its own `close()` call, leaking the connection until garbage
+        collection warns about it. The outer `finally` here still closes it.
+        """
+        import contextlib
+
+        @contextlib.contextmanager
+        def guarded(connection):
+            try:
+                with connection as db:
+                    yield db
+            finally:
+                if not connection.closed:
+                    connection.close()
+
         if remaining_seconds is None:
-            return self.connect()
+            return guarded(self.connect())
         remaining = remaining_seconds()
         if remaining <= 0:
             raise ValidationError("validation deadline exhausted before connecting")
-        return self.connect(connect_timeout=max(1, min(5, int(remaining))))
+        return guarded(self.connect(connect_timeout=max(1, min(5, int(remaining)))))
 
     @staticmethod
     def _bind_deadline(db, remaining_seconds) -> None:
@@ -158,23 +191,37 @@ class PostgresValidationStore:
         With a caller-supplied `remaining_seconds` (the Responses lane), that
         callable is trusted to already measure time left against the SAME
         absolute deadline the primary operation used, extended by the fixed
-        grace -- it is used directly, unwrapped. A primary operation that
-        already consumed the whole shared budget must not then receive a
-        second, fresh CLEANUP_ALLOWANCE_SECONDS window measured from whatever
-        moment cleanup happens to start: that would silently push completion
-        past the documented operation-budget-plus-grace boundary. If the
-        caller's deadline-plus-grace is already spent, cleanup is refused
-        outright and the attempt stays exactly as the aborted primary
-        operation left it (admitted or running), which is still reconcilable.
+        grace. A primary operation that already consumed the whole shared
+        budget must not then receive a second, fresh CLEANUP_ALLOWANCE_SECONDS
+        window measured from whatever moment cleanup happens to start: that
+        would silently push completion past the documented
+        operation-budget-plus-grace boundary. If the caller's
+        deadline-plus-grace is already spent, cleanup is refused outright and
+        the attempt stays exactly as the aborted primary operation left it
+        (admitted or running), which is still reconcilable.
+
+        Either way, CLEANUP_OVERHEAD_MARGIN_SECONDS is reserved out of
+        whatever is left before it is handed to the SQL-level statement/lock
+        timeout: that timeout only bounds Postgres's own wait, not the
+        connection handshake before it or the implicit ROLLBACK round trip
+        after a canceled statement, so a value computed to fill the entire
+        remaining allowance leaves no margin and observed wall-clock
+        completion lands at or past the boundary instead of strictly before
+        it.
         """
         if remaining_seconds is not None:
-            return remaining_seconds
+            def bounded() -> float:
+                left = remaining_seconds() - CLEANUP_OVERHEAD_MARGIN_SECONDS
+                if left <= 0:
+                    raise ValidationError("validation cleanup allowance is exhausted")
+                return left
+            return bounded
         anchored: dict = {}
 
         def remaining() -> float:
             if "deadline" not in anchored:
                 anchored["deadline"] = time.monotonic() + CLEANUP_ALLOWANCE_SECONDS
-            left = anchored["deadline"] - time.monotonic()
+            left = anchored["deadline"] - time.monotonic() - CLEANUP_OVERHEAD_MARGIN_SECONDS
             if left <= 0:
                 raise ValidationError("validation cleanup allowance is exhausted")
             return left
@@ -778,3 +825,4 @@ class ValidationBridgeService:
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]

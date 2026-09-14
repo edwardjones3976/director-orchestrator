@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
@@ -328,7 +329,17 @@ class ResponseMeterTests(unittest.TestCase):
         work.update(task_id=task_id, assignment_id=task_id, starting_ref="a" * 40,
             allowed_tools=[], allowed_external_effects=[], idempotency_key=attempt)
         work["limits"].update(max_hops=1, max_revisions=0, timeout_seconds=30)
-        packet = canonical_json_bytes(work)
+        # PostgresValidationStore.admit builds admission["packet"] with
+        # packet_contracts.canonical_json_bytes (RFC 8785), not this module's
+        # entitlement_contracts.canonical_json_bytes used for entitlement
+        # signing above -- the two disagree on number formatting (e.g.
+        # budget_usd as 1.0 vs 1), so a digest taken with the wrong
+        # canonicalizer never matches admission["packet"]'s real digest in
+        # OpenAIResponsesValidationRoute.validate_canary. This digest, which
+        # seeds the enrollment's work_packet_digest and therefore the route's
+        # canary pin, must be computed the same way admission actually will.
+        from director_orchestrator.packet_contracts import canonical_json_bytes as packet_canonical_json_bytes
+        packet = packet_canonical_json_bytes(work)
         packet_digest = "sha256:" + hashlib.sha256(packet).hexdigest()
         enrollment = team.signed(ResponseMeterEnrollment(
             schema_version="responses-meter-enrollment/v1", authority_digest=budget.grant_digest,
@@ -484,3 +495,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
