@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
@@ -30,6 +31,14 @@ from .provider_activation import ProviderActivationBinding
 SCHEMA = "director_provider_validation_v1"
 CHECKPOINT_NAMESPACE = "director-provider-validation/v1"
 MAX_CAPTURE_BYTES = 1_048_576
+# Explicit bounded cleanup allowance for the best-effort ambiguity marker in
+# PostgresValidationStore.fail. The allowance is anchored once per cleanup and
+# then only decreases: it never resets, restarts, or extends the authoritative
+# operation deadline, funds no second dispatch, erases no retained usage, and
+# treats no rollback as undoing provider work. It only bounds an otherwise
+# indefinite wait on a row the timed-out primary operation, a concurrent
+# settlement, or maintenance may still be holding.
+CLEANUP_ALLOWANCE_SECONDS = 2.0
 
 
 class ValidationError(RuntimeError):
@@ -110,6 +119,57 @@ class PostgresValidationStore:
         db.execute("SELECT set_config('statement_timeout',%s,true), set_config('lock_timeout',%s,true)",
                    (milliseconds, milliseconds))
 
+    @staticmethod
+    def _refresh_deadline(db, remaining_seconds) -> None:
+        """Re-derive statement/lock timeouts from the time actually left.
+
+        A timeout bound once at method entry goes stale across successive
+        statements, and the transaction-local setting also governs commit-time
+        deferred-trigger lock waits. Refreshing before later statements and
+        again immediately before the implicit COMMIT bounds every wait by
+        remaining time instead of an earlier, larger figure. Source-level
+        correction for the cumulative per-statement/COMMIT staleness
+        suspicion (F7); no runtime reproduction is claimed.
+        """
+        if remaining_seconds is not None:
+            remaining_seconds()
+            PostgresValidationStore._bind_deadline(db, remaining_seconds)
+
+    def _cleanup_remaining(self, remaining_seconds):
+        """Return one anchored, strictly decreasing cleanup budget source.
+
+        The allowance is fixed on the first reading: the documented fixed
+        grace, tightened to the shared operation deadline's remaining time
+        when that source is still live. Every later reading counts down the
+        same anchored deadline, so per-statement refreshes inside the cleanup
+        -- including the refresh immediately before the implicit COMMIT -- can
+        never restart or extend the allowance after the original deadline has
+        raised or expired. A spent or failing budget source anchors the plain
+        grace; it never unbounds the marker.
+        """
+        anchored: dict = {}
+
+        def remaining() -> float:
+            if "deadline" not in anchored:
+                budget = CLEANUP_ALLOWANCE_SECONDS
+                if remaining_seconds is not None:
+                    try:
+                        left = float(remaining_seconds())
+                    except Exception:
+                        # A spent budget source must not unbound the marker;
+                        # the fixed grace then applies and any marker failure
+                        # stays best-effort for the caller.
+                        left = 0.0
+                    if left > 0:
+                        budget = min(budget, left)
+                anchored["deadline"] = time.monotonic() + max(budget, 0.0)
+            left = anchored["deadline"] - time.monotonic()
+            if left <= 0:
+                raise ValidationError("validation cleanup allowance is exhausted")
+            return left
+
+        return remaining
+
     def bootstrap(self) -> None:
         """Explicit migration of the fixed validation schema only."""
         with self.connect() as db:
@@ -183,8 +243,7 @@ class PostgresValidationStore:
                 raise ValidationError("attempt already admitted; reconcile without redispatch")
             if row[5] + spec["cost_units"] > row[4]:
                 raise ValidationError("validation budget exhausted")
-            if remaining_seconds is not None:
-                remaining_seconds()
+            self._refresh_deadline(db, remaining_seconds)
             reservation, nonce = secrets.token_hex(32), secrets.token_hex(32)
             work = dict(spec["work_packet"])
             # Unique canary identity prevents accidental reuse of a production task.
@@ -201,6 +260,7 @@ class PostgresValidationStore:
                        (reservation,request.generation,request.provider,nonce,raw,digest(raw)))
             db.execute(f"INSERT INTO {SCHEMA}.checkpoints VALUES (%s,%s,1,'admitted')",
                        (reservation,CHECKPOINT_NAMESPACE))
+            self._refresh_deadline(db, remaining_seconds)
             return dict(reservation=reservation,nonce=nonce,fence=1,generation=request.generation,
                         provider=request.provider,candidate=row[0],tree=row[1],expires_at=row[3],
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
@@ -213,16 +273,16 @@ class PostgresValidationStore:
             row = db.execute(f"SELECT a.state,a.nonce,a.fence,a.input_digest,g.revoked,g.expires_at "
                              f"FROM {SCHEMA}.attempts a JOIN {SCHEMA}.generations g USING(generation) "
                              "WHERE a.reservation=%s AND a.generation=%s AND a.provider=%s FOR UPDATE",
-                             (admission["reservation"],admission["generation"],admission["provider"])).fetchone()
+                             (admission["reservation"],admission["generation"],admission["provider"]))
             if (row is None or row[0] != "admitted" or row[1] != admission["nonce"]
                     or row[2] != admission["fence"] or row[3] != digest(admission["packet"])
                     or row[4] or row[5] <= int(time.time())):
                 raise ValidationError("validation fence or attempt is not eligible")
-            if remaining_seconds is not None:
-                remaining_seconds()
+            self._refresh_deadline(db, remaining_seconds)
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='running' WHERE reservation=%s", (admission["reservation"],))
             db.execute(f"INSERT INTO {SCHEMA}.checkpoints VALUES (%s,%s,2,'running')",
                        (admission["reservation"],CHECKPOINT_NAMESPACE))
+            self._refresh_deadline(db, remaining_seconds)
 
     def verify_fence(self, request, *, remaining_seconds=None) -> None:
         """Called by the same native executor directly before I/O."""
@@ -241,28 +301,49 @@ class PostgresValidationStore:
                     or request.assignment_id != request.task_id):
                 raise ValidationError("dedicated validation writer fence rejected")
 
-    def fail(self, reservation: str) -> None:
-        with self.connect() as db:
+    def fail(self, reservation: str, *, remaining_seconds=None) -> None:
+        """Best-effort durable ambiguity marker under one anchored allowance.
+
+        The cleanup deadline is anchored on the first reading: it starts at
+        the fixed grace, tightened to the shared operation deadline's
+        remaining time while that budget is still live. Later readings in the
+        same cleanup count down that anchored deadline, so a refresh can
+        never restart or extend the allowance after the primary deadline has
+        raised or expired. This writes no second dispatch, resets no
+        operation budget, erases no retained usage, and treats no rollback as
+        undoing provider work. If the bounded marker cannot be written, the
+        caller's original refusal keeps propagating and the attempt stays
+        exactly as the aborted primary operation left it: admitted or
+        running, still ineligible for redispatch, still reconcilable.
+        """
+        bounded = self._cleanup_remaining(remaining_seconds)
+        with self._connect_bounded(bounded) as db:
+            self._bind_deadline(db, bounded)
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='ambiguous' WHERE reservation=%s AND state IN ('admitted','running')",
                        (reservation,))
+            self._refresh_deadline(db, bounded)
 
     def settle(self, admission: dict, output: bytes, capture: ValidationCapture, *, remaining_seconds=None) -> str:
-        encoded = canonical_json_bytes(asdict(capture))
-        evidence_digest = digest(encoded)
+        # The deadline is entered before capture serialization: an exhausted
+        # budget refuses as a deadline, so a malformed capture can never
+        # masquerade as deadline evidence and expiry can never surface as a
+        # serialization TypeError.
         with self._connect_bounded(remaining_seconds) as db:
             if remaining_seconds is not None:
                 self._bind_deadline(db, remaining_seconds)
+            encoded = canonical_json_bytes(asdict(capture))
+            evidence_digest = digest(encoded)
             row = db.execute(f"SELECT a.state,g.revoked,g.expires_at FROM {SCHEMA}.attempts a "
                              f"JOIN {SCHEMA}.generations g USING(generation) WHERE reservation=%s FOR UPDATE",
                              (admission["reservation"],)).fetchone()
             if row is None or row[0] != "running" or row[1] or row[2] <= int(time.time()):
                 raise ValidationError("completion revoked or expired")
-            if remaining_seconds is not None:
-                remaining_seconds()
+            self._refresh_deadline(db, remaining_seconds)
             db.execute(f"UPDATE {SCHEMA}.attempts SET state='succeeded',output=%s,capture=%s::jsonb,"
                        "capture_digest=%s WHERE reservation=%s", (output,encoded.decode(),evidence_digest,admission["reservation"]))
             db.execute(f"INSERT INTO {SCHEMA}.checkpoints VALUES (%s,%s,3,'succeeded')",
                        (admission["reservation"],CHECKPOINT_NAMESPACE))
+            self._refresh_deadline(db, remaining_seconds)
         return evidence_digest
 
     def load_capture(self, evidence_digest: str):
@@ -522,7 +603,15 @@ class ValidationBridgeService:
             return {"evidence_digest":evidence,"evidence_id":admission["reservation"],
                     "expires_at":capture.expires_at,"surfaces":["app","runtime_adapter"]}
         except Exception:
-            self.store.fail(admission["reservation"])
+            # Best-effort durable ambiguity marker under one anchored cleanup
+            # allowance: the native lane supplies no shared deadline, so the
+            # fixed anchored grace bounds the marker and no refresh can restart
+            # it. The original refusal keeps propagating even if the marker
+            # itself cannot be written.
+            try:
+                self.store.fail(admission["reservation"])
+            except Exception:
+                pass
             raise
 
     def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
@@ -534,11 +623,15 @@ class ValidationBridgeService:
         The canary packet's own ceiling tightens that same deadline from the shared
         start; a post-admission reading may never extend it.  Store calls receive
         the shared deadline so connection waits and transaction-local statement
-        and lock timeouts -- including commit-time deferred-trigger lock waits --
-        are bounded, and a late COMMIT rolls back instead of persisting eligible
-        settlement after expiry.  A timeout or rollback never pretends to reverse
-        an external provider action: actual results, usage and charges remain
-        reconcilable facts.
+        and lock timeouts -- refreshed before later statements and again
+        immediately before the implicit COMMIT, including commit-time
+        deferred-trigger lock waits -- are bounded, and a late COMMIT rolls back
+        instead of persisting eligible settlement after expiry.  Failure cleanup
+        obeys one anchored allowance: the ambiguity marker is bounded by the
+        shared deadline's remaining time or, once that is spent, the fixed
+        anchored grace, and a refresh can never restart it.  A timeout or
+        rollback never pretends to reverse an external provider action: actual
+        results, usage and charges remain reconcilable facts.
         """
         from .host_provider_bridge import BridgeRequest
         route = self.openai_responses_route
@@ -625,10 +718,11 @@ class ValidationBridgeService:
                     "expires_at": capture.expires_at, "surfaces": ["app", "runtime_adapter"],
                     "transport": "responses-api"}
         except Exception:
-            # Best-effort durable reconciliation marker; the original refusal must
-            # keep propagating even if the marker itself cannot be written.
+            # Best-effort durable reconciliation marker under the anchored
+            # cleanup allowance; the original refusal must keep propagating
+            # even if the marker itself cannot be written.
             try:
-                self.store.fail(admission["reservation"])
+                self.store.fail(admission["reservation"], remaining_seconds=remaining_seconds)
             except Exception:
                 pass
             raise
@@ -642,3 +736,4 @@ class ValidationBridgeService:
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]

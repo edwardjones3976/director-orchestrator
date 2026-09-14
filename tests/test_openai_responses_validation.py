@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
@@ -10,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 import json
 import unittest
 
@@ -481,7 +482,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
                 service.owner_token)
         transport.send.assert_not_called()
         store.settle.assert_not_called()
-        store.fail.assert_called_once_with(admission["reservation"])
+        store.fail.assert_called_once_with(admission["reservation"], remaining_seconds=ANY)
 
     def test_expired_whole_operation_deadline_never_reaches_http_or_settlement(self):
         transport, route, admission, store, service = self._mocked_responses_bridge()
@@ -500,7 +501,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         self.assertEqual(1, store.admit.call_count)
         transport.send.assert_not_called()
         store.settle.assert_not_called()
-        store.fail.assert_called_once_with(admission["reservation"])
+        store.fail.assert_called_once_with(admission["reservation"], remaining_seconds=ANY)
 
     def test_packet_ceiling_is_measured_from_operation_start_not_admission(self):
         transport, route, admission, store, service = self._mocked_responses_bridge()
@@ -565,3 +566,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 23:04 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]

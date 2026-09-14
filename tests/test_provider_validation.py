@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
@@ -14,7 +15,7 @@ from pathlib import Path
 import secrets
 import sys
 import tempfile
-from unittest.mock import patch
+from unittest.mock import MagicMock,patch
 import unittest
 
 from director_orchestrator.packet_contracts import canonical_json_bytes
@@ -591,13 +592,22 @@ class PostgresValidationTests(unittest.TestCase):
         self.assertTrue(verifier.verify(binding(),evidence))
 
     def test_exhausted_deadline_refuses_before_any_store_effect(self):
+        import time
         generation=self.generation()
+        # A fully valid capture built from a synthetic admission: the settle
+        # refusal below must be deadline evidence, never serialization noise.
+        synthetic={"reservation":"e"*64,"nonce":"n"*64,"fence":1,
+                   "generation":"a"*64,"provider":"claude","candidate":CANDIDATE,"tree":TREE,
+                   "expires_at":int(time.time())+600,
+                   "binding":asdict(binding()),"configuration_digest":"c"*64,
+                   "packet":canonical_json_bytes(work_packet()),"owner_digest":"o"*64}
+        valid_capture=make_capture(synthetic,raw_native(),capture_key=KEY)
         for call in (lambda: self.store.admit(ValidationRequest(generation=generation,provider="claude"),OWNER,
                             remaining_seconds=lambda:0.0),
                 lambda: self.store.claim_execution({"reservation":"f"*64,"generation":generation,
                     "provider":"claude","nonce":"n"*64,"fence":1,"packet":b"{}"},
                     remaining_seconds=lambda:0.0),
-                lambda: self.store.settle({"reservation":"f"*64},b"{}",None,remaining_seconds=lambda:0.0)):
+                lambda: self.store.settle(synthetic,raw_native(),valid_capture,remaining_seconds=lambda:0.0)):
             with self.subTest(call=call),self.assertRaisesRegex(ValidationError,"deadline"):
                 call()
         with self.store.connect() as db:
@@ -605,6 +615,31 @@ class PostgresValidationTests(unittest.TestCase):
                 (generation,)).fetchone()[0])
             self.assertIsNone(db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s",
                 (generation,)).fetchone())
+
+    def test_expired_settle_deadline_refuses_before_serialization(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        capture=make_capture(admission,raw_native(),capture_key=KEY)
+        started=time.monotonic()
+        with self.assertRaisesRegex(ValidationError,"deadline"):
+            self.store.settle(admission,raw_native(),capture,remaining_seconds=lambda:0.0)
+        self.assertLess(time.monotonic()-started,10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                           (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1])
+
+    def test_malformed_capture_fails_independently_of_the_deadline(self):
+        generation,admission=self._admitted_and_claimed()
+        # With a live budget the malformed capture fails on its own terms
+        # (TypeError), which is exactly why it can never masquerade as
+        # deadline evidence in the expired-budget regression above.
+        with self.assertRaises(TypeError):
+            self.store.settle(admission,b"{}",None)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                           (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1])
 
     def test_admission_row_lock_is_bounded_and_reserves_nothing(self):
         import time
@@ -660,10 +695,140 @@ class PostgresValidationTests(unittest.TestCase):
             release.set();thread.join(10)
         with self.store.connect() as db:
             row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation",]).fetchone() if False else
                 (admission["reservation"],)).fetchone()
             succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s AND state='succeeded'",
                 (admission["reservation"],)).fetchone()[0]
         self.assertNotEqual("succeeded",row[0]);self.assertIsNone(row[1]);self.assertEqual(0,succeeded)
+
+    def _responses_service_fixture(self):
+        """Real store and service; only the provider transport is synthetic."""
+        import time as time_module
+        from types import SimpleNamespace
+        from director_orchestrator.openai_responses_validation import OpenAIResponsesValidationRoute
+        work=work_packet()
+        work["limits"]["timeout_seconds"]=2
+        packet=canonical_json_bytes(work)
+        transport=SimpleNamespace(model="gpt-fixture-responses",
+            api_url="https://api.openai.com/v1/responses",_api_key="sk-contention-fixture",
+            maximum_timeout_seconds=60,response_meter=SimpleNamespace(enrollments={}))
+        authority=MagicMock();authority.reserve.return_value=SimpleNamespace(token_limit=128)
+        route=OpenAIResponsesValidationRoute(transport=transport,total_token_limit=128,
+            expected_model=transport.model,meter_enrollment_digest="d"*64,
+            expected_organization_id="org-fixture",expected_api_project_id="proj-fixture",
+            canary_task_id=work["task_id"],canary_assignment_id=work["assignment_id"],
+            canary_attempt_digest=work["idempotency_key"],
+            canary_work_packet_digest="sha256:"+digest(packet),
+            budget_authority=authority,budget_authority_digest="c"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,
+            owner_token=OWNER,expires_at=int(time_module.time())+600,budget_units=1,
+            lanes={"openai":{"binding":asdict(binding("openai")),
+                "configuration_digest":route.configuration_digest,"cost_units":1,"work_packet":work}})
+        native=dict(object="response",id="resp-contention-fixture",
+            created_at=int(time_module.time()),status="completed",error=None,
+            incomplete_details=None,model="gpt-fixture-responses",service_tier="default",
+            output=[dict(type="message",role="assistant",status="completed",
+                content=[dict(type="output_text",text="Canary analyzed")])],
+            usage=dict(input_tokens=12,output_tokens=4,total_tokens=16,
+                input_tokens_details=dict(cached_tokens=0),
+                output_tokens_details=dict(reasoning_tokens=0)))
+        capture_bytes=canonical_json_bytes({"response":native,"response_headers":{
+            "openai-organization":"org-fixture","openai-project":"proj-fixture",
+            "x-request-id":"req-contention-fixture"}})
+        sends=[]
+        def send(raw,*,context):
+            sends.append(raw)
+            context.execution_observer("openai",capture_bytes,None)
+        transport.send=send
+        service=ValidationBridgeService(store=self.store,production_executor=None,
+            capture_key=KEY,owner_token=OWNER,account_files={},openai_responses_route=route)
+        return {"service":service,"generation":generation,"sends":sends}
+
+    def _run_service_contention_case(self, phase):
+        """Service-level cleanup under real SQL contention (finding A5).
+
+        A real PostgreSQL session holds the conflicting lock from inside the
+        wrapped store call and keeps holding it across the primary refusal AND
+        the except-path fail cleanup, so the anchored cleanup allowance is what
+        lets the service finish. The blocker-held event plus the lock/deadline
+        SQL state witness the contention. Completion must land inside the
+        original 2s packet budget plus 1s scheduler grace plus the documented
+        2s anchored cleanup allowance, and strictly before the blocker is
+        released. After draining, no late eligible success, no stored capture
+        digest, and no duplicate dispatch may exist.
+        """
+        import threading
+        import time as time_module
+        fixture=self._responses_service_fixture()
+        box={}
+        def wrapped_factory(original):
+            def wrapped(*args,**kwargs):
+                if phase in ("claim_execution","settle"):
+                    box["reservation"]=args[0]["reservation"]
+                elif phase=="verify_fence":
+                    box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
+                release,held=threading.Event(),threading.Event()
+                def blocker():
+                    with self.store.connect() as db:
+                        db.execute("SELECT set_config('statement_timeout','15000',true),"
+                            "set_config('lock_timeout','15000',true)")
+                        if phase=="verify_fence":
+                            db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
+                        else:
+                            db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
+                                       (box["reservation"],)).fetchone()
+                        held.set()
+                        release.wait(20)
+                thread=threading.Thread(target=blocker,daemon=True)
+                thread.start()
+                self.assertTrue(held.wait(10),"contention blocker never acquired its lock")
+                box["release"]=release;box["thread"]=thread
+                return original(*args,**kwargs)
+            return wrapped
+        with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
+            started=time_module.monotonic()
+            with self.assertRaises(Exception) as caught:
+                fixture["service"].run(ValidationRequest(
+                    generation=fixture["generation"],provider="openai"),OWNER)
+            elapsed=time_module.monotonic()-started
+        error=caught.exception
+        sqlstate=getattr(error,"sqlstate",None)
+        self.assertTrue(sqlstate in ("55P03","57014")
+                        or "timeout" in str(error).lower()
+                        or "deadline" in str(error).lower(),
+                        f"unexpected refusal: {error!r}")
+        # Original C3 boundary preserved: 2s packet budget + 1s scheduler grace;
+        # the anchored cleanup allowance (2s) is additional and bounded. The
+        # service returned strictly before the blocker was released.
+        self.assertLess(elapsed,2.0+1.0+2.0,
+                        f"service overran deadline plus cleanup allowance: {elapsed:.2f}s")
+        self.assertFalse(box["release"].is_set(),
+                         "blocker released before the service completed")
+        expected_sends=1 if phase=="settle" else 0
+        self.assertEqual(expected_sends,len(fixture["sends"]),
+                         "duplicate or missing dispatch under contention")
+        box["release"].set();box["thread"].join(5)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                           (box["reservation"],)).fetchone()
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s "
+                                 "AND state='succeeded'",(box["reservation"],)).fetchone()[0]
+        self.assertIn(row[0],("running","ambiguous"))
+        self.assertIsNone(row[1])
+        self.assertEqual(0,succeeded)
+        with self.assertRaisesRegex(ValidationError,"already admitted"):
+            fixture["service"].run(ValidationRequest(
+                generation=fixture["generation"],provider="openai"),OWNER)
+
+    def test_service_claim_timeout_blocks_dispatch_and_stays_reconcilable(self):
+        self._run_service_contention_case("claim_execution")
+
+    def test_service_fence_timeout_blocks_dispatch_within_cleanup_allowance(self):
+        self._run_service_contention_case("verify_fence")
+
+    def test_service_settle_timeout_keeps_no_late_eligible_success(self):
+        self._run_service_contention_case("settle")
 
     def test_real_subprocess_capture_uses_dedicated_fence_and_no_production_writer(self):
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
@@ -709,8 +874,8 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
-
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]

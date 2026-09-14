@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
@@ -285,18 +286,25 @@ class ResponseMeterTests(unittest.TestCase):
         """Real configured factory, store, meter and budget; only HTTP is mocked.
 
         Requires the documented disposable Windows PostgreSQL lane through the
-        inherited team fixtures.  The entitlement fixtures supply the DSN and
-        secret files, so responses_route_from_file builds its own real budget
-        authority and pool from on-disk configuration, and the route derives its
-        canary pins from the single enrolled admission.  setUp for this test
-        only registers the owner-signed canary budget; the bridge performs the
-        single authoritative reservation through
-        route.reserve_monetary_admission.  Proposed by this tools-disabled
-        repair; NOT executed by it.
+        inherited team fixtures.  The route builds against its own freshly
+        created, entitlement-only control-plane schema, so the factory's strict
+        inventory validation sees exactly the entitlement manifest tables, plus
+        a separate primary schema holding the team spend/usage tables and the
+        attempt ledger.  Production inventory guards, funding checks and daily
+        caps are unchanged.  setUp for this test only registers the owner-signed
+        canary budget in the route's own authority; the bridge performs the
+        single authoritative reservation through route.reserve_monetary_admission.
+        Proposed by this tools-disabled repair; NOT executed by it.
         """
         import secrets
         import time
+        import uuid
         from dataclasses import asdict
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.entitlement_control_plane import (
+            entitlement_store_from_handle,
+            open_entitlement_control_plane,
+        )
         from director_orchestrator.openai_responses_validation import responses_route_from_file
         from director_orchestrator.provider_activation import ProviderActivationBinding
         from director_orchestrator.provider_validation import (
@@ -306,13 +314,12 @@ class ResponseMeterTests(unittest.TestCase):
             ValidationError,
             ValidationRequest,
         )
+        from tests import test_entitlement_control_plane as entitlement_fixtures
 
         attempt = "sha256:" + "4" * 64
         task_id = "VALIDATION-meter-canary"
         budget = team.signed(team.budget(self.g, grant_digest="d" * 64, provider_id="openai",
             task_id=task_id, attempt_reservation_microusd=30), team.fixtures.OWNER_SECRET)
-        with self.store._pool.connection() as c, c.transaction():
-            self.authority.budgets.register(c, budget)
         work = json.loads((Path(__file__).resolve().parents[1] /
             "docs/schemas/model-work-packet-v1.example.json").read_text())
         work.update(task_id=task_id, assignment_id=task_id, starting_ref="a" * 40,
@@ -352,28 +359,59 @@ class ResponseMeterTests(unittest.TestCase):
             "openai", "workspace", "v1", "v1", "v1", "v1", "v1"))
         owner = "owner-fixture-" + "o" * 40
         capture_key = "bridge-fixture-" + "k" * 40
-        with tempfile.TemporaryDirectory() as directory:
-            enrollment_path = Path(directory) / "enrollments.json"
-            enrollment_path.write_text(json.dumps([enrollment.model_dump(mode="json")]))
-            config_path = Path(directory) / "responses-validation.json"
-            config_path.write_text(json.dumps({
-                "model": enrollment.model,
-                "api_url": "https://api.openai.com/v1/responses",
-                "total_token_limit": 1000,
-                "api_key": "test-key",
-                "enrollment_file": str(enrollment_path.resolve()),
-                "entitlements_postgres_dsn": team.fixtures.TEST_DSN,
-                "entitlements_schema": self.schema,
-                "primary_postgres_schema": self.schema,
-                "trusted_verifier_secret_file": team.fixtures.VERIFIER_SECRET_FILE,
-                "route_verifier_secret_file": team.fixtures.ROUTE_SECRET_FILE,
-                "owner_authority_secret_file": team.fixtures.OWNER_SECRET_FILE,
-                "allow_insecure_local_postgres": True,
-                "maximum_timeout_seconds": 60,
-            }))
-            route = responses_route_from_file(config_path)
-            meter_pool = route.transport.response_meter.pool
-            try:
+        route_schema = f"entitlement_meter_it_{uuid.uuid4().hex[:8]}_v1"
+        primary_schema = f"primary_meter_it_{uuid.uuid4().hex[:8]}_v1"
+        handle = None
+        meter_pool = None
+        try:
+            # Entitlement-only schema for the route: the factory's strict
+            # inventory validation must see exactly the entitlement manifest.
+            handle = open_entitlement_control_plane(
+                team.fixtures.TEST_DSN,
+                schema=route_schema,
+                trusted_verifier_secret_file=team.fixtures.VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=team.fixtures.ROUTE_SECRET_FILE,
+                owner_authority_secret_file=team.fixtures.OWNER_SECRET_FILE,
+                allow_insecure_local_transport=True)
+            route_store = entitlement_store_from_handle(handle)
+            route_store.register_signed_template(entitlement_fixtures._signed_template())
+            route_store.register_verified_slack_destination(
+                destination_id="slack-owner-dm",
+                owner_signature_principal=entitlement_fixtures.OWNER_PRINCIPAL,
+                owner_signature_digest=entitlement_fixtures._owner_signature({
+                    "schema_version": "OwnerSlackDestination/v1",
+                    "destination_id": "slack-owner-dm",
+                    "owner_signature_principal": entitlement_fixtures.OWNER_PRINCIPAL,
+                }),
+                health_proof=entitlement_fixtures._slack_health_proof())
+            route_store.register_project(entitlement_fixtures._registration())
+            route_authority = PrimaryProviderBudgetAuthority(
+                route_store, primary_schema=primary_schema)
+            with handle.pool.connection() as c, c.transaction():
+                c.execute(f"CREATE TABLE {primary_schema}.director_primary_provider_attempt"
+                          "(attempt_digest text PRIMARY KEY)")
+                route_authority.register(c, budget)
+            with tempfile.TemporaryDirectory() as directory:
+                enrollment_path = Path(directory) / "enrollments.json"
+                enrollment_path.write_text(json.dumps([enrollment.model_dump(mode="json")]))
+                config_path = Path(directory) / "responses-validation.json"
+                config_path.write_text(json.dumps({
+                    "model": enrollment.model,
+                    "api_url": "https://api.openai.com/v1/responses",
+                    "total_token_limit": 1000,
+                    "api_key": "test-key",
+                    "enrollment_file": str(enrollment_path.resolve()),
+                    "entitlements_postgres_dsn": team.fixtures.TEST_DSN,
+                    "entitlements_schema": route_schema,
+                    "primary_postgres_schema": primary_schema,
+                    "trusted_verifier_secret_file": team.fixtures.VERIFIER_SECRET_FILE,
+                    "route_verifier_secret_file": team.fixtures.ROUTE_SECRET_FILE,
+                    "owner_authority_secret_file": team.fixtures.OWNER_SECRET_FILE,
+                    "allow_insecure_local_postgres": True,
+                    "maximum_timeout_seconds": 60,
+                }))
+                route = responses_route_from_file(config_path)
+                meter_pool = route.transport.response_meter.pool
                 store = PostgresValidationStore(team.fixtures.TEST_DSN)
                 store.bootstrap()
                 generation = secrets.token_hex(32)
@@ -396,22 +434,32 @@ class ResponseMeterTests(unittest.TestCase):
                 self.assertEqual("responses-api", result["transport"])
                 self.assertTrue(verifier.verify(
                     ProviderActivationBinding(**binding), result["evidence_digest"]))
-                # Exactly one authoritative reservation, made by the bridge.
-                with self.store._pool.connection() as c:
+                # Exactly one authoritative reservation, made by the bridge, in
+                # the route's own primary schema.
+                with handle.pool.connection() as c:
                     spend = c.execute(f"SELECT count(*) AS n, reserved_microusd "
-                        f"FROM {self.schema}.director_primary_provider_spend "
+                        f"FROM {primary_schema}.director_primary_provider_spend "
                         "WHERE attempt_digest=%s GROUP BY reserved_microusd", (attempt,)).fetchone()
+                    usage_rows = c.execute(f"SELECT count(*) AS n "
+                        f"FROM {primary_schema}.director_primary_provider_usage").fetchone()["n"]
                 self.assertIsNotNone(spend)
                 self.assertEqual((1, 30), (spend["n"], spend["reserved_microusd"]))
-                self.assertEqual(1, self.count_rows())
+                self.assertEqual(1, usage_rows)
                 # Durable no-replay refusal for the same admitted attempt.
                 with self.assertRaisesRegex(ValidationError, "already admitted"):
                     service.run(request, owner)
-            finally:
+        finally:
+            if meter_pool is not None:
                 meter_pool.close()
+            if handle is not None:
+                with handle.pool.connection() as c:
+                    c.execute(f"DROP SCHEMA IF EXISTS {route_schema} CASCADE")
+                    c.execute(f"DROP SCHEMA IF EXISTS {primary_schema} CASCADE")
+                handle.close()
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
