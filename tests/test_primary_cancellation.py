@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
 """Owner-authenticated cancellation against the disposable PostgreSQL lane."""
@@ -151,7 +152,8 @@ class AuthenticatedCancellationTests(unittest.TestCase):
         replay = self.send(request)
         self.assertEqual(200, replay.status_code, replay.text)
         self.assertEqual(after, self.snapshot())
-        self.assertEqual({"PENDING"}, set(self.coordinator.parallel_aggregate(self.task).statuses.values()))
+        # Graph CLAIMED/unit bookkeeping alone is not durable dispatch evidence.
+        self.assertEqual({"FAILED"}, set(self.coordinator.parallel_aggregate(self.task).statuses.values()))
         self.provider.assert_not_called()
         self.effect.assert_not_called()
 
@@ -427,3 +429,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]

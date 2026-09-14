@@ -1,3 +1,5 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
@@ -159,6 +161,8 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+
 
     def test_one_format_success_invokes_only_the_primary_attempt(self) -> None:
         invoked: list[int] = []
@@ -657,6 +661,21 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         construct.assert_called_once_with(settings, None)
         self.assertIs(dependencies.budget_routing, routing)
         self.assertIsNone(dependencies.team_routing)
+        self.assertIs(dependencies.capabilities, capabilities)
+        
+        settings_bridge = replace(
+            settings,
+            langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch",
+            langgraph_primary_host_bridge_secret="a" * 32
+        )
+        sentinel = object()
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing), \
+             patch("director_orchestrator.primary_default.challenge_host_provider_bridge", return_value=sentinel):
+            dependencies_bridge = build_automatic_primary_live_dependencies(settings_bridge, None, None)
+        self.assertIs(dependencies_bridge.bridge_challenge, sentinel)
 
 
 
@@ -3108,3 +3127,5 @@ if __name__ == "__main__":
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]

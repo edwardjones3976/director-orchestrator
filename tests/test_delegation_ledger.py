@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
@@ -561,9 +563,56 @@ class RemainingFindingsRegressionTests(unittest.TestCase):
             with self.subTest(outcome=outcome), self.assertRaises(DelegationAuditError):
                 record(outcome=outcome, grant_id=None)
 
+    def test_one_provider_grant_and_accept_survive_an_anchored_ledger_round_trip(self):
+        grant = json.loads(GRANT)
+        grant["providers"] = ["openai"]
+        for outcome in (RecordedOutcome.DELEGATED, RecordedOutcome.WOULD_DELEGATE):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / "audit.sqlite3")
+                anchor = MemoryAnchor()
+                original = record(
+                    outcome=outcome, grant_snapshot=json.dumps(grant),
+                    verdicts=(verdict(),),
+                )
+                store = TaskStore(path, delegation_audit_anchor=anchor)
+                self.assertEqual(store.append_delegation_audit_record(original), original.digest)
+                reopened = TaskStore(path, delegation_audit_anchor=anchor)
+                self.assertEqual(reopened.delegation_audit_records(), [original])
+                self.assertEqual(anchor.head[0], 1)
+
+    def test_historical_multi_verdict_digests_survive_the_one_reviewer_change(self):
+        # Fixed pre-change records from ef0d7cb. A serializer or payload change
+        # must not silently change the identity of an existing ledger record.
+        expected = {
+            RecordedOutcome.DELEGATED:
+                "bb67542be088a9d56ca6f45462e1c773e99f95377495b5f7923e9baeb88ad71f",
+            RecordedOutcome.WOULD_DELEGATE:
+                "daef651ec31e8b29151f838c1bf8bedd9b3f5d746bf3cb3a0a8653ed4fe2bb6c",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "audit.sqlite3")
+            anchor = MemoryAnchor()
+            store = TaskStore(path, delegation_audit_anchor=anchor)
+            originals = []
+            for outcome, digest in expected.items():
+                with self.subTest(outcome=outcome):
+                    original = record(outcome=outcome)
+                    self.assertEqual(original.digest, digest)
+                    self.assertEqual(parse_record(original.canonical_json()), original)
+                    self.assertEqual(store.append_delegation_audit_record(original), digest)
+                    originals.append(original)
+            reopened = TaskStore(path, delegation_audit_anchor=anchor)
+            restored = reopened.delegation_audit_records()
+            self.assertEqual(restored, originals)
+            self.assertEqual([item.canonical_json() for item in restored],
+                             [item.canonical_json() for item in originals])
+            self.assertEqual([item.digest for item in restored], list(expected.values()))
+
     def test_delegation_claims_require_concurring_verdicts_and_passing_gates(self):
         cases = [
-            {"verdicts": ()}, {"verdicts": (verdict(),)}, {"gate_results": ()},
+            {"verdicts": ()}, {"gate_results": ()},
+            *({"verdicts": (verdict(outcome=outcome),)}
+              for outcome in VerdictOutcome if outcome != VerdictOutcome.ACCEPT),
             *({"verdicts": (verdict(), verdict("cursor", outcome))}
               for outcome in VerdictOutcome if outcome != VerdictOutcome.ACCEPT),
             *({"gate_results": (gate(status=status),)}
@@ -1148,3 +1197,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
+# [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]

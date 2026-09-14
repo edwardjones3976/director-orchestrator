@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:28 UTC | BEGIN]] -->
@@ -78,7 +81,7 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | `antigravity` |
 | Charter workload lane key | `antigravity` |
-| Standing role label | Specialist and Backup Programmer |
+| Standing role label | - |
 | Configuration prefixes | `GEMINI_`, `GOOGLE_` |
 | Alias note | Gemini and Antigravity share one lane. The primary roster names the lane antigravity and requires its backend identity to be gemini; the legacy ProviderName enum, adapter, spend ledger, and standing role are keyed gemini. This is the only lane-to-backend alias the capability validator permits. |
 
@@ -87,11 +90,11 @@ The sections below mirror the preserved restricted mode. Their no-repository-con
 | Field | Value |
 | --- | --- |
 | Team | supplemental |
-| Lane class | subordinate_specialist |
-| Summary | Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
-| Charter workload lane | `bounded_subordinate_specialist` |
+| Lane class | capability_routed_lane |
+| Summary | Capability-routed provider with no standing job or rank. This section mirrors the retained restricted fixture contact, whose artifacts require independent verification before integration. The separately selected team contract is described above and keeps its own explicit grants and qualification gates. |
+| Charter workload lane | `bounded_capability_routed_lane` |
 | Strategy key | `gemini` |
-| Strategy priority | `subordinate_boilerplate_and_alternate_ideation` |
+| Strategy priority | `bounded_capability_routing` |
 | Committee member | yes |
 | Voting power | 1.0 |
 | Seatable in debate | yes |
@@ -120,8 +123,8 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | - |
 | Comparison peers | - |
 | Family | - |
-| Routing rule | Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing. |
-| Transport rule | - |
+| Routing rule | Preview routing selects Antigravity only when the assignment matches its verified bounded capabilities; all other work follows cheap-capable-model-first routing. |
+| Transport rule | The fields below describe the restricted fixture and invited-debate contacts only. The team contract requires separate selection, exact signed grants, qualification and independent review; role descriptions do not enable it. |
 
 Elevated work:
 
@@ -129,8 +132,8 @@ Elevated work:
 
 Non-substitution rules:
 
-- Antigravity is never a primary-team substitute.
-- Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it.
+- A provider cannot independently review, accept or merge its own material work.
+- Restricted fixture artifacts require a later independently assigned non-author with verified integration capability; provider identity does not prescribe the recipient.
 
 ## Capabilities
 
@@ -232,7 +235,7 @@ Strengths:
 | Denied authorities | `acceptance_verdict`, `billing_or_spend`, `branch_selection`, `contract_or_methodology_definition`, `deployment_or_publication`, `external_write`, `merge.non_protected`, `merge.protected`, `permission_or_credential_change`, `repository_access`, `repository_write`, `review_verdict` |
 | Withheld context | `acceptance_criteria`, `assignment_task_text`, `dependency_outcomes`, `owner_objective`, `owner_or_slack_identifiers`, `primary_team_handoff_context`, `private_project_data`, `repository_paths_diffs_or_source`, `reviewer_revision_text`, `run_session_or_task_identifiers` |
 | Charter prohibited | `defining research-contract or methodology truth`, `merging into a protected branch` |
-| Review requirement | Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it. |
+| Review requirement | Restricted fixture artifacts require a later independently assigned non-author with verified integration capability before integration or acceptance influence. Team-contract work follows its separate exact-candidate independence gates. |
 | Production authority permitted | yes |
 | External effects that may be granted | - |
 | Public research lane rejects all effects | no |
@@ -244,8 +247,8 @@ Strengths:
 
 Strategy constraints:
 
-- supplemental only; never a primary-team substitute
-- work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment
+- restricted fixture contact only; the separately selected team contract requires its own explicit grants and qualification
+- every artifact requires independent downstream verification before integration or acceptance influence
 - cannot issue review, acceptance, or merge verdicts
 - cannot define contract or methodology truth
 - cannot initiate, self-route, widen, or autonomously continue a conversation
@@ -292,7 +295,7 @@ Separation of duties:
 
 - Relay rule: provider_messages_relay_through_director.
 - Direct provider-to-provider channels exist: no.
-- Antigravity receives no dependency outcomes, task prose, or repository context on its work route; its artifact reaches Claude, Cursor, or Grok only as a Director-declared dependency of the later verifying assignment.
+- The restricted fixture contact receives no dependency outcomes, task prose, or repository context; its artifact reaches an eligible independently assigned verifier only through a Director-declared dependency.
 - The debate seat is the one prose-bearing envelope, admitted only by a persisted Director invitation.
 - Antigravity never posts to the Slack thread; the Director relays a concise summary.
 
@@ -340,7 +343,7 @@ Separation of duties:
 - `docs/team-operating-charter.md`: Antigravity may hold a debate seat, but only one the Director gave it
 - `docs/provider-setup.md`: Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
 - `docs/provider-allocation-profiles.md`: Gemini and Antigravity share the Antigravity lane.
-- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: never_a_primary_team_substitute: true
+- `docs/templates/project-bootstrap/provider-roles-contract.yaml`: contact_scope:
 
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]] -->
@@ -357,5 +360,7 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
-
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:56 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

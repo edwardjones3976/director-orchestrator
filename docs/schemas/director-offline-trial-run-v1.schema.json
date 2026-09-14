@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:director:offline-trial-run:v1",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^(DIR-LG-[A-F0-9]+|unresolved-thread:[0-9]{10,}\\.[0-9]{1,6})$"
+    },
+    "mode": {
+      "const": "offline"
+    },
+    "actual_owner_event": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "correctness_verified": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "task_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "terminal_reply_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "wall_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "owner_pause_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "machine_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "ambiguous_effects": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "delivery_ambiguous": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "operational_provider_attempts": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "actual_cost_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "runtime_sha": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "image_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "cost_basis": {
+      "enum": [
+        "simulation_zero_calls",
+        null
+      ]
+    },
+    "simulation_label": {
+      "enum": [
+        "SIMULATION — NO PROVIDER INTERACTION",
+        null
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "mode",
+    "actual_owner_event",
+    "correctness_verified",
+    "task_count",
+    "terminal_reply_count",
+    "wall_seconds",
+    "owner_pause_seconds",
+    "machine_seconds",
+    "ambiguous_effects",
+    "delivery_ambiguous",
+    "operational_provider_attempts",
+    "actual_cost_usd",
+    "runtime_sha",
+    "image_id",
+    "cost_basis",
+    "simulation_label"
+  ],
+  "additionalProperties": false
+}

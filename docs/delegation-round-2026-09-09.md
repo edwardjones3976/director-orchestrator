@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | BEGIN]] -->
@@ -82,6 +83,7 @@ so they are not re-derived:
   data; post **only on change**.
 - Post immediately, regardless of change, when `ambiguous_effect_count > 0`, the
   parallel kill switch is set, or health is unreachable.
+  *(Correction 2026-09-12: The rule changed in #197; it speaks when the kill switch is engaged while parallel dispatch is enabled.)*
 - Target the configured Director channel variable. Never a literal channel ID in
   the workflow.
 - Never post secret, DSN or allowlist values.
@@ -106,3 +108,4 @@ behind `main` fails on files it never touched.
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:50 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->

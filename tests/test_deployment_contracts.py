@@ -1,3 +1,10 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | BEGIN]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | BEGIN]]
@@ -46,7 +53,7 @@ process.stdout.write(JSON.stringify({outputs, store}));
             "providers": {name: providers.get(name, True) for name in (
                 "slack", "openai_director", "cursor", "claude", "gemini", "grok", "perplexity"
             )},
-            "parallel_dispatch": {"kill_switch_open": True},
+            "parallel_dispatch": {"enabled": False, "kill_switch_open": True},
             "langgraph_primary": {"ambiguous_effect_count": 0},
         }}
 
@@ -69,16 +76,44 @@ process.stdout.write(JSON.stringify({outputs, store}));
         ambiguous["body"]["langgraph_primary"]["ambiguous_effect_count"] = 1
         stopped = self._status_response()
         stopped["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        stopped["body"]["parallel_dispatch"]["enabled"] = True
         responses = [{"error": "connection refused"}, {"statusCode": 503},
                      ambiguous, ambiguous, stopped]
         result = self._run_status_sequence(responses)
         for index, output in enumerate(result["outputs"]):
+            if index in (1, 3):
+                self.assertEqual(output, [])
+                continue
             with self.subTest(response=index):
                 self.assertEqual(len(output), 1)
                 self.assertIs(output[0]["json"]["alarm"], True)
         self.assertIn("unreachable", result["outputs"][0][0]["json"]["text"])
-        self.assertIn("ambiguous effects", result["outputs"][3][0]["json"]["text"])
-        self.assertIn("kill switch engaged", result["outputs"][4][0]["json"]["text"])
+        self.assertIn("ambiguous effects", result["outputs"][2][0]["json"]["text"])
+        self.assertIn("kill switch engaged while parallel dispatch is enabled", result["outputs"][4][0]["json"]["text"])
+
+    def test_status_treats_engaged_kill_switch_as_expected_while_parallel_dispatch_is_disabled(self):
+        healthy = self._status_response()
+        engaged = self._status_response()
+        engaged["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        engaged_enabled = self._status_response()
+        engaged_enabled["body"]["parallel_dispatch"]["kill_switch_open"] = False
+        engaged_enabled["body"]["parallel_dispatch"]["enabled"] = True
+
+        result = self._run_status_sequence([healthy, engaged, engaged, engaged, engaged_enabled])
+        initial, changed, quiet1, quiet2, alarmed = result["outputs"]
+
+        self.assertEqual(len(initial), 1)
+        self.assertEqual(len(changed), 1)
+        self.assertIs(changed[0]["json"]["alarm"], False)
+        self.assertEqual(changed[0]["json"]["changed"], ["parallel_dispatch_kill_switch_open"])
+        self.assertEqual(quiet1, [])
+        self.assertEqual(quiet2, [])
+        self.assertEqual(len(alarmed), 1)
+        self.assertIs(alarmed[0]["json"]["alarm"], True)
+        self.assertIn("kill switch engaged while parallel dispatch is enabled", alarmed[0]["json"]["text"])
+
+        watched = json.loads(result["store"]["lastWatched"])
+        self.assertIn("parallel_dispatch_enabled", watched)
 
     def test_status_only_emits_fixed_boolean_provider_fields(self):
         response = self._status_response(gemini="sensitive-test-value", grok={"key": "sensitive-test-value"})
@@ -91,6 +126,26 @@ process.stdout.write(JSON.stringify({outputs, store}));
         self.assertIsNone(watched["provider_gemini_ready"])
         self.assertIsNone(watched["provider_grok_ready"])
         self.assertIs(watched["provider_openai_director_ready"], True)
+
+    def test_status_lease_loss_recovery_and_timestamp_updates(self):
+        import copy
+        healthy = self._status_response()
+        healthy['body']['langgraph_primary'].update(new_intake_requested=True, writer_lease_ready=True, intake_lease_last_renewal_at='2026-09-13T13:40:00+00:00')
+        tick = copy.deepcopy(healthy)
+        tick['body']['langgraph_primary']['intake_lease_last_renewal_at'] = '2026-09-13T13:40:10+00:00'
+        lost = copy.deepcopy(tick)
+        lost['body']['langgraph_primary']['writer_lease_ready'] = False
+        lost['body']['langgraph_primary']['lease_renewal_failure_category'] = 'intake_renewal_failed'
+        outputs = self._run_status_sequence([healthy, tick, lost, lost, tick])['outputs']
+        self.assertEqual(outputs[1], [])
+        self.assertEqual(outputs[3], [])
+        self.assertTrue(outputs[2][0]['json']['alarm'])
+        self.assertIn('13:40:10', outputs[2][0]['json']['text'])
+        self.assertFalse(outputs[4][0]['json']['alarm'])
+        self.assertIn('provider_gemini_configured', outputs[0][0]['json']['text'])
+        lost['body']['langgraph_primary']['intake_lease_last_renewal_at'] = 'secret-token'
+        lost['body']['langgraph_primary']['lease_renewal_failure_category'] = 'secret-token'
+        self.assertNotIn('secret-token', json.dumps(self._run_status_sequence([lost])))
 
     def test_status_connects_schedule_health_diff_and_slack_without_other_routes(self):
         workflow = json.loads(
@@ -432,6 +487,124 @@ process.stdout.write(JSON.stringify({outputs, store}));
             recovery,
         )
 
+    def _health_activation(self, *, capabilities=None, adapters=None, bridge_challenge=None, ready=None):
+        """A stand-in activation. `ready` is the set of lanes the activation
+        service currently reports provider_ready(lane, live=True) for; None
+        models a deployment without an activation service (nothing is live)."""
+        from unittest.mock import MagicMock
+
+        activation = MagicMock()
+        activation.live_dependencies = MagicMock()
+        activation.live_dependencies.capabilities = capabilities or {}
+        activation.live_dependencies.adapters = adapters or {}
+        activation.live_dependencies.bridge_challenge = bridge_challenge
+        if ready is None:
+            activation.provider_activation = None
+        else:
+            activation.provider_activation = MagicMock()
+            activation.provider_activation.provider_ready = (
+                lambda provider_id, *, live: live and provider_id in ready
+            )
+        return activation
+
+    @staticmethod
+    def _main_module():
+        # Resolve through sys.modules, exactly as mock.patch does. Other test
+        # modules pop director_orchestrator.main to re-import it against a
+        # temporary database; `from director_orchestrator import main` would
+        # hand back the stale package attribute (a store whose temp directory
+        # is gone) while patch() re-imports a fresh module.
+        import importlib
+
+        return importlib.import_module("director_orchestrator.main")
+
+    def _health(self, activation, settings=None):
+        from fastapi.testclient import TestClient
+        from unittest.mock import patch
+
+        main_module = self._main_module()
+        with patch("director_orchestrator.main.primary_default_activation", activation), \
+             patch("director_orchestrator.main.settings", settings or main_module.settings):
+            response = TestClient(main_module.app).get("/health")
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_health_endpoint_host_bridge_startup_challenge_and_configured(self):
+        from dataclasses import replace
+
+        bridged = replace(
+            self._main_module().settings,
+            langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch",
+            langgraph_primary_host_bridge_secret="s" * 40,
+        )
+        # Live branch, challenge failed or not attempted: configured comes from
+        # settings, the startup challenge is not claimed.
+        data = self._health(self._health_activation(bridge_challenge=None), bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        # Live branch, challenge evidence present.
+        data = self._health(self._health_activation(bridge_challenge=object()), bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": True})
+        # Fallback branches (no activation; activation without live dependencies):
+        # configured still follows settings, the challenge is never claimed.
+        data = self._health(None, bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        activation = self._health_activation()
+        activation.live_dependencies = None
+        data = self._health(activation, bridged)
+        self.assertEqual(data["host_bridge"], {"configured": True, "startup_challenge_ok": False})
+        data = self._health(None)
+        self.assertEqual(data["host_bridge"], {"configured": False, "startup_challenge_ok": False})
+        for value in data["host_bridge"].values():
+            self.assertIsInstance(value, bool)
+
+    def test_health_endpoint_providers_lanes(self):
+        from director_orchestrator.primary_transports import PrimaryProviderCapability, PRIMARY_PROVIDER_LANES
+
+        def capability(provider, executable, authenticated):
+            return PrimaryProviderCapability(
+                provider_id=provider, backend_identity=provider, transport_kind="test",
+                executable_observed=executable, authenticated_observed=authenticated,
+            )
+
+        capabilities = {
+            "claude": capability("claude", True, False),
+            "openai": capability("openai", True, True),
+            "antigravity": capability("antigravity", False, False),
+        }
+        # antigravity is dispatched through a composed (team) adapter although
+        # no local executable was observed; claude is installed and callable
+        # but outside the composed adapter set (not a required provider).
+        capabilities["claude"] = capability("claude", True, True)
+        adapters = {"openai": object(), "antigravity": object(), "cursor": object()}
+        activation = self._health_activation(
+            capabilities=capabilities, adapters=adapters, ready={"openai", "antigravity"}
+        )
+        data = self._health(activation)
+        lanes = data["providers"]["lanes"]
+        self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
+        for lane in lanes.values():
+            self.assertEqual(set(lane), {"configured", "live_ready"})
+            for value in lane.values():
+                self.assertIsInstance(value, bool)
+        self.assertEqual(lanes["claude"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["openai"], {"configured": True, "live_ready": True})
+        self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": True})
+        # routed, but the activation service does not currently report it live
+        self.assertEqual(lanes["cursor"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["github-copilot"], {"configured": False, "live_ready": False})
+
+        # Without an activation service nothing is live, whatever is routed.
+        lanes = self._health(self._health_activation(capabilities=capabilities, adapters=adapters))["providers"]["lanes"]
+        self.assertEqual(lanes["openai"], {"configured": True, "live_ready": False})
+        self.assertEqual(lanes["antigravity"], {"configured": True, "live_ready": False})
+
+        for activation in (None, self._health_activation()):
+            if activation is not None:
+                activation.live_dependencies = None
+            lanes = self._health(activation)["providers"]["lanes"]
+            self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
+            for lane in lanes.values():
+                self.assertEqual(lane, {"configured": False, "live_ready": False})
 
 if __name__ == "__main__":
     unittest.main()
@@ -443,3 +616,10 @@ if __name__ == "__main__":
 # [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 23:10 UTC | END]]
 # [[Claude Cowork | Claude Opus 5 | 2026-09-10 | 03:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 18:04 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 12:24 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]

@@ -1,3 +1,13 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:59 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
@@ -57,6 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
 from .antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
 from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
@@ -135,6 +146,7 @@ from .host_provider_bridge import (
 )
 from .primary_providers import CandidateShaResolver, PrimaryProviderBinding
 from .primary_parallel import (
+    CancelledPlanBindingHold,
     ParallelAggregate,
     ParallelAssignment,
     ParallelAssignmentStatus,
@@ -655,6 +667,8 @@ class DefaultPrimaryLiveDependencies:
     ] = field(default_factory=dict)
     team_routing: Any | None = None
     budget_routing: PrimaryProviderBudgetRouting | None = None
+    capabilities: Mapping[str, Any] = field(default_factory=dict)
+    bridge_challenge: Any | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -1048,6 +1062,15 @@ def build_automatic_primary_live_dependencies(
 
     from .antigravity_team_routing import configured_provider_budget_routing
     budget_routing = configured_provider_budget_routing(settings, handle)
+    meter_file = getattr(settings, "langgraph_primary_openai_response_meter_enrollment_file", "")
+    if meter_file:
+        from .primary_transports import OpenAIResponsesPacketTransport
+        from .response_meter import load_response_meter_registry
+        transport = transports.get("openai")
+        if not isinstance(transport, OpenAIResponsesPacketTransport):
+            raise ValueError("response meter enrollment requires the explicit OpenAI Responses route")
+        transport.response_meter = load_response_meter_registry(meter_file,
+            authority=budget_routing.authority, pool=budget_routing.pool)
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         attempt_formats={
@@ -1064,6 +1087,9 @@ def build_automatic_primary_live_dependencies(
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
         budget_routing=budget_routing,
+        # capabilities is the full discovery map (all PRIMARY_PROVIDER_LANES), not the required-provider subset used for adapters
+        capabilities=capabilities,
+        bridge_challenge=bridge_challenge,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -2182,6 +2208,8 @@ class DefaultPrimaryActivation:
         self.application: DefaultPrimaryApplication | None = None
         self.services: DefaultDryRunServices | None = None
         self.provider_activation: PrimaryProviderActivationService | None = None
+        self.live_dependencies: DefaultPrimaryLiveDependencies | None = None
+        self._lease_diagnostics = LeaseRenewalDiagnostics()
         self._reconciliation_worker_ready = False
         self._live_dependencies_ready = False
         if (effect_mutation is None) != (effect_readback is None):
@@ -2270,6 +2298,7 @@ class DefaultPrimaryActivation:
                     live_dependencies = build_automatic_primary_live_dependencies(
                         settings, handle, services, team_routing=team_routing
                     )
+                self.live_dependencies = live_dependencies
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -2778,9 +2807,20 @@ class DefaultPrimaryActivation:
         if not self.enabled:
             return
         assert self.coordinator is not None
-        self.coordinator.heartbeat_active_task_writers()
+        try:
+            self.coordinator.heartbeat_active_task_writers(
+                on_renewal_outcome=self._lease_diagnostics.task_completed
+            )
+        except Exception:
+            self._lease_diagnostics.failed("task_writer_renewal_failed")
+            raise
         if self.settings.langgraph_primary_new_intake_enabled:
-            self.coordinator.renew_new_intake()
+            try:
+                self.coordinator.renew_new_intake()
+            except Exception:
+                self._lease_diagnostics.failed("intake_renewal_failed")
+                raise
+            self._lease_diagnostics.succeeded()
 
     def reconcile_once(self) -> int:
         if not self.enabled:
@@ -2791,9 +2831,31 @@ class DefaultPrimaryActivation:
         # Readiness describes this bounded pass, never a sticky historical win.
         self._reconciliation_worker_ready = False
         self._historical_parallel_hold_count = 0
+        self._cancelled_plan_binding_hold_count = 0
         recovered = []
         for projection in self.coordinator.list_projections():
             payload = projection.projection
+            if payload.get("terminal_classification") == "CANCELLED":
+                # Reconcile ledger-only cancellation residue, never reconstruct
+                # or drive a terminal task's historical graph/provider plan.
+                try:
+                    self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                    # Empty pending rows alone do not settle a divergent binding.
+                    # Reobserve the durable adjudication and terminal ledger even
+                    # when the coordinator skipped writer renewal for this task.
+                    self.coordinator.parallel.verify_cancelled_terminal_binding(projection.task_id)
+                except CancelledPlanBindingHold:
+                    # The ledger committed a specific refusal; keep readiness
+                    # false while allowing diagnostics and unrelated tasks up.
+                    self._cancelled_plan_binding_hold_count += 1
+                    # Health is not a dispatch guard. Tolerate this refusal only in
+                    # explicitly paid-off, non-live, intake-off diagnostic operation: a
+                    # process that owns new intake must not start over this ledger.
+                    if (self.settings.allow_paid_runs
+                            or self.settings.langgraph_primary_live_provider_dispatch_enabled
+                            or self.settings.langgraph_primary_new_intake_enabled):
+                        raise
+                continue
             if payload.get("terminal_classification") is not None:
                 continue
             if _historical_parallel_binding(payload) is not None:
@@ -2820,11 +2882,14 @@ class DefaultPrimaryActivation:
                 recovered.append(self.application.recover(projection.task_id))
             except HistoricalParallelPlanHold:
                 self._historical_parallel_hold_count += 1
-        self._reconciliation_worker_ready = self._historical_parallel_hold_count == 0
+        self._reconciliation_worker_ready = (
+            self._historical_parallel_hold_count == 0 and self._cancelled_plan_binding_hold_count == 0
+        )
         return len(recovered)
 
     def health(self) -> dict[str, Any]:
         configured = self.settings.langgraph_primary_configuration_readiness()
+        configured.update(self._lease_diagnostics.health())
         provider_activation = (
             self.provider_activation.health()
             if self.provider_activation is not None
@@ -2861,7 +2926,10 @@ class DefaultPrimaryActivation:
         observed["historical_parallel_plan_hold_count"] = getattr(
             self, "_historical_parallel_hold_count", 0
         )
+        observed["cancelled_plan_binding_hold_count"] = getattr(self, "_cancelled_plan_binding_hold_count", 0)
         observed["reconciliation_hold_reason"] = (
+            "cancelled_parallel_plan_requires_owner_reconciliation"
+            if observed["cancelled_plan_binding_hold_count"] else
             "historical_parallel_plan_requires_reconciliation"
             if observed["historical_parallel_plan_hold_count"] else None
         )
@@ -2958,3 +3026,13 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:59 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]

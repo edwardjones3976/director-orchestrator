@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -35,7 +38,7 @@
 | Accounting note | legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority. |
 | Committee member key | - |
 | Charter workload lane key | - |
-| Standing role label | - |
+| Standing role label | Authorized public web retrieval |
 | Configuration prefixes | `FIRECRAWL_` |
 | Alias note | Firecrawl is a LangGraph-primary-only public search lane. It shares Perplexity's fail-closed public research contract and public-search transport class but is its own lane with its own allocation; it is not a Perplexity alias. |
 
@@ -45,7 +48,7 @@
 | --- | --- |
 | Team | lane_only |
 | Lane class | public_search_transport |
-| Summary | Public search transport on the LangGraph primary path only, under the same fail-closed public research contract as Perplexity. It has an allocation in the mixed, public research, and enterprise profiles but no charter role, committee seat, standing role, or legacy adapter, and a nonzero target is not evidence that the route is operational. |
+| Summary | Public search transport on the LangGraph primary path only, under the same fail-closed public research contract as Perplexity. It has an allocation in the mixed, public research, and enterprise profiles but no charter role, committee seat, or legacy adapter, and a nonzero target is not evidence that the route is operational. |
 | Charter workload lane | - |
 | Strategy key | - |
 | Strategy priority | - |
@@ -275,3 +278,6 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

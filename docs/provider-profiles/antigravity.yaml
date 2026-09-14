@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | BEGIN]]
@@ -71,17 +73,17 @@ identifiers:
   legacy_accounting_note: "legacy_accounting_agent is the accounting backend only; it is not an identity and carries no authority."
   committee_member_key: "antigravity"
   charter_workload_lane_key: "antigravity"
-  standing_role_label: "Specialist and Backup Programmer"
+  standing_role_label: null
   config_prefixes: ["GEMINI_", "GOOGLE_"]
   alias_note: "Gemini and Antigravity share one lane. The primary roster names the lane antigravity and requires its backend identity to be gemini; the legacy ProviderName enum, adapter, spend ledger, and standing role are keyed gemini. This is the only lane-to-backend alias the capability validator permits."
 
 roles:
   team: "supplemental"
-  lane_class: "subordinate_specialist"
-  summary: "Subordinate supplemental specialist, never a primary-team substitute. Work is limited to explicit boilerplate, scaffolding, low-level mechanical implementation, and alternate or abstract ideation in closed public fixture lanes, and every work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
-  charter_workload_lane: "bounded_subordinate_specialist"
+  lane_class: "capability_routed_lane"
+  summary: "Capability-routed provider with no standing job or rank. This section mirrors the retained restricted fixture contact, whose artifacts require independent verification before integration. The separately selected team contract is described above and keeps its own explicit grants and qualification gates."
+  charter_workload_lane: "bounded_capability_routed_lane"
   strategy_key: "gemini"
-  strategy_priority: "subordinate_boilerplate_and_alternate_ideation"
+  strategy_priority: "bounded_capability_routing"
   eligible_responsibility_areas: []
   excluded_responsibility_areas: []
   eligible_complexity: []
@@ -89,11 +91,11 @@ roles:
   comparison_peers: []
   elevated_work: []
   non_substitution_rules:
-    - "Antigravity is never a primary-team substitute."
-    - "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+    - "A provider cannot independently review, accept or merge its own material work."
+    - "Restricted fixture artifacts require a later independently assigned non-author with verified integration capability; provider identity does not prescribe the recipient."
   family: null
-  transport_rule: null
-  routing_rule: "Preview routing selects Antigravity only for an explicit boilerplate, scaffolding, low-level, mechanical, or alternate-ideation request; other work follows cheap-capable-model-first routing."
+  transport_rule: "The fields below describe the restricted fixture and invited-debate contacts only. The team contract requires separate selection, exact signed grants, qualification and independent review; role descriptions do not enable it."
+  routing_rule: "Preview routing selects Antigravity only when the assignment matches its verified bounded capabilities; all other work follows cheap-capable-model-first routing."
   committee:
     member: true
     voting_power: 1.0
@@ -212,10 +214,10 @@ authority:
   charter_prohibited:
     - "defining research-contract or methodology truth"
     - "merging into a protected branch"
-  review_requirement: "Every Antigravity work assignment must feed a later OpenAI, Claude, Cursor, or Grok assignment that independently verifies and integrates or rejects it."
+  review_requirement: "Restricted fixture artifacts require a later independently assigned non-author with verified integration capability before integration or acceptance influence. Team-contract work follows its separate exact-candidate independence gates."
   strategy_constraints:
-    - "supplemental only; never a primary-team substitute"
-    - "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment"
+    - "restricted fixture contact only; the separately selected team contract requires its own explicit grants and qualification"
+    - "every artifact requires independent downstream verification before integration or acceptance influence"
     - "cannot issue review, acceptance, or merge verdicts"
     - "cannot define contract or methodology truth"
     - "cannot initiate, self-route, widen, or autonomously continue a conversation"
@@ -299,7 +301,7 @@ communication:
   relay_rule: "provider_messages_relay_through_director"
   direct_provider_to_provider_channels_exist: false
   notes:
-    - "Antigravity receives no dependency outcomes, task prose, or repository context on its work route; its artifact reaches Claude, Cursor, or Grok only as a Director-declared dependency of the later verifying assignment."
+    - "The restricted fixture contact receives no dependency outcomes, task prose, or repository context; its artifact reaches an eligible independently assigned verifier only through a Director-declared dependency."
     - "The debate seat is the one prose-bearing envelope, admitted only by a persisted Director invitation."
     - "Antigravity never posts to the Slack thread; the Director relays a concise summary."
 
@@ -321,9 +323,11 @@ sources:
   - document: "docs/provider-allocation-profiles.md"
     anchor: "Gemini and Antigravity share the Antigravity lane."
   - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
-    anchor: "never_a_primary_team_substitute: true"
+    anchor: "contact_scope:"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

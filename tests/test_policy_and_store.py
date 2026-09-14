@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
+# OpenAI continuation repairs attribution only here; prior material from
+# Copilot branch head 510251c66a78251bd242e8f773a03c51bf65f99b is preserved.
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
@@ -421,14 +424,14 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(strategy["grok"]["team"], "primary")
         self.assertEqual(
             strategy["grok"]["priority"],
-            "primary_cursor_family_repository_partner",
+            "capability_routed_assignment",
         )
         self.assertEqual(strategy["perplexity"]["team"], "supplemental")
         self.assertEqual(strategy["cursor"]["capability_parity_target"], 1.0)
         self.assertEqual(strategy["grok"]["capability_parity_target"], 1.0)
         self.assertEqual(strategy["grok"]["family"], "cursor")
         self.assertEqual(strategy["cursor"]["eligible_complexity"], ["low", "medium", "high", "critical"])
-        self.assertEqual(strategy["cursor"]["priority"], "primary_full_spectrum_repository_partner")
+        self.assertEqual(strategy["cursor"]["priority"], "capability_routed_assignment")
         self.assertIn("technical leadership and coordination", strategy["cursor"]["strengths"])
 
     def test_perplexity_readiness_requires_the_complete_research_only_profile(self):
@@ -999,3 +1002,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]

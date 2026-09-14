@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:46 UTC | BEGIN]]
 """Observed, fail-closed provider activation evidence.
@@ -325,7 +326,7 @@ class ProviderActivationRegistry:
             observed_at=observed_at,
             expires_at=expires_at,
         )
-        if records and records[-1] != evidence:
+        if len(records) == expected_revision + 1 and records[-1] != evidence:
             raise ProviderActivationError(
                 "a reached stage cannot be replaced within the same binding version"
             )
@@ -434,3 +435,4 @@ __all__ = [
 ]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]

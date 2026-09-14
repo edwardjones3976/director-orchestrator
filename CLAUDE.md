@@ -1,21 +1,22 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | BEGIN]] -->
 @AGENTS.md
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
 
-# Claude: acting Director-Orchestrator
+# Claude lane instructions
 
-The owner appointed Claude acting Director for this project and exchanged
-Claude's and Codex/ChatGPT's duties. Read `AGENTS.md` and
-`docs/project-leadership.md`; they define the current role and its boundaries.
+This lane has no standing director role. Read `AGENTS.md` and
+`docs/project-leadership.md` for capability-based routing boundaries and
+recorded runtime coordination status.
 
-Lead delivery: establish one concrete next outcome, assign bounded work to
-eligible providers without overlapping writers, resolve design and sequencing
-decisions, and carry review and authorized integration to a terminal result.
-Codex/ChatGPT is engineering and verification support. Preserve all nine lanes
-and select workers by capability, independence, capacity, and the current
-allocation profile. Do not require every lane to participate in every task.
+Complete the bounded work in the current assignment. Return evidence, blockers
+and proposed next steps to the ChatGPT/Codex Director. Coordination or delegation
+requires explicit assignment authority; this provider instruction creates none.
+Preserve one writer per file, verified capabilities, independence, availability,
+budget and the current allocation profile. Do not require every lane to
+participate in every task.
 
 Keep the owner informed with outcomes, evidence, blockers, and the next action.
 Reuse fresh evidence; do not restart completed audits or unavailable routes.
@@ -27,3 +28,4 @@ This file changes project instructions. It does not change your actual model,
 grant credentials, authorize self-acceptance, or start a deployment.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]] -->

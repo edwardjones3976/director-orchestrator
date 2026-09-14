@@ -1,0 +1,19 @@
+{
+  "run_id": "DIR-LG-AB12",
+  "mode": "offline",
+  "actual_owner_event": true,
+  "correctness_verified": true,
+  "task_count": null,
+  "terminal_reply_count": 1,
+  "wall_seconds": 30.0,
+  "owner_pause_seconds": 0.0,
+  "machine_seconds": 30.0,
+  "ambiguous_effects": 0,
+  "delivery_ambiguous": false,
+  "operational_provider_attempts": null,
+  "actual_cost_usd": null,
+  "cost_basis": null,
+  "runtime_sha": null,
+  "image_id": null,
+  "simulation_label": "SIMULATION — NO PROVIDER INTERACTION"
+}

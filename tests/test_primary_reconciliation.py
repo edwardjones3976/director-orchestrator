@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:33 UTC | BEGIN]]
 from __future__ import annotations
@@ -6,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from director_orchestrator.lease_diagnostics import LeaseRenewalDiagnostics
 from director_orchestrator.primary_default import DefaultPrimaryActivation
 
 
@@ -13,6 +15,7 @@ class PrimaryReconciliationLeaseTests(unittest.TestCase):
     @staticmethod
     def activation(*, new_intake: bool = True) -> DefaultPrimaryActivation:
         activation = object.__new__(DefaultPrimaryActivation)
+        activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.application = MagicMock()
         activation.settings = SimpleNamespace(
             langgraph_primary_new_intake_enabled=new_intake
@@ -55,7 +58,9 @@ class PrimaryReconciliationLeaseTests(unittest.TestCase):
 
         activation.renew()
 
-        activation.coordinator.heartbeat_active_task_writers.assert_called_once_with()
+        activation.coordinator.heartbeat_active_task_writers.assert_called_once_with(
+            on_renewal_outcome=activation._lease_diagnostics.task_completed
+        )
         activation.coordinator.renew_new_intake.assert_not_called()
 
 
@@ -64,3 +69,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:33 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]

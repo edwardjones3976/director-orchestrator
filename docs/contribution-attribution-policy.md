@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
@@ -67,9 +68,9 @@ another untrusted source as authenticated identity.
 
 - The producer supplies the contribution identity and does not obscure material
   co-authors.
-- Cursor, as Project Secretary, checks tag completeness alongside branch, SHA,
-  review, security, CI, and handoff records.
-- Claude, as acting Director, resolves classification questions and prevents a tagging
+- The assigned recordkeeping provider checks tag completeness alongside branch,
+  SHA, review, security, CI, and handoff records.
+- The ChatGPT/Codex Director resolves classification questions and prevents a tagging
   request from weakening functionality or deterministic gates.
 - An independent reviewer verifies the exact candidate, including attribution
   changes, without treating the tags themselves as review evidence.
@@ -77,7 +78,7 @@ another untrusted source as authenticated identity.
 ## Authorship versus coordination
 
 Work produced or materially authored by a provider remains attributed solely to
-that provider or those providers. The acting Director/Claude does not inherit
+that provider or those providers. The acting Director does not inherit
 authorship through delegation, routing, coordination, QA, review, acceptance,
 relay, merge eligibility evaluation, or merge execution; those activities create
 no code authorship. A Director relay envelope records the relay, not authorship
@@ -106,3 +107,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

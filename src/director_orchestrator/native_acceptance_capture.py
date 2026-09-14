@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | BEGIN]]
@@ -50,7 +51,8 @@ def _stop(proc):
     proc.wait(timeout=10)
 
 
-def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE, merge_stderr=False):
+def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE, merge_stderr=False,
+                failure_capture=None):
     """No pipe deadlock, output truncation or unbounded disk/timeout allowance."""
     with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as output:
         source.write(stdin)
@@ -58,6 +60,7 @@ def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE,
         proc = subprocess.Popen(command, cwd=cwd, env=env, stdin=source,
                                 stdout=output, stderr=subprocess.STDOUT if merge_stderr else subprocess.DEVNULL, shell=False)
         deadline = time.monotonic() + timeout
+        failure = None
         try:
             while proc.poll() is None:
                 if time.monotonic() >= deadline or os.fstat(output.fileno()).st_size > limit:
@@ -67,9 +70,21 @@ def run_bounded(command, *, cwd, env, stdin=b"", timeout=600, limit=MAX_CAPTURE,
                 raise IssuerError("native capture exceeds limit")
             output.seek(0)
             return proc.returncode, output.read(limit + 1)
+        except IssuerError as exc:
+            failure = exc
+            raise
         finally:
             if proc.poll() is None:
                 _stop(proc)
+            # Opt-in diagnostic only, after shutdown; never a successful capture.
+            if failure_capture is not None and (failure is not None or proc.returncode):
+                output.seek(0)
+                try:
+                    failure_capture(output.read(limit), os.fstat(output.fileno()).st_size > limit)
+                except Exception:
+                    if failure is None:
+                        raise IssuerError("native failure evidence could not be retained") from None
+                    failure.add_note("Failure evidence could not be retained.")
 
 
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
@@ -463,3 +478,4 @@ def work(cfg, job_id):
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 05:24 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 06:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 23:35 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]

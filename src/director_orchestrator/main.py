@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
@@ -115,6 +119,7 @@ from .providers import provider_registry
 from .parallel_dispatch import (
     DailyTaskBudgetLedger,
 )
+from .primary_parallel import CancelledPlanReconciliationRequest, CancelledPlanReconciliationResponse
 from .primary_commands import (
     ApprovalResumeRequest,
     CancellationRequest,
@@ -133,6 +138,7 @@ from .primary_activation_commands import (
     ProviderActivationAdvanceRequest,
     verify_provider_activation_advance_proof,
 )
+from director_orchestrator.primary_transports import provider_lane_detail
 from .workload_policy import EnforcementMode
 
 
@@ -481,12 +487,39 @@ def health() -> dict:
         configured_mode=EnforcementMode(settings.workload_policy_mode),
         shadow_assignment_limit=settings.workload_policy_shadow_assignments,
     )
+    providers_ready = settings.readiness()
+    host_bridge_configured = bool(settings.langgraph_primary_host_bridge_endpoint and settings.langgraph_primary_host_bridge_secret)
+    # startup_challenge_ok is the bridge challenge captured once when the live
+    # dependencies were built; /health never re-challenges (no I/O per request).
+    if primary_default_activation is not None and primary_default_activation.live_dependencies is not None:
+        deps = primary_default_activation.live_dependencies
+        routed = tuple(deps.adapters)
+        # live_ready applies the gate dispatch applies: the activation service's
+        # current per-provider evidence. Without the service nothing is live.
+        activation_service = primary_default_activation.provider_activation
+        dispatchable = tuple(
+            lane for lane in routed
+            if activation_service is not None
+            and activation_service.provider_ready(lane, live=True)
+        )
+        providers_ready["lanes"] = provider_lane_detail(
+            deps.capabilities, routed=routed, dispatchable=dispatchable
+        )
+        host_bridge_ready = {
+            "configured": host_bridge_configured,
+            "startup_challenge_ok": deps.bridge_challenge is not None,
+        }
+    else:
+        providers_ready["lanes"] = provider_lane_detail({})
+        host_bridge_ready = {"configured": host_bridge_configured, "startup_challenge_ok": False}
+
     return {
         "ok": True,
         "version": __version__,
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
-        "providers": settings.readiness(),
+        "providers": providers_ready,
+        "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
         "primary_slack_delivery": (primary_slack_delivery.health()
@@ -824,8 +857,8 @@ def _require_primary_owner_actor(actor_id: str) -> None:
 
 def _verify_primary_owner_command_signature(
     task_id: str,
-    request: CancellationRequest | RecoveryRequest,
-    operation: PrimaryCommandOperation,
+    request: CancellationRequest | RecoveryRequest | CancelledPlanReconciliationRequest,
+    operation: PrimaryCommandOperation | str,
 ) -> str:
     proof = request.gateway_proof
     if (
@@ -835,7 +868,11 @@ def _verify_primary_owner_command_signature(
         or not hmac.compare_digest(proof.channel_id, settings.slack_channel_id)
     ):
         raise HTTPException(status_code=403, detail="Slack command channel mismatch")
-    suffix = "cancel" if operation == PrimaryCommandOperation.CANCELLATION else "recover"
+    suffix = {
+        PrimaryCommandOperation.CANCELLATION: "cancel",
+        PrimaryCommandOperation.RECOVERY: "recover",
+        "cancelled_plan_reconciliation": "cancelled-plan/reconcile",
+    }[operation]
     path = f"/v1/primary/tasks/{task_id}/{suffix}"
     try:
         nonce_digest = verify_primary_ingress_proof(
@@ -853,8 +890,8 @@ def _verify_primary_owner_command_signature(
 
 def _verify_primary_owner_command_proof(
     task_id: str,
-    request: CancellationRequest | RecoveryRequest,
-    operation: PrimaryCommandOperation,
+    request: CancellationRequest | RecoveryRequest | CancelledPlanReconciliationRequest,
+    operation: PrimaryCommandOperation | str,
 ) -> None:
     nonce_digest = _verify_primary_owner_command_signature(task_id, request, operation)
     proof = request.gateway_proof
@@ -1330,6 +1367,35 @@ def primary_recover(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.get("/v1/primary/tasks/{task_id}/cancelled-plan/diagnostic", dependencies=[Depends(require_auth)])
+def primary_cancelled_plan_diagnostic(task_id: str) -> dict:
+    if primary_default_activation is None or primary_default_activation.coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    try:
+        return primary_default_activation.coordinator.parallel.cancelled_plan_diagnostic(task_id)
+    except Exception:
+        raise HTTPException(status_code=409, detail="Cancelled plan diagnostic unavailable") from None
+
+
+@app.post("/v1/primary/tasks/{task_id}/cancelled-plan/reconcile",
+          response_model=CancelledPlanReconciliationResponse, dependencies=[Depends(require_auth)])
+def primary_reconcile_cancelled_plan(task_id: str, request: CancelledPlanReconciliationRequest):
+    nonce_digest = _verify_primary_owner_command_signature(
+        task_id, request, "cancelled_plan_reconciliation")
+    if primary_default_activation is None or primary_default_activation.coordinator is None:
+        raise HTTPException(status_code=503, detail="LangGraph primary is unavailable")
+    try:
+        request.validate_path(task_id)
+        coordinator = primary_default_activation.coordinator
+        writer = coordinator.get_task_writer(task_id)
+        if writer is None or not hmac.compare_digest(writer.owner_token, coordinator._owner_token):
+            raise RuntimeError("reconciliation requires the current process writer")
+        return coordinator.parallel.adjudicate_cancelled_plan(request=request, writer=writer, nonce_digest=nonce_digest)
+    except Exception:
+        # Storage exceptions may carry row values. Return no SQL or private data.
+        raise HTTPException(status_code=409, detail="Cancelled plan reconciliation refused") from None
+
+
 def _apply_owner_decision(record: TaskRecord, approval: OwnerApproval) -> None:
     if record.status == TaskStatus.FAILED:
         apply_failed_predispatch_retry(record, approval)
@@ -1660,3 +1726,7 @@ def complete_run(
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]

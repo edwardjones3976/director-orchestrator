@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | BEGIN]] -->
 # LangGraph-primary + n8n activation plan (v4 — ASAP)
@@ -387,9 +388,7 @@ non-2xx from `/v1/intake` mapped to an explicit webhook error response; no raw
 provider output echoed. Status (`n8n/workflows/director-status.json`, new): a
 schedule trigger polling `GET /health` on S and L, and `/v1/staging/status`
 while a staging app is running, diffing readiness booleans against the previous
-run and posting to `SLACK_DIRECTOR_CHANNEL_ID` only on change, and immediately
-when `ambiguous_effect_count` exceeds zero, the kill switch is set, or health is
-unreachable. Both validated with `python -m json.tool`. Documented in
+run and posting to `SLACK_DIRECTOR_CHANNEL_ID` only on change. It speaks anyway — regardless of change — on three conditions: the health endpoint is unreachable, `ambiguous_effect_count` is above zero, or the parallel dispatch kill switch is engaged while parallel dispatch is enabled. Both validated with `python -m json.tool`. Documented in
 `docs/n8n-operations.md`, including how the webhook is repointed between
 profiles. Cursor reviews.
 
@@ -554,3 +553,4 @@ exactly this. Recommend consolidating to one protected payload after Sunday;
 not urgent enough to spend deadline time on now.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:30 UTC | END]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->

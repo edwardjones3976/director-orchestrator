@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:56 UTC | BEGIN]]
@@ -8,9 +12,12 @@
 from __future__ import annotations
 
 import ast
+import atexit
 import importlib.util
 import json
 import os
+import shutil
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -28,8 +35,29 @@ BINDING_FIELDS = (
     "workspace_version",
     "binding_version",
 )
+# Entitlement prerequisites are real files at startup (an existing DSN file of
+# at most 65536 bytes; three secret files of at least 32 bytes), so the
+# complete fixture provides real files in a private temporary directory.
+_ENTITLEMENT_DIR = Path(tempfile.mkdtemp(prefix="preflight-entitlement-"))
+atexit.register(shutil.rmtree, _ENTITLEMENT_DIR, True)
+
+
+# The one connection target the complete fixture uses for both the primary
+# store and the entitlement DSN file: startup parses both with
+# _parse_connection_target (explicit port, user, dbname, a verifying sslmode
+# with sslrootcert) and requires the same database and role.
+FIXTURE_DSN = "postgresql://fixtureuser:fixturepassword@db:5432/primary?sslmode=verify-full&sslrootcert=/fixture-ca.pem"
+
+
+def _entitlement_file(name: str, content: str) -> str:
+    path = _ENTITLEMENT_DIR / name
+    path.write_text(content, encoding="utf-8")
+    return str(path)
+
+
 # Distinctive fixture values. None of them may appear in the output.
 SECRETS = {
+    "slack_bot_token": "xoxb-fixture-" + "8" * 32,
     "langgraph_primary_adapter_callback_secret": "adaptercallback" + "0" * 32,
     "langgraph_primary_independent_review_evidence_secret": "review" + "1" * 32,
     "langgraph_primary_ci_evidence_secret": "cievidence" + "2" * 32,
@@ -38,9 +66,21 @@ SECRETS = {
     "langgraph_primary_owner_token": "ownertoken" + "5" * 32,
     "claude_callback_secret": "claudecallback" + "6" * 32,
     "shared_secret": "sharedsecret" + "7" * 32,
-    "langgraph_primary_postgres_dsn": "postgresql://fixtureuser:fixturepassword@db/primary",
+    "langgraph_primary_postgres_dsn": FIXTURE_DSN,
     "repository_snapshot_root": "/fixture-snapshot-root",
     "cursor_api_key": "cursorapikeyfixture",
+    "entitlement_postgres_dsn_file": _entitlement_file(
+        "dsn", FIXTURE_DSN
+    ),
+    "entitlement_trusted_verifier_secret_file": _entitlement_file(
+        "trusted-verifier", "trustedverifierfixture" + "9abcdefghijklmnop" * 2
+    ),
+    "entitlement_route_verifier_secret_file": _entitlement_file(
+        "route-verifier", "routeverifierfixture" + "9abcdefghijklmnop" * 2
+    ),
+    "entitlement_owner_authority_secret_file": _entitlement_file(
+        "owner-authority", "ownerauthorityfixture" + "9abcdefghijklmnop" * 2
+    ),
 }
 
 
@@ -83,6 +123,7 @@ def _complete(**overrides) -> Settings:
         langgraph_primary_enabled=True,
         langgraph_primary_new_intake_enabled=True,
         langgraph_primary_live_provider_dispatch_enabled=True,
+        entitlement_control_plane_enabled=True,
         trusted_provider_cost_ranks_json=json.dumps({"cursor": 1, "claude": 2, "openai": 3}),
         langgraph_primary_provider_activation_bindings_json=json.dumps(bindings),
         langgraph_primary_completion_evidence_actor_allowlist_json=json.dumps(
@@ -251,6 +292,268 @@ class SecretDisclosureTests(unittest.TestCase):
             if line.startswith("  ") and ": " in line and line.strip()[0].isupper():
                 self.assertRegex(line.strip(), r"^[A-Z][A-Z0-9_]+: (true|false)$")
 
+    def test_the_report_prints_subsystem_readiness_stages(self):
+        lines = PREFLIGHT.report(_complete(), [])
+        
+        self.assertIn("  ENTITLEMENT_CONTROL_PLANE_ENABLED: true", lines)
+        self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE_PRESENT: true", lines)
+        self.assertIn("  ENTITLEMENT_SCHEMA_CONFIGURED: true", lines)
+        self.assertIn("  EFFECT_GATEWAY_SLACK_CONFIGURED: true", lines)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: false", lines)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", lines)
+        self.assertIn("  EFFECT_GATEWAY_ANY_CONFIGURED: true", lines)
+        self.assertIn("  HOST_BRIDGE_ENDPOINT_CONFIGURED: false", lines)
+        self.assertIn("  HOST_BRIDGE_SECRET_CONFIGURED: false", lines)
+
+        no_slack = PREFLIGHT.report(_complete(slack_bot_token=""), [])
+        self.assertIn("  EFFECT_GATEWAY_SLACK_CONFIGURED: false", no_slack)
+        self.assertIn("  EFFECT_GATEWAY_ANY_CONFIGURED: false", no_slack)
+
+    def test_incomplete_subsystems_produce_one_problem_each(self):
+        settings = _complete(
+            entitlement_postgres_dsn_file="",
+            langgraph_primary_host_bridge_endpoint="https://localhost",
+            langgraph_primary_host_bridge_secret="",
+        )
+        problems = PREFLIGHT.unmet(settings)
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", entitlement[0])
+        
+        bridge = [p for _, p in problems if "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET" in PREFLIGHT.variables(p)]
+        self.assertEqual(len(bridge), 1)
+        self.assertIn("configured together", bridge[0])
+
+    def test_effect_gateway_missing_names_slack_bot_token(self):
+        problems = PREFLIGHT.unmet(_complete(slack_bot_token=""))
+        gateway = [p for s, p in problems if s == "effect gateways"]
+        self.assertEqual(len(gateway), 1)
+        self.assertIn("SLACK_BOT_TOKEN", gateway[0])
+
+    def test_entitlement_owner_authority_missing_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_owner_authority_secret_file=""))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", entitlement[0])
+
+    def test_entitlement_postgres_schema_invalid_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_postgres_schema="Bad-Schema"))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_SCHEMA", entitlement[0])
+
+    def test_entitlement_control_plane_disabled_names_variable(self):
+        problems = PREFLIGHT.unmet(_complete(entitlement_control_plane_enabled=False))
+        entitlement = [p for s, p in problems if s == "entitlement control plane"]
+        self.assertEqual(len(entitlement), 1)
+        self.assertIn("ENTITLEMENT_CONTROL_PLANE_ENABLED", entitlement[0])
+
+    def test_dependent_entitlement_checks_run_while_the_plane_is_disabled(self):
+        # One pass reports every prerequisite: the switch AND the file the
+        # operator would otherwise discover one enable later.
+        problems = self._entitlement_problems(
+            entitlement_control_plane_enabled=False, entitlement_postgres_dsn_file=""
+        )
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(any("ENTITLEMENT_CONTROL_PLANE_ENABLED" in p for p in problems))
+        self.assertTrue(any("ENTITLEMENT_POSTGRES_DSN_FILE" in p for p in problems))
+
+    def _entitlement_problems(self, **overrides):
+        problems = PREFLIGHT.unmet(_complete(**overrides))
+        return [p for s, p in problems if s == "entitlement control plane"]
+
+    def test_each_entitlement_secret_file_is_required_by_name(self):
+        for attribute, name in (
+            ("entitlement_trusted_verifier_secret_file", "ENTITLEMENT_TRUSTED_VERIFIER_SECRET_FILE"),
+            ("entitlement_route_verifier_secret_file", "ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE"),
+            ("entitlement_owner_authority_secret_file", "ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE"),
+        ):
+            with self.subTest(attribute=attribute):
+                problems = self._entitlement_problems(**{attribute: ""})
+                self.assertEqual(len(problems), 1)
+                self.assertIn(name, problems[0])
+
+    def test_entitlement_files_must_exist_within_startup_bounds(self):
+        # A configured path is not a file: startup reads these, so the
+        # preflight checks existence and size (never the contents).
+        missing = str(_ENTITLEMENT_DIR / "does-not-exist")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=missing)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        report = PREFLIGHT.report(_complete(entitlement_postgres_dsn_file=missing), [])
+        self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: false", report)
+
+        oversized = _entitlement_file("dsn-oversized", "x" * 65_537)
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=oversized)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+
+        short = _entitlement_file("short-secret", "tooshort")
+        problems = self._entitlement_problems(entitlement_route_verifier_secret_file=short)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", problems[0])
+        for problem in problems:
+            self.assertNotIn(short, problem)
+
+    def test_entitlement_secret_contents_are_validated_like_startup(self):
+        # _read_secret_file / _validate_secret_material: stripped UTF-8 text,
+        # at least 32 bytes, at least 16 distinct byte values. The material is
+        # never echoed.
+        cases = {
+            "blank": " " * 40,
+            "low-entropy": "a" * 40,
+            "short-after-strip": "  " + "9abcdefghijklmnop" + "  ",
+        }
+        for label, content in cases.items():
+            with self.subTest(label=label):
+                path = _entitlement_file(f"secret-{label}", content)
+                problems = self._entitlement_problems(entitlement_owner_authority_secret_file=path)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("ENTITLEMENT_OWNER_AUTHORITY_SECRET_FILE", problems[0])
+                self.assertNotIn(path, problems[0])
+                self.assertNotIn(content.strip() or "blank", problems[0])
+        invalid = _ENTITLEMENT_DIR / "secret-invalid-utf8"
+        invalid.write_bytes(b"\xff\xfe" + b"x" * 40)
+        problems = self._entitlement_problems(entitlement_owner_authority_secret_file=str(invalid))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("UTF-8", problems[0])
+
+    def test_entitlement_dsn_contents_are_checked_before_startup_parses_them(self):
+        # _parse_connection_target refuses empty input and line breaks before
+        # psycopg ever sees it; the preflight applies those two rules and
+        # leaves the full parse to startup.
+        empty = _entitlement_file("dsn-empty", "   \n")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=empty)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("empty", problems[0])
+        multiline = _entitlement_file("dsn-multiline", FIXTURE_DSN + "\nhost=other")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=multiline)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("one line", problems[0])
+        trailing_newline = _entitlement_file("dsn-trailing", FIXTURE_DSN + "\n")
+        self.assertEqual(self._entitlement_problems(entitlement_postgres_dsn_file=trailing_newline), [])
+
+    def test_entitlement_dsn_is_parsed_and_compared_exactly_as_startup_does(self):
+        # _parse_connection_target and the storage-identity digest are the
+        # same functions configured_provider_budget_routing applies; the
+        # contents never reach a problem string.
+        junk = _entitlement_file("dsn-junk", "not-a-postgres-dsn")
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=junk)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("startup accepts", problems[0])
+        self.assertNotIn("not-a-postgres-dsn", problems[0])
+
+        weak = _entitlement_file("dsn-weak", FIXTURE_DSN.replace("verify-full", "require"))
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=weak)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("startup accepts", problems[0])
+
+        other = _entitlement_file("dsn-other-db", FIXTURE_DSN.replace("/primary?", "/other?"))
+        problems = self._entitlement_problems(entitlement_postgres_dsn_file=other)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("share database and role", problems[0])
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN", problems[0])
+        self.assertNotIn("fixturepassword", "\n".join(problems))
+
+        problems = self._entitlement_problems(langgraph_primary_postgres_dsn="postgresql://fixtureuser:fixturepassword@db/primary")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("LANGGRAPH_PRIMARY_POSTGRES_DSN", problems[0])
+        self.assertNotIn("fixturepassword", problems[0])
+
+    def test_unresolvable_home_prefix_reads_as_an_unavailable_file(self):
+        # Path.expanduser raises RuntimeError for ~missing-user; that must be
+        # reported as a missing file, not escape as a traceback.
+        problems = self._entitlement_problems(
+            entitlement_route_verifier_secret_file="~preflight-no-such-user-fixture/secret"
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE", problems[0])
+        report = PREFLIGHT.report(
+            _complete(entitlement_route_verifier_secret_file="~preflight-no-such-user-fixture/secret"), []
+        )
+        self.assertIn("  ENTITLEMENT_ROUTE_VERIFIER_SECRET_FILE_PRESENT: false", report)
+
+    def test_entitlement_schema_uses_the_runtime_ascii_pattern(self):
+        # A \\d pattern would admit Unicode digits that entitlement_control_plane rejects.
+        problems = self._entitlement_problems(entitlement_postgres_schema="example_v\u0661")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_SCHEMA", problems[0])
+        self.assertEqual(self._entitlement_problems(entitlement_postgres_schema="example_v1"), [])
+
+    def test_filesystem_errors_read_as_unavailable_files_and_never_escape(self):
+        # A permission failure or a removal between the two metadata calls must
+        # neither abort the report nor print the configured path.
+        from pathlib import Path
+
+        for method in ("is_file", "stat"):
+            with self.subTest(method=method):
+                def refuse(self_, *args, **kwargs):
+                    raise PermissionError(13, "denied", "/never-printed")
+                with patch.object(Path, method, refuse):
+                    all_problems = PREFLIGHT.unmet(_complete())
+                    report = PREFLIGHT.report(_complete(), all_problems)
+                problems = [p for s, p in all_problems if s == "entitlement control plane"]
+                self.assertEqual(len(problems), 4)
+                self.assertTrue(all("must name an existing file" in p for p in problems))
+                self.assertIn("  ENTITLEMENT_POSTGRES_DSN_FILE_PRESENT: false", report)
+                self.assertNotIn("never-printed", "\n".join(report))
+                self.assertNotIn(SECRETS["entitlement_postgres_dsn_file"], "\n".join(report))
+
+    def test_dsn_path_is_not_expanded_but_secret_paths_are(self):
+        # configured_provider_budget_routing opens Path(dsn_file) literally;
+        # _read_secret_file expands ~. The preflight mirrors each caller.
+        home = {"HOME": str(_ENTITLEMENT_DIR), "USERPROFILE": str(_ENTITLEMENT_DIR)}
+        with patch.dict(os.environ, home):
+            problems = self._entitlement_problems(
+                entitlement_postgres_dsn_file="~/dsn",
+                entitlement_trusted_verifier_secret_file="~/trusted-verifier",
+            )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ENTITLEMENT_POSTGRES_DSN_FILE", problems[0])
+
+    def test_github_app_credential_syntax_is_checked_like_startup(self):
+        def gateway_problems(**overrides):
+            problems = PREFLIGHT.unmet(_complete(**overrides))
+            return [p for s, p in problems if s == "effect gateways"]
+
+        valid = dict(
+            oracle_automerge_github_app_id="12345",
+            oracle_automerge_github_installation_id="67890",
+            oracle_automerge_github_app_private_key_b64="QUJDRA==",
+        )
+        self.assertEqual(gateway_problems(**valid), [])
+        report = PREFLIGHT.report(_complete(**valid), [])
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: true", report)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", report)
+
+        # An incomplete App configuration is skipped by the effect registry when
+        # Slack is configured (startup builds Slack only), so it is not a problem.
+        partial = dict(valid, oracle_automerge_github_installation_id="", oracle_automerge_github_app_private_key_b64="")
+        self.assertEqual(gateway_problems(**partial), [])
+        report = PREFLIGHT.report(_complete(**partial), [])
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_CONFIGURED: false", report)
+        self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: true", report)
+
+        for broken in (
+            dict(valid, oracle_automerge_github_app_id="app-id"),
+            dict(valid, oracle_automerge_github_installation_id="12 34"),
+            dict(valid, oracle_automerge_github_app_private_key_b64="not base64!"),
+            dict(valid, oracle_automerge_github_app_private_key_b64="QUJDR"),
+        ):
+            with self.subTest(broken=sorted(k for k in broken if broken[k] != valid[k])):
+                problems = gateway_problems(**broken)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_ID", problems[0])
+                self.assertIn("ORACLE_AUTOMERGE_GITHUB_APP_PRIVATE_KEY_B64", problems[0])
+                report = PREFLIGHT.report(_complete(**broken), [])
+                self.assertIn("  EFFECT_GATEWAY_GITHUB_APP_SYNTAX_OK: false", report)
+
 
 class ReadOnlyTests(unittest.TestCase):
     """The reporter may not acquire a way to write, connect, or enable."""
@@ -274,8 +577,18 @@ class ReadOnlyTests(unittest.TestCase):
             {
                 "__future__", "dataclasses", "pathlib", "re", "sys",
                 "director_orchestrator.config",
+                # Pure parsing and digest helpers, the same ones startup
+                # applies to the entitlement DSN; the assertion below pins
+                # that nothing in this file can reach for a connection.
+                "psycopg.conninfo",
+                "director_orchestrator.entitlement_control_plane",
+                "director_orchestrator.langgraph_postgres",
             },
         )
+        names = {node.id for node in ast.walk(self.tree) if isinstance(node, ast.Name)}
+        attributes = {node.attr for node in ast.walk(self.tree) if isinstance(node, ast.Attribute)}
+        for forbidden in ("connect", "connection", "Connection", "ConnectionPool", "Pool", "cursor", "execute"):
+            self.assertNotIn(forbidden, names | attributes, forbidden)
 
     def test_pathlib_is_used_to_read_and_never_to_write(self):
         """pathlib earns its place by reading config.py, and nothing more.
@@ -527,3 +840,7 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:43 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:08 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]]
