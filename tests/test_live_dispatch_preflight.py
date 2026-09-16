@@ -192,6 +192,34 @@ class UnsetEnvironmentTests(unittest.TestCase):
             ("GROK_ENABLED", "XAI_API_KEY", "PRIMARY_TEAM", "USAGE_CHECK_PROVIDERS"),
         )
 
+    def test_a_lane_missing_from_one_roster_list_still_names_all_four_variables(self):
+        settings = replace(
+            _complete(), grok_enabled=True, grok_api_key="fixture-key",
+            primary_team=("openai", "claude", "cursor", "grok"),
+            usage_check_providers=("openai", "claude", "cursor"),
+        )
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "provider roster"]
+        self.assertEqual(len(problems), 1)
+        self.assertIn("absent from USAGE_CHECK_PROVIDERS:", problems[0])
+        self.assertEqual(
+            PREFLIGHT.variables(problems[0]),
+            ("GROK_ENABLED", "XAI_API_KEY", "PRIMARY_TEAM", "USAGE_CHECK_PROVIDERS"),
+        )
+
+    def test_every_roster_problem_names_its_variables(self):
+        # _bare() leaves every lane disabled, so the generic every-problem test
+        # never reaches this stage; drive it with a drifted environment.
+        drifted = replace(
+            _complete(), grok_enabled=True, grok_api_key="fixture-key",
+            perplexity_enabled=True, perplexity_api_key="fixture-key",
+            primary_team=("openai",), usage_check_providers=("claude",),
+        )
+        problems = [p for s, p in PREFLIGHT.unmet(drifted) if s == "provider roster"]
+        self.assertEqual(len(problems), 2)
+        for problem in problems:
+            self.assertTrue(PREFLIGHT.variables(problem), problem)
+            self.assertNotIn("fixture-key", problem)
+
     def test_a_rostered_or_disabled_lane_raises_no_roster_problem(self):
         rostered = replace(
             _complete(), grok_enabled=True, grok_api_key="fixture-key",

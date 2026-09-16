@@ -440,10 +440,13 @@ def roster_problems(settings: Settings) -> list[str]:
             if lane not in roster
         ]
         if missing:
+            # Name both roster variables every time, whichever is missing, so
+            # variables() resolves the same four names for every roster problem.
             problems.append(
                 f"{enable_name} is enabled and {key_name} is configured but "
                 f"'{lane}' is absent from {' and '.join(missing)}: the credential "
-                "can never be exercised until the roster names the lane"
+                "can never be exercised until both PRIMARY_TEAM and "
+                "USAGE_CHECK_PROVIDERS name the lane"
             )
     return problems
 # [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]
