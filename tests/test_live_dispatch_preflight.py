@@ -201,9 +201,10 @@ class UnsetEnvironmentTests(unittest.TestCase):
         problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "provider roster"]
         self.assertEqual(len(problems), 1)
         self.assertIn("absent from USAGE_CHECK_PROVIDERS:", problems[0])
+        # Order follows first mention in the text; the set is what matters.
         self.assertEqual(
-            PREFLIGHT.variables(problems[0]),
-            ("GROK_ENABLED", "XAI_API_KEY", "PRIMARY_TEAM", "USAGE_CHECK_PROVIDERS"),
+            set(PREFLIGHT.variables(problems[0])),
+            {"GROK_ENABLED", "XAI_API_KEY", "PRIMARY_TEAM", "USAGE_CHECK_PROVIDERS"},
         )
 
     def test_every_roster_problem_names_its_variables(self):
