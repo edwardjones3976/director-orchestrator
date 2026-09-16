@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -173,6 +174,35 @@ class UnsetEnvironmentTests(unittest.TestCase):
         settings = replace(_complete(), trusted_provider_cost_ranks_json=json.dumps({"cursor": 1}))
         problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "workload policy"]
         self.assertTrue(any("TRUSTED_PROVIDER_COST_RANKS is missing a rank for selectable primary lane(s): claude, openai" in p for p in problems))
+
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]]
+    def test_an_enabled_credentialed_lane_missing_from_the_roster_is_reported(self):
+        settings = replace(
+            _complete(), grok_enabled=True, grok_api_key="fixture-key",
+            primary_team=("openai", "claude", "cursor"),
+            usage_check_providers=("openai", "claude", "cursor"),
+        )
+        problems = [p for s, p in PREFLIGHT.unmet(settings) if s == "provider roster"]
+        self.assertEqual(len(problems), 1)
+        self.assertIn("GROK_ENABLED is enabled and XAI_API_KEY is configured", problems[0])
+        self.assertIn("PRIMARY_TEAM and USAGE_CHECK_PROVIDERS", problems[0])
+        self.assertNotIn("fixture-key", problems[0])
+        self.assertEqual(
+            PREFLIGHT.variables(problems[0]),
+            ("GROK_ENABLED", "XAI_API_KEY", "PRIMARY_TEAM", "USAGE_CHECK_PROVIDERS"),
+        )
+
+    def test_a_rostered_or_disabled_lane_raises_no_roster_problem(self):
+        rostered = replace(
+            _complete(), grok_enabled=True, grok_api_key="fixture-key",
+            primary_team=("openai", "claude", "cursor", "grok"),
+            usage_check_providers=("openai", "claude", "cursor", "grok"),
+        )
+        disabled = replace(_complete(), grok_enabled=False, grok_api_key="fixture-key")
+        no_key = replace(_complete(), grok_enabled=True, grok_api_key="")
+        for settings in (rostered, disabled, no_key):
+            self.assertEqual([p for s, p in PREFLIGHT.unmet(settings) if s == "provider roster"], [])
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]
 
     def test_langgraph_shadow_lane_prerequisite_is_reported(self):
         settings = replace(_complete(), langgraph_shadow_enabled=True, langgraph_checkpoint_path="")
@@ -844,3 +874,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]

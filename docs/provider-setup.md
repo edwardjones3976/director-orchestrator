@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
@@ -417,6 +418,16 @@ GROK_CLI_TIMEOUT_SECONDS=3600
 GROK_CLI_MAX_TURNS=20
 ```
 
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
+One xAI key serves every project (owner decision 2026-09-16); do not mint
+per-project keys. `GROK_ENABLED=true` plus a configured `XAI_API_KEY` is not
+enough for the key to be exercised: the lane must also appear in
+`PRIMARY_TEAM` (assignments) and `USAGE_CHECK_PROVIDERS` (periodic usage
+checks). A deployment `.env` that overrides those lists without `grok` leaves
+the credential idle with no error; `scripts/live-dispatch-preflight.py`
+reports this under "provider roster".
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
+
 Readiness fails closed unless the endpoint is exactly `https://api.x.ai/v1`,
 tools remain disabled for the API contact, every bound is valid, and any enabled
 repository-write or review authority has a nonempty explicit CLI worktree map.
@@ -707,3 +718,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -410,6 +411,44 @@ def validator_problems(validate) -> list[str]:
     return []
 
 
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]]
+# A provider whose lane is enabled and whose credential is configured, but which
+# the roster overrides leave out, can never receive an assignment or a usage
+# check: the key sits unused and nothing reports why. Owner instruction
+# 2026-09-16: no configured key may go unused. Each entry is
+# (lane, enable attribute, credential attribute, enable variable, credential
+# variable); the roster variables are PRIMARY_TEAM and USAGE_CHECK_PROVIDERS.
+ROSTERED_PROVIDERS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("grok", "grok_enabled", "grok_api_key", "GROK_ENABLED", "XAI_API_KEY"),
+    ("perplexity", "perplexity_enabled", "perplexity_api_key", "PERPLEXITY_ENABLED", "PERPLEXITY_API_KEY"),
+)
+
+
+def roster_problems(settings: Settings) -> list[str]:
+    """Enabled, credentialed lanes that the roster overrides exclude."""
+
+    problems: list[str] = []
+    for lane, enabled, key, enable_name, key_name in ROSTERED_PROVIDERS:
+        if not getattr(settings, enabled) or not getattr(settings, key):
+            continue
+        missing = [
+            name
+            for name, roster in (
+                ("PRIMARY_TEAM", settings.primary_team),
+                ("USAGE_CHECK_PROVIDERS", settings.usage_check_providers),
+            )
+            if lane not in roster
+        ]
+        if missing:
+            problems.append(
+                f"{enable_name} is enabled and {key_name} is configured but "
+                f"'{lane}' is absent from {' and '.join(missing)}: the credential "
+                "can never be exercised until the roster names the lane"
+            )
+    return problems
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]
+
+
 def unmet(settings: Settings) -> list[tuple[str, str]]:
     """Every unmet prerequisite as (stage, problem), in startup order."""
 
@@ -454,6 +493,9 @@ def unmet(settings: Settings) -> list[tuple[str, str]]:
         ("langgraph runtime", runtime_target.validate_langgraph_runtime_configuration),
     ):
         problems.extend((stage, item) for item in validator_problems(validate))
+    # [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]]
+    problems.extend(("provider roster", item) for item in roster_problems(settings))
+    # [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]
     profile = settings.execution_profile_readiness()
     for key, name in EXECUTION_PROFILE:
         if not profile[key]:
@@ -588,3 +630,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]]
