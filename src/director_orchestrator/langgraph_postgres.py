@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[Grok Bot | Grok 4.20 Expert | 2026-09-12 | 03:01 UTC | BEGIN]]
@@ -78,6 +82,8 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
 
 import hashlib
 import hmac
@@ -457,6 +463,7 @@ def _search_path_option(schema: str) -> str:
 
 
 _APPEND_ONLY_TABLES = (
+    "director_primary_cancelled_plan_adjudication",
     "director_primary_workload_assignment",
     "director_primary_intake_auth_claim",
     "director_primary_intake_dedup",
@@ -603,6 +610,11 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         f"""
         CREATE INDEX IF NOT EXISTS director_primary_slack_delivery_pending_idx
         ON {schema}.director_primary_slack_delivery (state, created_at, task_id)
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_slack_delivery
+        ADD COLUMN IF NOT EXISTS owner_decision text
+            CHECK (owner_decision IN ('approve','reject'))
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_intake_dedup (
@@ -1141,6 +1153,17 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         ON {schema}.director_primary_provider_attempt (attempt_digest, event_sequence)
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_cancelled_plan_adjudication (
+            task_id text PRIMARY KEY
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            evidence jsonb NOT NULL,
+            evidence_digest text NOT NULL CHECK (
+                evidence_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            recorded_at timestamptz NOT NULL DEFAULT clock_timestamp()
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_audit_event (
             event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             task_id text NOT NULL,
@@ -1309,6 +1332,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 OR (OLD.slack_ts IS NOT NULL AND NEW.slack_ts IS DISTINCT FROM OLD.slack_ts)
                 OR (OLD.bot_user_id IS NOT NULL AND NEW.bot_user_id IS DISTINCT FROM OLD.bot_user_id)
                 OR (OLD.owner_command_id IS NOT NULL AND NEW.owner_command_id IS DISTINCT FROM OLD.owner_command_id)
+                OR (OLD.owner_decision IS NOT NULL AND NEW.owner_decision IS DISTINCT FROM OLD.owner_decision)
                 OR (OLD.owner_decision_at IS NOT NULL AND NEW.owner_decision_at IS DISTINCT FROM OLD.owner_decision_at) THEN
                 RAISE EXCEPTION 'primary Slack delivery evidence is immutable';
             END IF;
@@ -5077,6 +5101,73 @@ def database_binding(
     return identity, instance
 
 
+class _ProviderActivationOnlyStore:
+    """Expose only observed activation reads and authorized appends."""
+
+    def __init__(self, store):
+        self.__store = store
+
+    def load(self, binding, surface):
+        return self.__store.load(binding, surface)
+
+    def append_authorized(self, evidence, *, expected_revision, authorization):
+        return self.__store.append_authorized(evidence,
+            expected_revision=expected_revision, authorization=authorization)
+
+
+@contextmanager
+def open_provider_activation_store(dsn: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str,
+        allow_insecure_local_transport: bool = False, deadline: float | None = None):
+    """Open existing activation tables only; no DDL, saver or runtime authority.
+
+    Callers first verify the signed generation, restore proof and staged mode.
+    Every pooled connection rechecks the exact database instance. The returned
+    interface cannot construct a graph, acquire a writer or mutate task state.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+    from time import monotonic
+    def check_deadline():
+        if deadline is not None and monotonic() >= deadline:
+            raise PostgresCheckpointConfigurationError("activation publication deadline exceeded")
+    check_deadline()
+    schema = _require_schema(schema)
+    parsed = _parse_connection_target(dsn, conninfo_to_dict=conninfo_to_dict,
+        allow_insecure_local_transport=allow_insecure_local_transport)
+    if _storage_identity(parsed, schema=schema) != accepted_storage_identity:
+        raise PostgresCheckpointConfigurationError("activation database target differs")
+    try:
+        uuid.UUID(accepted_instance_id)
+    except (TypeError, ValueError, AttributeError):
+        raise PostgresCheckpointConfigurationError("activation database instance is invalid") from None
+    option = _search_path_option(schema)
+    pool = ConnectionPool(conninfo=dsn, min_size=1, max_size=1, open=False,
+        timeout=10, configure=_configure_connection(schema, option,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id),
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row,
+            "connect_timeout": 10, "options": option + " -c statement_timeout=10000 -c lock_timeout=10000"})
+    try:
+        check_deadline()
+        pool.open(wait=True, timeout=10)
+        check_deadline()
+        with pool.connection() as connection:
+            # Existence is verified by reads, never by implicit setup or repair.
+            with connection.transaction():
+                connection.execute("SET TRANSACTION READ ONLY")
+                for table in ("director_provider_activation_evidence", "director_provider_activation_authorization"):
+                    check_deadline()
+                    connection.execute(f"SELECT 1 FROM {schema}.{table} LIMIT 0")
+        check_deadline()
+        yield _ProviderActivationOnlyStore(PostgresConditionalClaimStore(
+            _pool=pool, _schema=schema, storage_identity=accepted_storage_identity,
+            database_instance_id=accepted_instance_id, _store_provenance=_FACTORY_PROVENANCE))
+    finally:
+        pool.close()
+
+
 def open_postgres_control_plane(
     dsn: str,
     *,
@@ -5223,3 +5314,7 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]

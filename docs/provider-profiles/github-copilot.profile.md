@@ -1,3 +1,6 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
@@ -44,8 +47,8 @@
 | Field | Value |
 | --- | --- |
 | Team | lane_only |
-| Lane class | supplemental_hygiene_reviewer |
-| Summary | Optional supplemental hygiene reviewer with no assigned workload share, range, or ceiling for Lite observations, plus an enterprise-profile production allocation that no legacy adapter can execute. The primary roster lists the lane among its implementers, but the capability validator refuses production authority for every Copilot lane, so the allocation is accounting, not live capability. |
+| Lane class | capability_routed_lane |
+| Summary | Optional capability-routed lane for bounded quality observations on frozen candidates. Enterprise-profile allocation is accounting only when no authenticated execution adapter is present, and production authority remains blocked by capability validation. |
 | Charter workload lane | - |
 | Strategy key | - |
 | Strategy priority | - |
@@ -77,7 +80,7 @@ Direct-production allocation targets by profile (percent of the rolling twenty-a
 | Capability parity target | - |
 | Comparison peers | - |
 | Family | - |
-| Routing rule | Request it only after required checks are green and the exact candidate is frozen; never trigger it automatically on every push. |
+| Routing rule | Request it only when the candidate is frozen, required checks are green, and the expected information gain justifies a bounded hygiene observation. |
 | Transport rule | - |
 
 Elevated work:
@@ -279,7 +282,7 @@ Separation of duties:
 
 ## Sources
 
-- `docs/team-operating-charter.md`: GitHub Copilot Lite is an optional supplemental hygiene reviewer with no
+- `docs/team-operating-charter.md`: GitHub Copilot Lite is an optional capability-routed quality-observation lane with no
 - `docs/provider-setup.md`: GitHub Copilot Lite is not another provider bridge.
 - `docs/provider-allocation-profiles.md`: GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;
 - `docs/templates/project-bootstrap/provider-roles-contract.yaml`: github_copilot_lite:
@@ -296,3 +299,6 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 00:08 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

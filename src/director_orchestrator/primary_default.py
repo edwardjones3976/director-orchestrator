@@ -1,5 +1,15 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:59 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -60,6 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
 from .antigravity_team_routing import PrimaryProviderBudgetRouting, live_provider_admissions
 from .langgraph_postgres import EffectReservation, PrimaryTaskProjection
@@ -659,6 +670,8 @@ class DefaultPrimaryLiveDependencies:
     ] = field(default_factory=dict)
     team_routing: Any | None = None
     budget_routing: PrimaryProviderBudgetRouting | None = None
+    capabilities: Mapping[str, Any] = field(default_factory=dict)
+    bridge_challenge: Any | None = None
 
     def format_roster(self, provider: str) -> tuple[tuple[str, str], ...]:
         return deterministic_format_roster(
@@ -1052,6 +1065,15 @@ def build_automatic_primary_live_dependencies(
 
     from .antigravity_team_routing import configured_provider_budget_routing
     budget_routing = configured_provider_budget_routing(settings, handle)
+    meter_file = getattr(settings, "langgraph_primary_openai_response_meter_enrollment_file", "")
+    if meter_file:
+        from .primary_transports import OpenAIResponsesPacketTransport
+        from .response_meter import load_response_meter_registry
+        transport = transports.get("openai")
+        if not isinstance(transport, OpenAIResponsesPacketTransport):
+            raise ValueError("response meter enrollment requires the explicit OpenAI Responses route")
+        transport.response_meter = load_response_meter_registry(meter_file,
+            authority=budget_routing.authority, pool=budget_routing.pool)
     return DefaultPrimaryLiveDependencies(
         adapters=adapters,
         attempt_formats={
@@ -1068,6 +1090,9 @@ def build_automatic_primary_live_dependencies(
         candidate_sha_resolver=candidate_sha,
         team_routing=team_routing,
         budget_routing=budget_routing,
+        # capabilities is the full discovery map (all PRIMARY_PROVIDER_LANES), not the required-provider subset used for adapters
+        capabilities=capabilities,
+        bridge_challenge=bridge_challenge,
         packet_result_resolver=packet_result,
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
@@ -1928,6 +1953,11 @@ class DefaultPrimaryApplication:
             record.status = TaskStatus.BLOCKED
         elif classification is not None:
             record.status = TaskStatus.FAILED
+        elif projection.projection.get("setup_hold_reasons"):
+            record.status = TaskStatus.BLOCKED
+            record.availability_impacts = list(record.availability_impacts) + [
+                "Paid setup required; approved work remains paused until funding/meter evidence is ready."
+            ]
         elif projection.projection.get("run_status") == "RUNNING":
             record.status = TaskStatus.RUNNING
         return record
@@ -2156,7 +2186,10 @@ class DefaultPrimaryApplication:
             self._ensure_parallel_lifecycle(self._record_from_projection(projection))
             updated = self.coordinator.recover(task_id)
             record = self._record_from_projection(updated)
-            if updated.projection.get("provider_dispatch_status") != "NOT_STARTED":
+            # Recovery may quiesce a cancelled ledger; a terminal graph must
+            # never be resumed merely because its parallel aggregate settled.
+            if (updated.projection.get("terminal_classification") is None
+                    and updated.projection.get("provider_dispatch_status") != "NOT_STARTED"):
                 self._drive_parallel_lifecycle(record)
                 refreshed = self.coordinator.get_projection(task_id)
                 if refreshed is None:
@@ -2186,6 +2219,8 @@ class DefaultPrimaryActivation:
         self.application: DefaultPrimaryApplication | None = None
         self.services: DefaultDryRunServices | None = None
         self.provider_activation: PrimaryProviderActivationService | None = None
+        self.live_dependencies: DefaultPrimaryLiveDependencies | None = None
+        self._lease_diagnostics = LeaseRenewalDiagnostics()
         self._reconciliation_worker_ready = False
         self._live_dependencies_ready = False
         if (effect_mutation is None) != (effect_readback is None):
@@ -2274,6 +2309,7 @@ class DefaultPrimaryActivation:
                     live_dependencies = build_automatic_primary_live_dependencies(
                         settings, handle, services, team_routing=team_routing
                     )
+                self.live_dependencies = live_dependencies
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -2608,15 +2644,9 @@ class DefaultPrimaryActivation:
                     def reserve_attempt(
                         attempt_ordinal: int,
                     ) -> ProviderAttemptReservation:
-                        idempotency_key_digest = _digest(
-                            {
-                                "assignment_idempotency_key": str(
-                                    packet["idempotency_key"]
-                                ),
-                                "attempt_ordinal": attempt_ordinal,
-                                "format_roster": format_roster,
-                            }
-                        )
+                        from .primary_parallel import provider_attempt_idempotency
+                        idempotency_key_digest = provider_attempt_idempotency(
+                            packet["idempotency_key"], attempt_ordinal, format_roster)
                         return self.coordinator.reserve_provider_attempt(
                             reservation=reservation,
                             attempt_ordinal=attempt_ordinal,
@@ -2718,6 +2748,67 @@ class DefaultPrimaryActivation:
                         "provider_result_authenticated",
                     )
 
+                def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage):
+                    from .primary_paid_preflight import check_budget_setup, PlannedProviderAttempt
+                    from .primary_parallel import PaidSetupHold, provider_attempt_digest, provider_attempt_idempotency
+                    from .entitlement_contracts import canonical_json_bytes
+                    try:
+                        record = services._record(reservation.task_id)
+                        if record.plan is None:
+                            raise PaidSetupHold()
+                        assignment = next(item for item in record.plan.assignments
+                                          if item.sequence == reservation.sequence)
+                        provider = _assignment_provider_lane(assignment)
+                        if (provider != reservation.provider_id or
+                                services._packet_router._assignment_id(record, assignment) != reservation.assignment_id):
+                            raise PaidSetupHold()
+                        if not provider_activation.provider_ready(provider, live=True):
+                            raise PaidSetupHold()
+                        packet = validate_packet("work", services._packet_router.planned_work_packet(record, assignment))
+                        limits = packet['limits']
+                        attempt_usd = float(limits['budget_usd']) / 3.0
+                        if attempt_usd <= 0 or float(limits['budget_usd']) > settings.max_task_budget_usd:
+                            raise PaidSetupHold()
+                        # Team preflight needs a pure signed-grant interface;
+                        # do not call the runtime query factory as a probe.
+                        if live_dependencies.team_routing is not None and provider == 'antigravity':
+                            raise PaidSetupHold()
+                        budget = check_budget_setup(connection=connection,
+                            routing=live_dependencies.budget_routing, settings=settings,
+                            provider=provider, packet=packet, attempt_usd=attempt_usd,
+                            wave_budget_usage=wave_budget_usage)
+                        roster = live_dependencies.format_roster(provider)
+                        format_id, transport_id = roster[0]
+                        idem = provider_attempt_idempotency(packet['idempotency_key'], 1, roster)
+                        attempt = provider_attempt_digest(task_id=reservation.task_id,
+                            assignment_id=reservation.assignment_id, attempt_ordinal=1,
+                            provider_id=provider, format_id=format_id, transport_id=transport_id,
+                            idempotency_key_digest=idem,
+                            budget_evidence_digest='sha256:' + budget.grant_digest)
+                        adapter = live_dependencies.adapter_for_format(provider, roster[0])
+                        transport = adapter._transport
+                        meter_required = bool(provider == 'openai' and
+                            (getattr(settings, 'langgraph_primary_openai_response_meter_enrollment_file', '')
+                             or getattr(transport, 'response_meter', None) is not None))
+                        preflight = getattr(transport, 'preflight', None)
+                        if meter_required and not callable(preflight):
+                            raise PaidSetupHold()
+                        if callable(preflight):
+                            preflight(canonical_json_bytes(packet), context=PlannedProviderAttempt(
+                                task_id=reservation.task_id, assignment_id=reservation.assignment_id,
+                                idempotency_key=attempt, work_packet_digest=document_digest(packet),
+                                writer_token_digest=services._packet_router.writer_token(record).digest,
+                                fencing_generation=writer.fencing_generation,
+                                timeout_seconds=max(1, int(limits['timeout_seconds']) // 3),
+                                budget_usd=attempt_usd, total_token_limit=budget.token_limit,
+                                max_hops=int(limits["max_hops"]), max_revisions=int(limits["max_revisions"]),
+                                allowed_tools=tuple(packet['allowed_tools']),
+                                allowed_external_effects=tuple(packet['allowed_external_effects'])))
+                    except Exception as exc:
+                        # No exception payload enters the ledger or user surface.
+                        raise PaidSetupHold() from None
+
+                dispatch_parallel_assignment.preflight = preflight_parallel_assignment
                 parallel_dispatcher = dispatch_parallel_assignment
                 self._live_dependencies_ready = True
             else:
@@ -2782,9 +2873,20 @@ class DefaultPrimaryActivation:
         if not self.enabled:
             return
         assert self.coordinator is not None
-        self.coordinator.heartbeat_active_task_writers()
+        try:
+            self.coordinator.heartbeat_active_task_writers(
+                on_renewal_outcome=self._lease_diagnostics.task_completed
+            )
+        except Exception:
+            self._lease_diagnostics.failed("task_writer_renewal_failed")
+            raise
         if self.settings.langgraph_primary_new_intake_enabled:
-            self.coordinator.renew_new_intake()
+            try:
+                self.coordinator.renew_new_intake()
+            except Exception:
+                self._lease_diagnostics.failed("intake_renewal_failed")
+                raise
+            self._lease_diagnostics.succeeded()
 
     def reconcile_once(self) -> int:
         if not self.enabled:
@@ -2804,6 +2906,10 @@ class DefaultPrimaryActivation:
                 # or drive a terminal task's historical graph/provider plan.
                 try:
                     self.coordinator.reconcile_cancelled_pending(projection.task_id)
+                    # Empty pending rows alone do not settle a divergent binding.
+                    # Reobserve the durable adjudication and terminal ledger even
+                    # when the coordinator skipped writer renewal for this task.
+                    self.coordinator.parallel.verify_cancelled_terminal_binding(projection.task_id)
                 except CancelledPlanBindingHold:
                     # The ledger committed a specific refusal; keep readiness
                     # false while allowing diagnostics and unrelated tasks up.
@@ -2849,6 +2955,7 @@ class DefaultPrimaryActivation:
 
     def health(self) -> dict[str, Any]:
         configured = self.settings.langgraph_primary_configuration_readiness()
+        configured.update(self._lease_diagnostics.health())
         provider_activation = (
             self.provider_activation.health()
             if self.provider_activation is not None
@@ -2986,5 +3093,16 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:59 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:25 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | BEGIN]]
@@ -104,6 +105,7 @@ class SlackIntakeReceiptTests(unittest.TestCase):
         self.assertIn("request state must be reconciled before retrying", message["text"])
         self.assertNotIn("QUEUED", message["text"])
         self.assertNotIn("ACCEPTED", message["text"])
+        self.assertNotIn("REQUEST RECEIVED", message["text"])
         self.assertNotIn("could not accept", message["text"])
 
     def forward_response(self, response):
@@ -136,7 +138,7 @@ class SlackIntakeReceiptTests(unittest.TestCase):
                     )
                     self.client.chat_postMessage.assert_called_once()
                     message = self.client.chat_postMessage.call_args.kwargs
-                    self.assertIn(f"{task_id} — ACCEPTED", message["text"])
+                    self.assertIn(f"{task_id} — REQUEST RECEIVED", message["text"])
                     self.assertNotIn("BLOCKED", message["text"])
                     self.assertEqual(message["thread_ts"], self.event["thread_ts"])
 
@@ -145,7 +147,7 @@ class SlackIntakeReceiptTests(unittest.TestCase):
             "task_id": PRIMARY_ID, "status": "OWNER_DECISION_REQUIRED"
         }))
         message = self.client.chat_postMessage.call_args.kwargs["text"]
-        self.assertIn(f"{PRIMARY_ID} — ACCEPTED", message)
+        self.assertIn(f"{PRIMARY_ID} — REQUEST RECEIVED", message)
         self.assertNotIn("QUEUED", message)
 
     def test_http_200_never_confirms_acceptance_even_with_a_valid_id(self):
@@ -354,3 +356,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 21:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]

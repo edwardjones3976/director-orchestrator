@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
@@ -167,6 +169,84 @@ must be adopted into the deployed candidate; it owns authenticated bridge
 access, durable admissions, bounded budgets and captured results. Without that
 package or its independently provisioned authority, validation cannot run.
 
+`PublishProviderEvidence` completes the separate publication step after a
+successful native validation capture. It takes `-ProviderEvidencePath` naming a
+UTF-8 JSON file, at most 128 KiB, mounted read-only into one utility container.
+The container invokes `primary_generation publish-provider-evidence
+--evidence-file /run/director-provider-evidence.json`. It does not invoke a
+provider, start the normal application, run migrations or adopt intake. The
+staged ASGI service remains GET-only.
+
+Publication reads already captured validation records while
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED=false` remains unchanged in the
+generation-bound offline-handoff profile. Only this staged reader opts out of
+the verifier loader's execution-switch check; it retains the configured
+validation DSN, capture key, candidate/tree/generation checks and read-only
+database connection. The normal runtime loader still requires validation to be
+enabled. Do not change the flag to publish evidence from an existing generation.
+
+The file is the closed object `{"version":"director-staged-provider-evidence/v1",
+"generation":"<selected manifest SHA256>","requests":[...]}`. Each item has
+`provider_id` and `request`; `request` is the existing signed
+`ProviderActivationAdvanceRequest` contract. Earlier stages also require
+`observation_base64`, containing the actual receipt or attributed attestation
+bytes, at most 8 KiB decoded. Its SHA256 must equal the signed `evidence_digest`.
+For `LIVE_OK`, that field is forbidden: the digest must identify the persisted
+native capture instead. Retain the submitted file with its source observations.
+These receipts establish supplied bytes and owner-authorized attribution;
+the publisher does **not** independently observe installation or authentication.
+
+A fresh binding needs separately signed `INSTALLED`, `AUTHENTICATED`,
+`WORKSPACE_BOUND`, `DRY_RUN_OK` and `LIVE_OK` requests, in that order on both
+surfaces (`app` and `runtime_adapter`), with expected revisions 0–4. Already
+current stored observations may supply earlier stages instead. The publisher
+never derives those four observations from a successful canary. The complete
+batch is checked against a snapshot before any append and must leave both
+surfaces LIVE-ready for every selected provider. Missing stages, expired or
+future observations, reordered stages and altered history are refused.
+There are 1–160 requests within the same 128 KiB file bound. The command checks
+a cooperative 120-second deadline between individual evidence-store and
+capture-verifier calls; it is not a hard process deadline. A database operation
+already in progress may finish after it. Statements and lock waits are bounded
+to ten seconds; pool startup and acquisition are also bounded to ten seconds.
+Read-only capture verification has a five-second connection timeout and a
+ten-second statement timeout. Cleanup/driver scheduling may add elapsed time.
+Expired time prevents further publication and prevents a success report.
+
+An authorized signer must set each request's `evidence_id` using
+`primary_provider_evidence.evidence_id(identity, generation, provider, surface,
+evidence_digest, stage=stage)` **before** creating its existing v1 advancement proof. This
+pure helper returns `staged-v1:` plus SHA256 of canonical JSON containing the
+publication version, complete activation identity, selected generation,
+provider, surface, stage and evidence digest. The existing proof signs that field and
+the provider endpoint. This is the authenticated generation binding; changing
+only the outer file generation cannot retarget a valid signature. The publisher
+never creates signatures. The existing owner identity check, distinct gateway
+key, five-minute proof lifetime, immutable binding and durable nonce checks
+still apply. General v1 HTTP advancement remains backward compatible.
+
+Before opening the bounded evidence write pool, publication verifies the exact
+selected generation, signed acceptance and completed restore, validation
+manifest, capture-verifier generation, runtime-off switches and every signed
+request. The existing `CaptureVerifier` then verifies persisted native input,
+output, successful terminal session, signature, binding, generation and expiry;
+caller assertions cannot replace these bytes. Both chains are read back after
+writing. Output reports only the selected providers' verified surfaces and
+`selected_provider_live_ready`. It does not scan unrelated providers or assert
+global/core readiness; the existing runtime health endpoint owns those claims.
+Publication alone grants no live routing or paid activation.
+
+An interruption can leave part of a chain committed. Reuse the identical signed
+input while its proof and capture remain current; durable exact replay does not
+append another row or dispatch another canary. Conflicting evidence is refused.
+Previously recorded stages are compared at their exact history index, even when
+later stages exist, and their original durable nonce claims must match. After
+the proof expires, inspect current stage readback and obtain fresh signed
+commands **only for the remaining stages**, using the same current native
+capture. Completed surfaces are verified from stored history and need no new
+command. Do not rerun native execution merely to recover publication or replace
+past evidence. A failed readback is not success, even if rows were committed.
+
 Issuer enrollment and real provider qualification remain separate authorized
 work. Developing these controls did not enroll a host, call any provider, create
 an acceptance signature or activate the runtime.
@@ -182,3 +262,5 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->

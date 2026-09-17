@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
@@ -26,7 +28,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # Project state report
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=cec0aca69091698bbaa02118ef5bddf7adaa9b8822dc2e6c370598d0e4a2bef4 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=883f7fafa38449c1ddfbeb9570bddb044c56ccd5ca90b82c5a06748cf4b3cb7e -->
 
 Use for a new bootstrap, milestone, reshaped plan, pause, or completion. Delete
 sections that do not carry decision-relevant information. Do not place secrets,
@@ -71,7 +73,7 @@ report or submission envelope.
 - **Selected modules:** <active modules>
 - **Team routing:** <providers, roles, and discovered workflow skills>
 - **Provider roles contract:** <path to the project's `provider-roles-contract.yaml`, or none; it records the eight responsibility areas and the Cursor, Antigravity, Perplexity, and OpenAI boundaries>
-- **Director/control plane:** <Claude acting leadership and actual runtime provider separately reported; material provider production is attributed and requires non-author review/merge>
+- **Director/control plane:** <ChatGPT/Codex project leadership and actual runtime provider separately reported; material provider production is attributed and requires non-author review/merge>
 - **Enforced accepted-productive-work routing:** <frozen approved allocation profile and digest; all eight active lane targets, real admissions, accepted output, deviations and capacity exclusions>
 - **Prospective total effort:** <observed immutable effort points, tokens, costs, missing telemetry, waste and separate subscription/API budgets; no independent legacy percentage matrix>
 - **Workload accounting:** <last nineteen real assignments plus candidate, fixed20 startup denominator, zero-target ineligible, target+5 hard ceiling, ±3 preference, preserved history across profile changes>
@@ -120,7 +122,7 @@ report or submission envelope.
 - **Trusted CI:** <run IDs, exact candidate, job conclusions, or unverified>
 - **Security:** <scan ID, exact range/candidate, coverage, findings, or unverified>
 - **Independent review:** <provider, exact SHA/digest, verdict, threads, or pending/unverified>
-- **Acting Director function:** <Moderator / Participant / Director / not applicable; record Claude project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote, and moderating the same debate does not forfeit it>
+- **Acting Director function:** <Moderator / Participant / Director / not applicable; record ChatGPT/Codex project leadership separately from the provider that actually executed the call; Participant may use only its one existing vote, and moderating the same debate does not forfeit it>
 - **Debate integrity:** <neutral framing, independent positions, appropriate alternative or none, counter-bias check, actual participants/abstentions/unavailable members, and retained dissent, or not applicable>
 - **Risks and confidence:** <unresolved risks, limitations, blockers, uncertainty, and calibrated confidence>
 - **Usage:** <cost, input/output/cached/reasoning tokens when available, elapsed time, retries, and explicitly unavailable telemetry>
@@ -177,3 +179,5 @@ published, enabled, or otherwise changed>.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

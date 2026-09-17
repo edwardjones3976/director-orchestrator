@@ -1,3 +1,7 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]]
@@ -159,6 +163,8 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(1, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+
 
     def test_one_format_success_invokes_only_the_primary_attempt(self) -> None:
         invoked: list[int] = []
@@ -479,6 +485,44 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         contexts = []
         dependencies.adapter_for_format = lambda *_args: SimpleNamespace(
             dispatch=lambda _packet, *, context: (contexts.append(context) or {"status": "FAILED"}))
+        # Exercise the actual factory's pre-ACTIVE closure with a genuine signed
+        # synthetic budget and the real packet (no fake preflight callback).
+        from tests.test_antigravity_team import grant, budget, fixtures
+        from datetime import datetime, timezone
+        from decimal import Decimal, ROUND_CEILING
+        from director_orchestrator.primary_paid_preflight import PlannedProviderAttempt
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        from unittest.mock import Mock
+        packet = activation.services._packet_router.planned_work_packet(record, assignment)
+        signed_budget = budget(grant(), provider_id="openai", project_id=packet["project"],
+            task_id=record.task_id,
+            task_limit_microusd=int(Decimal(str(settings.max_task_budget_usd))*1000000),
+            daily_limit_microusd=int(Decimal(str(settings.max_daily_provider_budget_usd))*1000000),
+            attempt_reservation_microusd=int((Decimal(str(float(packet["limits"]["budget_usd"])/3))*1000000).to_integral_value(rounding=ROUND_CEILING)))
+        dependencies.budget_routing.authority.entitlements = SimpleNamespace(
+            _clock=lambda:datetime.now(timezone.utc), _owner_authority_secret=fixtures.OWNER_SECRET)
+        def connection():
+            result=Mock()
+            result.execute.side_effect=[Mock(fetchall=lambda:[dict(authority_digest=signed_budget.grant_digest,
+                document=signed_budget.model_dump(mode="json"))]),Mock(fetchone=lambda:None),
+                Mock(fetchone=lambda:None),Mock(fetchone=lambda:dict(task_spend=0,daily_spend=0))]
+            return result
+        planned=[]
+        selected_adapter = dependencies.adapter_for_format("openai",("api","api"))
+        selected_adapter._transport=SimpleNamespace(response_meter=object(),
+            preflight=lambda payload, *, context:planned.append(context))
+        dependencies.adapter_for_format=lambda *_args:selected_adapter
+        activation.application._parallel_dispatcher.preflight(reservation,writer=writer,
+            connection=connection(),wave_budget_usage={})
+        self.assertEqual(len(planned),1)
+        self.assertIsInstance(planned[0],PlannedProviderAttempt)
+        self.assertEqual(planned[0].total_token_limit,signed_budget.token_limit)
+        self.assertEqual(contexts,[])
+        absent=Mock(); absent.execute.return_value.fetchall.return_value=[]
+        with self.assertRaises(PaidSetupHold):
+            activation.application._parallel_dispatcher.preflight(reservation,writer=writer,
+                connection=absent,wave_budget_usage={})
+        self.assertEqual(contexts,[])
         with patch("director_orchestrator.primary_default.live_provider_admissions", return_value={}):
             outcome = activation.application._parallel_dispatcher(reservation)
         self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
@@ -657,6 +701,21 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         construct.assert_called_once_with(settings, None)
         self.assertIs(dependencies.budget_routing, routing)
         self.assertIsNone(dependencies.team_routing)
+        self.assertIs(dependencies.capabilities, capabilities)
+        
+        settings_bridge = replace(
+            settings,
+            langgraph_primary_host_bridge_endpoint="https://localhost/v1/host-provider/dispatch",
+            langgraph_primary_host_bridge_secret="a" * 32
+        )
+        sentinel = object()
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value=adapters), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _:None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing), \
+             patch("director_orchestrator.primary_default.challenge_host_provider_bridge", return_value=sentinel):
+            dependencies_bridge = build_automatic_primary_live_dependencies(settings_bridge, None, None)
+        self.assertIs(dependencies_bridge.bridge_challenge, sentinel)
 
 
 
@@ -1848,6 +1907,56 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "ci_security_completion", projection.projection["visited_nodes"]
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+
+    def test_paid_setup_hold_preserves_approved_pause_and_recovers_ready_waves(self):
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        ready = False
+        entered = []
+        checked = []
+        def dispatch(reservation):
+            entered.append(reservation.sequence)
+            record = self.services._record(reservation.task_id)
+            assignment = next(a for a in record.plan.assignments if a.sequence == reservation.sequence)
+            record.assignment_outcomes.append(AssignmentOutcome(
+                assignment_sequence=assignment.sequence,provider=assignment.agent,
+                run_id=f"accepted-{assignment.sequence}",result=f"accepted-{assignment.sequence}",
+                review_summary="synthetic accepted outcome",
+                provider_result_digest=digest(f"accepted-{assignment.sequence}").removeprefix("sha256:")))
+            return ParallelDispatchOutcome(ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"accepted-{reservation.sequence}"), "provider_result_authenticated")
+        def preflight(reservation, **kwargs):
+            checked.append(reservation.sequence)
+            if not ready:
+                raise PaidSetupHold()
+            if reservation.sequence == 3:
+                prior = self.coordinator.parallel_aggregate(reservation.task_id)
+                self.assertEqual(len(prior.result_digests), 2)
+                record = self.services._record(reservation.task_id)
+                assignment = next(a for a in record.plan.assignments if a.sequence == 3)
+                packet = self.services._packet_router.planned_work_packet(record,assignment)
+                serialized = json.dumps(packet)
+                self.assertIn(self.services._packet_router._dependency_digest(record,1),serialized)
+                self.assertIn(self.services._packet_router._dependency_digest(record,2),serialized)
+        dispatch.preflight = preflight
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch("director_orchestrator.primary_default.preview_plan", return_value=self.parallel_plan()):
+            pending = self.application.create_intake(self.intake(),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        held = self.approve(self.application,self.coordinator,pending.task_id)
+        self.assertEqual(held.status, TaskStatus.BLOCKED)
+        self.assertEqual(entered, [])
+        self.assertNotIn(3,checked)
+        state = self.coordinator._runtime.compact_state(pending.task_id)
+        self.assertIsNone(state.get("terminal_classification"))
+        self.assertEqual(tuple(state['setup_hold_reasons']), ('paid_setup_required',))
+        projection = self.coordinator.get_projection(pending.task_id)
+        self.assertEqual(projection.projection['run_status'],'PAUSED')
+        # Recovery uses the existing approved provider interrupt, no fresh approval.
+        ready = True
+        final = self.application.recover(pending.task_id)
+        self.assertEqual(final.status,TaskStatus.DONE)
+        self.assertEqual(sorted(entered),[1,2,3])
+        self.assertEqual(self.coordinator.get_projection(pending.task_id).projection['setup_hold_reasons'],[])
 
     def test_requested_enterprise_capability_persists_owner_hold_before_registration(self):
         settings = replace(self.settings, langgraph_primary_offline_simulation_enabled=True,
@@ -3108,3 +3217,8 @@ if __name__ == "__main__":
 # [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 02:56 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
+
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]

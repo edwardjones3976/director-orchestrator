@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -59,6 +60,19 @@ class MemoryStore:
 
 
 class PrimaryProviderActivationServiceTests(unittest.TestCase):
+    def test_signed_next_stage_advances_instead_of_comparing_with_prior_stage(self):
+        surface = ProviderActivationSurface.APP
+        for revision, stage in enumerate((ProviderActivationStage.INSTALLED, ProviderActivationStage.AUTHENTICATED)):
+            self.service.record_authorized(provider_id="claude",
+                evidence_schema_version="provider-activation-evidence/v1", binding_version="v1",
+                surface=surface, stage=stage, expected_revision=revision,
+                evidence_id=f"observed-{revision}", evidence_digest=str(revision + 1) * 64,
+                observed_at=self.now, expires_at=self.now + timedelta(minutes=5),
+                authorization=ProviderActivationAuthorization("provider-activation-advance-proof/v1",
+                    "owner", str(revision + 1) * 64, str(revision + 2) * 64))
+        self.assertEqual([row.stage for row in self.store.load(self.bindings["claude"], surface)],
+            [ProviderActivationStage.INSTALLED, ProviderActivationStage.AUTHENTICATED])
+
     def setUp(self) -> None:
         self.now = datetime(2026, 9, 1, tzinfo=timezone.utc)
         self.store = MemoryStore()
@@ -238,3 +252,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:20 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -92,10 +93,10 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "cross-platform QA",
                 "technical coordination",
             ],
-            "routing_rule": "Route Cursor by fit, independence, capacity, and evidence needs.",
+            "routing_rule": "Route Cursor by capability, authority, independence, and capacity.",
             "non_substitution_rules": [
-                "Cursor cannot replace acting Director acceptance.",
-                "Cursor does not replace mandatory Codex Security.",
+                "Cursor cannot substitute for assignment-scoped acceptance authority.",
+                "Codex Security remains an independent deterministic gate where configured.",
                 "Cursor cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
             ],
@@ -125,11 +126,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "cross-platform QA",
                 "technical coordination",
             ],
-            "routing_rule": "Route Grok as a Cursor-family primary peer by fit, independence, capacity, and evidence needs.",
-            "transport_rule": "The xAI API, Grok Build CLI, and Grok Bot are distinct contacts; each may exercise only capabilities actually available and authorized on that contact.",
+            "routing_rule": "Route Grok by capability, authority, independence, and capacity.",
+            "transport_rule": "xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact.",
             "non_substitution_rules": [
-                "Grok cannot replace acting Director acceptance.",
-                "Grok does not replace mandatory Codex Security.",
+                "Grok cannot substitute for assignment-scoped acceptance authority.",
+                "Codex Security remains an independent deterministic gate where configured.",
                 "Grok cannot review or approve its own work.",
                 "Capability parity does not bypass assignment scope or deterministic gates.",
             ],
@@ -137,7 +138,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     },
     "director_operating_directive": {
         "workload_policy_version": "v1",
-        "director": "claude",
+        "director": "openai",
         "runtime_director": {
             "default_provider": "openai",
             "activation_from_role_change": False,
@@ -156,12 +157,12 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         "direct_workload_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "overall_effort_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "workload_lanes": {
-            "claude": "control_plane_and_authorized_production",
-            "cursor": "primary_full_spectrum",
-            "grok": "primary_full_spectrum",
-            "antigravity": "bounded_subordinate_specialist",
+            "claude": "capability_routed_lane",
+            "cursor": "capability_routed_lane",
+            "grok": "capability_routed_lane",
+            "antigravity": "bounded_capability_routed_lane",
             "perplexity": "public_research_evidence_only",
-            "openai": "primary_full_spectrum",
+            "openai": "chatgpt_codex_director_lane",
         },
         "workload_accounting": {
             "unit_basis": "real_reserved_assignment_once",
@@ -816,7 +817,7 @@ def tally_advisory_votes(
         elif material_risk:
             resolution = "owner_decision_required"
         else:
-            resolution = "claude_director_judgment"
+            resolution = "openai_director_judgment"
     return AdvisoryVoteTally(
         configured_weight_total=configured_total,
         cast_weight_total=cast_total,
@@ -848,3 +849,4 @@ def tally_advisory_votes(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]

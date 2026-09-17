@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | BEGIN]]
 """Historical plan identity remains frozen across allocation schema upgrades."""
 import copy
@@ -5,6 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from director_orchestrator.lease_diagnostics import LeaseRenewalDiagnostics
 from director_orchestrator.primary_default import (
     DefaultPrimaryActivation, DefaultPrimaryApplication,
     HistoricalParallelPlanHold, _digest, _historical_parallel_binding,
@@ -81,6 +83,7 @@ class HistoricalParallelRecoveryTests(unittest.TestCase):
         self.coordinator.list_projections.return_value = (self.projection,)
         self.coordinator.get_task_writer.return_value = None
         activation = object.__new__(DefaultPrimaryActivation)
+        activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.application = Mock()
         activation.application.recover.side_effect = ValueError("parallel plan binding changed")
         activation.services = object()
@@ -93,6 +96,7 @@ class HistoricalParallelRecoveryTests(unittest.TestCase):
         before = copy.deepcopy(self.projection.projection)
         self.coordinator.list_projections.return_value = (self.projection,)
         activation = object.__new__(DefaultPrimaryActivation)
+        activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.application = self.application
         activation.coordinator = self.coordinator
         activation.services = self.application.services
@@ -120,3 +124,4 @@ class HistoricalParallelRecoveryTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:30 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]

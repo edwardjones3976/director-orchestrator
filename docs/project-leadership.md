@@ -1,22 +1,23 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | BEGIN]] -->
 # Current project leadership
 
-Claude is the acting Director-Orchestrator for this project. Codex, ChatGPT,
-and OpenAI provide the bounded engineering and eligible independent review
-work previously assigned to Claude. This decision applies to new project
+The project uses capability-based routing with assignment-scoped authority.
+ChatGPT/Codex keeps the explicit Director lane description; Perplexity and
+Firecrawl keep explicit public-research lane descriptions. Other lanes do not
+carry standing job assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.
 
-The owner's instruction was: "Make it so that, throughout the project, Claude
-is now the acting director, and Codex/ChatGPT switches everything with Claude,
-and vice versa." The real native Claude provider accepted the handoff on
-2026-09-08 UTC and issued the implementation directive. The native response
-identified Claude Opus 5; this was an actual provider response, not a predicted
-position or a renamed Codex task. Coordination creates no code authorship or
-independent candidate acceptance.
+Historical coordination decisions remain recorded as evidence only. The current
+owner objective is immediate ChatGPT/Codex Director authority for priorities,
+decomposition, routing, review orchestration, completion reporting, and owner
+escalation. This policy update does not claim that a deployed runtime provider
+changed in production.
 
 The owner-visible handoff is recorded in Codex task
 `01a077dc-2e5c-7652-9ae7-1e5aa0e692e5`, evidence set
@@ -30,22 +31,23 @@ observed tool use, and completed process cleanup. These are referenceable
 host observation artifacts for the coordination handoff, not a signed
 provider-v2 acceptance receipt or authority to activate a runtime.
 
-## Responsibilities
+## Runtime coordination status and responsibilities
 
 | Responsibility | Current owner |
 | --- | --- |
-| Project priorities, scope, sequence, and design decisions | Claude |
-| Work decomposition, allocation, bounded dispatch, and overlap prevention | Claude |
-| Review orchestration, evidence reconciliation, and delivery reporting | Claude |
-| Bounded implementation, debugging, testing, and verification | Codex/ChatGPT and other capable assigned providers |
+| Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane |
+| Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane |
+| Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane |
+| Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority |
 | Independent review | An eligible provider that did not materially author the candidate |
 | Owner-reserved decisions | The owner, under the existing deterministic gates |
 
-Claude delegates substantial implementation work. Codex may act within an
-assigned engineering scope and coordinate its implementation subtasks; it
-does not silently reclaim project priorities or issue instructions as Claude.
-Other providers keep their identities and capabilities. Antigravity remains a
-team participant on its actually qualified and authorized routes. Codex
+The Director delegates substantial implementation work. OpenAI/Codex may also
+act within a separately assigned engineering scope, but coordination duties do
+not imply material authorship or independent acceptance authority.
+Other providers keep their identities and verified capabilities. Non-exempt
+providers do not carry standing jobs; assignments are capability- and
+authority-scoped for each candidate. Codex
 Security remains the named security product and gate.
 
 All provider-led activities keep one active writer per file, isolated
@@ -96,10 +98,16 @@ active writers, unresolved decisions, and relevant evidence once. Do not
 replay an ambiguous dispatch or revive an unavailable route to deliver the
 same handoff again. A Codex task cannot become Claude by changing its title.
 
-Fresh project decisions supersede historical prose describing OpenAI as the
-project lead. Historical documents remain historical; current role and
+The immediate ChatGPT/Codex appointment supersedes historical prose assigning
+project leadership to Claude. Historical documents remain historical; current role and
 allocation sources must agree with this decision.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+
+
+Runtime note: some deployments may still report pre-cutover coordinator identifiers.
+That status is observational only and does not create standing role authority.
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->

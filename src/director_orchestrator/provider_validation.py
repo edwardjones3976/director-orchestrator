@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -260,10 +261,14 @@ class CaptureVerifier:
             return False
 
 
-def capture_verifier_from_environment(*, candidate: str = "", tree: str = ""):
-    """No DDL or dispatch. Missing configuration cannot admit LIVE_OK."""
+def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", require_enabled: bool = True):
+    """No DDL or dispatch. Staged readers may opt out of the execution switch.
+
+    Disabling that switch check never supplies missing configuration or bypasses
+    the candidate/tree pins and authenticated capture checks.
+    """
     import os
-    if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_ENABLED") != "true":
+    if require_enabled and os.environ.get("DIRECTOR_PROVIDER_VALIDATION_ENABLED") != "true":
         return None
     if not candidate or candidate != os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"]:
         raise ValidationError("validation candidate differs from runtime pin")
@@ -465,3 +470,4 @@ class ValidationBridgeService:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]

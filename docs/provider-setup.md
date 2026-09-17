@@ -1,3 +1,9 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:42 UTC | BEGIN]] -->
@@ -33,6 +39,11 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-25 | 01:13 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-24 | 14:47 UTC | BEGIN]] -->
 # Provider Setup Matrix
+
+For editor-hosted agents, consult the [VS Code contact methods and Director
+integration guide](providers/vscode-contact-methods.md). It separates GitHub
+Copilot, provider-specific credentials, extension APIs, MCP, and workspace
+transports, with the evidence required before a route can accept assignments.
 
 The cross-provider responsibility, debate, advisory-voting, and strict
 Perplexity evidence boundaries are defined in
@@ -83,7 +94,7 @@ the preflight's own paraphrase of the startup constructor's refusal, because a
 read-only preflight must not construct the activation (it opens a Postgres
 control plane). It removes, relaxes, and defaults nothing. It prints variable
 names and booleans only, never a value —
-the same rule `/health` follows. Exit status is 0 when nothing is outstanding
+the same rule `/health` follows. The preflight reports bridge CONFIGURATION booleans only; the startup challenge result (captured once when the activation built its live dependencies; /health never re-challenges and opens no connection per request) is exposed as `/health.host_bridge.startup_challenge_ok`, named for what it is: startup evidence, not current liveness. Exit status is 0 when nothing is outstanding
 and 1 when anything is. A clean exit is a configuration statement only: it is
 not acceptance, not provider activation evidence, and not owner approval.
 
@@ -162,6 +173,43 @@ Reported following main.py's order, additionally running the runtime validator w
 8. **Execution profile**, which fails closed before any provider call:
    `PROJECT_ALLOWLIST`, `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`, and
    `CLAUDE_CALLBACK_SECRET`, as listed above.
+9. **Subsystem readiness**, evaluated last, mirroring what live startup
+   requires without connecting to anything. The entitlement control plane:
+   `ENTITLEMENT_CONTROL_PLANE_ENABLED` must be true, and its dependent checks
+   run whether or not it is (one pass reports everything): the DSN file must
+   exist at the literal configured path, be at most 65536 bytes and, stripped,
+   be one non-empty line that the same `_parse_connection_target` startup
+   uses accepts (explicit dbname, port, user, a verifying sslmode with
+   sslrootcert, no delegated identity) and that names the same database and
+   role as `LANGGRAPH_PRIMARY_POSTGRES_DSN` under the entitlement schema —
+   the identical storage-identity digest startup compares; only the
+   database-side accepted identity, which needs the live handle, is left to
+   startup. The parser and digest are imported as pure functions; the file
+   still opens no connection, which its tests pin by name; each of
+   the three secret files must exist after `~` expansion and, stripped, hold
+   at least 32 UTF-8 bytes with at least 16 distinct byte values — the same
+   rule `_read_secret_file` applies; the schema must match `[a-z0-9_]+_v<N>`.
+   File contents are read only to apply those rules and never reach the
+   output; any filesystem or `~user` expansion failure reads as an unavailable
+   file. The effect gateways: `SLACK_BOT_TOKEN` or a GitHub credential; when
+   the registry would build the GitHub App gateway, its credential must also
+   pass the constructor's local syntax checks (numeric ids, strict base64
+   private key) — an incomplete App configuration is skipped by startup and
+   therefore not reported. The host provider bridge: endpoint/secret
+   configuration booleans only; the pairing rule is reported by the
+   langgraph-primary validator above.
+
+   `/health.providers.lanes.<lane>` reports two booleans. `configured` is a
+   startup observation: an executable was observed for the lane, or the lane
+   has a composed adapter (the Antigravity team route dispatches without a
+   local executable; an installed lane outside
+   `LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS` has no adapter). `live_ready` is the
+   gate dispatch itself applies: the lane has a composed adapter and the
+   activation service currently reports `provider_ready(lane, live=True)`, so
+   a lapsed `LIVE_OK` capture flips it to false on the next read; without an
+   activation service nothing is live. A binary or login that disappears after
+   startup is not re-probed by `/health` (dispatch would fail the same way);
+   that liveness belongs to a bounded monitor, not the health endpoint.
 
 ### Mutual exclusions and pairings
 
@@ -369,6 +417,16 @@ GROK_CLI_REPOSITORY_MAP_JSON={}
 GROK_CLI_TIMEOUT_SECONDS=3600
 GROK_CLI_MAX_TURNS=20
 ```
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
+One xAI key serves every project (owner decision 2026-09-16); do not mint
+per-project keys. `GROK_ENABLED=true` plus a configured `XAI_API_KEY` is not
+enough for the key to be exercised: the lane must also appear in
+`PRIMARY_TEAM` (assignments) and `USAGE_CHECK_PROVIDERS` (periodic usage
+checks). A deployment `.env` that overrides those lists without `grok` leaves
+the credential idle with no error; `scripts/live-dispatch-preflight.py`
+reports this under "provider roster".
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
 
 Readiness fails closed unless the endpoint is exactly `https://api.x.ai/v1`,
 tools remain disabled for the API contact, every bound is valid, and any enabled
@@ -655,3 +713,9 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:40 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:36 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->

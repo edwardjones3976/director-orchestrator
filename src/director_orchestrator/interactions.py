@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | BEGIN]]
@@ -110,7 +111,9 @@ class DirectorIdentity(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    acting_project_director: Literal["claude"] = "claude"
+    # Historical v3 records used Claude; do not reinterpret an omitted legacy field.
+    # New generations explicitly bind the current project Director in the engine.
+    acting_project_director: Literal["claude", "openai"] = "claude"
     provider: Literal["openai", "claude"]
     transport: ProviderTransport
     model_name: str = Field(min_length=1, max_length=255)
@@ -817,3 +820,4 @@ def director_evidence_matches(
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 04:12 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]

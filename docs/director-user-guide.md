@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
 # Director-Orchestrator operator guide
 
@@ -63,10 +64,10 @@ simulation. Stage A success is `paid_off_primary_intake_active` true.
 ### Status posts
 
 The n8n status workflow polls `/health`, diffs the readiness booleans against
-the previous run, and posts to the Director channel **only on change** — plus
-immediately when `ambiguous_effect_count` rises above zero, the kill switch is
-set, or health is unreachable. Silence means nothing changed, which is the
-normal state.
+the previous run, and posts to the Director channel **only on change**.
+**It speaks anyway** — regardless of change — on three conditions: the health
+endpoint is unreachable, `ambiguous_effect_count` is above zero, or the parallel dispatch kill switch is engaged while parallel dispatch is enabled. An engaged switch with parallel dispatch disabled is the expected offline posture: it posts once as a readiness change and is then silent. The ambiguous-effects alarm matters most:
+rollback is refused while that count is non-zero.
 
 ## The control script
 
@@ -174,3 +175,4 @@ proves tests passed, not that a provider executed. Coordination creates no
 production credit. No lane, including the Director, may accept or merge its own
 material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->

@@ -1,4 +1,77 @@
 {
+  "$defs": {
+    "MeteringEvidence": {
+      "additionalProperties": false,
+      "description": "Durable tariff provenance, excluding raw provider content and credentials.",
+      "properties": {
+        "cost_basis": {
+          "const": "signed-tariff-metered-not-invoice",
+          "title": "Cost Basis",
+          "type": "string"
+        },
+        "enrollment_document": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Enrollment Document",
+          "type": "string"
+        },
+        "enrollment_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Enrollment Digest",
+          "type": "string"
+        },
+        "response_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Response Digest",
+          "type": "string"
+        },
+        "response_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Response Id",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "cached_input_tokens": {
+          "minimum": 0,
+          "title": "Cached Input Tokens",
+          "type": "integer"
+        },
+        "reasoning_output_tokens": {
+          "minimum": 0,
+          "title": "Reasoning Output Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cost_basis",
+        "enrollment_document",
+        "enrollment_digest",
+        "response_digest",
+        "response_id",
+        "request_id",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "reasoning_output_tokens"
+      ],
+      "title": "MeteringEvidence",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -40,6 +113,17 @@
       "pattern": "^[0-9a-f]{64}$",
       "title": "Meter Signature",
       "type": "string"
+    },
+    "metering_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MeteringEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

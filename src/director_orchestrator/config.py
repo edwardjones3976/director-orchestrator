@@ -1,3 +1,9 @@
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
+# [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | BEGIN]]
@@ -690,6 +696,7 @@ class Settings:
     n8n_webhook_url: str = os.getenv("N8N_DIRECTOR_WEBHOOK_URL", "")
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     chatgpt_bridge_enabled: bool = _bool("CHATGPT_BRIDGE_ENABLED", False)
+    chatgpt_bridge_allow_paid_runs: bool = _bool("CHATGPT_BRIDGE_ALLOW_PAID_RUNS", False)
     chatgpt_bridge_slack_user_id: str = os.getenv(
         "CHATGPT_BRIDGE_SLACK_USER_ID", "U0B9KFJPST1"
     ).strip()
@@ -723,6 +730,10 @@ class Settings:
         default_factory=lambda: _bool("CLAUDE_DIRECTOR_ENABLED", False)
     )
     langgraph_primary_openai_transport: str = os.getenv("LANGGRAPH_PRIMARY_OPENAI_TRANSPORT", "responses-api")
+    # Empty keeps metering disabled. This names owner-signed metadata, never keys.
+    langgraph_primary_openai_response_meter_enrollment_file: str = os.getenv(
+        "LANGGRAPH_PRIMARY_OPENAI_RESPONSE_METER_ENROLLMENT_FILE", ""
+    )
     openai_model: str = os.getenv("OPENAI_DIRECTOR_MODEL", "gpt-5.6")
     openai_reasoning_effort: str = os.getenv("OPENAI_REASONING_EFFORT", "medium")
     # Explicit accounting estimates for Director calls. Defaults preserve the
@@ -1251,7 +1262,7 @@ class Settings:
     def chatgpt_bridge_readiness(self) -> dict[str, bool]:
         return {
             "enabled": self.chatgpt_bridge_enabled,
-            "paid_execution_enabled": self.allow_paid_runs,
+            "paid_execution_enabled": self.allow_paid_runs or self.chatgpt_bridge_allow_paid_runs,
             "slack_transport_configured": self.readiness()["slack"],
             "internal_auth_configured": bool(self.shared_secret),
             "openai_configured": bool(self.openai_api_key),
@@ -2075,8 +2086,8 @@ class Settings:
         return {
             "claude": {
                 "team": "primary",
-                "priority": "acting_director_orchestrator",
-                "project_role": "acting_director",
+                "priority": "capability_routed_assignment",
+                "project_role": "capability_routed_provider",
                 "runtime_selection": (
                     "native_transport_injection_required" if self.claude_director_enabled
                     else "disabled_legacy_openai_runtime"
@@ -2091,8 +2102,8 @@ class Settings:
             },
             "openai": {
                 "team": "primary",
-                "priority": "bounded_engineering_and_independent_review",
-                "project_role": "bounded_implementer_and_non_author_reviewer",
+                "priority": "director_control_plane_and_authorized_production",
+                "project_role": "chatgpt_codex_director",
                 "runtime_selection": (
                     "not_selected_as_director" if self.claude_director_enabled
                     else "legacy_responses_api_director"
@@ -2107,7 +2118,7 @@ class Settings:
             },
             "cursor": {
                 "team": "primary",
-                "priority": "primary_full_spectrum_repository_partner",
+                "priority": "capability_routed_assignment",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
@@ -2123,8 +2134,9 @@ class Settings:
                 ],
             },
             "gemini": {
+                "contact_scope": "restricted_fixture_and_invited_debate",
                 "team": "supplemental",
-                "priority": "subordinate_boilerplate_and_alternate_ideation",
+                "priority": "bounded_capability_routing",
                 "account_context": self.other_provider_account_context,
                 "strengths": [
                     "bounded boilerplate and scaffolding in predefined public fixture lanes",
@@ -2133,8 +2145,8 @@ class Settings:
                     "bounded sandbox execution for the above",
                 ],
                 "constraints": [
-                    "supplemental only; never a primary-team substitute",
-                    "work assignments must feed a later OpenAI, Claude, Cursor, or Grok integration assignment",
+                    "restricted fixture contact only; the separately selected team contract requires its own explicit grants and qualification",
+                    "every artifact requires independent downstream verification before integration or acceptance influence",
                     "cannot issue review, acceptance, or merge verdicts",
                     "cannot define contract or methodology truth",
                     "cannot initiate, self-route, widen, or autonomously continue a conversation",
@@ -2148,7 +2160,7 @@ class Settings:
             "grok": {
                 "team": "primary",
                 "family": "cursor",
-                "priority": "primary_cursor_family_repository_partner",
+                "priority": "capability_routed_assignment",
                 "account_context": self.other_provider_account_context,
                 "capability_parity_target": 1.0,
                 "eligible_complexity": ["low", "medium", "high", "critical"],
@@ -2171,7 +2183,7 @@ class Settings:
                 ],
                 "separation_of_duties": [
                     "cannot independently accept or merge its own candidate",
-                    "cannot replace the executing Director's acceptance role",
+                    "cannot replace assignment-scoped acceptance authority",
                     "external writes still require the assigned execution surface and current deterministic gates",
                 ],
                 "current_transport_constraints": [
@@ -2182,7 +2194,7 @@ class Settings:
             },
             "perplexity": {
                 "team": "supplemental",
-                "priority": "optional_current_research_specialist",
+                "priority": "optional_public_research",
                 "account_context": self.other_provider_account_context,
                 "strengths": ["current web research", "source gathering", "fact verification"],
             },
@@ -2247,3 +2259,10 @@ class Settings:
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 06:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]

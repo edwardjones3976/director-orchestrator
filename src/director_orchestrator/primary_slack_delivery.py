@@ -1,3 +1,8 @@
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:33 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -52,6 +57,7 @@ def render_notification(row: dict, settings) -> dict | None:
         lines.append("Historical execution mode is not recorded.")
     approval_display_complete = True
     if pending:
+        lines.append(f"Owner decision required for {pending['kind']}. Review the complete proposed scope below:")
         if record.plan:
             lines.append(record.plan.normalized_outcome)
             lines.append(f"Risk: {record.plan.risk_level.value}. Maximum hops: {record.plan.max_hops}; revisions: {record.plan.max_revisions}.")
@@ -72,8 +78,16 @@ def render_notification(row: dict, settings) -> dict | None:
         lines.append("Decision scope: " + pending["kind"] + ". Other safety gates still apply.")
         lines.append("Approve or reject this exact request using the buttons below.")
     else:
-        lines.append("Reason: " + str(projection.get("reason_code") or "not reported"))
-        lines.extend(f"{item.provider.value}: {item.result}" for item in record.assignment_outcomes)
+        reason_code = projection.get("reason_code")
+        if reason_code == "completion_passed":
+            lines.append("All planned assignments completed and passed verification.")
+        else:
+            lines.append("Reason: " + str(reason_code or "not reported"))
+        for item in record.assignment_outcomes:
+            result_text = str(item.result)
+            if simulation and result_text == "SIMULATION — NO PROVIDER INTERACTION":
+                result_text = "simulated result"
+            lines.append(f"{item.provider.value}: {result_text}")
         if not record.assignment_outcomes:
             lines.append("No completed provider result is recorded.")
         lines.append("Actual USD cost: not recorded; budget units are not billing evidence.")
@@ -191,19 +205,22 @@ class PrimarySlackDelivery:
         with self.pool.connection() as connection:
             return connection.execute(f"""SELECT task_id, notification_key, projection_digest,
                 client_msg_id, state, created_at, claimed_at, acknowledged_at, delivered_at,
-                slack_ts, readback_attempts, last_error, owner_decision_at, owner_command_id
+                slack_ts, readback_attempts, last_error, owner_decision, owner_decision_at, owner_command_id
                 FROM {self.schema}.director_primary_slack_delivery
                 WHERE task_id=%s ORDER BY created_at LIMIT 100""", (task_id,)).fetchall()
 
     def record_owner_decision(self, request) -> None:
+        # The command vocabulary says deny; the delivery/API vocabulary says reject.
+        decision = {"approve": "approve", "deny": "reject"}[request.decision]
         with self.pool.connection() as connection:
             connection.execute(f"""UPDATE {self.schema}.director_primary_slack_delivery d
-                SET owner_decision_at=r.recorded_at, owner_command_id=r.command_id
+                SET owner_decision_at=r.recorded_at, owner_command_id=r.command_id,
+                    owner_decision=%s
                 FROM {self.schema}.director_primary_command_receipt r
                 WHERE d.task_id=%s AND d.notification_key=%s AND d.owner_command_id IS NULL
                 AND r.task_id=d.task_id AND r.operation='approval_resume'
                 AND r.command_id=%s AND r.command_digest=%s""",
-                (request.task_id, "approval:" + request.request_digest + ":" + request.expected_projection_digest,
+                (decision, request.task_id, "approval:" + request.request_digest + ":" + request.expected_projection_digest,
                  request.command_id, request.command_digest))
 
     def enqueue(self, *, limit: int = 100) -> int:
@@ -380,3 +397,9 @@ class PrimarySlackDelivery:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:33 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]

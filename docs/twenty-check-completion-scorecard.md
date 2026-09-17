@@ -1,3 +1,7 @@
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 # Twenty checks for a completed Director
 
@@ -23,7 +27,7 @@ whether any operation is permitted. The report always says
 | 04 | Status really delivered | Scheduled execution correlated with fresh Slack readback |
 | 05 | Primary owns intake | Database-derived ownership, disabled legacy intake, positive fencing generation |
 | 06 | Durable restart | Same task/checkpoint restored after restart without redispatch |
-| 07 | Reconciliation clear | No historical hold, hold reason or ambiguous primary effect; worker readiness belongs to 19 |
+| 07 | Reconciliation clear | Fresh generation-bound consistency proof for durable projections, batches, assignments and unresolved effects; this collector is not yet implemented. Health can establish a blocker only. |
 | 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision |
 | 09 | Durable final reply | One final result plus duplicate-input and ambiguous-post recovery evidence |
 | 10 | Ten offline Slack runs | Ten consecutive actual-owner events, independent correctness and measured time, zero operational provider calls |
@@ -51,6 +55,12 @@ The default is offline. It produces `completion-scorecard.json` and
 `completion-scorecard.md`, with UNKNOWN for facts it has not observed. Add
 `--live` to read the explicitly named Director container,
 `http://127.0.0.1:8080/health`, deployment topology and known host gateway processes.
+For topology checks 01 and 02, also supply `--gateway <exact-running-container-name>`.
+The name must match the intended gateway in the complete running-container inventory;
+the collector never substitutes a predecessor or the first matching process. It
+records the selected container ID and immutable image ID with both observations.
+Omitting this option leaves topology UNKNOWN. The Python API accepts `gateway=`;
+its existing `topology=False` option still disables topology collection.
 Add `--github` with `--live` to query the
 candidate's CI through the existing authenticated GitHub CLI. There are no
 provider calls, Slack writes, retries, deployments or imported credentials.
@@ -81,7 +91,12 @@ trusts the named local host and service; its in-process marker is not a security
 sandbox against arbitrary Python code, and it does not attest an uncompromised
 host or validate image-label supply-chain provenance.
 
-The first collectors cover 01, 02, 05, 07, 13, 16, 18 and 19, and can establish FAIL for 12 when
+The first collectors cover 01, 02, 05, 13, 16, 18 and 19. Check 07 can establish
+FAIL from a reported historical hold, hold reason or ambiguous effect, including
+when other health fields are missing. Zero health counters cannot prove that the
+underlying records agree: absent a generation-bound authoritative consistency
+collector, check 07 stays UNKNOWN. Worker readiness is separate in 19.
+The collectors can establish FAIL for 12 when
 the running activation verifier rejects readiness. A true activation flag does
 not expose native capture identity/expiry and therefore cannot PASS 12. CI
 reuses `state_witness.gh_checks_green`, including its actual-step and required-job
@@ -150,6 +165,20 @@ Machine time excluding an owner pause is shown separately and cannot substitute
 for the required under-60-second wall time. Actual Grok Bot is distinct from
 direct xAI Grok and Cursor Grok, regardless of shared branding or quota labels.
 
+## Offline trial records
+
+[Offline trial tooling](collect-offline-slack-trials.md) checks a rubric declared
+in the original source message. Its JSONL recorder uses exactly
+`OFFLINE_RUN_RECORD_FIELDS` (`RUN_RECORD_FIELDS` plus `simulation_label`) and
+shares `evaluate_run_record`. The ten-run evaluator keeps its count, distinct-ID,
+wall-time, origin, image, cost, ambiguity and zero-call requirements.
+
+A zero-call-verified offline run maps to `actual_cost_usd: 0` with
+`cost_basis: simulation_zero_calls`; incomplete operational-attempt authority
+stays null. The recorder retains a non-qualifying row and stops further appends.
+Saved receipts do not become scored observations, and the in-process check-10
+collector remains a separate work order.
+
 ## Validation
 
 ```powershell
@@ -165,3 +194,7 @@ visibility, altered native seals and incomplete changed-path coverage. Native
 SQLite fixtures verify read-only evidence consumption. No live provider or
 Postgres lane is needed.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]] -->

@@ -1,3 +1,9 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
@@ -35,7 +41,7 @@ from time import monotonic
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 import httpx
 
@@ -313,6 +319,7 @@ class OpenAIResponsesPacketTransport:
         reasoning_effort: str = "medium",
         api_url: str = "https://api.openai.com/v1/responses",
         maximum_timeout_seconds: int = 180,
+        response_meter=None,
     ) -> None:
         if not api_key or not model:
             raise ValueError("OpenAI transport requires configured credentials and model")
@@ -321,6 +328,7 @@ class OpenAIResponsesPacketTransport:
         self.reasoning_effort = reasoning_effort
         self.api_url = api_url
         self.maximum_timeout_seconds = maximum_timeout_seconds
+        self.response_meter = response_meter
 
     def send(
         self, work_packet_json: bytes, *, context: ProviderAdapterContext
@@ -356,12 +364,21 @@ class OpenAIResponsesPacketTransport:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-
         def remaining_seconds() -> float:
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise RuntimeError("OpenAI transport timeout is exhausted")
             return remaining
+
+        meter = self.response_meter
+        if meter is not None:
+            from .response_meter import ResponseMeterRegistry
+            if isinstance(meter, ResponseMeterRegistry):
+                meter = meter.for_context(context)
+            headers.update(meter.prepare(context=context, packet=work_packet_json,
+                api_url=self.api_url, model=self.model, api_key=self._api_key,
+                remaining_seconds=remaining_seconds))
+            body["service_tier"] = meter.enrollment.service_tier
 
         async def invoke():
             # HTTPX timeouts bound individual I/O operations, not total elapsed
@@ -376,9 +393,10 @@ class OpenAIResponsesPacketTransport:
                             if len(raw) + len(chunk) > maximum_bytes:
                                 raise RuntimeError("OpenAI response exceeds its byte bound")
                             raw.extend(chunk)
-                    return json.loads(raw)
+                    return json.loads(raw), {key: response.headers[key] for key in (
+                        "openai-organization", "openai-project", "x-request-id") if key in response.headers}
 
-                count = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
+                count, _ = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
                 if (not isinstance(count, dict)
                         or count.get("object") != "response.input_tokens"
                         or type(count.get("input_tokens")) is not int
@@ -391,16 +409,21 @@ class OpenAIResponsesPacketTransport:
                 # Responses includes reasoning tokens in max_output_tokens.
                 # This is a token bound, never a converted or vendor USD cap.
                 body["max_output_tokens"] = output_allowance
-                native = await post_json(self.api_url, body, _MAX_COMMAND_RESULT_BYTES)
+                native, response_headers = await post_json(self.api_url, body, _MAX_COMMAND_RESULT_BYTES)
                 remaining_seconds()
-                return native, input_tokens, output_allowance
+                return native, input_tokens, output_allowance, response_headers
 
         try:
-            native, input_tokens, output_allowance = asyncio.run(invoke())
+            native, input_tokens, output_allowance, response_headers = asyncio.run(invoke())
         except TimeoutError as exc:
             raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError("OpenAI provider outcome is ambiguous") from exc
+        if meter is not None:
+            # Complete measured usage remains chargeable even if a subsequent
+            # result-contract or token-limit check rejects the generated output.
+            meter.settle(native, response_headers, remaining_seconds=remaining_seconds)
+            remaining_seconds()
         if (not isinstance(native, dict) or native.get("status") != "completed"
                 or native.get("error") is not None
                 or native.get("incomplete_details") is not None):
@@ -1224,6 +1247,43 @@ def provider_lane_readiness(
     }
 
 
+def provider_lane_detail(
+    capabilities: Mapping[str, PrimaryProviderCapability],
+    required_providers: tuple[str, ...] = PRIMARY_PROVIDER_LANES,
+    routed: Collection[str] = (),
+    dispatchable: Collection[str] | None = None,
+) -> dict[str, dict[str, bool]]:
+    """Return configured and live_ready booleans for each lane.
+
+    configured (a startup observation): an executable was observed for the
+    lane, or the lane has a composed adapter (``routed``: the keys of the live
+    dependencies' adapter map, which is how a team-routed lane such as
+    antigravity is dispatched without a local executable, and which excludes
+    installed lanes outside LANGGRAPH_PRIMARY_REQUIRED_PROVIDERS).
+
+    live_ready: the lane is routed AND, when ``dispatchable`` is given, is in
+    it. Callers pass the lanes the activation service currently reports
+    ``provider_ready(lane, live=True)`` for, the same gate dispatch applies,
+    so a lapsed LIVE_OK capture flips this to false; an installed-but-unrouted
+    lane is never live-ready. Booleans only; no command paths or credentials.
+    """
+
+    routed_lanes = frozenset(routed)
+    dispatchable_lanes = None if dispatchable is None else frozenset(dispatchable)
+    detail: dict[str, dict[str, bool]] = {}
+    for provider_id in required_providers:
+        capability = capabilities.get(provider_id)
+        observed = capability is not None and capability.provider_id == provider_id
+        is_routed = provider_id in routed_lanes
+        detail[provider_id] = {
+            "configured": bool((observed and capability.executable_observed) or is_routed),
+            "live_ready": bool(
+                is_routed and (dispatchable_lanes is None or provider_id in dispatchable_lanes)
+            ),
+        }
+    return detail
+
+
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:32 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:11 UTC | END]]
@@ -1242,3 +1302,10 @@ def provider_lane_readiness(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
+
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
+# [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
