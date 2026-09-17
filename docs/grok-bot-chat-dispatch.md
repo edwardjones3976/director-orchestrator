@@ -81,6 +81,17 @@ Run from the repository root with the app open on the secondary display:
 | `-Action send` with an unknown digest | `no preview for <digest>` |
 | `-Action paste` with a validation-only packet | preview PNG shows the text and VERDICT line in the Grok Bot composer; `digest=8bf521a8…` printed; no receipt written |
 | `-Action clear` | composer empty on the after-screenshot; no send receipt exists |
+
+### Guarded `paste` on a busy desktop (2026-09-17 01:00 UTC, real app)
+
+| Path | Result |
+| --- | --- |
+| `-Action focus` before the run | `focused=ChatGPT pid=41744 grok_bot_window_pid=41880 keys_would_reach_grok_bot=False` |
+| first `-Action paste` | refused at the clipboard read-back (`clipboard read-back differs from the packet; not pasting`); no keystroke; owner clipboard sentinel intact. A transient race with another clipboard writer; the refusal is the designed outcome |
+| second and third `-Action paste` | `AppActivate` took focus, `Assert-GrokBotFocused` passed, text landed in the composer, `clipboard=restored` and the owner's sentinel was back on the clipboard; one `.pasted.json` marker written |
+| `-Action clear` | composer empty afterwards; no `.sent.json` exists; nothing was sent |
+
+Not yet observed: the case the guard exists for, `AppActivate` returning true while focus stays with the interactive user. On this desktop AppActivate took focus each time; the guard's refusal path is proven only by `-Action focus` reporting `False` when Grok Bot is not in front.
 | `-Action shot` | one PNG under `%LOCALAPPDATA%\director-orchestrator\grok-bot\` |
 
 Nothing was sent to Grok Bot during validation.
@@ -134,7 +145,7 @@ safe (no input, no clipboard). When in doubt run `focus` first; it prints
 the Claude desktop app in front: `focused=claude pid=35152
 grok_bot_window_pid=41880 keys_would_reach_grok_bot=False`. The script parses
 (`Parser::ParseFile`, zero errors); `UIAutomationClient` loads without a
-Bitdefender block. `paste`/`send` with the guard were not exercised at validation
+Bitdefender block. `paste` with the guard was exercised on 2026-09-17 (table above); `send` with the guard was not, and the AppActivate-succeeds-but-focus-stays case was not observed at validation
 time because the desktop was in use — which is the point.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:59 UTC | END]] -->
