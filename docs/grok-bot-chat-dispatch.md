@@ -42,7 +42,9 @@ not land in a worktree. Override with `-ArtifactRoot` if needed.
 3. **Read the preview PNG.** The composer must show the packet tail and the SHA.
    If it does not (focus trap, empty composer, stale text), do not send; run
    `-Action clear` to abandon the paste, fix focus, and paste again. The same
-   digest cannot be sent twice.
+   digest cannot be sent twice. Before any of this, the desktop must be idle;
+   see "Idle desktop, focus guard, clipboard restore" below.
+   <!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC]] -->
 
 4. Send:
 
@@ -93,3 +95,44 @@ Nothing was sent to Grok Bot during validation.
 - Read-only packets only. Grok Bot holds a live GitHub connection and could act.
 - One packet at a time; wait for the VERDICT line before pasting the next.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | END]] -->
+
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC | BEGIN]] -->
+## Idle desktop, focus guard, clipboard restore (added 2026-09-17)
+
+**Incident.** On 2026-09-16 at 23:23 UTC a keystroke meant for Grok Bot reached
+the owner's browser instead. `AppActivate` had returned `$true`, but Windows keeps
+focus with an interactively active user, so the key went to the foreground window
+the owner was using. An hour later a screenshot taken before a paste showed the
+owner in a credential dialog with a "Copy to clipboard" button on screen; the
+paste step, which overwrites the clipboard, would have replaced the value the
+owner was about to copy. Neither risk was covered by the 2026-09-13 script.
+
+**Rule.** Run `paste`, `send` and `clear` only on an idle desktop: the owner is
+not typing, and no dialog is open. `-Action shot` and `-Action focus` are always
+safe (no input, no clipboard). When in doubt run `focus` first; it prints
+`keys_would_reach_grok_bot=True|False`.
+
+**Guards in the script.**
+
+- Every `SendKeys` is preceded by `Assert-GrokBotFocused`, which reads the
+  focused element through managed UI Automation (`UIAutomationClient`, no user32
+  P/Invoke) and stops with `keyboard focus is with '<name>' (pid N), not Grok
+  Bot` unless the focus owner is the Grok Bot main-window process or a same-named
+  child of the exact executable. `AppActivate` returning `$true` is not trusted.
+- `paste` saves the owner's clipboard text before writing the packet and
+  restores it (or clears a non-text clipboard) in a `finally` once the paste is
+  verified; the output line `clipboard=restored|cleared (...)` records which.
+  Non-text clipboard content (an image, a file list) cannot be restored and is
+  cleared; the line says so.
+- `send` no longer checks the clipboard. It requires `<digest>.pasted.json`,
+  written by `paste`, and refuses if the Grok Bot pid has changed since the paste.
+  Focus is asserted **before** the receipt is written, so a refused send leaves
+  no false "sent" record and the same digest can be retried.
+
+**Validation, 2026-09-17 00:37 UTC, Windows 11, real app.** `-Action focus` with
+the Claude desktop app in front: `focused=claude pid=35152
+grok_bot_window_pid=41880 keys_would_reach_grok_bot=False`. The script parses
+(`Parser::ParseFile`, zero errors); `UIAutomationClient` loads without a
+Bitdefender block. `paste`/`send` with the guard were not exercised at validation
+time because the desktop was in use — which is the point.
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC | END]] -->
