@@ -94,8 +94,12 @@ function Read-ClipboardText {
   try { return (Get-Clipboard -Raw -ErrorAction Stop) } catch { return $null }
 }
 
-function Restore-ClipboardText([string]$Saved) {
-  if ($null -ne $Saved) { Set-Clipboard -Value $Saved; return "restored" }
+function Restore-ClipboardText($Saved) {
+  # Untyped on purpose: a [string] parameter turns $null into "" and
+  # Set-Clipboard rejects an empty string, which broke the first paste that
+  # started from an empty clipboard (2026-09-18). Empty and null both mean clear.
+  # [[Claude Code | Claude Opus 5 | 2026-09-18 | 17:35 UTC]]
+  if (-not [string]::IsNullOrEmpty($Saved)) { Set-Clipboard -Value $Saved; return "restored" }
   Add-Type -AssemblyName System.Windows.Forms
   [System.Windows.Forms.Clipboard]::Clear()
   return "cleared (previous content was empty or not text)"
