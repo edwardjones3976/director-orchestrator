@@ -91,7 +91,9 @@ Run from the repository root with the app open on the secondary display:
 | second and third `-Action paste` | `AppActivate` took focus, `Assert-GrokBotFocused` passed, text landed in the composer, `clipboard=restored` and the owner's sentinel was back on the clipboard; one `.pasted.json` marker written |
 | `-Action clear` | composer empty afterwards; no `.sent.json` exists; nothing was sent |
 
-Not yet observed: the case the guard exists for, `AppActivate` returning true while focus stays with the interactive user. On this desktop AppActivate took focus each time; the guard's refusal path is proven only by `-Action focus` reporting `False` when Grok Bot is not in front.
+Not yet observed at that time: the case the guard exists for, `AppActivate` returning true while focus stays with the interactive user. On this desktop AppActivate took focus each time; the guard's refusal path was proven only by `-Action focus` reporting `False` when Grok Bot is not in front.
+
+**Observed 2026-09-18 17:22 UTC** (`[[Claude Code | Claude Opus 5 | 2026-09-18 | 17:35 UTC]]`): with the owner active in the Claude desktop app, `-Action paste` ran `AppActivate` (returned `$true`) and then stopped at `Assert-GrokBotFocused` with `keyboard focus is with 'claude' (pid 38952), not Grok Bot (pid 49060); not sending keys`. No keystroke reached any window; the owner's clipboard was restored by the `finally`. A retry twenty seconds later, once focus had moved, pasted normally (`clipboard=cleared (previous content was empty or not text)`) and was sent after the preview was read. The same session also hit and fixed the empty-clipboard restore bug (`ad7bf88`).
 | `-Action shot` | one PNG under `%LOCALAPPDATA%\director-orchestrator\grok-bot\` |
 
 Nothing was sent to Grok Bot during validation.
