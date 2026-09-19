@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | BEGIN]] -->
@@ -61,6 +62,17 @@ route. Its attempt receipt does not replace the canonical rolling allocation led
 General assignments require the new allocation policy, canonical admission, stable
 journal binding, independent review and applicable activation checks. Tools are disabled
 by client configuration; this is not a claim of an OS security sandbox.
+
+`director_orchestrator.zai_lane` adds the program-level trial wiring: a typed
+contact-lane identity (product Claude Code CLI, family Z.ai, no production, review
+or merge authority), `ZAI_*` settings whose readiness booleans appear in
+`GET /health` as `providers.zai` and `zai_trial`, a startup validator that refuses
+any widening, and a separate append-only trial ledger that records each bounded
+assignment's status, latency, unknown cost and the non-Z.ai evaluator's
+correctness, first-pass, correction, privacy-fit and usefulness verdicts.
+`scripts/zai-trial.py` is the operator entry point (`status`, `dispatch`,
+`evaluate`). The lane still refuses dispatch at or after the trial end, and the
+identifier `zai` stays outside every production enumeration.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:00 UTC | END]] -->
 
 ## First qualification result
@@ -69,7 +81,9 @@ The September 13 UTC owner-invoked trial failed Director packet validation after
 47.234 seconds. The original harness retained only the exception class, so the exact
 rejected field cannot be recovered from its receipt. No live success or actual billing
 amount is claimed. The attempt was not repeated. Follow-up code retains sanitized
-diagnostics for future authorized calls. Eleven focused offline tests passed.
+diagnostics for future authorized calls, and focused offline tests cover the
+transport and the trial lane.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 01:10 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->

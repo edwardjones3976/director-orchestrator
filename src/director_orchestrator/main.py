@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
@@ -162,6 +163,7 @@ settings.validate_workload_policy_configuration()
 settings.validate_langgraph_configuration()
 settings.validate_langgraph_primary_configuration()
 # [[Codex | GPT-5.6 | 2026-08-22 16:05 UTC | END]]
+settings.validate_zai_trial_configuration()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | BEGIN]]
 store = TaskStore(settings.sqlite_path)
 primary_default_activation = None
@@ -519,6 +521,9 @@ def health() -> dict:
         "environment": settings.app_env,
         "paid_runs_enabled": settings.allow_paid_runs,
         "providers": providers_ready,
+        # Trial-only contact lane (owner directive #207): individual readiness
+        # booleans so an operator can see which gate is closed; never a value.
+        "zai_trial": settings.zai_trial_readiness(),
         "host_bridge": host_bridge_ready,
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
         "chatgpt_bridge": settings.chatgpt_bridge_readiness(),
@@ -1730,3 +1735,4 @@ def complete_run(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
