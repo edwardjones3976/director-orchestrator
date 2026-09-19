@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 """Operator entry point for the Z.ai trial-only contact lane (owner directive #207).
 
@@ -81,8 +82,13 @@ def main(argv=None) -> int:
     from director_orchestrator.zai_trial import redact_bound_key
 
     settings = Settings()
-    settings.validate_zai_trial_configuration()
-    ledger = ZaiTrialLedger(settings.zai_trial_ledger_path) if settings.zai_trial_ledger_path else None
+    try:
+        settings.validate_zai_trial_configuration()
+        ledger = ZaiTrialLedger(settings.zai_trial_ledger_path) if settings.zai_trial_ledger_path else None
+    except (ValueError, ZaiTrialLedgerError) as exc:
+        # A widened setting, a ledger path that names another store, or a file that is
+        # not this build's ledger: refuse as JSON before anything is read or written.
+        return _refused(str(exc))
 
     if args.command == "status":
         print(json.dumps({
@@ -155,3 +161,4 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]

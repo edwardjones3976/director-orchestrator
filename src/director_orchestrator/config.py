@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
@@ -972,6 +973,7 @@ class Settings:
             and executable.is_file(),
             "journal_configured": bool(self.zai_trial_journal_dir),
             "ledger_configured": bool(self.zai_trial_ledger_path),
+            "ledger_isolated": self.zai_ledger_isolated(),
             "timeout_valid": 1 <= self.zai_timeout_seconds <= 69,
             "lite_entitlement_verified": self.zai_lite_entitlement_verified,
             "trial_window_open": now < TRIAL_END,
@@ -979,6 +981,36 @@ class Settings:
             "review_verdict_disabled": not self.zai_allow_review_verdict,
             "production_activation_absent": not self.zai_production_activation,
         }
+
+    def zai_ledger_isolated(self) -> bool:
+        """True when the trial ledger names no other durable store (or is unset).
+
+        `ZaiTrialLedger` opens whatever path it is given, so a ledger path that
+        names the TaskStore, a LangGraph checkpoint or any other durable file would
+        write `zai_trial_*` tables into production storage. Same convention as the
+        LangGraph path checks: spelling and file identity, failing closed on races.
+        """
+
+        ledger = self.zai_trial_ledger_path.strip()
+        if not ledger:
+            return True
+        checkpoint = self.langgraph_checkpoint_path.strip()
+        others = (
+            self.sqlite_path,
+            checkpoint,
+            langgraph_resume_claim_path(checkpoint) if checkpoint else "",
+            self.langgraph_primary_acceptance_registry_path,
+            self.langgraph_primary_acceptance_journal_path,
+            self.langgraph_runtime_checkpoint_path,
+            self.langgraph_runtime_ledger_path,
+            self.completion_gate_store_path,
+            self.completion_gate_worker_store_path,
+            self.completion_gate_host_broker_path,
+            self.completion_gate_container_runtime_path,
+        )
+        return all(
+            _paths_are_isolated(ledger, other) for other in others if other and other.strip()
+        )
 
     def grok_primary_readiness(self) -> dict[str, bool]:
         repository_transport_required = (
@@ -1247,6 +1279,12 @@ class Settings:
             raise ValueError(
                 "ZAI_TRIAL_ENABLED requires ZAI_LITE_ENTITLEMENT_VERIFIED=true "
                 "(the owner has observed the Lite entitlement)"
+            )
+        if not self.zai_ledger_isolated():
+            raise ValueError(
+                "ZAI_TRIAL_LEDGER_PATH must be its own file: it names the TaskStore, a "
+                "LangGraph checkpoint, resume-claim, acceptance, runtime-ledger or "
+                "completion-gate store"
             )
 
     def validate_intake_routing_defaults(self) -> None:
@@ -2358,3 +2396,4 @@ class Settings:
 
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]

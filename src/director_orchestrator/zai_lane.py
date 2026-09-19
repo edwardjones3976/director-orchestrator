@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 """Z.ai trial-only contact lane: typed identity, separate trial ledger, bounded dispatch.
 
@@ -12,6 +13,7 @@ merge authority" structural rather than a runtime promise.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import sqlite3
 import threading
@@ -97,6 +99,94 @@ def is_self_evaluator(evaluator: str, model: str | None = None) -> bool:
     return bool(model) and name == model.strip().lower()
 
 
+_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    "CREATE TABLE IF NOT EXISTS zai_trial_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    """
+                CREATE TABLE IF NOT EXISTS zai_trial_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    assignment_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    work_packet_digest TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    recovery INTEGER NOT NULL CHECK (recovery IN (0, 1)),
+                    recovery_basis TEXT,
+                    started_at TEXT NOT NULL,
+                    production_credit INTEGER NOT NULL DEFAULT 0 CHECK (production_credit = 0),
+                    review_authority INTEGER NOT NULL DEFAULT 0 CHECK (review_authority = 0),
+                    merge_authority INTEGER NOT NULL DEFAULT 0 CHECK (merge_authority = 0),
+                    CHECK ((recovery = 1) = (recovery_basis IS NOT NULL))
+                )
+                """,
+    "CREATE INDEX IF NOT EXISTS zai_trial_attempts_assignment ON zai_trial_attempts(assignment_id, started_at)",
+    """
+                CREATE TABLE IF NOT EXISTS zai_trial_outcomes (
+                    attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_attempts(attempt_id),
+                    status TEXT NOT NULL CHECK (
+                        status IN ('SUCCEEDED', 'FAILED', 'AMBIGUOUS', 'REFUSED', 'BLOCKED')
+                    ),
+                    finished_at TEXT NOT NULL,
+                    latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
+                    result_packet_digest TEXT,
+                    cost_usd REAL CHECK (cost_usd IS NULL OR cost_usd > 0),
+                    error_type TEXT,
+                    CHECK (status <> 'SUCCEEDED' OR result_packet_digest IS NOT NULL)
+                )
+                """,
+    """
+                CREATE TABLE IF NOT EXISTS zai_trial_evaluations (
+                    attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_outcomes(attempt_id),
+                    evaluated_at TEXT NOT NULL,
+                    evaluator TEXT NOT NULL CHECK (
+                        evaluator <> ''
+                        AND instr(lower(evaluator), 'zai') = 0
+                        AND instr(lower(evaluator), 'z.ai') = 0
+                        AND instr(lower(evaluator), 'z-ai') = 0
+                        AND instr(lower(evaluator), 'glm') = 0
+                    ),
+                    correctness TEXT NOT NULL CHECK (correctness IN ('correct', 'incorrect', 'unverified')),
+                    first_pass INTEGER NOT NULL CHECK (first_pass IN (0, 1)),
+                    correction_count INTEGER NOT NULL CHECK (correction_count >= 0),
+                    privacy_fit TEXT NOT NULL CHECK (privacy_fit IN ('fit', 'unfit', 'unassessed')),
+                    usefulness TEXT NOT NULL CHECK (
+                        usefulness IN ('accepted', 'partially_useful', 'unusable', 'unassessed')
+                    ),
+                    notes_digest TEXT,
+                    CHECK (first_pass = 0 OR correction_count = 0)
+                )
+                """,
+    *(
+        f"""CREATE TRIGGER IF NOT EXISTS {table}_no_{verb.lower()}
+        BEFORE {verb} ON {table}
+        BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"""
+        for table in ("zai_trial_attempts", "zai_trial_outcomes", "zai_trial_evaluations")
+        for verb in ("UPDATE", "DELETE")
+    ),
+)
+
+
+def _normalize_sql(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+@functools.lru_cache(maxsize=1)
+def _expected_schema() -> frozenset[tuple[str, str, str]]:
+    """sqlite_master of this build's schema, built once in memory: the comparison target."""
+
+    memory = sqlite3.connect(":memory:")
+    try:
+        for statement in _SCHEMA_STATEMENTS:
+            memory.execute(statement)
+        return frozenset(
+            (row[0], row[1], _normalize_sql(row[2]))
+            for row in memory.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL"
+            )
+        )
+    finally:
+        memory.close()
+
+
 class ZaiTrialLedger:
     """Append-only SQLite record of bounded Lite assignments and their evaluation.
 
@@ -121,91 +211,58 @@ class ZaiTrialLedger:
         connection.execute("PRAGMA secure_delete = ON")
         connection.execute("PRAGMA foreign_keys = ON")
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError:
+                raise  # lock contention is not a schema problem
+            except sqlite3.DatabaseError as exc:
+                raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger") from exc
             with connection:
+                # Every connection, not only the first: the file can be replaced between
+                # calls, and a foreign or older database must never be written.
+                self._verify_schema(connection)
                 yield connection
         finally:
             connection.close()
 
+    def _verify_schema(self, connection: sqlite3.Connection) -> None:
+        """Fail closed unless the file is empty or exactly this build's ledger.
+
+        `CREATE TABLE IF NOT EXISTS` would accept any pre-existing database and
+        silently lose the CHECK constraints and append-only triggers that carry the
+        no-credit guarantee. There is no migration: an older, partial, weakened or
+        foreign file is refused. The error names no path.
+        """
+
+        try:
+            actual = frozenset(
+                (row["type"], row["name"], _normalize_sql(row["sql"]))
+                for row in connection.execute(
+                    "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL"
+                )
+            )
+        except sqlite3.OperationalError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger") from exc
+        if not actual:
+            return  # a fresh file: _initialize creates the schema in this transaction
+        if actual != _expected_schema():
+            raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger")
+        version = connection.execute(
+            "SELECT value FROM zai_trial_metadata WHERE key = 'version'"
+        ).fetchone()
+        if version is None or version[0] != LEDGER_VERSION:
+            raise ZaiTrialLedgerError("zai_ledger_version_mismatch")
+
     def _initialize(self) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS zai_trial_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-            )
+            for statement in _SCHEMA_STATEMENTS:
+                connection.execute(statement)
             connection.execute(
                 "INSERT OR IGNORE INTO zai_trial_metadata (key, value) VALUES ('version', ?)",
                 (LEDGER_VERSION,),
             )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zai_trial_attempts (
-                    attempt_id TEXT PRIMARY KEY,
-                    assignment_id TEXT NOT NULL,
-                    task_id TEXT NOT NULL,
-                    work_packet_digest TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    purpose TEXT NOT NULL,
-                    recovery INTEGER NOT NULL CHECK (recovery IN (0, 1)),
-                    recovery_basis TEXT,
-                    started_at TEXT NOT NULL,
-                    production_credit INTEGER NOT NULL DEFAULT 0 CHECK (production_credit = 0),
-                    review_authority INTEGER NOT NULL DEFAULT 0 CHECK (review_authority = 0),
-                    merge_authority INTEGER NOT NULL DEFAULT 0 CHECK (merge_authority = 0),
-                    CHECK ((recovery = 1) = (recovery_basis IS NOT NULL))
-                )
-                """
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS zai_trial_attempts_assignment"
-                " ON zai_trial_attempts(assignment_id, started_at)"
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zai_trial_outcomes (
-                    attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_attempts(attempt_id),
-                    status TEXT NOT NULL CHECK (
-                        status IN ('SUCCEEDED', 'FAILED', 'AMBIGUOUS', 'REFUSED', 'BLOCKED')
-                    ),
-                    finished_at TEXT NOT NULL,
-                    latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
-                    result_packet_digest TEXT,
-                    cost_usd REAL CHECK (cost_usd IS NULL OR cost_usd > 0),
-                    error_type TEXT,
-                    CHECK (status <> 'SUCCEEDED' OR result_packet_digest IS NOT NULL)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS zai_trial_evaluations (
-                    attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_outcomes(attempt_id),
-                    evaluated_at TEXT NOT NULL,
-                    evaluator TEXT NOT NULL CHECK (
-                        evaluator <> ''
-                        AND instr(lower(evaluator), 'zai') = 0
-                        AND instr(lower(evaluator), 'z.ai') = 0
-                        AND instr(lower(evaluator), 'z-ai') = 0
-                        AND instr(lower(evaluator), 'glm') = 0
-                    ),
-                    correctness TEXT NOT NULL CHECK (correctness IN ('correct', 'incorrect', 'unverified')),
-                    first_pass INTEGER NOT NULL CHECK (first_pass IN (0, 1)),
-                    correction_count INTEGER NOT NULL CHECK (correction_count >= 0),
-                    privacy_fit TEXT NOT NULL CHECK (privacy_fit IN ('fit', 'unfit', 'unassessed')),
-                    usefulness TEXT NOT NULL CHECK (
-                        usefulness IN ('accepted', 'partially_useful', 'unusable', 'unassessed')
-                    ),
-                    notes_digest TEXT,
-                    CHECK (first_pass = 0 OR correction_count = 0)
-                )
-                """
-            )
-            for table in ("zai_trial_attempts", "zai_trial_outcomes", "zai_trial_evaluations"):
-                for verb in ("UPDATE", "DELETE"):
-                    connection.execute(
-                        f"""CREATE TRIGGER IF NOT EXISTS {table}_no_{verb.lower()}
-                        BEFORE {verb} ON {table}
-                        BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END"""
-                    )
 
     @staticmethod
     def _recorded_failures(connection: sqlite3.Connection) -> int:
@@ -559,3 +616,4 @@ class ZaiTrialLane:
         )
         return ZaiTrialDispatch(attempt_id=attempt_id, latency_ms=latency_ms, result=result)
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
