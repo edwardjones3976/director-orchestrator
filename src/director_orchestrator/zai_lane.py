@@ -20,21 +20,27 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from .langgraph_runtime import ProviderAdapterContext
 from .native_acceptance_issuer import IssuerError
-from .packet_contracts import document_digest
+from .packet_contracts import PacketContractError, document_digest, validate_packet
 from .zai_trial import ENDPOINT, TRIAL_END, build_zai_trial_adapter
 
 LEDGER_VERSION = "zai-trial-ledger/v1"
 # Welcome packet rule: after three recorded failures the route is unavailable.
 MAX_RECORDED_FAILURES = 3
-ATTEMPT_STATUSES = ("SUCCEEDED", "FAILED", "AMBIGUOUS")
+# SUCCEEDED / FAILED / AMBIGUOUS describe an attempt that reached the provider.
+# REFUSED means a deterministic check stopped it before any provider contact (the
+# attempt is not consumed). BLOCKED means Z.ai answered OWNER_DECISION_REQUIRED:
+# not a failure, never redispatched without a new assignment.
+ATTEMPT_STATUSES = ("SUCCEEDED", "FAILED", "AMBIGUOUS", "REFUSED", "BLOCKED")
+FAILURE_STATUSES = ("FAILED", "AMBIGUOUS")
 CORRECTNESS = ("correct", "incorrect", "unverified")
 PRIVACY_FIT = ("fit", "unfit", "unassessed")
 USEFULNESS = ("accepted", "partially_useful", "unusable", "unassessed")
-_SELF_NAMES = frozenset({"zai", "z.ai", "glm"})
+# Any evaluator name containing one of these is Z.ai evaluating itself.
+_SELF_MARKERS = ("zai", "z.ai", "z-ai", "glm")
 
 
 @dataclass(frozen=True)
@@ -65,7 +71,7 @@ class ZaiTrialLedgerError(RuntimeError):
 
 
 class ZaiTrialLaneUnavailable(RuntimeError):
-    """The lane is not ready or the trial window is closed; nothing was dispatched."""
+    """The lane is not ready, the window is closed, or the packet failed pre-flight; nothing was dispatched."""
 
 
 @dataclass(frozen=True)
@@ -80,7 +86,15 @@ def _now() -> str:
 
 
 def attempt_id_for(idempotency_key: str) -> str:
+    """Same digest the transport uses for its journal reservation file."""
     return hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+
+
+def is_self_evaluator(evaluator: str, model: str | None = None) -> bool:
+    name = evaluator.strip().lower()
+    if not name or any(marker in name for marker in _SELF_MARKERS):
+        return True
+    return bool(model) and name == model.strip().lower()
 
 
 class ZaiTrialLedger:
@@ -149,7 +163,9 @@ class ZaiTrialLedger:
                 """
                 CREATE TABLE IF NOT EXISTS zai_trial_outcomes (
                     attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_attempts(attempt_id),
-                    status TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'FAILED', 'AMBIGUOUS')),
+                    status TEXT NOT NULL CHECK (
+                        status IN ('SUCCEEDED', 'FAILED', 'AMBIGUOUS', 'REFUSED', 'BLOCKED')
+                    ),
                     finished_at TEXT NOT NULL,
                     latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
                     result_packet_digest TEXT,
@@ -165,7 +181,11 @@ class ZaiTrialLedger:
                     attempt_id TEXT PRIMARY KEY REFERENCES zai_trial_outcomes(attempt_id),
                     evaluated_at TEXT NOT NULL,
                     evaluator TEXT NOT NULL CHECK (
-                        evaluator <> '' AND lower(evaluator) NOT IN ('zai', 'z.ai', 'glm')
+                        evaluator <> ''
+                        AND instr(lower(evaluator), 'zai') = 0
+                        AND instr(lower(evaluator), 'z.ai') = 0
+                        AND instr(lower(evaluator), 'z-ai') = 0
+                        AND instr(lower(evaluator), 'glm') = 0
                     ),
                     correctness TEXT NOT NULL CHECK (correctness IN ('correct', 'incorrect', 'unverified')),
                     first_pass INTEGER NOT NULL CHECK (first_pass IN (0, 1)),
@@ -213,7 +233,9 @@ class ZaiTrialLedger:
 
         One primary attempt per assignment. One recovery only after a recorded
         FAILED outcome and only with an explicit basis; a SUCCEEDED attempt is
-        never repeated and an AMBIGUOUS one is never redispatched.
+        never repeated, an AMBIGUOUS one is never redispatched, a BLOCKED one
+        (owner decision required) needs a new assignment, and a REFUSED one
+        never reached the provider so it does not consume the attempt.
         """
 
         if not purpose.strip():
@@ -232,17 +254,20 @@ class ZaiTrialLedger:
                 WHERE a.assignment_id = ? ORDER BY a.started_at, a.attempt_id""",
                 (assignment_id,),
             ).fetchall()
+            if any(row["status"] == "BLOCKED" for row in prior):
+                raise ZaiTrialLedgerError("zai_owner_decision_required_before_redispatch")
+            consumed = [row for row in prior if row["status"] != "REFUSED"]
             if recovery_basis is None:
-                if prior:
+                if consumed:
                     raise ZaiTrialLedgerError("zai_primary_attempt_already_recorded")
             else:
                 if not recovery_basis.strip():
                     raise ZaiTrialLedgerError("zai_recovery_requires_explicit_basis")
-                if not prior:
+                if not consumed:
                     raise ZaiTrialLedgerError("zai_recovery_requires_a_prior_attempt")
-                if any(row["recovery"] for row in prior):
+                if any(row["recovery"] for row in consumed):
                     raise ZaiTrialLedgerError("zai_recovery_already_used")
-                statuses = [row["status"] for row in prior]
+                statuses = [row["status"] for row in consumed]
                 if None in statuses:
                     raise ZaiTrialLedgerError("zai_prior_attempt_unresolved_no_redispatch")
                 if "SUCCEEDED" in statuses:
@@ -312,8 +337,6 @@ class ZaiTrialLedger:
     ) -> None:
         """Record the non-Z.ai evaluator's verdict; Z.ai never assesses its own work."""
 
-        if not evaluator.strip() or evaluator.strip().lower() in _SELF_NAMES:
-            raise ZaiTrialLedgerError("zai_cannot_evaluate_its_own_work")
         if correctness not in CORRECTNESS:
             raise ZaiTrialLedgerError("zai_evaluation_correctness_unknown")
         if privacy_fit not in PRIVACY_FIT:
@@ -326,10 +349,15 @@ class ZaiTrialLedger:
             "sha256:" + hashlib.sha256(notes.encode("utf-8")).hexdigest() if notes else None
         )
         with self._lock, self._connect() as connection:
-            if not connection.execute(
-                "SELECT 1 FROM zai_trial_outcomes WHERE attempt_id = ?", (attempt_id,)
-            ).fetchone():
+            row = connection.execute(
+                """SELECT a.model FROM zai_trial_attempts a
+                JOIN zai_trial_outcomes o ON o.attempt_id = a.attempt_id WHERE a.attempt_id = ?""",
+                (attempt_id,),
+            ).fetchone()
+            if row is None:
                 raise ZaiTrialLedgerError("zai_evaluation_requires_recorded_outcome")
+            if is_self_evaluator(evaluator, row["model"]):
+                raise ZaiTrialLedgerError("zai_cannot_evaluate_its_own_work")
             if connection.execute(
                 "SELECT 1 FROM zai_trial_evaluations WHERE attempt_id = ?", (attempt_id,)
             ).fetchone():
@@ -365,23 +393,23 @@ class ZaiTrialLedger:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, moment: datetime | None = None) -> dict[str, Any]:
         """Trial metrics for the 2026-09-29 owner decision; grants nothing."""
 
         rows = self.attempts()
         outcomes = [row for row in rows if row["status"]]
+        contacted = [row for row in outcomes if row["status"] != "REFUSED"]
         evaluated = [row for row in rows if row["correctness"]]
-        failures = sum(1 for row in outcomes if row["status"] in ("FAILED", "AMBIGUOUS"))
+        failures = sum(1 for row in outcomes if row["status"] in FAILURE_STATUSES)
         first_pass_correct = sum(
             1 for row in evaluated if row["correctness"] == "correct" and row["first_pass"]
         )
+        counts = {name.lower(): sum(1 for row in outcomes if row["status"] == name) for name in ATTEMPT_STATUSES}
         return {
             "version": LEDGER_VERSION,
             "lane": ZAI_CONTACT_LANE.as_dict(),
             "attempts": len(rows),
-            "succeeded": sum(1 for row in outcomes if row["status"] == "SUCCEEDED"),
-            "failed": sum(1 for row in outcomes if row["status"] == "FAILED"),
-            "ambiguous": sum(1 for row in outcomes if row["status"] == "AMBIGUOUS"),
+            **counts,
             "unresolved": len(rows) - len(outcomes),
             "evaluated": len(evaluated),
             "first_pass_yield": (
@@ -393,14 +421,14 @@ class ZaiTrialLedger:
                 else None
             ),
             "mean_latency_ms": (
-                round(sum(row["latency_ms"] for row in outcomes) / len(outcomes))
-                if outcomes
+                round(sum(row["latency_ms"] for row in contacted) / len(contacted))
+                if contacted
                 else None
             ),
-            "cost_known": sum(1 for row in outcomes if row["cost_usd"] is not None),
+            "cost_known": sum(1 for row in contacted if row["cost_usd"] is not None),
             "recorded_failures": failures,
             "route_available": failures < MAX_RECORDED_FAILURES,
-            "trial_window_open": datetime.now(timezone.utc) < TRIAL_END,
+            "trial_window_open": (moment or datetime.now(timezone.utc)) < TRIAL_END,
             "dispatch_authorized": False,
             "production_credit_issued": False,
             "review_authority": False,
@@ -415,12 +443,23 @@ class ZaiTrialLane:
     consumer: a trial result is evidence in the trial ledger, not a ProviderRun.
     """
 
-    def __init__(self, *, adapter, ledger: ZaiTrialLedger, model: str):
+    def __init__(
+        self,
+        *,
+        adapter,
+        ledger: ZaiTrialLedger,
+        model: str,
+        journal: Path | None = None,
+        now: Callable[[], datetime] | None = None,
+    ):
         if getattr(adapter, "provider", None) != ZAI_CONTACT_LANE.lane_id:
             raise ValueError("the trial lane only drives the zai packet boundary adapter")
         self.adapter = adapter
         self.ledger = ledger
         self.model = model
+        # The transport's journal: its reservation file proves provider contact began.
+        self._journal = Path(journal) if journal else None
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     @classmethod
     def from_settings(cls, settings, *, moment: datetime | None = None) -> "ZaiTrialLane":
@@ -428,10 +467,11 @@ class ZaiTrialLane:
         closed = sorted(name for name, ready in readiness.items() if not ready)
         if closed:
             raise ZaiTrialLaneUnavailable("zai trial lane is not ready: " + ", ".join(closed))
+        journal = Path(settings.zai_trial_journal_dir).expanduser()
         adapter = build_zai_trial_adapter(
             executable=Path(settings.zai_cli_executable).expanduser(),
             api_key=settings.zai_api_key,
-            journal=Path(settings.zai_trial_journal_dir).expanduser(),
+            journal=journal,
             model=settings.zai_model,
             lite_verified=settings.zai_lite_entitlement_verified,
         )
@@ -439,7 +479,34 @@ class ZaiTrialLane:
             adapter=adapter,
             ledger=ZaiTrialLedger(settings.zai_trial_ledger_path),
             model=settings.zai_model,
+            journal=journal,
         )
+
+    def _preflight(self, work_packet: Mapping[str, Any], context: ProviderAdapterContext) -> None:
+        """Mirror the adapter's and transport's deterministic refusals before reserving.
+
+        A packet that could never reach Z.ai must not consume the assignment's
+        primary attempt or count toward the three-failure route closure.
+        """
+
+        if self._now() >= TRIAL_END:
+            raise ZaiTrialLaneUnavailable("Lite trial window closed; separate owner decision required")
+        if context.allowed_tools or context.allowed_external_effects or context.budget_usd != 0:
+            raise ZaiTrialLaneUnavailable("trial dispatch requires no tools, external effects or budget")
+        if not 0 < context.timeout_seconds <= 69:
+            raise ZaiTrialLaneUnavailable("trial timeout must be between 1 and 69 seconds")
+        try:
+            work = validate_packet("work", work_packet)
+        except PacketContractError as exc:
+            raise ZaiTrialLaneUnavailable(f"work packet rejected before dispatch: {exc}") from exc
+        if document_digest(work) != context.work_packet_digest:
+            raise ZaiTrialLaneUnavailable("work packet digest does not match the dispatch context")
+        if work["allowed_tools"] or work["allowed_external_effects"] or work["limits"]["budget_usd"] != 0:
+            raise ZaiTrialLaneUnavailable("trial packets carry no tools, external effects or budget")
+
+    def _contacted(self, attempt_id: str) -> bool:
+        """Whether the transport wrote its own reservation, i.e. provider contact began."""
+        return self._journal is None or (self._journal / f"{attempt_id}.json").exists()
 
     def dispatch(
         self,
@@ -449,10 +516,7 @@ class ZaiTrialLane:
         purpose: str,
         recovery_basis: str | None = None,
     ) -> ZaiTrialDispatch:
-        if datetime.now(timezone.utc) >= TRIAL_END:
-            raise ZaiTrialLaneUnavailable("Lite trial window closed; separate owner decision required")
-        if context.allowed_tools or context.allowed_external_effects or context.budget_usd != 0:
-            raise ZaiTrialLaneUnavailable("trial dispatch requires no tools, external effects or budget")
+        self._preflight(work_packet, context)
         attempt_id = self.ledger.reserve(
             assignment_id=context.assignment_id,
             task_id=context.task_id,
@@ -466,26 +530,32 @@ class ZaiTrialLane:
         try:
             result = self.adapter.dispatch(work_packet, context=context)
         except Exception as exc:
-            # Timeouts, output overflow and a pre-existing journal reservation
-            # leave the provider state unknown: never redispatched.
-            ambiguous = isinstance(exc, (IssuerError, FileExistsError))
+            latency_ms = int((time.monotonic() - started) * 1000)
+            if isinstance(exc, (IssuerError, FileExistsError)):
+                # Timeouts, output overflow and a pre-existing journal reservation
+                # leave the provider state unknown: never redispatched.
+                status = "AMBIGUOUS"
+            elif isinstance(exc, (ValueError, PacketContractError)) and not self._contacted(attempt_id):
+                # A deterministic refusal before the transport reserved its journal
+                # entry: Z.ai was never contacted, the attempt is not consumed.
+                status = "REFUSED"
+            else:
+                status = "FAILED"
             self.ledger.record_outcome(
-                attempt_id,
-                status="AMBIGUOUS" if ambiguous else "FAILED",
-                latency_ms=int((time.monotonic() - started) * 1000),
-                error_type=type(exc).__name__,
+                attempt_id, status=status, latency_ms=latency_ms, error_type=type(exc).__name__
             )
             raise
         latency_ms = int((time.monotonic() - started) * 1000)
-        succeeded = result.get("status") == "SUCCEEDED"
+        provider_status = result.get("status")
+        status = {"SUCCEEDED": "SUCCEEDED", "OWNER_DECISION_REQUIRED": "BLOCKED"}.get(provider_status, "FAILED")
         self.ledger.record_outcome(
             attempt_id,
-            status="SUCCEEDED" if succeeded else "FAILED",
+            status=status,
             latency_ms=latency_ms,
             result_packet_digest=document_digest(result),
             # The host CLI prices with Anthropic tariffs, so cost stays unknown.
             cost_usd=None,
-            error_type=None if succeeded else str(result.get("status")),
+            error_type=None if status == "SUCCEEDED" else str(provider_status),
         )
         return ZaiTrialDispatch(attempt_id=attempt_id, latency_ms=latency_ms, result=result)
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]

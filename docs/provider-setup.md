@@ -561,17 +561,25 @@ PYTHONPATH=src python scripts/zai-trial.py --env-file .env dispatch --work-packe
 PYTHONPATH=src python scripts/zai-trial.py --env-file .env evaluate --attempt <id> --evaluator cursor --correctness correct --first-pass --privacy-fit fit --usefulness accepted
 ```
 
-`dispatch` validates the v1 work packet, reserves one attempt per assignment in
-the trial ledger before any provider I/O, and afterwards records status, latency
-and the result digest. Cost stays unknown, never zero, because the host CLI prices
-with Anthropic tariffs. Nothing retries automatically: one recovery is allowed
-only after a recorded `FAILED` outcome and only with an explicit
-`--recovery-basis`; a `SUCCEEDED` or `AMBIGUOUS` attempt is never redispatched,
-and the route closes after three recorded failures. `evaluate` records the
-non-Z.ai evaluator's correctness, first-pass, correction-count, privacy-fit and
-usefulness verdicts (Z.ai cannot evaluate its own work), and `status` derives the
-first-pass yield and correction rate the 2026-09-29 decision needs. The ledger
-issues no production credit and is not the canonical rolling allocation ledger.
+`dispatch` validates the v1 work packet and mirrors the transport's deterministic
+refusals (digest, tools, budget, timeout, trial end) before it reserves one attempt
+per assignment in the trial ledger, so a packet that could never reach Z.ai
+consumes nothing; afterwards it records status, latency and the result digest.
+Cost stays unknown, never zero, because the host CLI prices with Anthropic
+tariffs. Outcome statuses: `SUCCEEDED`, `FAILED`, `AMBIGUOUS` (timeout or unknown
+provider state), `REFUSED` (stopped before provider contact, attempt not consumed)
+and `BLOCKED` (Z.ai answered `OWNER_DECISION_REQUIRED`; needs a new assignment).
+Nothing retries automatically: one recovery is allowed only after a recorded
+`FAILED` outcome and only with an explicit `--recovery-basis`; a `SUCCEEDED`,
+`AMBIGUOUS` or `BLOCKED` attempt is never redispatched, and the route closes after
+three recorded failures (`FAILED` plus `AMBIGUOUS`). `resolve --attempt <id>
+--reason …` closes an attempt that a killed process left without an outcome, as
+`AMBIGUOUS` only. `evaluate` records the non-Z.ai evaluator's correctness,
+first-pass, correction-count, privacy-fit and usefulness verdicts (any evaluator
+name naming Z.ai or GLM, or equal to the attempt's model, is refused), and
+`status` derives the first-pass yield and correction rate the 2026-09-29 decision
+needs. The ledger issues no production credit and is not the canonical rolling
+allocation ledger.
 The conditional eleven-contact allocation profile is described separately and
 stays `PROPOSED` until that decision.
 

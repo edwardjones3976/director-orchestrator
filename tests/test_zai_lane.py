@@ -1,5 +1,6 @@
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 import json
+import re
 import sqlite3
 import sys
 import unittest
@@ -12,7 +13,7 @@ from unittest.mock import patch
 from director_orchestrator.config import Settings
 from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.native_acceptance_issuer import IssuerError
-from director_orchestrator.packet_contracts import document_digest
+from director_orchestrator.packet_contracts import PacketContractError, document_digest
 from director_orchestrator.zai_lane import (
     MAX_RECORDED_FAILURES,
     ZAI_CONTACT_LANE,
@@ -21,16 +22,27 @@ from director_orchestrator.zai_lane import (
     ZaiTrialLedger,
     ZaiTrialLedgerError,
     attempt_id_for,
+    is_self_evaluator,
 )
 from director_orchestrator.zai_trial import ENDPOINT, TRIAL_END, ZaiLiteTrialTransport
 
+ROOT = Path(__file__).resolve().parents[1]
 SECRET = "test.secret"
+BEFORE_END = TRIAL_END - timedelta(days=1)
 
 
-def _context(assignment="A-1", key="k-1", **overrides) -> ProviderAdapterContext:
+def work_packet(assignment="A-1", key="k-1", **limits) -> dict:
+    work = json.loads((ROOT / "docs/schemas/model-work-packet-v1.example.json").read_text(encoding="utf-8"))
+    work.update(assignment_id=assignment, idempotency_key=key, allowed_tools=[], allowed_external_effects=[])
+    work["limits"].update(budget_usd=0, timeout_seconds=60, retry_limit=1)
+    work["limits"].update(limits)
+    return work
+
+
+def _context(work: dict, **overrides) -> ProviderAdapterContext:
     fields = dict(
-        task_id="T-1", assignment_id=assignment, idempotency_key=key,
-        work_packet_digest="sha256:" + "a" * 64, writer_token_digest="sha256:" + "0" * 64,
+        task_id=work["task_id"], assignment_id=work["assignment_id"], idempotency_key=work["idempotency_key"],
+        work_packet_digest=document_digest(work), writer_token_digest="sha256:" + "0" * 64,
         timeout_seconds=60, budget_usd=0, max_hops=1, max_revisions=1,
         allowed_tools=(), allowed_external_effects=(),
     )
@@ -52,6 +64,16 @@ class FakeAdapter:
         return self.behaviour
 
 
+def closed_settings() -> Settings:
+    """A closed lane built explicitly, so the host environment cannot open it."""
+    return replace(
+        Settings(), zai_trial_enabled=False, zai_api_key="", zai_api_base=ENDPOINT, zai_mode="trial_only",
+        zai_model="glm-5.3-flash", zai_cli_executable="", zai_trial_journal_dir="", zai_trial_ledger_path="",
+        zai_timeout_seconds=60, zai_lite_entitlement_verified=False, zai_production_activation="",
+        zai_allow_repository_write=False, zai_allow_review_verdict=False,
+    )
+
+
 class IdentityTests(unittest.TestCase):
     def test_contact_lane_holds_no_authority_and_names_product_and_family(self):
         lane = ZAI_CONTACT_LANE.as_dict()
@@ -65,7 +87,7 @@ class IdentityTests(unittest.TestCase):
     def test_zai_is_absent_from_every_production_and_review_enumeration(self):
         # This absence is the structural guarantee: no admission, credit,
         # review verdict, committee vote or reviewer independence can name zai.
-        from director_orchestrator import engine, team_charter
+        from director_orchestrator import engine, langgraph_postgres, team_charter
         from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, LANES
         from director_orchestrator.interactions import InteractionProvider, ProviderTransport
         from director_orchestrator.models import ProviderName
@@ -94,6 +116,14 @@ class IdentityTests(unittest.TestCase):
             self.assertNotIn("zai", {str(value).lower() for value in values}, name)
         for profile, targets in ALLOCATION_PROFILES.items():
             self.assertNotIn("zai", targets, profile)
+        # The Postgres admission ledger's lane allowlist is literal SQL, not an enum.
+        ddl = Path(langgraph_postgres.__file__).read_text(encoding="utf-8")
+        literals = re.findall(r"provider_lane\s+IN\s*\(([^)]*)\)", ddl)
+        self.assertTrue(literals, "expected at least one provider_lane IN (...) literal")
+        for literal in literals:
+            lanes = {item.strip().strip("'") for item in literal.split(",")}
+            self.assertNotIn("zai", lanes)
+            self.assertEqual(lanes, set(PRIMARY_PROVIDER_LANES))
 
 
 class SettingsTests(unittest.TestCase):
@@ -102,21 +132,15 @@ class SettingsTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
         self.ready = replace(
-            Settings(),
-            zai_trial_enabled=True, zai_api_key=SECRET, zai_api_base=ENDPOINT,
-            zai_mode="trial_only", zai_model="glm-5.3-flash",
-            zai_cli_executable=sys.executable,
-            zai_trial_journal_dir=str(root / "journal"),
-            zai_trial_ledger_path=str(root / "ledger.sqlite3"),
-            zai_timeout_seconds=60, zai_lite_entitlement_verified=True,
-            zai_production_activation="",
-            zai_allow_repository_write=False, zai_allow_review_verdict=False,
+            closed_settings(),
+            zai_trial_enabled=True, zai_api_key=SECRET, zai_cli_executable=sys.executable,
+            zai_trial_journal_dir=str(root / "journal"), zai_trial_ledger_path=str(root / "ledger.sqlite3"),
+            zai_lite_entitlement_verified=True,
         )
-        self.before = TRIAL_END - timedelta(days=1)
 
     def test_defaults_fail_closed_and_stay_boolean(self):
-        settings = Settings()
-        readiness = settings.zai_trial_readiness(moment=self.before)
+        settings = closed_settings()
+        readiness = settings.zai_trial_readiness(moment=BEFORE_END)
         self.assertTrue(all(isinstance(value, bool) for value in readiness.values()))
         self.assertFalse(readiness["trial_enabled"])
         self.assertFalse(readiness["credential_configured"])
@@ -124,14 +148,20 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(readiness["trial_only_mode"])
         self.assertTrue(readiness["production_activation_absent"])
         self.assertIs(settings.readiness()["zai"], False)
-        settings.validate_zai_trial_configuration()  # defaults are a valid closed lane
+        settings.validate_zai_trial_configuration()  # a closed lane is a valid configuration
+        # The shipped defaults are the closed lane above, whatever the host exports.
+        for field in ("zai_trial_enabled", "zai_lite_entitlement_verified", "zai_allow_repository_write",
+                      "zai_allow_review_verdict"):
+            self.assertIs(Settings.__dataclass_fields__[field].default, False, field)
+        self.assertEqual(Settings.__dataclass_fields__["zai_mode"].default, "trial_only")
+        self.assertEqual(Settings.__dataclass_fields__["zai_api_base"].default, ENDPOINT)
 
     def test_fully_configured_lane_is_ready_only_inside_the_trial_window(self):
-        self.assertTrue(all(self.ready.zai_trial_readiness(moment=self.before).values()))
+        self.assertTrue(all(self.ready.zai_trial_readiness(moment=BEFORE_END).values()))
         at_end = self.ready.zai_trial_readiness(moment=TRIAL_END)
         self.assertFalse(at_end["trial_window_open"])
         self.assertTrue(all(value for name, value in at_end.items() if name != "trial_window_open"))
-        self.assertNotIn(SECRET, json.dumps(self.ready.zai_trial_readiness(moment=self.before)))
+        self.assertNotIn(SECRET, json.dumps(self.ready.zai_trial_readiness(moment=BEFORE_END)))
 
     def test_each_widening_setting_fails_startup_validation(self):
         widenings = {
@@ -148,7 +178,7 @@ class SettingsTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as caught:
                     widened.validate_zai_trial_configuration()
                 self.assertIn(variable, str(caught.exception))
-                self.assertFalse(all(widened.zai_trial_readiness(moment=self.before).values()))
+                self.assertFalse(all(widened.zai_trial_readiness(moment=BEFORE_END).values()))
         self.ready.validate_zai_trial_configuration()
 
     def test_individual_readiness_checks_close_the_lane(self):
@@ -163,7 +193,7 @@ class SettingsTests(unittest.TestCase):
         }
         for check, change in cases.items():
             with self.subTest(check=check):
-                readiness = replace(self.ready, **change).zai_trial_readiness(moment=self.before)
+                readiness = replace(self.ready, **change).zai_trial_readiness(moment=BEFORE_END)
                 self.assertFalse(readiness[check])
                 self.assertFalse(all(readiness.values()))
 
@@ -202,13 +232,13 @@ class SettingsTests(unittest.TestCase):
 
     def test_from_settings_refuses_a_closed_lane_and_builds_an_open_one(self):
         with self.assertRaises(ZaiTrialLaneUnavailable) as caught:
-            ZaiTrialLane.from_settings(Settings(), moment=self.before)
+            ZaiTrialLane.from_settings(closed_settings(), moment=BEFORE_END)
         self.assertIn("trial_enabled", str(caught.exception))
         self.assertNotIn(SECRET, str(caught.exception))
         with self.assertRaises(ZaiTrialLaneUnavailable) as caught:
             ZaiTrialLane.from_settings(self.ready, moment=TRIAL_END)
         self.assertIn("trial_window_open", str(caught.exception))
-        lane = ZaiTrialLane.from_settings(self.ready, moment=self.before)
+        lane = ZaiTrialLane.from_settings(self.ready, moment=BEFORE_END)
         self.assertEqual(lane.adapter.provider, "zai")
         self.assertEqual(lane.model, "glm-5.3-flash")
 
@@ -234,12 +264,13 @@ class LedgerTests(unittest.TestCase):
         self.ledger.record_evaluation(attempt, evaluator="claude", correctness="correct",
                                       first_pass=True, correction_count=0,
                                       privacy_fit="fit", usefulness="accepted", notes="fine")
-        status = self.ledger.status()
+        status = self.ledger.status(moment=BEFORE_END)
         self.assertEqual((status["attempts"], status["succeeded"], status["evaluated"]), (1, 1, 1))
         self.assertEqual(status["first_pass_yield"], 1.0)
         self.assertEqual(status["correction_rate"], 0.0)
         self.assertEqual(status["mean_latency_ms"], 1200)
         self.assertEqual(status["cost_known"], 0)
+        self.assertTrue(status["trial_window_open"])
         for flag in ("dispatch_authorized", "production_credit_issued", "review_authority", "merge_authority"):
             self.assertIs(status[flag], False, flag)
         row = self.ledger.attempts()[0]
@@ -269,7 +300,7 @@ class LedgerTests(unittest.TestCase):
             self.reserve(key="k-1rr", recovery_basis="again")
         self.assertIn("zai_recovery_already_used", str(caught.exception))
 
-    def test_success_and_ambiguity_are_never_redispatched(self):
+    def test_success_ambiguity_and_owner_blocks_are_never_redispatched(self):
         done = self.reserve(assignment="A-ok", key="ok")
         self.ledger.record_outcome(done, status="SUCCEEDED", latency_ms=5,
                                    result_packet_digest="sha256:" + "b" * 64)
@@ -281,6 +312,28 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(ZaiTrialLedgerError) as caught:
             self.reserve(assignment="A-amb", key="amb-r", recovery_basis="timeout")
         self.assertIn("never_redispatched", str(caught.exception))
+        blocked = self.reserve(assignment="A-blk", key="blk")
+        self.ledger.record_outcome(blocked, status="BLOCKED", latency_ms=5, error_type="OWNER_DECISION_REQUIRED",
+                                   result_packet_digest="sha256:" + "c" * 64)
+        for kwargs in (dict(), dict(recovery_basis="owner said go")):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ZaiTrialLedgerError) as caught:
+                self.reserve(assignment="A-blk", key="blk-2", **kwargs)
+            self.assertIn("owner_decision_required", str(caught.exception))
+        status = self.ledger.status(moment=BEFORE_END)
+        self.assertEqual((status["blocked"], status["recorded_failures"]), (1, 1))
+        self.assertTrue(status["route_available"])
+
+    def test_refused_attempts_consume_nothing(self):
+        refused = self.reserve()
+        self.ledger.record_outcome(refused, status="REFUSED", latency_ms=0, error_type="ValueError")
+        again = self.reserve(key="k-1-again")  # a fresh primary attempt is still allowed
+        self.assertNotEqual(again, refused)
+        with self.assertRaises(ZaiTrialLedgerError):
+            self.reserve(key="k-1-r", recovery_basis="basis")  # refused rows never justify a recovery
+        status = self.ledger.status(moment=BEFORE_END)
+        self.assertEqual((status["refused"], status["recorded_failures"], status["unresolved"]), (1, 0, 1))
+        self.assertIsNone(status["mean_latency_ms"])
+        self.assertTrue(status["route_available"])
 
     def test_route_closes_after_three_recorded_failures(self):
         for index in range(MAX_RECORDED_FAILURES):
@@ -288,7 +341,7 @@ class LedgerTests(unittest.TestCase):
             self.ledger.record_outcome(attempt, status="FAILED" if index % 2 else "AMBIGUOUS",
                                        latency_ms=1, error_type="RuntimeError")
         self.assertFalse(self.ledger.route_available())
-        self.assertFalse(self.ledger.status()["route_available"])
+        self.assertFalse(self.ledger.status(moment=BEFORE_END)["route_available"])
         with self.assertRaises(ZaiTrialLedgerError) as caught:
             self.reserve(assignment="A-next", key="k-next")
         self.assertIn("three_failures", str(caught.exception))
@@ -313,13 +366,14 @@ class LedgerTests(unittest.TestCase):
                     work_packet_digest, model, purpose, recovery, started_at, {column})
                     VALUES ('x{column}', 'A', 'T', 'd', 'glm-x', 'p', 0, 'now', 1)"""
                 )
-        with self.assertRaises(sqlite3.IntegrityError):
-            connection.execute(
-                """INSERT INTO zai_trial_evaluations (attempt_id, evaluated_at, evaluator,
-                correctness, first_pass, correction_count, privacy_fit, usefulness)
-                VALUES (?, 'now', 'ZAI', 'correct', 1, 0, 'fit', 'accepted')""",
-                (attempt,),
-            )
+        for evaluator in ("ZAI", "glm-5.3-flash", "Z.ai GLM", "zai-lane", "z-ai"):
+            with self.subTest(evaluator=evaluator), self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    """INSERT INTO zai_trial_evaluations (attempt_id, evaluated_at, evaluator,
+                    correctness, first_pass, correction_count, privacy_fit, usefulness)
+                    VALUES (?, 'now', ?, 'correct', 1, 0, 'fit', 'accepted')""",
+                    (attempt, evaluator),
+                )
 
     def test_evaluation_rules(self):
         attempt = self.reserve()
@@ -332,6 +386,9 @@ class LedgerTests(unittest.TestCase):
                                    result_packet_digest="sha256:" + "b" * 64)
         for kwargs, fragment in (
             (dict(evaluator="z.ai"), "own_work"),
+            (dict(evaluator="GLM-5.3-FLASH"), "own_work"),
+            (dict(evaluator="Z.ai GLM reviewer"), "own_work"),
+            (dict(evaluator="   "), "own_work"),
             (dict(correctness="maybe"), "correctness_unknown"),
             (dict(first_pass=True, correction_count=2), "zero_corrections"),
             (dict(privacy_fit="?"), "privacy_fit_unknown"),
@@ -340,7 +397,7 @@ class LedgerTests(unittest.TestCase):
             values = dict(evaluator="cursor", correctness="incorrect", first_pass=False,
                           correction_count=2, privacy_fit="fit", usefulness="partially_useful")
             values.update(kwargs)
-            with self.subTest(fragment=fragment), self.assertRaises(ZaiTrialLedgerError) as caught:
+            with self.subTest(fragment=fragment, kwargs=kwargs), self.assertRaises(ZaiTrialLedgerError) as caught:
                 self.ledger.record_evaluation(attempt, **values)
             self.assertIn(fragment, str(caught.exception))
         self.ledger.record_evaluation(attempt, evaluator="cursor", correctness="incorrect",
@@ -350,9 +407,12 @@ class LedgerTests(unittest.TestCase):
             self.ledger.record_evaluation(attempt, evaluator="cursor", correctness="correct",
                                           first_pass=True, correction_count=0,
                                           privacy_fit="fit", usefulness="accepted")
-        status = self.ledger.status()
+        status = self.ledger.status(moment=BEFORE_END)
         self.assertEqual(status["first_pass_yield"], 0.0)
         self.assertEqual(status["correction_rate"], 2.0)
+        self.assertTrue(is_self_evaluator("glm-5.3", None))
+        self.assertTrue(is_self_evaluator("some-model", "SOME-MODEL"))
+        self.assertFalse(is_self_evaluator("owner", "glm-5.3"))
 
     def test_outcome_rules(self):
         with self.assertRaises(ZaiTrialLedgerError):
@@ -374,14 +434,21 @@ class LaneDispatchTests(unittest.TestCase):
         self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.ledger = ZaiTrialLedger(str(Path(self.tmp.name) / "ledger.sqlite3"))
-        self.work = {"objective": "add"}
+        self.journal = Path(self.tmp.name) / "journal"
+        self.journal.mkdir()
+        self.work = work_packet()
+        self.context = _context(self.work)
         self.result = {"provider": "zai", "status": "SUCCEEDED", "outcome": "def add(a, b): return a + b"}
 
-    def lane(self, behaviour):
-        return ZaiTrialLane(adapter=FakeAdapter(behaviour), ledger=self.ledger, model="glm-5.3-flash")
+    def lane(self, behaviour, *, now=None):
+        return ZaiTrialLane(adapter=FakeAdapter(behaviour), ledger=self.ledger, model="glm-5.3-flash",
+                            journal=self.journal, now=now or (lambda: BEFORE_END))
+
+    def mark_contacted(self, key="k-1"):
+        (self.journal / f"{attempt_id_for(key)}.json").write_text("{}", encoding="utf-8")
 
     def test_success_is_journaled_with_latency_digest_and_unknown_cost(self):
-        dispatched = self.lane(self.result).dispatch(self.work, context=_context(), purpose="smoke")
+        dispatched = self.lane(self.result).dispatch(self.work, context=self.context, purpose="smoke")
         self.assertEqual(dispatched.result, self.result)
         row = self.ledger.attempts()[0]
         self.assertEqual(row["status"], "SUCCEEDED")
@@ -390,45 +457,80 @@ class LaneDispatchTests(unittest.TestCase):
         self.assertGreaterEqual(row["latency_ms"], 0)
         self.assertEqual(row["purpose"], "smoke")
 
-    def test_provider_reported_failure_status_is_a_recorded_failure(self):
-        failed = dict(self.result, status="FAILED")
-        self.lane(failed).dispatch(self.work, context=_context(), purpose="smoke")
-        row = self.ledger.attempts()[0]
-        self.assertEqual((row["status"], row["error_type"]), ("FAILED", "FAILED"))
+    def test_provider_reported_statuses_map_to_failed_or_blocked(self):
+        self.lane(dict(self.result, status="FAILED")).dispatch(self.work, context=self.context, purpose="x")
+        blocked_work = work_packet(assignment="A-2", key="k-2")
+        self.lane(dict(self.result, status="OWNER_DECISION_REQUIRED")).dispatch(
+            blocked_work, context=_context(blocked_work), purpose="x")
+        rows = {row["assignment_id"]: (row["status"], row["error_type"]) for row in self.ledger.attempts()}
+        self.assertEqual(rows["A-1"], ("FAILED", "FAILED"))
+        self.assertEqual(rows["A-2"], ("BLOCKED", "OWNER_DECISION_REQUIRED"))
+        status = self.ledger.status(moment=BEFORE_END)
+        self.assertEqual((status["failed"], status["blocked"], status["recorded_failures"]), (1, 1, 1))
 
-    def test_exceptions_map_to_failed_or_ambiguous_and_propagate(self):
-        with self.assertRaises(RuntimeError):
-            self.lane(RuntimeError("boom")).dispatch(self.work, context=_context("A-f", "f"), purpose="x")
-        with self.assertRaises(IssuerError):
-            self.lane(IssuerError("timeout")).dispatch(self.work, context=_context("A-t", "t"), purpose="x")
-        with self.assertRaises(FileExistsError):
-            self.lane(FileExistsError("reserved")).dispatch(self.work, context=_context("A-r", "r"), purpose="x")
+    def test_exceptions_map_to_failed_ambiguous_or_refused_and_propagate(self):
+        # Two refusals consume nothing; the three contacted failures then close the route.
+        cases = {
+            "A-v": (ValueError("Trial packet exceeds input limit"), False, "REFUSED"),
+            "A-c": (PacketContractError("bad result"), False, "REFUSED"),
+            "A-x": (ValueError("provider said no after contact"), True, "FAILED"),
+            "A-r": (FileExistsError("reserved"), False, "AMBIGUOUS"),
+            "A-t": (IssuerError("timeout"), True, "AMBIGUOUS"),
+        }
+        for assignment, (exc, contacted, expected) in cases.items():
+            work = work_packet(assignment=assignment, key=f"k-{assignment}")
+            if contacted:
+                self.mark_contacted(f"k-{assignment}")
+            with self.subTest(assignment=assignment), self.assertRaises(type(exc)):
+                self.lane(exc).dispatch(work, context=_context(work), purpose="x")
         statuses = {row["assignment_id"]: row["status"] for row in self.ledger.attempts()}
-        self.assertEqual(statuses, {"A-f": "FAILED", "A-t": "AMBIGUOUS", "A-r": "AMBIGUOUS"})
+        self.assertEqual(statuses, {a: expected for a, (_, _, expected) in cases.items()})
+        status = self.ledger.status(moment=BEFORE_END)
+        self.assertEqual((status["refused"], status["recorded_failures"]), (2, 3))
+        self.assertFalse(status["route_available"])
+
+    def test_refused_pre_io_attempt_keeps_the_primary_attempt_available(self):
+        with self.assertRaises(ValueError):
+            self.lane(ValueError("Trial packet exceeds input limit")).dispatch(
+                self.work, context=self.context, purpose="x")
+        retry = work_packet(key="k-1-retry")
+        dispatched = self.lane(self.result).dispatch(retry, context=_context(retry), purpose="x")
+        self.assertEqual(self.ledger.attempts()[-1]["status"], "SUCCEEDED")
+        self.assertEqual(dispatched.result["status"], "SUCCEEDED")
 
     def test_second_dispatch_of_an_assignment_never_reaches_the_provider(self):
         adapter = FakeAdapter(RuntimeError("boom"))
-        lane = ZaiTrialLane(adapter=adapter, ledger=self.ledger, model="glm-5.3-flash")
+        lane = ZaiTrialLane(adapter=adapter, ledger=self.ledger, model="glm-5.3-flash",
+                            journal=self.journal, now=lambda: BEFORE_END)
+        self.mark_contacted("k-1")
         with self.assertRaises(RuntimeError):
-            lane.dispatch(self.work, context=_context(), purpose="x")
+            lane.dispatch(self.work, context=self.context, purpose="x")
+        retry = work_packet(key="k-2")
         with self.assertRaises(ZaiTrialLedgerError):
-            lane.dispatch(self.work, context=_context(key="k-2"), purpose="x")
+            lane.dispatch(retry, context=_context(retry), purpose="x")
         self.assertEqual(adapter.calls, 1)
         lane.adapter.behaviour = self.result
-        lane.dispatch(self.work, context=_context(key="k-2"), purpose="x",
-                      recovery_basis="transient provider error")
+        lane.dispatch(retry, context=_context(retry), purpose="x", recovery_basis="transient provider error")
         self.assertEqual(adapter.calls, 2)
 
-    def test_tools_budget_and_expiry_refuse_before_reservation(self):
+    def test_preflight_refusals_happen_before_reservation(self):
         lane = self.lane(self.result)
+        budgeted = work_packet(budget_usd=1.0)
+        mismatched = work_packet()
+        mismatched["objective"] = "changed after the context was signed"
+        refusals = [
+            (self.work, _context(self.work, allowed_tools=("READ_REPOSITORY",))),
+            (self.work, _context(self.work, budget_usd=0.5)),
+            (self.work, _context(self.work, timeout_seconds=70)),
+            (budgeted, _context(budgeted)),
+            (mismatched, self.context),
+            ({"not": "a packet"}, self.context),
+        ]
+        for work, context in refusals:
+            with self.subTest(context=context), self.assertRaises(ZaiTrialLaneUnavailable):
+                lane.dispatch(work, context=context, purpose="x")
         with self.assertRaises(ZaiTrialLaneUnavailable):
-            lane.dispatch(self.work, context=_context(allowed_tools=("READ_REPOSITORY",)), purpose="x")
-        with self.assertRaises(ZaiTrialLaneUnavailable):
-            lane.dispatch(self.work, context=_context(budget_usd=0.5), purpose="x")
-        with patch("director_orchestrator.zai_lane.datetime") as clock:
-            clock.now.return_value = TRIAL_END
-            with self.assertRaises(ZaiTrialLaneUnavailable):
-                lane.dispatch(self.work, context=_context(), purpose="x")
+            self.lane(self.result, now=lambda: TRIAL_END).dispatch(self.work, context=self.context, purpose="x")
         self.assertEqual(self.ledger.attempts(), [])
         self.assertEqual(lane.adapter.calls, 0)
 
