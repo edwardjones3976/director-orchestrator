@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]] -->
@@ -502,6 +503,86 @@ authoritative daily spend backstop. Only after billing and the dedicated
 key are ready should an operator set `PERPLEXITY_ENABLED=true` and include
 `perplexity` in `USAGE_CHECK_PROVIDERS` if periodic checks are desired.
 
+## Z.ai trial-only contact lane
+
+Z.ai (GLM Coding Plan) is staged as a trial-only, fail-closed contact lane under
+owner directive #207 until the owner's separate activation decision on or after
+2026-09-29. It is not a production provider: `zai` is absent from the provider
+enums, the allocation lanes, the primary roster and the Postgres lane constraint,
+so no code path can grant it production credit, a counted review verdict or merge
+authority. Anything it reviews is advisory input to the author. The runtime
+identity, ledger and dispatch path live in `src/director_orchestrator/zai_lane.py`;
+the transport is unchanged in `zai_trial.py`.
+
+Keep the key only in the ignored deployment `.env` and start with
+`ZAI_TRIAL_ENABLED=false`:
+
+```dotenv
+ZAI_TRIAL_ENABLED=false
+ZAI_API_KEY=
+ZAI_API_BASE=https://api.z.ai/api/anthropic
+ZAI_MODE=trial_only
+ZAI_MODEL=glm-5.3-flash
+ZAI_CLI_EXECUTABLE=
+ZAI_TRIAL_JOURNAL_DIR=
+ZAI_TRIAL_LEDGER_PATH=
+ZAI_TIMEOUT_SECONDS=60
+ZAI_LITE_ENTITLEMENT_VERIFIED=false
+ZAI_PRODUCTION_ACTIVATION=
+ZAI_ALLOW_REPOSITORY_WRITE=false
+ZAI_ALLOW_REVIEW_VERDICT=false
+```
+
+`ZAI_CLI_EXECUTABLE` is the absolute path of the Claude Code CLI that hosts the
+session on this host. The transport pins it to `ZAI_API_BASE`, which must stay the
+official Anthropic-compatible endpoint, and disables tools, MCP servers, settings
+sources and session persistence for every call. `ZAI_TRIAL_JOURNAL_DIR` holds the
+per-attempt receipts (exclusive reservation, redacted native output, result) and
+`ZAI_TRIAL_LEDGER_PATH` is the separate append-only SQLite trial ledger. Reuse both
+across attempts; changing either to escape an attempt reservation is a policy
+breach. The deployed container image does not carry the Claude Code CLI, so the
+lane is closed there by construction and is operated from the Windows host.
+
+Startup refuses any widening: `ZAI_MODE` other than `trial_only`, either
+`ZAI_ALLOW_*` flag set true, a non-official `ZAI_API_BASE`, any value in
+`ZAI_PRODUCTION_ACTIVATION`, or `ZAI_TRIAL_ENABLED=true` without
+`ZAI_LITE_ENTITLEMENT_VERIFIED=true` (the owner has observed the Lite
+entitlement). `GET /health` reports `providers.zai` (one boolean) and `zai_trial`
+(the individual readiness booleans); neither carries a key, path, endpoint or
+model value. The lane also refuses to dispatch at or after 2026-09-29 07:00 UTC,
+the trial end the transport already enforces.
+
+Run bounded Lite assignments with `scripts/zai-trial.py`, which reads only the
+`ZAI_*` lines of the file named by `--env-file`:
+
+```bash
+PYTHONPATH=src python scripts/zai-trial.py --env-file .env status
+PYTHONPATH=src python scripts/zai-trial.py --env-file .env dispatch --work-packet packet.json --purpose "bounded Lite assignment"
+PYTHONPATH=src python scripts/zai-trial.py --env-file .env evaluate --attempt <id> --evaluator cursor --correctness correct --first-pass --privacy-fit fit --usefulness accepted
+```
+
+`dispatch` validates the v1 work packet and mirrors the transport's deterministic
+refusals (digest, tools, budget, timeout, trial end) before it reserves one attempt
+per assignment in the trial ledger, so a packet that could never reach Z.ai
+consumes nothing; afterwards it records status, latency and the result digest.
+Cost stays unknown, never zero, because the host CLI prices with Anthropic
+tariffs. Outcome statuses: `SUCCEEDED`, `FAILED`, `AMBIGUOUS` (timeout or unknown
+provider state), `REFUSED` (stopped before provider contact, attempt not consumed)
+and `BLOCKED` (Z.ai answered `OWNER_DECISION_REQUIRED`; needs a new assignment).
+Nothing retries automatically: one recovery is allowed only after a recorded
+`FAILED` outcome and only with an explicit `--recovery-basis`; a `SUCCEEDED`,
+`AMBIGUOUS` or `BLOCKED` attempt is never redispatched, and the route closes after
+three recorded failures (`FAILED` plus `AMBIGUOUS`). `resolve --attempt <id>
+--reason …` closes an attempt that a killed process left without an outcome, as
+`AMBIGUOUS` only. `evaluate` records the non-Z.ai evaluator's correctness,
+first-pass, correction-count, privacy-fit and usefulness verdicts (any evaluator
+name naming Z.ai or GLM, or equal to the attempt's model, is refused), and
+`status` derives the first-pass yield and correction rate the 2026-09-29 decision
+needs. The ledger issues no production credit and is not the canonical rolling
+allocation ledger.
+The conditional eleven-contact allocation profile is described separately and
+stays `PROPOSED` until that decision.
+
 ## Antigravity subordinate profile
 
 Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
@@ -719,3 +800,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
