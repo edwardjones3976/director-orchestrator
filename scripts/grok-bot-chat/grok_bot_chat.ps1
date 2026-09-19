@@ -91,7 +91,11 @@ function Assert-GrokBotFocused([System.Diagnostics.Process]$Process) {
 
 function Read-ClipboardText {
   # Text only. Non-text clipboard content (image, files) reads as $null and is not restored.
-  try { return (Get-Clipboard -Raw -ErrorAction Stop) } catch { return $null }
+  # A read FAILURE (locked or unavailable clipboard) is not "empty": it aborts here, before
+  # anything is written, so the restore path can never Clear() content we did not see.
+  # [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
+  try { return (Get-Clipboard -Raw -ErrorAction Stop) }
+  catch { throw "clipboard could not be read ($($_.Exception.Message)); not touching it, not pasting" }
 }
 
 function Restore-ClipboardText($Saved) {
@@ -111,7 +115,11 @@ switch ($Action) {
     # Read-only diagnostic: no AppActivate, no keys, no clipboard.
     $focused = Get-FocusedProcess
     $bot = @(Get-Process -Name "Grok Bot" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path -eq $Executable })
-    $isBot = ($bot.Count -eq 1) -and (($focused.Id -eq $bot[0].Id) -or ($focused.Name -eq $bot[0].Name))
+    # Same predicate as Assert-GrokBotFocused: the pid, or a same-named child of the SAME executable.
+    # [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
+    $samePath = $false
+    try { $samePath = ($focused.Name -eq $bot[0].Name) -and ($focused.Path -eq $Executable) } catch { $samePath = $false }
+    $isBot = ($bot.Count -eq 1) -and (($focused.Id -eq $bot[0].Id) -or $samePath)
     Write-Output ("focused=" + $focused.Name + " pid=" + $focused.Id + " grok_bot_window_pid=" + $(if ($bot.Count -eq 1) { $bot[0].Id } else { "none" }) + " keys_would_reach_grok_bot=" + $isBot)
   }
   "clear" {
@@ -133,8 +141,11 @@ switch ($Action) {
     $text = Get-Content -Raw -Encoding UTF8 $Packet
     if ([string]::IsNullOrWhiteSpace($text)) { throw "packet is empty" }
     if ($text -match "[^\x09\x0A\x0D\x20-\x7E]") { throw "packet must be ASCII; non-ASCII pastes as mojibake" }
-    if ($text -notmatch "VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}") {
-      throw "packet must end with the exact-SHA VERDICT line"
+    # The VERDICT template must be a whole line (nothing before or after it on that line). It is
+    # not anchored to the end of the file: packets carry the pre-staged diff after it.
+    # [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
+    if ($text -notmatch "(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$") {
+      throw "packet must contain the exact-SHA VERDICT line as a whole line"
     }
     $sha = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash(
       [Text.Encoding]::UTF8.GetBytes($text))).Replace("-", "").ToLower()
@@ -144,11 +155,12 @@ switch ($Action) {
     $process = Get-GrokBot
     # [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:35 UTC | BEGIN]] save the owner's clipboard, guard focus, restore
     $saved = Read-ClipboardText
-    Set-Clipboard -Value $text
-    $back = Get-Clipboard -Raw
-    if ($back -ne $text) { Restore-ClipboardText $saved | Out-Null; throw "clipboard read-back differs from the packet; not pasting" }
-
     try {
+      # Write and read-back INSIDE the try: if Set-Clipboard succeeds and the read-back throws,
+      # the finally still restores the owner's clipboard. [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
+      Set-Clipboard -Value $text
+      $back = Get-Clipboard -Raw
+      if ($back -ne $text) { throw "clipboard read-back differs from the packet; not pasting" }
       $ws = Activate $process
       Assert-GrokBotFocused $process
       $ws.SendKeys("^v"); Start-Sleep -Seconds 2

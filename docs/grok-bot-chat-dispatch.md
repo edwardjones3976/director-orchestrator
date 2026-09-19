@@ -9,9 +9,13 @@ It is a coordination contact only: Grok Bot's reply is review evidence for the
 exact-SHA record, never merge, callback, or runtime authority (see
 `docs/provider-profiles/grok.yaml`, transport `grok-bot`).
 
-One script, three actions, every failure a terminating error that stops before
-the keystroke that would send. No P/Invoke; COM `WScript.Shell` (AppActivate
-by **process id**, SendKeys), the clipboard, and a GDI screenshot only.
+One script, five actions (`focus`, `paste`, `send`, `shot`, `clear`), every
+failure a terminating error that stops before the keystroke that would send.
+No P/Invoke; COM `WScript.Shell` (AppActivate by **process id**, SendKeys),
+managed UI Automation (`UIAutomationClient`, to read which process owns
+keyboard focus before every keystroke), the clipboard (saved before the paste
+and restored after it), and a GDI screenshot only.
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
 
 ## Where things live
 
@@ -53,10 +57,14 @@ not land in a worktree. Override with `-ArtifactRoot` if needed.
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/grok-bot-chat/grok_bot_chat.ps1 -Action send -Digest <sha256>
    ```
 
-   Refuses unless a preview exists for that digest, no receipt exists yet, and
-   the clipboard still holds that packet. The receipt is written **before** the
-   Enter keystroke, so an ambiguous submission is never retried: if in doubt,
-   look at the screen, do not press again.
+   Refuses unless a preview exists for that digest, no receipt exists yet, the
+   `<digest>.pasted.json` marker written by `paste` exists, and the Grok Bot
+   process id in that marker is still the running one (a restarted app has an
+   unverified composer: re-paste). The clipboard is *not* consulted — `paste`
+   restored the owner's clipboard already. Focus is asserted, then the receipt
+   is written **before** the Enter keystroke, so an ambiguous submission is
+   never retried: if in doubt, look at the screen, do not press again.
+   <!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
 
 5. Poll (screenshot only, no input) every minute or two until the reply ends
    with the VERDICT line, typically 3-6 minutes:
@@ -149,5 +157,5 @@ grok_bot_window_pid=41880 keys_would_reach_grok_bot=False`. The script parses
 (`Parser::ParseFile`, zero errors); `UIAutomationClient` loads without a
 Bitdefender block. `paste` with the guard was exercised on 2026-09-17 (table above); `send` with the guard was not, and the AppActivate-succeeds-but-focus-stays case was not observed at validation
 time because the desktop was in use — which is the point.
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:59 UTC | END]] -->
