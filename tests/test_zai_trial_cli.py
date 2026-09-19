@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 """scripts/zai-trial.py: the operator boundary between the deployment .env, the trial ledger and stdout.
 
@@ -220,6 +221,24 @@ class CliDispatchOutputTests(unittest.TestCase):
         self.assertNotIn(SECRET, out)
         self.assertEqual(lane.calls[0][2:], ("output test", "provider 503 at 12:00"))
 
+    def test_every_command_keeps_the_refused_contract_when_the_ledger_fails_after_startup(self):
+        import sqlite3
+
+        from director_orchestrator.zai_lane import ZaiTrialLedgerError
+
+        cases = (
+            (ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger"), "zai_ledger_not_a_trial_ledger"),
+            (sqlite3.OperationalError("database is locked"), "ledger_error:OperationalError"),
+        )
+        for boom, reason in cases:
+            for argv in (["status"], ["resolve", "--attempt", "x", "--reason", "y"]):
+                with self.subTest(reason=reason, command=argv[0]):
+                    out = io.StringIO()
+                    with patch("director_orchestrator.config.Settings", lambda: self.settings),                          patch("director_orchestrator.zai_lane.ZaiTrialLedger.status", side_effect=boom),                          patch("director_orchestrator.zai_lane.ZaiTrialLedger.record_outcome", side_effect=boom),                          contextlib.redirect_stdout(out):
+                        code = self.main(argv)
+                    self.assertEqual(code, 2, out.getvalue())
+                    self.assertEqual(json.loads(out.getvalue()), {"status": "REFUSED", "reason": reason})
+
     def test_dispatch_failure_reports_the_type_only(self):
         code, out = self._run(FakeLane(RuntimeError("provider said " + SECRET)))
         self.assertEqual(code, 1, out)
@@ -232,3 +251,4 @@ class CliDispatchOutputTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | END]]

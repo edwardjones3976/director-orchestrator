@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 """Operator entry point for the Z.ai trial-only contact lane (owner directive #207).
@@ -15,6 +16,7 @@ stops here rather than reaching the provider.
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -72,6 +74,18 @@ def main(argv=None) -> int:
     if args.env_file:
         _load_zai_env(args.env_file)
     # Import after the environment is set: Settings reads it at import time.
+    from director_orchestrator.zai_lane import ZaiTrialLedgerError
+
+    try:
+        return _execute(args)
+    except (ZaiTrialLedgerError, sqlite3.Error) as exc:
+        # The ledger file can change under a running operator (replaced, locked, foreign),
+        # so every command keeps the REFUSED JSON contract instead of a traceback.
+        reason = str(exc) if isinstance(exc, ZaiTrialLedgerError) else f"ledger_error:{type(exc).__name__}"
+        return _refused(reason)
+
+
+def _execute(args) -> int:
     from director_orchestrator.config import Settings
     from director_orchestrator.zai_lane import (
         ZaiTrialLane,
@@ -162,3 +176,4 @@ if __name__ == "__main__":
     sys.exit(main())
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 23:58 UTC | END]]
