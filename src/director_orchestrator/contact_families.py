@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 """Typed contact-lane and provider-family identities (owner directive #207).
 
@@ -51,6 +52,9 @@ class UnknownContactError(ValueError):
 # it a route, a route status, or standing authority; see
 # docs/provider-allocation-profiles.md and docs/project-leadership.md for that.
 _CONTACT_LANES: tuple[ContactLane, ...] = (
+    # The owner is a ProviderName member (human approval steps), never a provider
+    # family: it shares a family with nobody and must not fail closed as unknown.
+    ContactLane(lane_id="owner", product="Owner", provider_family="Owner"),
     ContactLane(lane_id="openai", product="ChatGPT / Codex", provider_family="OpenAI"),
     ContactLane(lane_id="claude", product="Claude Code CLI", provider_family="Anthropic"),
     ContactLane(lane_id="cursor", product="Cursor Agent", provider_family="Anysphere"),
@@ -109,3 +113,4 @@ def share_provider_family(a: ContactIdentity, b: ContactIdentity) -> bool:
 
     return provider_family_for(a) == provider_family_for(b)
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]

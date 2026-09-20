@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 """Tests for typed contact-lane and provider-family identities (directive #207)."""
 
@@ -33,6 +34,7 @@ class ContactFamilyTableTests(unittest.TestCase):
             "github-copilot": "GitHub/Microsoft",
             "vscode-coding-bot": "GitHub/Microsoft",
             "zai": "Z.ai",
+            "owner": "Owner",
         }
         self.assertEqual(set(CONTACT_LANES_BY_ID), set(expected))
         for lane_id, family in expected.items():
@@ -90,13 +92,13 @@ class ShareProviderFamilyTests(unittest.TestCase):
 
     def test_unknown_identity_fails_closed_never_independent(self):
         with self.assertRaises(UnknownContactError):
-            provider_family_for("owner")
+            provider_family_for("unregistered-reviewer")
         with self.assertRaises(UnknownContactError):
             provider_family_for("some-unregistered-contact")
         with self.assertRaises(UnknownContactError):
-            share_provider_family("claude", "owner")
+            share_provider_family("claude", "unregistered-reviewer")
         with self.assertRaises(UnknownContactError):
-            share_provider_family("owner", "claude")
+            share_provider_family("unregistered-reviewer", "claude")
 
     def test_unknown_contact_error_is_a_value_error(self):
         # Callers that catch ValueError (the review-handoff and policy
@@ -140,6 +142,22 @@ class ConditionalAllocationConsistencyTests(unittest.TestCase):
         self.assertEqual(dict(families), expected)
 
 
+
+class ProviderNameCoverageTests(unittest.TestCase):
+    """Every ProviderName member resolves, so no existing plan can fail closed as family-unknown."""
+
+    def test_every_provider_name_member_has_a_family(self):
+        from director_orchestrator.models import ProviderName
+
+        for member in ProviderName:
+            with self.subTest(member=member.value):
+                self.assertTrue(provider_family_for(member))
+        self.assertEqual(provider_family_for("owner"), "Owner")
+        for other in ("openai", "claude", "grok", "github-copilot"):
+            self.assertFalse(share_provider_family("owner", other))
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]

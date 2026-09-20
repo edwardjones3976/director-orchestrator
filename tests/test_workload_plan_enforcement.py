@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -735,11 +736,14 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
 
     def test_independent_review_family_unknown_fails_closed(self) -> None:
         """Directive #207: a reviewer identity absent from the contact-family
-        table is never assumed independent of the producer it would review."""
+        table is never assumed independent of the producer it would review.
+        ``owner`` is removed from the table for this test only."""
 
         plan = self._implementation_and_review_plan(reviewer_agent=ProviderName.OWNER)
 
-        errors = policy_module._independent_review_binding_errors(plan)
+        with patch.dict(contact_families.CONTACT_LANES_BY_ID):
+            del contact_families.CONTACT_LANES_BY_ID["owner"]
+            errors = policy_module._independent_review_binding_errors(plan)
 
         self.assertIn("assignment 2: reviewer_family_unknown", errors)
 
@@ -784,3 +788,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]

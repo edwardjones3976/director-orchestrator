@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
@@ -1245,8 +1246,9 @@ class ReviewHandoffTests(unittest.TestCase):
 
     def test_reviewer_rejected_when_material_author_family_is_unknown(self):
         """Directive #207: a material author identity absent from the contact-
-        family table (here, ``owner``) fails closed rather than being assumed
-        independent of the reviewer."""
+        family table fails closed rather than being assumed independent of the
+        reviewer. ``owner`` is removed from the table for this test only (every
+        ``ProviderName`` member is present in the shipped table)."""
 
         record, producer, run = self.record(material_authors=["cursor", "owner"])
         upstream = Assignment(
@@ -1268,8 +1270,10 @@ class ReviewHandoffTests(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(ValueError, "reviewer_family_unknown"):
-            self.bind(record, producer, run)
+        with patch.dict(contact_families.CONTACT_LANES_BY_ID):
+            del contact_families.CONTACT_LANES_BY_ID["owner"]
+            with self.assertRaisesRegex(ValueError, "reviewer_family_unknown"):
+                self.bind(record, producer, run)
 
     def test_reviewer_rejected_when_sharing_material_authors_provider_family(self):
         """Directive #207, "Contact-family safety": a reviewer sharing the
@@ -2187,3 +2191,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]
