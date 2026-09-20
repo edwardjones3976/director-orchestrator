@@ -1,5 +1,7 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -15,6 +17,7 @@ from director_orchestrator.langgraph_runtime import ProviderAdapterContext
 from director_orchestrator.native_acceptance_issuer import IssuerError
 from director_orchestrator.packet_contracts import PacketContractError, document_digest
 from director_orchestrator.zai_lane import (
+    LEDGER_VERSION,
     MAX_RECORDED_FAILURES,
     ZAI_CONTACT_LANE,
     ZaiTrialLane,
@@ -171,6 +174,7 @@ class SettingsTests(unittest.TestCase):
             "ZAI_PRODUCTION_ACTIVATION": dict(zai_production_activation="sha256:" + "f" * 64),
             "ZAI_API_BASE": dict(zai_api_base="https://api.anthropic.com"),
             "ZAI_TRIAL_ENABLED": dict(zai_lite_entitlement_verified=False),
+            "ZAI_TRIAL_LEDGER_PATH": dict(zai_trial_ledger_path=self.ready.sqlite_path),
         }
         for variable, change in widenings.items():
             with self.subTest(variable=variable):
@@ -188,6 +192,7 @@ class SettingsTests(unittest.TestCase):
             "cli_configured": dict(zai_cli_executable="relative/claude"),
             "journal_configured": dict(zai_trial_journal_dir=""),
             "ledger_configured": dict(zai_trial_ledger_path=""),
+            "ledger_isolated": dict(zai_trial_ledger_path=self.ready.langgraph_checkpoint_path),
             "timeout_valid": dict(zai_timeout_seconds=70),
             "lite_entitlement_verified": dict(zai_lite_entitlement_verified=False),
         }
@@ -196,6 +201,29 @@ class SettingsTests(unittest.TestCase):
                 readiness = replace(self.ready, **change).zai_trial_readiness(moment=BEFORE_END)
                 self.assertFalse(readiness[check])
                 self.assertFalse(all(readiness.values()))
+
+    def test_ledger_path_must_be_its_own_file_even_through_a_link(self):
+        root = Path(self.tmp.name)
+        taskstore = root / "director.sqlite3"
+        taskstore.write_bytes(b"")
+        link = root / "ledger-link.sqlite3"
+        try:
+            os.link(taskstore, link)
+        except OSError as exc:  # filesystem without hard links
+            self.skipTest(f"hard links unavailable here: {type(exc).__name__}")
+        colliding = replace(self.ready, sqlite_path=str(taskstore), zai_trial_ledger_path=str(link))
+        self.assertFalse(colliding.zai_trial_readiness(moment=BEFORE_END)["ledger_isolated"])
+        with self.assertRaises(ValueError) as caught:
+            colliding.validate_zai_trial_configuration()
+        self.assertIn("ZAI_TRIAL_LEDGER_PATH", str(caught.exception))
+        self.assertNotIn(self.tmp.name, str(caught.exception))
+        for store in ("langgraph_runtime_ledger_path", "completion_gate_store_path"):
+            with self.subTest(store=store):
+                same = replace(self.ready, **{store: self.ready.zai_trial_ledger_path})
+                self.assertFalse(same.zai_trial_readiness(moment=BEFORE_END)["ledger_isolated"])
+        separate = replace(self.ready, sqlite_path=str(taskstore), zai_trial_ledger_path=str(root / "own.sqlite3"))
+        self.assertTrue(separate.zai_trial_readiness(moment=BEFORE_END)["ledger_isolated"])
+        separate.validate_zai_trial_configuration()
 
     def test_health_exposes_booleans_only_for_the_trial_lane(self):
         import importlib
@@ -429,6 +457,83 @@ class LedgerTests(unittest.TestCase):
             self.ledger.record_outcome(attempt, status="FAILED", latency_ms=1, error_type="X")
 
 
+def _sqlite_exec(path: Path, *statements: str) -> None:
+    db = sqlite3.connect(path)
+    try:
+        for statement in statements:
+            db.execute(statement)
+        db.commit()
+    finally:
+        db.close()
+
+
+class LedgerReuseTests(unittest.TestCase):
+    """An existing file is reused only when it is exactly this build's ledger."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.path = self.root / "ledger.sqlite3"
+
+    @staticmethod
+    def _reserve(ledger, key="k-1"):
+        return ledger.reserve(assignment_id="A-1", task_id="T-1", work_packet_digest="sha256:" + "a" * 64,
+                              idempotency_key=key, model="glm-5.3-flash", purpose="reuse test")
+
+    def test_a_matching_ledger_reopens_with_its_rows(self):
+        attempt = self._reserve(ZaiTrialLedger(str(self.path)))
+        again = ZaiTrialLedger(str(self.path))
+        self.assertEqual([row["attempt_id"] for row in again.attempts()], [attempt])
+        self.assertEqual(again.status()["version"], LEDGER_VERSION)
+
+    def test_foreign_partial_weakened_older_or_non_sqlite_files_are_refused(self):
+        foreign = self.root / "director.sqlite3"
+        _sqlite_exec(foreign, "CREATE TABLE tasks (id TEXT PRIMARY KEY)")
+        partial = self.root / "partial.sqlite3"
+        _sqlite_exec(partial, "CREATE TABLE zai_trial_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+                     f"INSERT INTO zai_trial_metadata VALUES ('version', '{LEDGER_VERSION}')")
+        weakened = self.root / "weakened.sqlite3"
+        ZaiTrialLedger(str(weakened))
+        _sqlite_exec(weakened, "DROP TRIGGER zai_trial_attempts_no_update")
+        older = self.root / "older.sqlite3"
+        ZaiTrialLedger(str(older))
+        _sqlite_exec(older, "UPDATE zai_trial_metadata SET value = 'zai-trial-ledger/v0' WHERE key = 'version'")
+        text = self.root / "notes.sqlite3"
+        text.write_text("not a database at all, just text", encoding="utf-8")
+        for label, path in (("foreign TaskStore", foreign), ("partial schema", partial),
+                            ("missing append-only trigger", weakened), ("older version", older),
+                            ("not sqlite", text)):
+            with self.subTest(label=label):
+                with self.assertRaises(ZaiTrialLedgerError) as caught:
+                    ZaiTrialLedger(str(path))
+                self.assertTrue(str(caught.exception).startswith("zai_ledger_"), str(caught.exception))
+                self.assertNotIn(self.tmp.name, str(caught.exception))
+        db = sqlite3.connect(foreign)
+        try:
+            names = {row[0] for row in db.execute("SELECT name FROM sqlite_master")}
+        finally:
+            db.close()
+        self.assertFalse(any(name.startswith("zai_trial") for name in names), names)
+        self.assertEqual(text.read_text(encoding="utf-8"), "not a database at all, just text")
+
+    def test_a_file_replaced_after_opening_is_refused_on_the_next_call(self):
+        ledger = ZaiTrialLedger(str(self.path))
+        self._reserve(ledger)
+        self.path.unlink()
+        _sqlite_exec(self.path, "CREATE TABLE tasks (id TEXT PRIMARY KEY)")
+        with self.assertRaises(ZaiTrialLedgerError):
+            self._reserve(ledger, key="k-2")
+        with self.assertRaises(ZaiTrialLedgerError):
+            ledger.status()
+        db = sqlite3.connect(self.path)
+        try:
+            names = {row[0] for row in db.execute("SELECT name FROM sqlite_master")}
+        finally:
+            db.close()
+        self.assertFalse(any(name.startswith("zai_trial") for name in names), names)
+
+
 class LaneDispatchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
@@ -545,3 +650,4 @@ class LaneDispatchTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | BEGIN]] -->
@@ -540,7 +541,11 @@ sources and session persistence for every call. `ZAI_TRIAL_JOURNAL_DIR` holds th
 per-attempt receipts (exclusive reservation, redacted native output, result) and
 `ZAI_TRIAL_LEDGER_PATH` is the separate append-only SQLite trial ledger. Reuse both
 across attempts; changing either to escape an attempt reservation is a policy
-breach. The deployed container image does not carry the Claude Code CLI, so the
+breach. The ledger must be its own file: startup and the CLI refuse a
+`ZAI_TRIAL_LEDGER_PATH` that names the TaskStore, a LangGraph checkpoint, resume-claim,
+acceptance, runtime-ledger or completion-gate store, and an existing file is reused
+only when it is exactly this build's schema and version (a foreign, partial, weakened
+or older file is refused, never migrated). The deployed container image does not carry the Claude Code CLI, so the
 lane is closed there by construction and is operated from the Windows host.
 
 Startup refuses any widening: `ZAI_MODE` other than `trial_only`, either
@@ -801,3 +806,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 06:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]] -->
