@@ -1,3 +1,5 @@
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -137,6 +139,70 @@ material authors, admission and accepted counts, effort, remaining capacity when
 known, costs and categorized waste. Token, spend, runtime and concurrency limits
 remain separate. Missing eligible integration or review capability fails closed;
 selecting a profile does not install an adapter or deploy LangGraph.
+
+## Proposed conditional allocation profile (Issue 207)
+
+The staged conditional profile descriptor (`src/director_orchestrator/conditional_allocation.py`)
+encodes an eleven-lane accepted-production policy target pending future activation:
+
+| Provider / contact lane | Policy family | Target | Soft band (preference) | Hard ceiling |
+| --- | --- | ---: | ---: | ---: |
+| Gemini / Antigravity | Google | 20% | 17% – 23% | 25% |
+| Z.ai | Z.ai | 18% | 15% – 21% | 23% |
+| Cursor | Anysphere | 13% | 10% – 16% | 18% |
+| Direct Grok | xAI | 13% | 10% – 16% | 18% |
+| Grok Bot | xAI | 13% | 10% – 16% | 18% |
+| OpenAI / Codex production | OpenAI | 10% | 7% – 13% | 15% |
+| Claude | Anthropic | 5% | 2% – 8% | 10% |
+| Perplexity | Perplexity | 3% | 0% – 6% | 8% |
+| GitHub Copilot | GitHub/Microsoft | 2% | 0% – 5% | 7% |
+| VS Code Coding Bot | GitHub/Microsoft | 2% | 0% – 5% | 7% |
+| Firecrawl | Firecrawl | 1% | 0% – 4% | 6% |
+| Total | | 100% | | |
+
+Cursor, Direct Grok, and Grok Bot are intentionally equal at 13%. GitHub Copilot and
+VS Code Coding Bot are intentionally equal at 2%.
+
+### Staged contract constraints and limitations
+
+- **Proposed status only:** The descriptor status is `PROPOSED`. It does not modify
+  active `allocation_profiles.py` profiles (`engineering`, `mixed`, `public_research`,
+  `enterprise`), default profile, legacy digests, or any existing assignment bindings.
+  It confers no runtime readiness, admission authority, or enrollment.
+- **Descriptive static contract:** This module is an immutable static descriptor,
+  not an admission or independence engine. It exposes no eligibility or admission APIs.
+- **Activation prerequisites:** Eligibility begins on or after **2026-09-29 UTC**.
+  Activation requires owner acceptance of Z.ai Lite qualification evidence and a
+  separate, explicit owner activation decision. No automatic Max purchase, activation,
+  or quota redistribution is permitted. All deterministic gates (approval, admission,
+  exact-candidate review, Codex Security, CI) remain mandatory. Prerequisites are named
+  immutable requirements, not runtime status flags.
+- **Trial boundary:** Z.ai Lite evaluation through 2026-09-28 operates under a separate
+  trial ledger and earns zero accepted-production credit.
+- **Policy families and independence:** Direct Grok and Grok Bot share the `xAI`
+  policy family; GitHub Copilot and VS Code Coding Bot share the `GitHub/Microsoft`
+  policy family. These are owner-selected policy labels for reviewer-independence
+  restriction and anti-duplication; they are not authenticated proof of a managed
+  serving model. Contacts and products remain distinct. A family label never proves
+  reviewer independence, and unknown contacts fail closed.
+- **Unresolved integration:** VS Code Coding Bot has no identified installed independent
+  integration. Its binding status is unresolved, its route is unbound, and no route is
+  invented. All profile descriptors remain unbound.
+- **OpenAI Director-activity floor:** At least 75% of OpenAI's own authenticated activity
+  must be Director/control-plane effort. This floor applies to OpenAI's own authenticated
+  work and has a distinct denominator from the 10% direct-production target. This
+  descriptor does not enforce the floor or provide the two activity ledgers; the dual
+  activity ledgers and runtime consumer integration remain required and are not
+  implemented by this contract.
+- **Window and tolerance:** Evaluated across a 20-slot window (5% per slot), with normal
+  tolerance of +/-3 percentage points (preference) and target + 5 points hard ceiling.
+  For Firecrawl (target 1%), a 5% mathematical slot is within the hard ceiling (6%),
+  but this descriptor conveys no actual admission or execution authority.
+- **Specialty boundaries:** Perplexity public research and Firecrawl authorized retrieval
+  boundaries are preserved; no permanent specialties exist for other participants.
+- **Canonical digest derivation:** The canonical digest dynamically binds all semantic
+  descriptor fields (effective date, prerequisites, OpenAI floor and denominators,
+  contacts, boundaries) in one immutable payload, ensuring the digest never goes stale.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
@@ -147,3 +213,5 @@ selecting a profile does not install an adapter or deploy LangGraph.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
