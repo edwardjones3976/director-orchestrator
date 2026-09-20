@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
@@ -210,11 +211,14 @@ class ZaiTrialLedger:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA secure_delete = ON")
-        connection.execute("PRAGMA foreign_keys = ON")
         try:
+            # Everything after connect() runs inside the try: a PRAGMA on a file that is
+            # not a database raises, and the handle must still be closed (Windows keeps
+            # the file locked otherwise). Same discipline as the reviewer asked of #242.
+            connection.row_factory = sqlite3.Row
             try:
+                connection.execute("PRAGMA secure_delete = ON")
+                connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError:
                 raise  # lock contention is not a schema problem
@@ -634,3 +638,4 @@ class ZaiTrialLane:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]

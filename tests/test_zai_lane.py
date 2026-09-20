@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
@@ -503,6 +504,12 @@ class LedgerReuseTests(unittest.TestCase):
         _sqlite_exec(older, "UPDATE zai_trial_metadata SET value = 'zai-trial-ledger/v0' WHERE key = 'version'")
         text = self.root / "notes.sqlite3"
         text.write_text("not a database at all, just text", encoding="utf-8")
+        # The refused text file must be deletable straight away: no connection may leak
+        # when the PRAGMA or BEGIN fails on a file that is not a database (Windows locks).
+        with self.assertRaises(ZaiTrialLedgerError):
+            ZaiTrialLedger(str(text))
+        text.unlink()
+        text.write_text("not a database at all, just text", encoding="utf-8")
         for label, path in (("foreign TaskStore", foreign), ("partial schema", partial),
                             ("missing append-only trigger", weakened), ("older version", older),
                             ("not sqlite", text)):
@@ -692,3 +699,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]
