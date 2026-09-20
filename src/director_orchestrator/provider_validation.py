@@ -493,12 +493,23 @@ class CaptureVerifier:
                 return False
             if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
                 return False
-            # A signed capture pins the Responses configuration it was minted
-            # under. Re-normalising the response cannot detect a rotated
-            # credential, endpoint, meter enrollment or timeout ceiling, so the
-            # bound route's CURRENT digest must still equal the capture's.
+            # A signed capture pins the lane configuration it was minted under.
+            # Re-normalising the response cannot detect a rotated credential,
+            # endpoint, meter enrollment, timeout ceiling or worker fingerprint,
+            # so wherever this verifier holds a route that can recompute its
+            # own identity, that route's CURRENT digest must still equal the
+            # capture's. Native command lanes (and openai without a bound
+            # Responses route) carry no recomputable identity here: their
+            # configuration pin is enforced at execution time by the bridge
+            # service (production_configuration_digest before and after the
+            # run), which is the only place the executor and account files
+            # exist. A later rotation of a native lane is therefore visible
+            # only through re-execution, never through this read path.
             if capture.provider == "openai" and self.openai_responses_route is not None:
                 if capture.configuration_digest != self.openai_responses_route.configuration_digest:
+                    return False
+            if capture.provider == "antigravity" and self.team_route is not None:
+                if capture.configuration_digest != self.team_route.configuration_digest():
                     return False
             result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),
                                        team_route=self.team_route, openai_responses_route=self.openai_responses_route)

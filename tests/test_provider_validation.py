@@ -536,6 +536,11 @@ class PostgresValidationTests(unittest.TestCase):
             make_capture({"provider":"antigravity","packet":bytes(stored[1]),"reservation":"f"*64},bytes(stored[2]),capture_key=KEY,team_route=route)
         with patch.object(route,"worker_secret",b"bad"*12):
             self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        # The team route's current fingerprint must still equal the digest the
+        # capture was minted under: a rotated worker configuration refuses.
+        with patch.object(route,"configuration_digest",lambda:"d"*64):
+            self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
 
     def test_capture_valid_and_reusable_for_two_surfaces_without_second_execution(self):
         admission,capture,evidence,verifier=self.completed()
@@ -614,7 +619,17 @@ class PostgresValidationTests(unittest.TestCase):
              "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY":KEY}
         with patch.dict(os.environ,env,clear=False):
             verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
-        self.assertEqual(TREE,verifier.tree)
+            self.assertEqual(TREE,verifier.tree)
+            # The environment pin is authoritative: a caller tree that differs
+            # from it, or a missing caller tree, is refused before any store
+            # access rather than silently adopting either side.
+            for caller in ("c"*40,""):
+                with self.subTest(caller=caller),self.assertRaisesRegex(ValidationError,"tree differs from runtime pin"):
+                    capture_verifier_from_environment(candidate=CANDIDATE,tree=caller)
+        with patch.dict(os.environ,{**env,"DIRECTOR_PROVIDER_VALIDATION_TREE":"e"*40},clear=False):
+            with self.assertRaisesRegex(ValidationError,"tree differs from runtime pin"):
+                capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+            self.assertEqual("e"*40,capture_verifier_from_environment(candidate=CANDIDATE,tree="e"*40).tree)
 
     def test_connection_acquisition_is_bounded_by_the_shared_deadline_not_the_driver(self):
         """Finding 3: a sub-second budget is enforced as a real outer deadline.

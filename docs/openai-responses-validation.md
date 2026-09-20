@@ -54,8 +54,15 @@ re-normalises identically.
   capture the right-tree verifier accepts.
 - **Current-configuration comparison (High).** The verifier compares the
   capture's `configuration_digest` with the route's current
-  `configuration_digest`. Regression: rotating the transport credential,
-  API URL or timeout ceiling flips a passing verification to refusal.
+  `configuration_digest` for every lane whose route it holds: the Responses
+  route (`configuration_digest` property) and the Antigravity team route
+  (`configuration_digest()` fingerprint). Regression: rotating the transport
+  credential, API URL or timeout ceiling, or the team worker fingerprint,
+  flips a passing verification to refusal. Native command lanes carry no
+  recomputable identity in the verifier (the executor and account files
+  exist only in the bridge service), so their configuration pin is enforced
+  at execution time by `production_configuration_digest` before and after
+  the run; a later native rotation is visible only through re-execution.
 - **Connection acquisition deadline (Medium).** libpq honours only
   whole-second `connect_timeout` values of at least two seconds, so
   `_connect_bounded` no longer rounds a sub-second budget upward: when the
