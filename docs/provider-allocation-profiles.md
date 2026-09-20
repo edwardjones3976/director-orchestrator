@@ -1,11 +1,8 @@
-<<<<<<< HEAD
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]] -->
-=======
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
->>>>>>> github/main
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -145,14 +142,6 @@ known, costs and categorized waste. Token, spend, runtime and concurrency limits
 remain separate. Missing eligible integration or review capability fails closed;
 selecting a profile does not install an adapter or deploy LangGraph.
 
-<<<<<<< HEAD
-## Dual activity ledgers
-
-The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) ensure that production credit is never derived from Director activity. 
-Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation. 
-Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
-The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. Unknown activity kinds are recorded separately and are not included in the utilization ratio.
-=======
 ## Proposed conditional allocation profile (Issue 207)
 
 The staged conditional profile descriptor (`src/director_orchestrator/conditional_allocation.py`)
@@ -216,7 +205,13 @@ VS Code Coding Bot are intentionally equal at 2%.
 - **Canonical digest derivation:** The canonical digest dynamically binds all semantic
   descriptor fields (effective date, prerequisites, OpenAI floor and denominators,
   contacts, boundaries) in one immutable payload, ensuring the digest never goes stale.
->>>>>>> github/main
+
+## Dual activity ledgers
+
+The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) ensure that production credit is never derived from Director activity. 
+Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation. 
+Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. Unknown activity kinds are recorded separately and are not included in the utilization ratio.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
@@ -227,11 +222,8 @@ VS Code Coding Bot are intentionally equal at 2%.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
-<<<<<<< HEAD
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
-=======
-<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
-<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
->>>>>>> github/main
