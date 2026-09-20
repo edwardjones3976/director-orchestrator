@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]]
 import sqlite3
@@ -99,8 +100,11 @@ class TestOpenAIActivityLedgers(unittest.TestCase):
         with self.assertRaisesRegex(LedgerError, "duplicate_idempotency_key"):
             ledgers.director.record_activity("id1", "intake", "task1", "purpose1")
             
-        stats = ledgers.utilization()
+        # Re-open with a new instance to prove durability
+        ledgers_new = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
+        stats = ledgers_new.utilization()
         self.assertEqual(stats["duplicate_attempts"], 1)
+        self.assertEqual(stats["director_events"], 1)
 
     def test_unknown_kind_separated(self):
         ledgers = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
@@ -111,40 +115,39 @@ class TestOpenAIActivityLedgers(unittest.TestCase):
         self.assertEqual(stats["production_events"], 0)
 
     def test_utilization_verdicts(self):
-        ledgers = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
-        
-        # 19 events (below 20)
+        # 19 events (insufficient history)
+        ledgers1 = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
         for i in range(19):
-            ledgers.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
-        self.assertEqual(ledgers.utilization()["verdict"], "insufficient_history")
+            ledgers1.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
+        self.assertEqual(ledgers1.utilization()["verdict"], "insufficient_history")
         
-        # 15 director, 5 production = exactly 75%
-        for i in range(5):
-            ledgers.production.record_production(f"id_p_{i}", "review", "task1", "purpose")
-        # Total is now 24. Wait, let's just make it exactly 20.
-        # I'll re-init the ledgers to keep it clean.
+        # 15 director, 5 production = exactly 15/20 (meets_floor)
+        dir_path2 = Path(self.temp_dir.name) / "director2.sqlite3"
+        prod_path2 = Path(self.temp_dir.name) / "production2.sqlite3"
+        ledgers2 = OpenAIActivityLedgers(str(dir_path2), str(prod_path2))
         
-        self.temp_dir.cleanup()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.dir_path = Path(self.temp_dir.name) / "director.sqlite3"
-        self.prod_path = Path(self.temp_dir.name) / "production.sqlite3"
-        
-        ledgers = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
         for i in range(15):
-            ledgers.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
+            ledgers2.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
         for i in range(5):
-            ledgers.production.record_production(f"id_p_{i}", "review", "task1", "purpose")
+            ledgers2.production.record_production(f"id_p_{i}", "review", "task1", "purpose")
             
-        stats = ledgers.utilization()
+        stats = ledgers2.utilization()
         self.assertEqual(stats["verdict"], "meets_floor")
-        ledgers.require_floor() # Should not raise
+        ledgers2.require_floor() # Should not raise
         
-        # Add 1 more production so it's 15/21 = 71.4% < 75%
-        ledgers.production.record_production("id_p_5", "review", "task1", "purpose")
-        self.assertEqual(ledgers.utilization()["verdict"], "below_floor")
+        # 14 director, 6 production = exactly 14/20 (below_floor)
+        dir_path3 = Path(self.temp_dir.name) / "director3.sqlite3"
+        prod_path3 = Path(self.temp_dir.name) / "production3.sqlite3"
+        ledgers3 = OpenAIActivityLedgers(str(dir_path3), str(prod_path3))
         
+        for i in range(14):
+            ledgers3.director.record_activity(f"id_d_{i}", "planning", "task1", "purpose")
+        for i in range(6):
+            ledgers3.production.record_production(f"id_p_{i}", "review", "task1", "purpose")
+            
+        self.assertEqual(ledgers3.utilization()["verdict"], "below_floor")
         with self.assertRaises(DirectorUtilizationHold):
-            ledgers.require_floor()
+            ledgers3.require_floor()
 
     def test_rolling_window(self):
         ledgers = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
@@ -183,3 +186,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]]

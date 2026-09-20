@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]]
 """OpenAI dual activity ledgers.
@@ -98,10 +99,10 @@ class _BaseLedger:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA secure_delete = ON")
-        connection.execute("PRAGMA foreign_keys = ON")
         try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("PRAGMA foreign_keys = ON")
             try:
                 connection.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError:
@@ -256,6 +257,12 @@ class OpenAIActivityLedgers:
         self.production = DirectProductionLedger(production_path)
 
     def utilization(self, moment: Optional[datetime] = None) -> dict[str, Any]:
+        """Calculate utilization over a rolling 7-day window.
+        
+        The window looks back from the given moment (or current time).
+        A minimum of 20 valid events must be recorded within that window
+        for history to be considered sufficient.
+        """
         moment = moment or datetime.now(timezone.utc)
         window_start = moment - timedelta(days=OBSERVATION_WINDOW_DAYS)
         window_start_str = window_start.isoformat(timespec="seconds")
@@ -310,3 +317,4 @@ class OpenAIActivityLedgers:
             raise DirectorUtilizationHold("OpenAI Director utilization is below the required floor")
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]]

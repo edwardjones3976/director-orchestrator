@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -13,7 +14,7 @@
 # Provider allocation profiles
 
 Owner-approved policy; the prospective Claude/OpenAI duty swap is effective 2026-09-08. Engineering is the default for this repository.
-The canonical runtime definitions are in `allocation_profiles.py`; select one
+The canonical runtime definitions are in `allocation_profiles.py`; select one profile before plan approval and bind its digest to the immutable assignment plan.
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
@@ -144,7 +145,7 @@ selecting a profile does not install an adapter or deploy LangGraph.
 The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) ensure that production credit is never derived from Director activity. 
 Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation. 
 Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
-The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window evaluates prospectively from the first recorded event. A minimum of 20 total valid events must be recorded before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. Unknown activity kinds are recorded separately and are not included in the utilization ratio.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. Unknown activity kinds are recorded separately and are not included in the utilization ratio.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
@@ -157,3 +158,4 @@ The ledgers are distinct, append-only SQLite files. A rolling 7-day observation 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
