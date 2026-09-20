@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]]
@@ -106,12 +107,12 @@ class TestOpenAIActivityLedgers(unittest.TestCase):
         self.assertEqual(stats["duplicate_attempts"], 1)
         self.assertEqual(stats["director_events"], 1)
 
-    def test_unknown_kind_separated(self):
+    def test_invalid_director_kind_refused(self):
         ledgers = OpenAIActivityLedgers(str(self.dir_path), str(self.prod_path))
-        ledgers.director.record_activity("id1", "made_up_kind", "task1", "purpose1")
+        with self.assertRaisesRegex(LedgerError, "invalid_director_kind"):
+            ledgers.director.record_activity("id1", "review", "task1", "purpose1")
         stats = ledgers.utilization()
         self.assertEqual(stats["director_events"], 0)
-        self.assertEqual(stats["unknown_events"], 1)
         self.assertEqual(stats["production_events"], 0)
 
     def test_utilization_verdicts(self):
@@ -187,3 +188,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]]
@@ -8,7 +9,8 @@ Implements the two OpenAI activity ledgers required for the conditional profile
 `dual_activity_ledgers_operational`.
 The Director/control-plane ledger records planning and coordination.
 The Direct-production ledger records bounded production assignments.
-They must not be conflated, and production credit cannot be derived from Director activity.
+They must not be conflated, and production credit cannot be derived from Director activity within these ledgers.
+However, runtime credit is unchanged until a consumer integrates them.
 """
 from __future__ import annotations
 
@@ -212,8 +214,9 @@ class DirectorActivityLedger(_BaseLedger):
     def record_activity(self, idempotency_key: str, kind: str, task_id: str, purpose_digest: str, assignment_id: Optional[str] = None) -> None:
         if not purpose_digest.strip():
             raise LedgerError("purpose_digest_required")
-        actual_kind = kind if kind in DIRECTOR_KINDS else "unknown"
-        self._record_event(idempotency_key, actual_kind, task_id, purpose_digest, assignment_id)
+        if kind not in DIRECTOR_KINDS:
+            raise LedgerError("invalid_director_kind")
+        self._record_event(idempotency_key, kind, task_id, purpose_digest, assignment_id)
 
 
 class DirectProductionLedger(_BaseLedger):
@@ -275,9 +278,9 @@ class OpenAIActivityLedgers:
             p_events = p_conn.execute("SELECT kind FROM openai_direct_production_events WHERE started_at >= ?", (window_start_str,)).fetchall()
             p_dups = p_conn.execute("SELECT COUNT(*) FROM duplicates WHERE attempted_at >= ?", (window_start_str,)).fetchone()[0]
                 
+        # The two files are read without a cross-file snapshot; the ratio is advisory until a consumer integrates them.
         duplicate_attempts = d_dups + p_dups
         director_events = sum(1 for row in d_events if row[0] in DIRECTOR_KINDS)
-        unknown_events = sum(1 for row in d_events if row[0] == "unknown")
         production_events = len(p_events)
         
         total_valid = director_events + production_events
@@ -299,7 +302,6 @@ class OpenAIActivityLedgers:
         return {
             "director_events": director_events,
             "production_events": production_events,
-            "unknown_events": unknown_events,
             "duplicate_attempts": duplicate_attempts,
             "floor_percent": FLOOR_PERCENT,
             "ratio": ratio_val,
@@ -318,3 +320,4 @@ class OpenAIActivityLedgers:
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]]
