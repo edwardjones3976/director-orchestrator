@@ -212,7 +212,7 @@ VS Code Coding Bot are intentionally equal at 2%.
 The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) use schema and kind checks to prevent Director rows from being credited as production within these ledgers. Runtime credit and workload caps are unchanged until a consumer integrates the ledgers. 
 Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation. 
 Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
-The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. Unknown activity kinds are recorded separately and are not included in the utilization ratio.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. A kind outside the ledger's own kind set is refused (invalid_director_kind / invalid_production_kind) and never recorded.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
