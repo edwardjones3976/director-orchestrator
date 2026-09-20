@@ -1,6 +1,7 @@
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
@@ -207,6 +208,24 @@ VS Code Coding Bot are intentionally equal at 2%.
   descriptor fields (effective date, prerequisites, OpenAI floor and denominators,
   contacts, boundaries) in one immutable payload, ensuring the digest never goes stale.
 
+## Contact-family safety (directive #207)
+
+`src/director_orchestrator/contact_families.py` types every known contact and
+lane id (for example `openai`, `claude`, `cursor`, `grok`, `grok-bot`,
+`gemini`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`,
+`vscode-coding-bot`, `zai`) to an owner-selected provider-family label: Direct
+Grok and Grok Bot are one xAI family; GitHub Copilot and VS Code Coding Bot
+are one GitHub/Microsoft family; Gemini and Antigravity are one Google family.
+Reviewer-independence checks in `review_handoff.py` and
+`policy.py::_independent_review_binding_errors` reject a reviewer whose
+provider family matches any material author's family, in addition to the
+existing identity check, so that separate contact lanes in the same family
+never create false different-provider review independence or duplicate
+accepted credit. An identity absent from the table is unknown and fails
+closed: it is never treated as independent. These family labels are policy
+labels for independence and anti-duplication decisions; they are not
+authenticated evidence of which underlying model actually served a request.
+
 ## Dual activity ledgers
 
 The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) use schema and kind checks to prevent Director rows from being credited as production within these ledgers. Runtime credit and workload caps are unchanged until a consumer integrates the ledgers. 
@@ -226,6 +245,7 @@ The ledgers are distinct, append-only SQLite files. A rolling 7-day observation 
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
