@@ -1,4 +1,8 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
 <!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -14,8 +18,7 @@
 # Provider allocation profiles
 
 Owner-approved policy; the prospective Claude/OpenAI duty swap is effective 2026-09-08. Engineering is the default for this repository.
-The canonical runtime definitions are in `allocation_profiles.py`; select one
-profile before plan approval and bind its digest to the immutable assignment plan.
+The canonical runtime definitions are in `allocation_profiles.py`; select one profile before plan approval and bind its digest to the immutable assignment plan.
 
 | Provider lane | Mixed | Engineering (default) | Public research | Enterprise |
 | --- | ---: | ---: | ---: | ---: |
@@ -222,6 +225,13 @@ accepted credit. An identity absent from the table is unknown and fails
 closed: it is never treated as independent. These family labels are policy
 labels for independence and anti-duplication decisions; they are not
 authenticated evidence of which underlying model actually served a request.
+
+## Dual activity ledgers
+
+The dual OpenAI activity ledgers (`openai_director_activity` and `openai_direct_production`) use schema and kind checks to prevent Director rows from being credited as production within these ledgers. Runtime credit and workload caps are unchanged until a consumer integrates the ledgers. 
+Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation. 
+Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. A kind outside the ledger's own kind set is refused (invalid_director_kind / invalid_production_kind) and never recorded.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
@@ -234,4 +244,8 @@ authenticated evidence of which underlying model actually served a request.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
 <!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
