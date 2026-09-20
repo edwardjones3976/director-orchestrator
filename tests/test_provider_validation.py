@@ -1,3 +1,9 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | BEGIN]]
@@ -11,9 +17,10 @@ import json
 import os
 from pathlib import Path
 import secrets
+import time
 import sys
 import tempfile
-from unittest.mock import patch
+from unittest.mock import MagicMock,patch
 import unittest
 
 from director_orchestrator.packet_contracts import canonical_json_bytes
@@ -21,7 +28,7 @@ from director_orchestrator.provider_activation import ProviderActivationBinding,
 from director_orchestrator.primary_provider_activation import PrimaryProviderActivationService
 from director_orchestrator.provider_validation import (
     SCHEMA,CHECKPOINT_NAMESPACE,PostgresValidationStore,ValidationError,ValidationRequest,
-    CaptureVerifier,make_capture,digest,normalize_capture,
+    CaptureVerifier,capture_verifier_from_environment,make_capture,digest,normalize_capture,
     ValidationBridgeService,production_configuration_digest,
 )
 
@@ -381,6 +388,22 @@ class PostgresValidationTests(unittest.TestCase):
             raise RuntimeError("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN is required; use sanctioned Windows lane")
         cls.store=PostgresValidationStore(dsn)
         cls.store.bootstrap()
+        # Deferred commit-time gate: a settlement must also survive a blocked
+        # COMMIT. The gate takes the same advisory lock the QA harness uses, so
+        # a commit-time lock wait is real and the shared deadline must bound it.
+        # Elsewhere the lock is uncontended and costs nothing.
+        with cls.store.connect() as db:
+            db.execute(f"""CREATE OR REPLACE FUNCTION {SCHEMA}.qa_settle_commit_gate() RETURNS trigger
+                LANGUAGE plpgsql AS $gate$ BEGIN
+                IF NEW.sequence = 3 AND NEW.state = 'succeeded' THEN
+                    PERFORM pg_advisory_xact_lock(hashtextextended(NEW.reservation, 20260914));
+                END IF;
+                RETURN NEW;
+                END $gate$""")
+            db.execute(f"DROP TRIGGER IF EXISTS qa_settle_commit_gate ON {SCHEMA}.checkpoints")
+            db.execute(f"""CREATE CONSTRAINT TRIGGER qa_settle_commit_gate
+                AFTER INSERT ON {SCHEMA}.checkpoints DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.qa_settle_commit_gate()""")
 
     def generation(self,*,budget=2,providers=("claude",)):
         generation=secrets.token_hex(32)
@@ -401,8 +424,57 @@ class PostgresValidationTests(unittest.TestCase):
         raw=raw_native()
         capture=make_capture(admission,raw,capture_key=KEY)
         evidence=self.store.settle(admission,raw,capture)
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
         return admission,capture,evidence,verifier
+
+    def _admitted_and_claimed(self):
+        generation=self.generation()
+        admission=self.admit(generation)
+        self.store.claim_execution(admission)
+        return generation,admission
+
+    def test_claim_execution_reads_back_running_state_and_checkpoint(self):
+        """Regression for a dropped fetchone(): claim_execution must actually
+        read the locked row, not index the live cursor object, before it can
+        decide the attempt is eligible and advance it to 'running'.
+
+        A single running checkpoint at sequence 2 is the correct outcome; it
+        is distinct from the admitted checkpoint at sequence 1, not a second
+        copy of it.
+        """
+        generation,admission=self._admitted_and_claimed()
+        with self.store.connect() as db:
+            state=db.execute(f"SELECT state FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()[0]
+            checkpoints=db.execute(f"SELECT sequence,state FROM {SCHEMA}.checkpoints "
+                "WHERE reservation=%s ORDER BY sequence",(admission["reservation"],)).fetchall()
+        self.assertEqual("running",state)
+        self.assertEqual([(1,"admitted"),(2,"running")],[tuple(row) for row in checkpoints])
+        with self.assertRaises(ValidationError):
+            self.store.claim_execution(admission)
+
+    def _hold_lock(self, statement, parameters):
+        import threading
+        release=threading.Event();held=threading.Event()
+        def blocker():
+            with self.store.connect() as db:
+                db.execute("SELECT set_config('statement_timeout','10000',true),set_config('lock_timeout','10000',true)")
+                db.execute(statement,parameters).fetchone()
+                held.set()
+                release.wait(15)
+        thread=threading.Thread(target=blocker,daemon=True)
+        thread.start()
+        self.assertTrue(held.wait(10))
+        return release,thread
+
+    def _bounded_deadline(self,started,budget_seconds=2.0):
+        import time
+        def remaining_seconds():
+            remaining=budget_seconds-(time.monotonic()-started)
+            if remaining<=0:
+                raise ValidationError("shared validation deadline exhausted")
+            return remaining
+        return remaining_seconds
 
     def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
         import time
@@ -455,7 +527,7 @@ class PostgresValidationTests(unittest.TestCase):
             account_files={},team_route=route)
         request=ValidationRequest(generation=generation,provider="antigravity")
         result=service.run(request,OWNER)
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation,team_route=route)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation,team_route=route)
         self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
         with self.assertRaisesRegex(ValidationError,"already admitted"):service.run(request,OWNER)
         self.assertEqual(len(calls),1)
@@ -464,6 +536,11 @@ class PostgresValidationTests(unittest.TestCase):
             make_capture({"provider":"antigravity","packet":bytes(stored[1]),"reservation":"f"*64},bytes(stored[2]),capture_key=KEY,team_route=route)
         with patch.object(route,"worker_secret",b"bad"*12):
             self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        # The team route's current fingerprint must still equal the digest the
+        # capture was minted under: a rotated worker configuration refuses.
+        with patch.object(route,"configuration_digest",lambda:"d"*64):
+            self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
 
     def test_capture_valid_and_reusable_for_two_surfaces_without_second_execution(self):
         admission,capture,evidence,verifier=self.completed()
@@ -511,8 +588,113 @@ class PostgresValidationTests(unittest.TestCase):
         self.assertFalse(verifier.verify(replace(binding(),app_version="changed"),evidence))
         self.assertFalse(verifier.verify(binding(),"f"*64))
         for key,candidate in (("wrong"*10,CANDIDATE),(KEY,"c"*40)):
-            bad=CaptureVerifier(self.store,capture_key=key,candidate=candidate,generation=admission["generation"])
+            bad=CaptureVerifier(self.store,capture_key=key,candidate=candidate,tree=TREE,generation=admission["generation"])
             self.assertFalse(bad.verify(binding(),evidence))
+
+    def test_capture_for_another_tree_never_qualifies(self):
+        """Finding 1: the expected runtime tree is compared, not merely carried.
+
+        A valid signed capture minted under the same candidate and generation
+        for a DIFFERENT runtime tree must not qualify LIVE_OK for this one.
+        """
+        admission,capture,evidence,verifier=self.completed()
+        self.assertEqual(TREE,capture.tree)
+        self.assertTrue(verifier.verify(binding(),evidence))
+        other=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree="c"*40,
+                              generation=admission["generation"])
+        self.assertFalse(other.verify(binding(),evidence))
+        for bad in ("","b"*39,"B"*40,None):
+            with self.subTest(tree=bad),self.assertRaisesRegex(ValueError,"runtime tree pin"):
+                CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=bad,
+                                generation=admission["generation"])
+
+    def test_environment_verifier_pins_the_tree(self):
+        import os
+        from unittest.mock import patch
+        env={"DIRECTOR_PROVIDER_VALIDATION_ENABLED":"true",
+             "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE":CANDIDATE,
+             "DIRECTOR_PROVIDER_VALIDATION_TREE":TREE,
+             "DIRECTOR_PROVIDER_VALIDATION_GENERATION":"0"*64,
+             "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN":self.store.dsn,
+             "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY":KEY}
+        with patch.dict(os.environ,env,clear=False):
+            verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+            self.assertEqual(TREE,verifier.tree)
+            # The environment pin is authoritative: a caller tree that differs
+            # from it, or a missing caller tree, is refused before any store
+            # access rather than silently adopting either side.
+            for caller in ("c"*40,""):
+                with self.subTest(caller=caller),self.assertRaisesRegex(ValidationError,"tree differs from runtime pin"):
+                    capture_verifier_from_environment(candidate=CANDIDATE,tree=caller)
+        with patch.dict(os.environ,{**env,"DIRECTOR_PROVIDER_VALIDATION_TREE":"e"*40},clear=False):
+            with self.assertRaisesRegex(ValidationError,"tree differs from runtime pin"):
+                capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+            self.assertEqual("e"*40,capture_verifier_from_environment(candidate=CANDIDATE,tree="e"*40).tree)
+
+    def test_connection_acquisition_is_bounded_by_the_shared_deadline_not_the_driver(self):
+        """Finding 3: a sub-second budget is enforced as a real outer deadline.
+
+        libpq honours only whole-second connect timeouts of at least two
+        seconds, so a remaining budget below that is not rounded upward for
+        the driver to wait out: the acquisition is awaited for exactly the
+        remaining budget, a slow connect fails closed at that point, the late
+        connection is closed on arrival, and a connect that returns only
+        after the deadline is refused on return instead of at the first
+        statement. Within budget the driver receives the whole-second floor,
+        capped at five seconds.
+        """
+        import threading
+        opened=[];arrived=[]
+        gate=threading.Event()
+        class Store(PostgresValidationStore):
+            slow=False
+            def connect(self, connect_timeout=5):
+                opened.append(connect_timeout)
+                if self.slow:
+                    gate.wait(3)
+                connection=super().connect(connect_timeout=connect_timeout)
+                arrived.append(connection)
+                return connection
+        store=Store(self.store.dsn)
+        with self.assertRaisesRegex(ValidationError,"deadline exhausted before connecting"):
+            store._connect_bounded(lambda: 0.0)
+        self.assertEqual([],opened)
+        # Sub-two-second budgets still connect, under the outer deadline.
+        for budget in (0.5,1.0,1.9):
+            with self.subTest(budget=budget),store._connect_bounded(lambda: budget) as db:
+                self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        self.assertEqual([2,2,2],opened)
+        # A slow connect is cut off at the remaining budget, not at the
+        # driver's rounded-up two seconds, and the late connection is closed.
+        store.slow=True;opened.clear();arrived.clear()
+        started=time.monotonic()
+        with self.assertRaisesRegex(ValidationError,"deadline exhausted while connecting"):
+            store._connect_bounded(lambda: 0.4)
+        self.assertLess(time.monotonic()-started,1.5)
+        self.assertEqual([2],opened)
+        gate.set()
+        deadline=time.monotonic()+5
+        while len(arrived)<1 and time.monotonic()<deadline:
+            time.sleep(0.05)
+        time.sleep(0.1)
+        self.assertEqual(1,len(arrived));self.assertTrue(arrived[0].closed)
+        store.slow=False;opened.clear()
+        # A connect that returns only after the deadline is refused on return
+        # and the connection it opened is closed, not leaked.
+        readings=iter([3.0])
+        def remaining():
+            try:
+                return next(readings)
+            except StopIteration:
+                raise ValidationError("Responses validation timeout is exhausted")
+        with self.assertRaisesRegex(ValidationError,"timeout is exhausted"):
+            store._connect_bounded(remaining)
+        self.assertEqual([3],opened);self.assertTrue(arrived[-1].closed)
+        with store._connect_bounded(lambda: 2.6) as db:
+            self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        with store._connect_bounded(lambda: 90.0) as db:
+            self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        self.assertEqual([3,2,5],opened)
 
     def test_underlying_bytes_required_not_just_signature(self):
         admission,capture,evidence,verifier=self.completed()
@@ -534,6 +716,517 @@ class PostgresValidationTests(unittest.TestCase):
         store=PostgresValidationStore(self.store.dsn)
         self.assertIsNone(store.load_capture("f"*64))
 
+    def test_shared_deadline_settlement_succeeds_without_contention(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        started=time.monotonic()
+        evidence=self.store.settle(admission,raw,capture,remaining_seconds=lambda:30.0)
+        self.assertLess(time.monotonic()-started,10)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
+        self.assertTrue(verifier.verify(binding(),evidence))
+
+    def test_exhausted_deadline_refuses_before_any_store_effect(self):
+        import time
+        generation=self.generation()
+        # A fully valid capture built from a synthetic admission: the settle
+        # refusal below must be deadline evidence, never serialization noise.
+        synthetic={"reservation":"e"*64,"nonce":"n"*64,"fence":1,
+                   "generation":"a"*64,"provider":"claude","candidate":CANDIDATE,"tree":TREE,
+                   "expires_at":int(time.time())+600,
+                   "binding":asdict(binding()),"configuration_digest":"c"*64,
+                   "packet":canonical_json_bytes(work_packet()),"owner_digest":"o"*64}
+        valid_capture=make_capture(synthetic,raw_native(),capture_key=KEY)
+        for call in (lambda: self.store.admit(ValidationRequest(generation=generation,provider="claude"),OWNER,
+                            remaining_seconds=lambda:0.0),
+                lambda: self.store.claim_execution({"reservation":"f"*64,"generation":generation,
+                    "provider":"claude","nonce":"n"*64,"fence":1,"packet":b"{}"},
+                    remaining_seconds=lambda:0.0),
+                lambda: self.store.settle(synthetic,raw_native(),valid_capture,remaining_seconds=lambda:0.0)):
+            with self.subTest(call=call),self.assertRaisesRegex(ValidationError,"deadline"):
+                call()
+        with self.store.connect() as db:
+            self.assertEqual(0,db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",
+                (generation,)).fetchone()[0])
+            self.assertIsNone(db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s",
+                (generation,)).fetchone())
+
+    def test_expired_settle_deadline_refuses_before_serialization(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        capture=make_capture(admission,raw_native(),capture_key=KEY)
+        started=time.monotonic()
+        with self.assertRaisesRegex(ValidationError,"deadline"):
+            self.store.settle(admission,raw_native(),capture,remaining_seconds=lambda:0.0)
+        self.assertLess(time.monotonic()-started,10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                           (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1])
+
+    def test_malformed_capture_fails_independently_of_the_deadline(self):
+        generation,admission=self._admitted_and_claimed()
+        # With a live budget the malformed capture fails on its own terms
+        # (TypeError), which is exactly why it can never masquerade as
+        # deadline evidence in the expired-budget regression above.
+        with self.assertRaises(TypeError):
+            self.store.settle(admission,b"{}",None)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                           (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1])
+
+    def test_admission_row_lock_is_bounded_and_reserves_nothing(self):
+        import time
+        generation=self.generation()
+        release,thread=self._hold_lock(
+            f"SELECT 1 FROM {SCHEMA}.generations WHERE generation=%s FOR UPDATE",(generation,))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception) as caught:
+                self.store.admit(ValidationRequest(generation=generation,provider="claude"),OWNER,
+                    remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+            self.assertNotIsInstance(caught.exception,ValidationError)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            self.assertEqual(0,db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",
+                (generation,)).fetchone()[0])
+            self.assertIsNone(db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE generation=%s",
+                (generation,)).fetchone())
+
+    def test_settlement_row_lock_is_bounded_and_rolls_back(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        release,thread=self._hold_lock(
+            f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",(admission["reservation"],))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception):
+                self.store.settle(admission,raw,capture,remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest,output FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()
+        self.assertEqual("running",row[0]);self.assertIsNone(row[1]);self.assertIsNone(row[2])
+
+    def test_commit_time_lock_cannot_persist_late_settlement(self):
+        import time
+        generation,admission=self._admitted_and_claimed()
+        raw=raw_native();capture=make_capture(admission,raw,capture_key=KEY)
+        release,thread=self._hold_lock(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",(admission["reservation"],))
+        started=time.monotonic()
+        try:
+            with self.assertRaises(Exception) as caught:
+                self.store.settle(admission,raw,capture,remaining_seconds=self._bounded_deadline(started))
+            self.assertLess(time.monotonic()-started,10)
+            self.assertNotIsInstance(caught.exception,ValidationError)
+        finally:
+            release.set();thread.join(10)
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                (admission["reservation"],)).fetchone()
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s AND state='succeeded'",
+                (admission["reservation"],)).fetchone()[0]
+        self.assertNotEqual("succeeded",row[0]);self.assertIsNone(row[1]);self.assertEqual(0,succeeded)
+
+    def _responses_service_fixture(self,*,transport_ceiling=60):
+        """Real store and service; only the provider transport is synthetic.
+
+        `transport_ceiling` bounds `maximum_timeout_seconds`. It defaults to a
+        much wider value than the 2s packet ceiling so the claim/fence/settle
+        contention cases below exercise the packet-ceiling tightening path.
+        The admission contention case needs it equal to the packet ceiling
+        instead: admission itself runs before that packet is even known, so
+        it can only ever be bounded by the transport ceiling.
+        """
+        import time as time_module
+        from types import SimpleNamespace
+        from director_orchestrator.openai_responses_validation import OpenAIResponsesValidationRoute
+        work=work_packet()
+        work["limits"]["timeout_seconds"]=2
+        packet=canonical_json_bytes(work)
+        transport=SimpleNamespace(model="gpt-fixture-responses",
+            api_url="https://api.openai.com/v1/responses",_api_key="sk-contention-fixture",
+            maximum_timeout_seconds=transport_ceiling,response_meter=SimpleNamespace(enrollments={}))
+        authority=MagicMock();authority.reserve.return_value=SimpleNamespace(token_limit=128)
+        route=OpenAIResponsesValidationRoute(transport=transport,total_token_limit=128,
+            expected_model=transport.model,meter_enrollment_digest="d"*64,
+            expected_organization_id="org-fixture",expected_api_project_id="proj-fixture",
+            canary_task_id=work["task_id"],canary_assignment_id=work["assignment_id"],
+            canary_attempt_digest=work["idempotency_key"],
+            canary_work_packet_digest="sha256:"+digest(packet),
+            budget_authority=authority,budget_authority_digest="c"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,
+            owner_token=OWNER,expires_at=int(time_module.time())+600,budget_units=1,
+            lanes={"openai":{"binding":asdict(binding("openai")),
+                "configuration_digest":route.configuration_digest,"cost_units":1,"work_packet":work}})
+        native=dict(object="response",id="resp-contention-fixture",
+            created_at=int(time_module.time()),status="completed",error=None,
+            incomplete_details=None,model="gpt-fixture-responses",service_tier="default",
+            output=[dict(type="message",role="assistant",status="completed",
+                content=[dict(type="output_text",text="Canary analyzed")])],
+            usage=dict(input_tokens=12,output_tokens=4,total_tokens=16,
+                input_tokens_details=dict(cached_tokens=0),
+                output_tokens_details=dict(reasoning_tokens=0)))
+        capture_bytes=canonical_json_bytes({"response":native,"response_headers":{
+            "openai-organization":"org-fixture","openai-project":"proj-fixture",
+            "x-request-id":"req-contention-fixture"}})
+        sends=[]
+        def send(raw,*,context):
+            sends.append(raw)
+            context.execution_observer("openai",capture_bytes,None)
+        transport.send=send
+        service=ValidationBridgeService(store=self.store,production_executor=None,
+            capture_key=KEY,owner_token=OWNER,account_files={},openai_responses_route=route)
+        return {"service":service,"generation":generation,"sends":sends}
+
+    def _run_service_contention_case(self, phase):
+        """Service-level cleanup under real SQL contention.
+
+        A real PostgreSQL session holds the conflicting lock from inside the
+        wrapped store call and keeps holding it across the primary refusal AND
+        the except-path fail cleanup, so the SQL state and elapsed time witness
+        real contention, not a mocked timeout. The blocker self-releases after
+        3 seconds as a safety-net watchdog only: the 2s packet budget plus the
+        1s scheduler grace is the whole boundary, and the cleanup allowance in
+        PostgresValidationStore.fail is anchored to that same absolute
+        deadline-plus-grace, not a second, fresh window stacked on top of it.
+        Completion must land strictly inside 2s+1s.
+
+        `threading.Event.wait` returns False on a timeout WITHOUT setting the
+        event, so `release.is_set()` can never observe an automatic watchdog
+        release; the blocker instead records whether its own wait returned via
+        the watchdog (timeout) or the explicit release into `box["watchdog_fired"]`,
+        which is witnessed twice: it must still be unset (None) immediately
+        after the service call returns/raises (proving the watchdog had not
+        yet fired when the primary assertions already ran), and it must be
+        False once we join the thread after explicitly releasing it (proving
+        that explicit release, not the watchdog, is what actually unblocked
+        it). The joined thread's `is_alive()` is asserted False, and any error
+        raised inside the blocker itself is recorded and asserted absent, not
+        silently dropped. After draining, no late eligible success, no stored
+        capture digest, and no duplicate dispatch may exist. The blocker
+        thread/connection handle is recorded before it starts or waits, and
+        any blocker setup failure is propagated (not silently swallowed) and
+        still joined in a finally so a failed setup cannot leak a thread,
+        connection or held lock.
+        """
+        import threading
+        import time as time_module
+        fixture=self._responses_service_fixture()
+        box={"watchdog_fired":None,"errors":[]}
+        def wrapped_factory(original):
+            def wrapped(*args,**kwargs):
+                if phase in ("claim_execution","settle"):
+                    box["reservation"]=args[0]["reservation"]
+                elif phase=="verify_fence":
+                    box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
+                release,held=threading.Event(),threading.Event()
+                def blocker():
+                    try:
+                        with self.store.connect() as db:
+                            db.execute("SELECT set_config('statement_timeout','15000',true),"
+                                "set_config('lock_timeout','15000',true)")
+                            if phase=="verify_fence":
+                                db.execute(f"LOCK TABLE {SCHEMA}.attempts IN ACCESS EXCLUSIVE MODE")
+                            else:
+                                db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
+                                           (box["reservation"],)).fetchone()
+                            held.set()
+                            # Self-release at 3s (2s packet budget + 1s
+                            # scheduler grace) is a watchdog safety net; the
+                            # service is expected to finish, and this test to
+                            # call release.set() itself, well before this
+                            # fires. Event.wait returns False on a timeout
+                            # without setting the event, so the outcome is
+                            # recorded explicitly rather than inferred from
+                            # release.is_set().
+                            released_explicitly=release.wait(3.0)
+                            box["watchdog_fired"]=not released_explicitly
+                    except BaseException as error:
+                        box["errors"].append(error)
+                        held.set()
+                thread=threading.Thread(target=blocker,daemon=True)
+                # Recorded before the thread starts or any wait, so a setup
+                # failure below can still be released and joined.
+                box["release"]=release;box["thread"]=thread
+                thread.start()
+                acquired=held.wait(10)
+                if box["errors"]:
+                    release.set();thread.join(5)
+                    raise AssertionError(f"contention blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+                if not acquired:
+                    release.set();thread.join(5)
+                    raise AssertionError("contention blocker never acquired its lock")
+                return original(*args,**kwargs)
+            return wrapped
+        try:
+            with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
+                started=time_module.monotonic()
+                with self.assertRaises(Exception) as caught:
+                    fixture["service"].run(ValidationRequest(
+                        generation=fixture["generation"],provider="openai"),OWNER)
+                elapsed=time_module.monotonic()-started
+            error=caught.exception
+            sqlstate=getattr(error,"sqlstate",None)
+            self.assertTrue(sqlstate in ("55P03","57014")
+                            or "timeout" in str(error).lower()
+                            or "deadline" in str(error).lower(),
+                            f"unexpected refusal: {error!r}")
+            # The 2s packet budget plus 1s scheduler grace is the whole
+            # boundary; no extra cleanup budget may push completion past it.
+            self.assertLess(elapsed,2.0+1.0,
+                            f"service overran the 2s budget plus 1s scheduler grace: {elapsed:.2f}s")
+            self.assertIsNone(box.get("watchdog_fired"),
+                              "blocker watchdog already fired before the service completed")
+            expected_sends=1 if phase=="settle" else 0
+            self.assertEqual(expected_sends,len(fixture["sends"]),
+                             "duplicate or missing dispatch under contention")
+            box["release"].set();box["thread"].join(5)
+            self.assertFalse(box["thread"].is_alive(),
+                             "contention blocker thread still running after join")
+            self.assertFalse(box["watchdog_fired"],
+                             "blocker self-released via its watchdog, not the explicit release")
+            self.assertFalse(box["errors"],f"contention blocker raised: {box['errors']}")
+            with self.store.connect() as db:
+                row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                               (box["reservation"],)).fetchone()
+                succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s "
+                                     "AND state='succeeded'",(box["reservation"],)).fetchone()[0]
+            # claim_execution's own SELECT ... FOR UPDATE blocks before it ever
+            # writes 'running', so a claim-phase timeout must leave 'admitted'
+            # (or the cleanup marker); later phases already reached 'running'
+            # before their own contention, so they never regress to 'admitted'.
+            expected_states=("admitted","ambiguous") if phase=="claim_execution" else ("running","ambiguous")
+            self.assertIn(row[0],expected_states)
+            self.assertIsNone(row[1])
+            self.assertEqual(0,succeeded)
+            with self.assertRaisesRegex(ValidationError,"already admitted"):
+                fixture["service"].run(ValidationRequest(
+                    generation=fixture["generation"],provider="openai"),OWNER)
+        finally:
+            release=box.get("release");thread=box.get("thread")
+            if release is not None:
+                release.set()
+            if thread is not None:
+                thread.join(5)
+
+    def test_service_claim_timeout_blocks_dispatch_and_stays_reconcilable(self):
+        self._run_service_contention_case("claim_execution")
+
+    def test_service_fence_timeout_blocks_dispatch_within_cleanup_allowance(self):
+        self._run_service_contention_case("verify_fence")
+
+    def test_service_settle_timeout_keeps_no_late_eligible_success(self):
+        self._run_service_contention_case("settle")
+
+    def test_service_openai_responses_admission_timeout_reserves_nothing(self):
+        """Full-service C3 admission case.
+
+        Admission runs OUTSIDE the failure-cleanup try block in
+        _run_openai_responses -- its own lock timeout is the only refusal; no
+        ambiguity marker is ever written for an admission-phase failure -- so
+        a blocked generations row lock during admit() must leave
+        reserved_units at zero and create no attempt row at all, distinct
+        from the claim/fence/settle cases above where an attempt already
+        exists before their contention. The transport ceiling here equals the
+        packet ceiling (2s) because admission happens before that packet is
+        even read back, so admission can only ever be bounded by the
+        transport ceiling, never by a later packet-ceiling tightening.
+        """
+        import threading
+        import time as time_module
+        fixture=self._responses_service_fixture(transport_ceiling=2)
+        box={"watchdog_fired":None,"errors":[]}
+        release,held=threading.Event(),threading.Event()
+        def blocker():
+            try:
+                with self.store.connect() as db:
+                    db.execute("SELECT set_config('statement_timeout','15000',true),"
+                        "set_config('lock_timeout','15000',true)")
+                    db.execute(f"SELECT 1 FROM {SCHEMA}.generations WHERE generation=%s FOR UPDATE",
+                               (fixture["generation"],)).fetchone()
+                    held.set()
+                    released_explicitly=release.wait(3.0)
+                    box["watchdog_fired"]=not released_explicitly
+            except BaseException as error:
+                box["errors"].append(error)
+                held.set()
+        thread=threading.Thread(target=blocker,daemon=True)
+        box["release"]=release;box["thread"]=thread
+        try:
+            thread.start()
+            acquired=held.wait(10)
+            if box["errors"]:
+                raise AssertionError(f"admission blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+            self.assertTrue(acquired,"admission contention blocker never acquired its lock")
+            started=time_module.monotonic()
+            with self.assertRaises(Exception) as caught:
+                fixture["service"].run(ValidationRequest(
+                    generation=fixture["generation"],provider="openai"),OWNER)
+            elapsed=time_module.monotonic()-started
+            error=caught.exception
+            self.assertNotIsInstance(error,ValidationError)
+            sqlstate=getattr(error,"sqlstate",None)
+            self.assertTrue(sqlstate in ("55P03","57014") or "timeout" in str(error).lower(),
+                            f"unexpected refusal: {error!r}")
+            self.assertLess(elapsed,2.0+1.0,
+                            f"admission overran the 2s budget plus 1s scheduler grace: {elapsed:.2f}s")
+            self.assertIsNone(box.get("watchdog_fired"),
+                              "blocker watchdog already fired before the service completed")
+            self.assertFalse(fixture["sends"],"transport must never be reached on an admission timeout")
+            release.set();thread.join(5)
+            self.assertFalse(thread.is_alive(),"admission blocker thread still running after join")
+            self.assertFalse(box["watchdog_fired"],
+                             "blocker self-released via its watchdog, not the explicit release")
+            self.assertFalse(box["errors"],f"admission blocker raised: {box['errors']}")
+            with self.store.connect() as db:
+                reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",
+                    (fixture["generation"],)).fetchone()[0]
+                attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",
+                    (fixture["generation"],)).fetchone()[0]
+            self.assertEqual(0,reserved)
+            self.assertEqual(0,attempts)
+        finally:
+            release.set()
+            thread.join(5)
+
+    def test_service_openai_responses_deferred_commit_cannot_persist_late_settlement(self):
+        """Full-service C3 deferred-COMMIT case.
+
+        Reuses this class's qa_settle_commit_gate deferred constraint trigger
+        (installed once in setUpClass): it takes the same advisory lock a
+        blocker session holds, so settle()'s own SELECT/UPDATE/INSERT succeed
+        but its implicit COMMIT blocks on the deferred trigger and is itself
+        bounded by the shared deadline's lock_timeout (refreshed immediately
+        before the implicit COMMIT), rolling back instead of persisting a
+        late 'succeeded' state. The blocker only acquires the advisory lock
+        once the reservation is known, from inside the wrapped claim_execution
+        call -- the reservation does not exist until admission returns -- and
+        holds it, uncontended with claim/fence/settle's own row locks, across
+        the rest of the operation.
+        """
+        import threading
+        import time as time_module
+        fixture=self._responses_service_fixture()
+        box={"watchdog_fired":None,"errors":[]}
+        def wrapped_claim(original):
+            def wrapped(*args,**kwargs):
+                reservation=args[0]["reservation"]
+                box["reservation"]=reservation
+                release,held=threading.Event(),threading.Event()
+                def blocker():
+                    try:
+                        with self.store.connect() as db:
+                            db.execute("SELECT set_config('statement_timeout','15000',true),"
+                                "set_config('lock_timeout','15000',true)")
+                            db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",
+                                       (reservation,)).fetchone()
+                            held.set()
+                            released_explicitly=release.wait(3.0)
+                            box["watchdog_fired"]=not released_explicitly
+                    except BaseException as error:
+                        box["errors"].append(error)
+                        held.set()
+                thread=threading.Thread(target=blocker,daemon=True)
+                box["release"]=release;box["thread"]=thread
+                thread.start()
+                acquired=held.wait(10)
+                if box["errors"]:
+                    release.set();thread.join(5)
+                    raise AssertionError(f"commit blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+                if not acquired:
+                    release.set();thread.join(5)
+                    raise AssertionError("commit contention blocker never acquired its advisory lock")
+                return original(*args,**kwargs)
+            return wrapped
+        try:
+            with patch.object(self.store,"claim_execution",wrapped_claim(self.store.claim_execution)):
+                started=time_module.monotonic()
+                with self.assertRaises(Exception) as caught:
+                    fixture["service"].run(ValidationRequest(
+                        generation=fixture["generation"],provider="openai"),OWNER)
+                elapsed=time_module.monotonic()-started
+            error=caught.exception
+            self.assertNotIsInstance(error,ValidationError)
+            sqlstate=getattr(error,"sqlstate",None)
+            self.assertTrue(sqlstate in ("55P03","57014") or "timeout" in str(error).lower(),
+                            f"unexpected refusal: {error!r}")
+            self.assertLess(elapsed,2.0+1.0,
+                            f"deferred-COMMIT overran the 2s budget plus 1s scheduler grace: {elapsed:.2f}s")
+            self.assertIsNone(box.get("watchdog_fired"),
+                              "blocker watchdog already fired before the service completed")
+            self.assertEqual(1,len(fixture["sends"]),
+                             "COMMIT-time contention must still have dispatched exactly once")
+            box["release"].set();box["thread"].join(5)
+            self.assertFalse(box["thread"].is_alive(),"commit blocker thread still running after join")
+            self.assertFalse(box["watchdog_fired"],
+                             "blocker self-released via its watchdog, not the explicit release")
+            self.assertFalse(box["errors"],f"commit blocker raised: {box['errors']}")
+            with self.store.connect() as db:
+                row=db.execute(f"SELECT state,capture_digest FROM {SCHEMA}.attempts WHERE reservation=%s",
+                               (box["reservation"],)).fetchone()
+                succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.checkpoints WHERE reservation=%s "
+                                     "AND state='succeeded'",(box["reservation"],)).fetchone()[0]
+            self.assertNotEqual("succeeded",row[0])
+            self.assertIsNone(row[1])
+            self.assertEqual(0,succeeded)
+        finally:
+            release=box.get("release");thread=box.get("thread")
+            if release is not None:
+                release.set()
+            if thread is not None:
+                thread.join(5)
+
+    def test_service_openai_responses_control_uncontended_success(self):
+        """The C3 control case: an uncontended run through the real service,
+        store and capture verifier reaches 'succeeded' with exactly one
+        transport call and a verifiable evidence digest. This is the baseline
+        the claim/fence/settle contention cases above are refused against.
+        """
+        fixture=self._responses_service_fixture()
+        result=fixture["service"].run(ValidationRequest(
+            generation=fixture["generation"],provider="openai"),OWNER)
+        self.assertTrue(result.get("evidence_digest"))
+        self.assertEqual(1,len(fixture["sends"]))
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,
+            generation=fixture["generation"],openai_responses_route=fixture["service"].openai_responses_route)
+        binding=asdict(ProviderActivationBinding("openai","workspace","v1","v1","v1","v1","v1"))
+        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+        # Finding 2: the signed capture pins the Responses configuration it
+        # was minted under; a route whose credential, endpoint or timeout
+        # ceiling has since rotated no longer qualifies it, even though the
+        # retained response re-normalises identically.
+        route=fixture["service"].openai_responses_route
+        for attribute,value in (("_api_key","sk-rotated"),("api_url","https://api.example.test/v1"),
+                                ("maximum_timeout_seconds",route.transport.maximum_timeout_seconds+1)):
+            with self.subTest(rotated=attribute):
+                original=getattr(route.transport,attribute)
+                setattr(route.transport,attribute,value)
+                try:
+                    self.assertFalse(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+                finally:
+                    setattr(route.transport,attribute,original)
+        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+        with self.store.connect() as db:
+            row=db.execute(f"SELECT state FROM {SCHEMA}.attempts WHERE generation=%s",
+                (fixture["generation"],)).fetchone()
+            checkpoints=[r[0] for r in db.execute(f"SELECT c.state FROM {SCHEMA}.checkpoints c "
+                f"JOIN {SCHEMA}.attempts a USING(reservation) WHERE a.generation=%s ORDER BY c.sequence",
+                (fixture["generation"],)).fetchall()]
+        self.assertEqual("succeeded",row[0])
+        self.assertEqual(["admitted","running","succeeded"],checkpoints)
+        with self.assertRaisesRegex(ValidationError,"already admitted"):
+            fixture["service"].run(ValidationRequest(
+                generation=fixture["generation"],provider="openai"),OWNER)
+
     def test_real_subprocess_capture_uses_dedicated_fence_and_no_production_writer(self):
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
         import time
@@ -554,7 +1247,7 @@ class PostgresValidationTests(unittest.TestCase):
                 capture_key=KEY,owner_token=OWNER,account_files={"claude":(str(account),)})
             result=service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
             self.assertEqual(result["surfaces"],["app","runtime_adapter"])
-            verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+            verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
             self.assertTrue(verifier.verify(binding(),result["evidence_digest"]))
             self.assertIsNone(production.writer_fence_verifier)
             with self.assertRaises(ValidationError):
@@ -578,7 +1271,12 @@ if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
-
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

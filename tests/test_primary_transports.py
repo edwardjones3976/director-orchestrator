@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | BEGIN]]
@@ -393,7 +394,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             "usage": {"input_tokens": 250, "output_tokens": 400, "total_tokens": 650},
         }
 
-    def _openai_send(self, replies, *, context=None, requests=None, clock=None):
+    def _openai_send(self, replies, *, context=None, requests=None, clock=None, meter=None):
         seen = requests if requests is not None else []
 
         def handle(request):
@@ -406,7 +407,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             return httpx.Response(200, json=reply)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-        transport = OpenAIResponsesPacketTransport(api_key="test-secret", model="configured-model")
+        transport = OpenAIResponsesPacketTransport(api_key="test-secret", model="configured-model", response_meter=meter)
         with patch("director_orchestrator.primary_transports.httpx.AsyncClient", return_value=client), \
              patch("director_orchestrator.primary_transports.httpx.Client", side_effect=AssertionError("no unmocked synchronous I/O")):
             if clock is not None:
@@ -509,6 +510,69 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             with self.subTest(stage=len(replies)), self.assertRaisesRegex(RuntimeError, "byte bound"):
                 self._openai_send(replies, requests=requests)
             self.assertEqual(len(replies), len(requests))
+
+    def test_openai_near_limit_response_is_capturable_or_never_metered(self):
+        """Finding 6: the capture bundle bound and the native read bound agree.
+
+        A native response that fits the read bound is always capturable once
+        wrapped with its retained headers (the encoded boundary case); one
+        that does not fit is refused before the meter settles, exactly like
+        an over-bound body, never metered first and found uncapturable after.
+        """
+        from director_orchestrator import primary_transports as pt
+        from director_orchestrator.packet_contracts import canonical_json_bytes
+        from director_orchestrator.provider_validation import MAX_CAPTURE_BYTES
+        self.assertEqual(MAX_CAPTURE_BYTES, pt._MAX_COMMAND_RESULT_BYTES)
+        self.assertLess(pt._MAX_RESPONSES_NATIVE_BYTES, MAX_CAPTURE_BYTES)
+        count = {"object": "response.input_tokens", "input_tokens": 250}
+        headers = {"openai-organization": "org-" + "o" * 60, "openai-project": "proj-" + "p" * 60,
+                   "x-request-id": "req-" + "r" * 60}
+
+        def sized(total_bytes):
+            response = self._openai_response()
+            response["output"][0]["content"][0]["text"] = "t"
+            base = len(json.dumps(response, separators=(",", ":")))
+            response["output"][0]["content"][0]["text"] = "t" * max(1, total_bytes - base + 1)
+            return response
+
+        settled = []
+
+        class Meter:
+            enrollments = {}
+            enrollment = SimpleNamespace(service_tier="default")
+
+            def prepare(self, *args, **kwargs):
+                return {}
+
+            def settle(self, native, response_headers, remaining_seconds=None):
+                settled.append(len(canonical_json_bytes(native)))
+
+        captured = []
+        context = replace(self._context(), execution_observer=lambda provider, raw, result: captured.append(raw))
+        # Exactly at the native bound: read, metered once, and the observer
+        # receives a bundle that the validation store will accept.
+        at_bound = sized(pt._MAX_RESPONSES_NATIVE_BYTES)
+        encoded = json.dumps(at_bound, separators=(",", ":")).encode()
+        self.assertLessEqual(len(encoded), pt._MAX_RESPONSES_NATIVE_BYTES)
+        self.assertGreater(len(encoded), pt._MAX_RESPONSES_NATIVE_BYTES - 64)
+        self._openai_send([count, httpx.Response(200, content=encoded, headers=headers)], context=context, meter=Meter())
+        self.assertEqual(1, len(captured))
+        self.assertLessEqual(len(captured[0]), MAX_CAPTURE_BYTES)
+        self.assertEqual(1, len(settled))
+        # One byte over the native bound: refused mid-stream, nothing settled.
+        over = json.dumps(sized(pt._MAX_RESPONSES_NATIVE_BYTES + 1), separators=(",", ":")).encode()
+        self.assertGreater(len(over), pt._MAX_RESPONSES_NATIVE_BYTES)
+        settled.clear(); captured.clear()
+        with self.assertRaisesRegex(RuntimeError, "exceeds its byte bound"):
+            self._openai_send([count, httpx.Response(200, content=over, headers=headers)], context=context, meter=Meter())
+        self.assertEqual([], settled)
+        self.assertEqual([], captured)
+        # An oversized retained header is refused before settle as well.
+        settled.clear()
+        big = dict(headers, **{"x-request-id": "r" * (pt._MAX_RESPONSES_HEADER_VALUE_BYTES + 1)})
+        with self.assertRaisesRegex(RuntimeError, "header exceeds its byte bound"):
+            self._openai_send([count, httpx.Response(200, json=self._openai_response(), headers=big)], context=context, meter=Meter())
+        self.assertEqual([], settled)
 
     def test_openai_rejects_noncompleted_and_malformed_native_results(self):
         valid = self._openai_response()
@@ -855,3 +919,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 02:45 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
