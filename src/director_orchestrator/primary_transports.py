@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
@@ -63,6 +64,16 @@ from .packet_routing import ANTIGRAVITY_DIRECTIVE_OBJECTIVE_PREFIX
 
 
 _MAX_COMMAND_RESULT_BYTES = 1_048_576
+# A Responses capture is retained as canonical JSON of {"response": <native>,
+# "response_headers": {<= three bounded values>}}. The validation capture bound
+# (provider_validation.MAX_CAPTURE_BYTES, 1 MiB) applies to THAT bundle, so the
+# native response itself is read under a smaller bound that leaves room for the
+# wrapper and headers: a response that was already metered can then never be
+# uncapturable. 4 KiB covers the wrapper keys plus three header values whose
+# lengths are checked in _responses_capture_bundle before the meter settles.
+_RESPONSES_CAPTURE_BUNDLE_OVERHEAD_BYTES = 4_096
+_MAX_RESPONSES_NATIVE_BYTES = _MAX_COMMAND_RESULT_BYTES - _RESPONSES_CAPTURE_BUNDLE_OVERHEAD_BYTES
+_MAX_RESPONSES_HEADER_VALUE_BYTES = 512
 _MAX_ARGUMENT_PROMPT_BYTES = 24_000
 
 
@@ -415,7 +426,7 @@ class OpenAIResponsesPacketTransport:
                 # Responses includes reasoning tokens in max_output_tokens.
                 # This is a token bound, never a converted or vendor USD cap.
                 body["max_output_tokens"] = output_allowance
-                native, response_headers = await post_json(self.api_url, body, _MAX_COMMAND_RESULT_BYTES)
+                native, response_headers = await post_json(self.api_url, body, _MAX_RESPONSES_NATIVE_BYTES)
                 remaining_seconds()
                 return native, input_tokens, output_allowance, response_headers
 
@@ -425,6 +436,11 @@ class OpenAIResponsesPacketTransport:
             raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError("OpenAI provider outcome is ambiguous") from exc
+        # Build the retained capture bundle BEFORE the meter settles, so a
+        # response that cannot be captured within the validation bound is
+        # refused exactly like an over-bound response body: never metered
+        # first and found uncapturable afterwards.
+        capture_bytes = _responses_capture_bundle(native, response_headers)
         if meter is not None:
             # Complete measured usage remains chargeable even if a subsequent
             # result-contract or token-limit check rejects the generated output.
@@ -476,17 +492,29 @@ class OpenAIResponsesPacketTransport:
         observer = getattr(context, "execution_observer", None)
         if observer is not None:
             # Authenticated native Responses bytes and filtered non-secret response headers for validation capture.
-            safe_headers = {
-                k: response_headers[k]
-                for k in ("openai-organization", "openai-project", "x-request-id")
-                if k in response_headers
-            }
-            capture_bundle = {
-                "response": native,
-                "response_headers": safe_headers,
-            }
-            observer("openai", canonical_json_bytes(capture_bundle), result)
+            observer("openai", capture_bytes, result)
         return result
+
+
+def _responses_capture_bundle(native: Mapping[str, Any], response_headers: Mapping[str, str]) -> bytes:
+    """Canonical retained capture of one Responses reply, bounded to 1 MiB.
+
+    The native body was read under _MAX_RESPONSES_NATIVE_BYTES and the three
+    retained header values are each bounded, so the encoded bundle fits the
+    validation capture bound; the explicit check keeps that a checked fact
+    rather than an arithmetic assumption.
+    """
+    safe_headers = {}
+    for key in ("openai-organization", "openai-project", "x-request-id"):
+        if key in response_headers:
+            value = response_headers[key]
+            if not isinstance(value, str) or len(value.encode("utf-8")) > _MAX_RESPONSES_HEADER_VALUE_BYTES:
+                raise RuntimeError("OpenAI response header exceeds its byte bound")
+            safe_headers[key] = value
+    encoded = canonical_json_bytes({"response": native, "response_headers": safe_headers})
+    if len(encoded) > _MAX_COMMAND_RESULT_BYTES:
+        raise RuntimeError("OpenAI response capture exceeds its byte bound")
+    return encoded
 
 
 class PublicSearchCommandTransport:
@@ -1330,3 +1358,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
@@ -17,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import tempfile
+import time
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
@@ -445,8 +447,26 @@ class ResponseMeterTests(unittest.TestCase):
                     capture_key=capture_key, owner_token=owner, account_files={},
                     openai_responses_route=route)
                 request = ValidationRequest(generation=generation, provider="openai")
-                verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40,
+                verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40, tree="b" * 40,
                     generation=generation, openai_responses_route=route)
+                # Finding 5: actual funding-schema contention against the
+                # real authority and pool. A blocker holds the project's
+                # advisory budget lock, so the monetary reservation waits on
+                # the funding schema itself; the transaction-local
+                # lock_timeout bound from the remaining budget aborts it,
+                # the transaction rolls back, and no spend row persists.
+                # Only after release does the bridge run below reserve once.
+                import psycopg
+                with handle.pool.connection() as blocker, blocker.transaction():
+                    blocker.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                                    ("primary-provider-budget:" + self.g.project_id,))
+                    started = time.monotonic()
+                    with self.assertRaises((psycopg.Error, ValidationError)):
+                        route.reserve_monetary_admission(remaining_seconds=lambda: 0.8)
+                    self.assertLess(time.monotonic() - started, 2.5)
+                with handle.pool.connection() as c:
+                    self.assertIsNone(c.execute(f"SELECT 1 FROM {primary_schema}.director_primary_provider_spend "
+                                                "WHERE attempt_digest=%s", (attempt,)).fetchone())
                 with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
                         side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)):
                     result = service.run(request, owner)
@@ -496,3 +516,4 @@ class ResponseMeterTests(unittest.TestCase):
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

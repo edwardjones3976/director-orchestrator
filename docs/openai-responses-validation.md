@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]] -->
@@ -26,7 +27,8 @@ The route requires:
 - a positive signed `total_token_limit`
 - a `configuration_digest` from `responses_validation_configuration_digest` that
   binds model, API URL, credential digest, enrollment organization/project ids,
-  meter enrollment digest, and token limit
+  meter enrollment digest, token limit, and the transport's
+  `maximum_timeout_seconds` ceiling (changing the ceiling changes the identity)
 - signed admission and fence verification before any HTTP request
 - provider-returned account headers and usage at meter settlement (missing headers
   refuse; they are never invented)
@@ -35,7 +37,49 @@ The route requires:
   refuse exactly like mismatched ones
 
 Capture verification accepts Responses envelopes (`object=response`) while Codex
-JSONL remains the native-host dialect.
+JSONL remains the native-host dialect. `CaptureVerifier` compares the signed
+capture's candidate, generation **and expected runtime tree** against its pins
+(the tree is read from `DIRECTOR_PROVIDER_VALIDATION_TREE`; a valid capture
+minted for another tree never qualifies), and for the Responses lane it also
+requires the capture's `configuration_digest` to equal the bound route's
+*current* digest, so a rotated credential, endpoint, meter enrollment or
+timeout ceiling refuses qualification even though the retained response
+re-normalises identically.
+
+## Corrections (2026-09-20 | 06:01 UTC, Claude Opus 5, Codex Director REQUEST_CHANGES at `2fbcb6a`)
+
+- **Tree binding (High).** `CaptureVerifier` takes `tree=` and refuses a
+  capture whose `tree` differs; `capture_verifier_from_environment` passes
+  the environment pin through. Regression: a wrong-tree verifier refuses a
+  capture the right-tree verifier accepts.
+- **Current-configuration comparison (High).** The verifier compares the
+  capture's `configuration_digest` with the route's current
+  `configuration_digest`. Regression: rotating the transport credential,
+  API URL or timeout ceiling flips a passing verification to refusal.
+- **Connection acquisition deadline (Medium).** libpq honours only
+  whole-second `connect_timeout` values of at least two seconds, so
+  `_connect_bounded` no longer rounds a sub-second budget upward: when the
+  remaining budget is smaller than what the driver would wait, the connect
+  runs on a worker thread and is awaited for exactly the remaining budget
+  (a late connection is closed on arrival), and every acquisition re-reads
+  the shared deadline after the connection returns. Regression: a slow
+  connect against a 0.4 s budget fails closed within the budget.
+- **Timeout ceiling in the identity.** `maximum_timeout_seconds` is part of
+  the configuration digest (see above); 180 and 180.0 are one identity.
+- **Funding COMMIT refresh.** `reserve_monetary_admission` re-derives the
+  transaction-local statement/lock timeouts from the time actually left
+  immediately before the transaction block exits, so the funding COMMIT
+  waits under the real remainder. Covered by an ordering test and by real
+  funding-schema contention against the configured authority and pool (an
+  advisory budget-lock holder aborts the reservation under `lock_timeout`
+  with no spend row persisted).
+- **Capture size reconciliation.** The native Responses body is read under
+  `MAX_CAPTURE_BYTES - 4096` and the retained bundle
+  (`{"response", "response_headers"}`, header values bounded at 512 bytes)
+  is encoded and size-checked *before* the meter settles, so a metered
+  response can never be uncapturable. Regression: the encoded boundary case
+  (a body exactly at the native bound) is captured within the validation
+  bound; one byte over is refused mid-stream with nothing settled.
 
 ## Corrections (2026-09-14, Claude Sonnet 5 high)
 
@@ -260,3 +304,4 @@ exact, real-PostgreSQL-confirmed test counts as of this revision, and the
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]] -->

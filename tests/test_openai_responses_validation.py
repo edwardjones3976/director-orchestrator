@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
@@ -211,6 +212,7 @@ class ResponsesRouteTests(unittest.TestCase):
             api_project_id="proj_fixture",
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
+            maximum_timeout_seconds=180,
         )
         self.assertEqual(len(d1), 64)
         d2 = responses_validation_configuration_digest(
@@ -221,8 +223,45 @@ class ResponsesRouteTests(unittest.TestCase):
             api_project_id="proj_other",
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
+            maximum_timeout_seconds=180,
         )
         self.assertNotEqual(d1, d2)
+
+    def test_configuration_digest_binds_the_timeout_ceiling(self):
+        """Finding 4: the transport ceiling is part of the identity.
+
+        The ceiling bounds the whole-operation deadline every store call
+        obeys, so changing it changes the configuration digest; an integer
+        and the equal float are one identity; a missing or non-positive
+        ceiling is an incomplete pin.
+        """
+        base = dict(model=MODEL, api_url="https://api.openai.com/v1/responses",
+                    credential_digest="e" * 64, organization_id="org_fixture",
+                    api_project_id="proj_fixture", meter_enrollment_digest="f" * 64,
+                    total_token_limit=128)
+        d180 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=180)
+        d60 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=60)
+        self.assertNotEqual(d180, d60)
+        self.assertEqual(d180, responses_validation_configuration_digest(**base, maximum_timeout_seconds=180.0))
+        for bad in (0, -1, True, "180"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValidationError, "configuration pin is incomplete"):
+                responses_validation_configuration_digest(**base, maximum_timeout_seconds=bad)
+        # The route reads the ceiling from its transport, so a transport
+        # whose ceiling changed no longer matches a digest pinned before.
+        def route(ceiling):
+            transport = SimpleNamespace(response_meter=SimpleNamespace(enrollments={}), model=MODEL,
+                                        api_url="https://api.openai.com/v1", _api_key="sk-test",
+                                        maximum_timeout_seconds=ceiling)
+            return OpenAIResponsesValidationRoute(transport=transport, total_token_limit=128,
+                                                  expected_model=MODEL, meter_enrollment_digest="d" * 64,
+                                                  expected_organization_id="org-1", expected_api_project_id="proj-1")
+        self.assertNotEqual(route(60).configuration_digest, route(120).configuration_digest)
+        transport = SimpleNamespace(response_meter=SimpleNamespace(enrollments={}), model=MODEL,
+                                    api_url="https://api.openai.com/v1", _api_key="sk-test")
+        with self.assertRaisesRegex(ValidationError, "transport configuration is incomplete"):
+            OpenAIResponsesValidationRoute(transport=transport, total_token_limit=128, expected_model=MODEL,
+                                           meter_enrollment_digest="d" * 64, expected_organization_id="org-1",
+                                           expected_api_project_id="proj-1").compute_configuration_digest()
 
     def test_route_detects_configuration_drift_against_pin(self):
         transport = SimpleNamespace(
@@ -266,6 +305,70 @@ class ResponsesRouteTests(unittest.TestCase):
         connection = MagicMock()
         with self.assertRaisesRegex(ValidationError, "exceeds budget token limit"):
             route.reserve_monetary_admission(connection=connection)
+
+    def test_monetary_reservation_refreshes_timeouts_immediately_before_commit(self):
+        """Finding 5: the funding transaction's timeouts are re-derived before COMMIT.
+
+        The pooled path binds statement/lock timeouts before the reservation
+        statements run; those figures are stale by the time the transaction
+        block exits and COMMIT waits on funding-schema locks. The last
+        statement inside the transaction must be a fresh set_config from the
+        time actually left, so a late COMMIT aborts under the real remainder.
+        """
+        events = []
+        # Reads: pool acquire, first bind, post-reserve check, pre-COMMIT bind.
+        remaining = iter([20.0, 20.0, 20.0, 0.75])
+
+        class Conn:
+            def execute(self, sql, params=None):
+                events.append(("execute", sql, params))
+
+            def transaction(self):
+                conn = self
+
+                class Tx:
+                    def __enter__(self_):
+                        events.append(("begin", None, None))
+                        return conn
+
+                    def __exit__(self_, *exc):
+                        events.append(("commit", None, None))
+                        return False
+                return Tx()
+
+        class Pool:
+            def connection(self, timeout=None):
+                pool_conn = Conn()
+
+                class Ctx:
+                    def __enter__(self_):
+                        events.append(("acquire", timeout, None))
+                        return pool_conn
+
+                    def __exit__(self_, *exc):
+                        return False
+                return Ctx()
+
+        authority = MagicMock()
+        authority.entitlements = SimpleNamespace(pool=Pool())
+        authority.reserve.side_effect = lambda conn, **kw: events.append(("reserve", None, None)) or SimpleNamespace(token_limit=500)
+        transport = SimpleNamespace(response_meter=SimpleNamespace(enrollments={}), model=MODEL,
+                                    maximum_timeout_seconds=60)
+        route = OpenAIResponsesValidationRoute(
+            transport=transport, total_token_limit=100, expected_model=MODEL,
+            meter_enrollment_digest="d" * 64, budget_authority=authority,
+            budget_authority_digest="a" * 64, canary_task_id="VALIDATION-task",
+            canary_attempt_digest="sha256:" + "1" * 64)
+        route.reserve_monetary_admission(remaining_seconds=lambda: next(remaining))
+        kinds = [e[0] for e in events]
+        self.assertEqual(["acquire", "begin", "execute", "reserve", "execute", "commit"], kinds)
+        set_configs = [e for e in events if e[0] == "execute"]
+        self.assertTrue(all("set_config('statement_timeout'" in e[1] for e in set_configs))
+        # The refresh before COMMIT carries the smaller remainder, not the
+        # figure bound before the reservation ran.
+        self.assertEqual(("20000", "20000"), set_configs[0][2])
+        self.assertEqual(("750", "750"), set_configs[1][2])
+        self.assertEqual("commit", kinds[-1])
 
     def test_native_codex_refusal_unchanged_without_responses_route(self):
         from director_orchestrator.native_codex_transport import NativeCodexPacketTransport
@@ -567,3 +670,4 @@ if __name__ == "__main__":
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

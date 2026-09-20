@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
@@ -16,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import time
 import sys
 import tempfile
 from unittest.mock import MagicMock,patch
@@ -26,7 +28,7 @@ from director_orchestrator.provider_activation import ProviderActivationBinding,
 from director_orchestrator.primary_provider_activation import PrimaryProviderActivationService
 from director_orchestrator.provider_validation import (
     SCHEMA,CHECKPOINT_NAMESPACE,PostgresValidationStore,ValidationError,ValidationRequest,
-    CaptureVerifier,make_capture,digest,normalize_capture,
+    CaptureVerifier,capture_verifier_from_environment,make_capture,digest,normalize_capture,
     ValidationBridgeService,production_configuration_digest,
 )
 
@@ -422,7 +424,7 @@ class PostgresValidationTests(unittest.TestCase):
         raw=raw_native()
         capture=make_capture(admission,raw,capture_key=KEY)
         evidence=self.store.settle(admission,raw,capture)
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
         return admission,capture,evidence,verifier
 
     def _admitted_and_claimed(self):
@@ -525,7 +527,7 @@ class PostgresValidationTests(unittest.TestCase):
             account_files={},team_route=route)
         request=ValidationRequest(generation=generation,provider="antigravity")
         result=service.run(request,OWNER)
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation,team_route=route)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation,team_route=route)
         self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
         with self.assertRaisesRegex(ValidationError,"already admitted"):service.run(request,OWNER)
         self.assertEqual(len(calls),1)
@@ -581,8 +583,103 @@ class PostgresValidationTests(unittest.TestCase):
         self.assertFalse(verifier.verify(replace(binding(),app_version="changed"),evidence))
         self.assertFalse(verifier.verify(binding(),"f"*64))
         for key,candidate in (("wrong"*10,CANDIDATE),(KEY,"c"*40)):
-            bad=CaptureVerifier(self.store,capture_key=key,candidate=candidate,generation=admission["generation"])
+            bad=CaptureVerifier(self.store,capture_key=key,candidate=candidate,tree=TREE,generation=admission["generation"])
             self.assertFalse(bad.verify(binding(),evidence))
+
+    def test_capture_for_another_tree_never_qualifies(self):
+        """Finding 1: the expected runtime tree is compared, not merely carried.
+
+        A valid signed capture minted under the same candidate and generation
+        for a DIFFERENT runtime tree must not qualify LIVE_OK for this one.
+        """
+        admission,capture,evidence,verifier=self.completed()
+        self.assertEqual(TREE,capture.tree)
+        self.assertTrue(verifier.verify(binding(),evidence))
+        other=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree="c"*40,
+                              generation=admission["generation"])
+        self.assertFalse(other.verify(binding(),evidence))
+        for bad in ("","b"*39,"B"*40,None):
+            with self.subTest(tree=bad),self.assertRaisesRegex(ValueError,"runtime tree pin"):
+                CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=bad,
+                                generation=admission["generation"])
+
+    def test_environment_verifier_pins_the_tree(self):
+        import os
+        from unittest.mock import patch
+        env={"DIRECTOR_PROVIDER_VALIDATION_ENABLED":"true",
+             "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE":CANDIDATE,
+             "DIRECTOR_PROVIDER_VALIDATION_TREE":TREE,
+             "DIRECTOR_PROVIDER_VALIDATION_GENERATION":"0"*64,
+             "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN":self.store.dsn,
+             "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY":KEY}
+        with patch.dict(os.environ,env,clear=False):
+            verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+        self.assertEqual(TREE,verifier.tree)
+
+    def test_connection_acquisition_is_bounded_by_the_shared_deadline_not_the_driver(self):
+        """Finding 3: a sub-second budget is enforced as a real outer deadline.
+
+        libpq honours only whole-second connect timeouts of at least two
+        seconds, so a remaining budget below that is not rounded upward for
+        the driver to wait out: the acquisition is awaited for exactly the
+        remaining budget, a slow connect fails closed at that point, the late
+        connection is closed on arrival, and a connect that returns only
+        after the deadline is refused on return instead of at the first
+        statement. Within budget the driver receives the whole-second floor,
+        capped at five seconds.
+        """
+        import threading
+        opened=[];arrived=[]
+        gate=threading.Event()
+        class Store(PostgresValidationStore):
+            slow=False
+            def connect(self, connect_timeout=5):
+                opened.append(connect_timeout)
+                if self.slow:
+                    gate.wait(3)
+                connection=super().connect(connect_timeout=connect_timeout)
+                arrived.append(connection)
+                return connection
+        store=Store(self.store.dsn)
+        with self.assertRaisesRegex(ValidationError,"deadline exhausted before connecting"):
+            store._connect_bounded(lambda: 0.0)
+        self.assertEqual([],opened)
+        # Sub-two-second budgets still connect, under the outer deadline.
+        for budget in (0.5,1.0,1.9):
+            with self.subTest(budget=budget),store._connect_bounded(lambda: budget) as db:
+                self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        self.assertEqual([2,2,2],opened)
+        # A slow connect is cut off at the remaining budget, not at the
+        # driver's rounded-up two seconds, and the late connection is closed.
+        store.slow=True;opened.clear();arrived.clear()
+        started=time.monotonic()
+        with self.assertRaisesRegex(ValidationError,"deadline exhausted while connecting"):
+            store._connect_bounded(lambda: 0.4)
+        self.assertLess(time.monotonic()-started,1.5)
+        self.assertEqual([2],opened)
+        gate.set()
+        deadline=time.monotonic()+5
+        while len(arrived)<1 and time.monotonic()<deadline:
+            time.sleep(0.05)
+        time.sleep(0.1)
+        self.assertEqual(1,len(arrived));self.assertTrue(arrived[0].closed)
+        store.slow=False;opened.clear()
+        # A connect that returns only after the deadline is refused on return
+        # and the connection it opened is closed, not leaked.
+        readings=iter([3.0])
+        def remaining():
+            try:
+                return next(readings)
+            except StopIteration:
+                raise ValidationError("Responses validation timeout is exhausted")
+        with self.assertRaisesRegex(ValidationError,"timeout is exhausted"):
+            store._connect_bounded(remaining)
+        self.assertEqual([3],opened);self.assertTrue(arrived[-1].closed)
+        with store._connect_bounded(lambda: 2.6) as db:
+            self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        with store._connect_bounded(lambda: 90.0) as db:
+            self.assertEqual(1,db.execute("SELECT 1").fetchone()[0])
+        self.assertEqual([3,2,5],opened)
 
     def test_underlying_bytes_required_not_just_signature(self):
         admission,capture,evidence,verifier=self.completed()
@@ -611,7 +708,7 @@ class PostgresValidationTests(unittest.TestCase):
         started=time.monotonic()
         evidence=self.store.settle(admission,raw,capture,remaining_seconds=lambda:30.0)
         self.assertLess(time.monotonic()-started,10)
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
         self.assertTrue(verifier.verify(binding(),evidence))
 
     def test_exhausted_deadline_refuses_before_any_store_effect(self):
@@ -1084,9 +1181,24 @@ class PostgresValidationTests(unittest.TestCase):
             generation=fixture["generation"],provider="openai"),OWNER)
         self.assertTrue(result.get("evidence_digest"))
         self.assertEqual(1,len(fixture["sends"]))
-        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,
+        verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,
             generation=fixture["generation"],openai_responses_route=fixture["service"].openai_responses_route)
         binding=asdict(ProviderActivationBinding("openai","workspace","v1","v1","v1","v1","v1"))
+        self.assertTrue(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+        # Finding 2: the signed capture pins the Responses configuration it
+        # was minted under; a route whose credential, endpoint or timeout
+        # ceiling has since rotated no longer qualifies it, even though the
+        # retained response re-normalises identically.
+        route=fixture["service"].openai_responses_route
+        for attribute,value in (("_api_key","sk-rotated"),("api_url","https://api.example.test/v1"),
+                                ("maximum_timeout_seconds",route.transport.maximum_timeout_seconds+1)):
+            with self.subTest(rotated=attribute):
+                original=getattr(route.transport,attribute)
+                setattr(route.transport,attribute,value)
+                try:
+                    self.assertFalse(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
+                finally:
+                    setattr(route.transport,attribute,original)
         self.assertTrue(verifier.verify(ProviderActivationBinding(**binding),result["evidence_digest"]))
         with self.store.connect() as db:
             row=db.execute(f"SELECT state FROM {SCHEMA}.attempts WHERE generation=%s",
@@ -1120,7 +1232,7 @@ class PostgresValidationTests(unittest.TestCase):
                 capture_key=KEY,owner_token=OWNER,account_files={"claude":(str(account),)})
             result=service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
             self.assertEqual(result["surfaces"],["app","runtime_adapter"])
-            verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,generation=generation)
+            verifier=CaptureVerifier(self.store,capture_key=KEY,candidate=CANDIDATE,tree=TREE,generation=generation)
             self.assertTrue(verifier.verify(binding(),result["evidence_digest"]))
             self.assertIsNone(production.writer_fence_verifier)
             with self.assertRaises(ValidationError):
@@ -1152,3 +1264,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

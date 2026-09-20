@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
@@ -22,6 +23,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from typing import Mapping
@@ -34,6 +36,8 @@ from .provider_activation import ProviderActivationBinding
 SCHEMA = "director_provider_validation_v1"
 CHECKPOINT_NAMESPACE = "director-provider-validation/v1"
 MAX_CAPTURE_BYTES = 1_048_576
+# libpq treats a connect_timeout below two seconds as two seconds.
+MIN_CONNECT_TIMEOUT_SECONDS = 2.0
 # Explicit bounded cleanup allowance for the best-effort ambiguity marker in
 # PostgresValidationStore.fail. It only bounds an otherwise indefinite wait on
 # a row the timed-out primary operation, a concurrent settlement, or
@@ -148,7 +152,50 @@ class PostgresValidationStore:
         remaining = remaining_seconds()
         if remaining <= 0:
             raise ValidationError("validation deadline exhausted before connecting")
-        return guarded(self.connect(connect_timeout=max(1, min(5, int(remaining)))))
+        # libpq rounds connect_timeout to whole seconds and treats anything
+        # below MIN_CONNECT_TIMEOUT_SECONDS as that minimum, so the driver
+        # can only honour a whole-second budget of at least two seconds. When
+        # the remaining budget is smaller than what the driver would wait, the
+        # acquisition is bounded by a real outer deadline here instead of the
+        # driver's rounded-up figure; either way the shared deadline is re-read
+        # after the connection returns so a slow connect that consumed the
+        # budget fails here rather than at the first statement.
+        driver_timeout = max(MIN_CONNECT_TIMEOUT_SECONDS, min(5.0, float(int(remaining))))
+        if remaining >= driver_timeout:
+            connection = self.connect(connect_timeout=int(driver_timeout))
+        else:
+            connection = self._connect_with_outer_deadline(int(driver_timeout), remaining)
+        try:
+            remaining_seconds()
+        except ValidationError:
+            connection.close()
+            raise
+        return guarded(connection)
+
+    def _connect_with_outer_deadline(self, driver_timeout: int, remaining: float):
+        """Bound a blocking connect by the caller's deadline, not the driver's.
+
+        The connect runs on a worker thread and is awaited for exactly the
+        remaining budget. On expiry the acquisition fails closed at once; the
+        late connection, if the driver ever returns one, is closed on arrival
+        so it never leaks into the pool of live handles.
+        """
+        import concurrent.futures
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="validation-connect")
+        future = executor.submit(self.connect, connect_timeout=driver_timeout)
+        try:
+            return future.result(timeout=max(0.0, remaining))
+        except concurrent.futures.TimeoutError:
+            def discard(done):
+                if done.exception() is None:
+                    try:
+                        done.result().close()
+                    except Exception:
+                        pass
+            future.add_done_callback(discard)
+            raise ValidationError("validation deadline exhausted while connecting")
+        finally:
+            executor.shutdown(wait=False)
 
     @staticmethod
     def _bind_deadline(db, remaining_seconds) -> None:
@@ -254,7 +301,6 @@ class PostgresValidationStore:
     def create_generation(self, *, generation: str, candidate: str, tree: str,
                           owner_token: str, expires_at: int, budget_units: int,
                           lanes: Mapping[str, dict]) -> None:
-        import re
         if (not re.fullmatch(r"[0-9a-f]{64}", generation)
                 or not re.fullmatch(r"[0-9a-f]{40}", candidate)
                 or not re.fullmatch(r"[0-9a-f]{40}", tree)
@@ -417,10 +463,13 @@ class PostgresValidationStore:
 
 class CaptureVerifier:
     def __init__(self, store: PostgresValidationStore, *, capture_key: str,
-                 candidate: str, generation: str, team_route=None, openai_responses_route=None):
+                 candidate: str, generation: str, tree: str, team_route=None, openai_responses_route=None):
         if len(capture_key) < 32:
             raise ValueError("dedicated bridge capture key is required")
+        if not re.fullmatch(r"[0-9a-f]{40}", tree or ""):
+            raise ValueError("expected runtime tree pin is required")
         self.store,self.key,self.candidate,self.generation=store,capture_key,candidate,generation
+        self.tree=tree
         self.team_route=team_route
         self.openai_responses_route=openai_responses_route
 
@@ -430,7 +479,11 @@ class CaptureVerifier:
             if row is None or row[3] or row[4] <= int(time.time()) or row[5] != "succeeded":
                 return False
             capture = ValidationCapture(**row[0])
+            # The expected tree is compared, not just carried: a valid signed
+            # capture minted for another runtime tree under the same candidate
+            # and generation must never qualify this one.
             if (capture.candidate != self.candidate or capture.generation != self.generation
+                    or capture.tree != self.tree
                     or capture.provider != binding.provider_id or capture.binding_digest != binding_digest(binding)
                     or capture.checkpoint_namespace != CHECKPOINT_NAMESPACE
                     or capture.expires_at <= int(time.time()) or not capture.native_session
@@ -440,6 +493,13 @@ class CaptureVerifier:
                 return False
             if capture.provider == "antigravity" and json.loads(bytes(row[2])).get("attempt_digest") != "sha256:"+capture.reservation:
                 return False
+            # A signed capture pins the Responses configuration it was minted
+            # under. Re-normalising the response cannot detect a rotated
+            # credential, endpoint, meter enrollment or timeout ceiling, so the
+            # bound route's CURRENT digest must still equal the capture's.
+            if capture.provider == "openai" and self.openai_responses_route is not None:
+                if capture.configuration_digest != self.openai_responses_route.configuration_digest:
+                    return False
             result = normalize_capture(capture.provider,json.loads(bytes(row[1])),bytes(row[2]),
                                        team_route=self.team_route, openai_responses_route=self.openai_responses_route)
             if digest(canonical_json_bytes(result)) != capture.result_digest or result["run_reference"] != capture.native_session:
@@ -469,6 +529,7 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
         generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],
+        tree=os.environ["DIRECTOR_PROVIDER_VALIDATION_TREE"],
         team_route=team_route_from_environment(),
         openai_responses_route=responses_route_from_environment())
 
@@ -826,3 +887,4 @@ class ValidationBridgeService:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
@@ -115,7 +116,8 @@ class OpenAIResponsesValidationRoute:
         api_url = getattr(self.transport, "api_url", None)
         api_key = getattr(self.transport, "_api_key", None)
         model = getattr(self.transport, "model", None)
-        if api_url is None or api_key is None or model is None:
+        maximum_timeout_seconds = getattr(self.transport, "maximum_timeout_seconds", None)
+        if api_url is None or api_key is None or model is None or maximum_timeout_seconds is None:
             if self._pinned_configuration_digest is not None:
                 return self._pinned_configuration_digest
             raise ValidationError("Responses validation transport configuration is incomplete")
@@ -130,6 +132,7 @@ class OpenAIResponsesValidationRoute:
             api_project_id=proj_id,
             meter_enrollment_digest=self.meter_enrollment_digest,
             total_token_limit=self.total_token_limit,
+            maximum_timeout_seconds=maximum_timeout_seconds,
         )
 
     @property
@@ -221,7 +224,15 @@ class OpenAIResponsesValidationRoute:
             rem = check_remaining()
             with pool.connection(timeout=rem) as conn, conn.transaction():
                 do_reserve(conn)
-                check_remaining()
+                # The transaction-local statement/lock timeouts were bound
+                # from the budget as it stood BEFORE the reservation's
+                # statements ran. COMMIT on leaving this block can itself
+                # wait on funding-schema locks (advisory budget lock holders,
+                # deferred constraints), so re-derive both timeouts from the
+                # time actually left immediately before it; a late COMMIT
+                # then aborts and rolls the reservation back instead of
+                # persisting a monetary reservation after the deadline.
+                apply_timeouts(conn)
 
     def normalize(self, work: Mapping, raw: bytes) -> dict:
         self.validate_canary(work, canonical_json_bytes(work))
@@ -244,8 +255,14 @@ def responses_validation_configuration_digest(
     api_project_id: str,
     meter_enrollment_digest: str,
     total_token_limit: int,
+    maximum_timeout_seconds: float | int,
 ) -> str:
     """Pin Responses validation identity without inventing account proof.
+
+    The transport's timeout ceiling is part of the identity: it bounds the
+    whole-operation deadline every store call and the network wait obey, so a
+    capture minted under one ceiling must not qualify a route running under
+    another.
 
     Organization and project ids here are the enrollment routing intention that
     settlement later matches against provider-returned headers. Missing provider
@@ -253,7 +270,10 @@ def responses_validation_configuration_digest(
     """
     if (not model or not api_url or not credential_digest or not organization_id
             or not api_project_id or not meter_enrollment_digest
-            or type(total_token_limit) is not int or total_token_limit < 1):
+            or type(total_token_limit) is not int or total_token_limit < 1
+            or isinstance(maximum_timeout_seconds, bool)
+            or type(maximum_timeout_seconds) not in (int, float)
+            or not maximum_timeout_seconds > 0):
         raise ValidationError("Responses validation configuration pin is incomplete")
     return digest(canonical_json_bytes({
         "transport": RESPONSES_VALIDATION_TRANSPORT,
@@ -264,6 +284,8 @@ def responses_validation_configuration_digest(
         "api_project_id": api_project_id,
         "meter_enrollment_digest": meter_enrollment_digest,
         "total_token_limit": total_token_limit,
+        # Canonicalised as a number; 180 and 180.0 are one identity.
+        "maximum_timeout_seconds": float(maximum_timeout_seconds),
     }))
 
 
@@ -536,4 +558,4 @@ def responses_route_from_environment() -> OpenAIResponsesValidationRoute | None:
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
-
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
