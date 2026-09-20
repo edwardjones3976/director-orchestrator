@@ -1,3 +1,4 @@
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -45,6 +46,7 @@ from .antigravity import (
     antigravity_contract_labels,
 )
 from .config import Settings
+from .contact_families import UnknownContactError, share_provider_family
 from .models import (
     AntigravityDirective,
     Assignment,
@@ -537,6 +539,26 @@ def _independent_review_binding_errors(plan: DirectorPlan) -> set[str]:
                 f"assignment {review.sequence}: a material author of assignment "
                 f"{reviewed.sequence} cannot review it"
             )
+        else:
+            # Directive #207, "Contact-family safety": a reviewer from the same
+            # provider family as the producer or any material author is not
+            # independent, even under a different contact identity. Unknown
+            # identities fail closed rather than being assumed independent.
+            family_check_authors = _material_author_agents(by_sequence, reviewed) | {
+                reviewed.agent
+            }
+            try:
+                reviewer_shares_family = any(
+                    share_provider_family(review.agent, author)
+                    for author in family_check_authors
+                )
+            except UnknownContactError:
+                errors.add(f"assignment {review.sequence}: reviewer_family_unknown")
+            else:
+                if reviewer_shares_family:
+                    errors.add(
+                        f"assignment {review.sequence}: reviewer_shares_provider_family"
+                    )
     return errors
 
 
@@ -1557,3 +1579,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]

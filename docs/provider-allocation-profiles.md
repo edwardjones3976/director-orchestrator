@@ -1,3 +1,4 @@
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -203,6 +204,24 @@ VS Code Coding Bot are intentionally equal at 2%.
 - **Canonical digest derivation:** The canonical digest dynamically binds all semantic
   descriptor fields (effective date, prerequisites, OpenAI floor and denominators,
   contacts, boundaries) in one immutable payload, ensuring the digest never goes stale.
+
+## Contact-family safety (directive #207)
+
+`src/director_orchestrator/contact_families.py` types every known contact and
+lane id (for example `openai`, `claude`, `cursor`, `grok`, `grok-bot`,
+`gemini`, `antigravity`, `perplexity`, `firecrawl`, `github-copilot`,
+`vscode-coding-bot`, `zai`) to an owner-selected provider-family label: Direct
+Grok and Grok Bot are one xAI family; GitHub Copilot and VS Code Coding Bot
+are one GitHub/Microsoft family; Gemini and Antigravity are one Google family.
+Reviewer-independence checks in `review_handoff.py` and
+`policy.py::_independent_review_binding_errors` reject a reviewer whose
+provider family matches any material author's family, in addition to the
+existing identity check, so that separate contact lanes in the same family
+never create false different-provider review independence or duplicate
+accepted credit. An identity absent from the table is unknown and fails
+closed: it is never treated as independent. These family labels are policy
+labels for independence and anti-duplication decisions; they are not
+authenticated evidence of which underlying model actually served a request.
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
@@ -215,3 +234,4 @@ VS Code Coding Bot are intentionally equal at 2%.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]] -->
