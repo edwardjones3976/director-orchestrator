@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
@@ -263,17 +264,20 @@ class ZaiTrialLedger:
             raise ZaiTrialLedgerError("zai_ledger_version_mismatch")
 
     def _initialize(self) -> None:
-        self._initializing = True
-        try:
-            with self._lock, self._connect() as connection:
-                for statement in _SCHEMA_STATEMENTS:
-                    connection.execute(statement)
-                connection.execute(
-                    "INSERT OR IGNORE INTO zai_trial_metadata (key, value) VALUES ('version', ?)",
-                    (LEDGER_VERSION,),
-                )
-        finally:
-            self._initializing = False
+        # The flag is set and cleared while the lock is held: no other connection can
+        # observe allow_empty=True between the initialising transaction and the reset.
+        with self._lock:
+            self._initializing = True
+            try:
+                with self._connect() as connection:
+                    for statement in _SCHEMA_STATEMENTS:
+                        connection.execute(statement)
+                    connection.execute(
+                        "INSERT OR IGNORE INTO zai_trial_metadata (key, value) VALUES ('version', ?)",
+                        (LEDGER_VERSION,),
+                    )
+            finally:
+                self._initializing = False
 
     @staticmethod
     def _recorded_failures(connection: sqlite3.Connection) -> int:
@@ -629,3 +633,4 @@ class ZaiTrialLane:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]

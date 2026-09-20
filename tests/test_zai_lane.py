@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
@@ -537,6 +538,24 @@ class LedgerReuseTests(unittest.TestCase):
         # A fresh ledger object may still initialise an empty file: that is the only sanctioned path.
         self.assertEqual(ZaiTrialLedger(str(self.path)).status()["attempts"], 0)
 
+    def test_initialising_flag_is_never_observable_outside_the_lock(self):
+        ledger = ZaiTrialLedger(str(self.path))
+        self.assertFalse(ledger._initializing)
+        observed = []
+        original = ledger._verify_schema
+
+        def spy(connection, *, allow_empty):
+            observed.append(allow_empty)
+            return original(connection, allow_empty=allow_empty)
+
+        ledger._verify_schema = spy
+        ledger.status()
+        self._reserve(ledger)
+        self.assertEqual(observed, [False, False], "ordinary connections must never run with allow_empty")
+        with self.assertRaises(ZaiTrialLedgerError):  # a failure inside _initialize leaves the flag cleared
+            with patch.object(ZaiTrialLedger, "_verify_schema", side_effect=ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger")):
+                ZaiTrialLedger(str(self.root / "other.sqlite3"))
+
     def test_a_file_replaced_after_opening_is_refused_on_the_next_call(self):
         ledger = ZaiTrialLedger(str(self.path))
         self._reserve(ledger)
@@ -672,3 +691,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
