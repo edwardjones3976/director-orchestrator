@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:21 UTC | BEGIN]]
 """Offline evidence-boundary fixtures; never invoke the collector's live main."""
@@ -573,9 +574,59 @@ class TaskLookupAndRubricTests(unittest.TestCase):
             for value in ENV.values():
                 self.assertNotIn(value.encode(), (output / "receipt.json").read_bytes())
 
+    def test_main_binds_task_from_current_gateway_request_received_wording(self):
+        rubric, sha = rubric_fixture()
+        task, deliveries, messages, headers = sample()
+        task["status"] = "DONE"
+        task["assignment_outcomes"][0]["provider_result_digest"] = "a" * 64
+        task["intake"]["text"] = messages[0]["text"] = "audit trial rubric-sha256:" + sha
+        messages[-1]["text"] += "\nActual USD cost: not recorded"
+        messages.append({"ts": "1789210001.100000", "thread_ts": THREAD, "user": BOT,
+            "text": f"*{TASK_ID} — REQUEST RECEIVED*\nThe Director returned a valid "
+                "intake receipt. Execution remains subject to the configured safety gates."})
+        def respond(request):
+            self.assertEqual(request.method, "GET")
+            if request.url.path.endswith("auth.test"):
+                payload = {"ok": True, "user_id": BOT, "bot_id": "BBOT123"}
+            elif request.url.path.endswith("conversations.replies"):
+                payload = {"ok": True, "messages": messages, "has_more": False}
+            elif request.url.path.endswith("/health"):
+                payload = {"environment": "local", "paid_runs_enabled": False,
+                    "langgraph_primary": {"ambiguous_effect_count": 0, "reconciliation_hold_reason": None,
+                        "primary_runtime_active": True}}
+            elif request.url.path.endswith("/deliveries"):
+                payload = deliveries
+            else:
+                self.assertTrue(request.url.path.endswith(TASK_ID))
+                payload = task
+            return httpx.Response(200, json=payload, headers=headers)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rubric_path = root / "rubric.json"
+            rubric_path.write_bytes(collector_module.encode(rubric))
+            output = root / "output"
+            runtime = receipt_fixture()["collection_runtime_before"]
+            client = httpx.Client(transport=httpx.MockTransport(respond))
+            with patch.object(collector_module, "inspect_runtime", return_value=(runtime, dict(ENV))), \
+                 patch.object(collector_module.httpx, "Client", return_value=client), redirect_stdout(io.StringIO()):
+                result = collector_module.main(["--expected-head", "b" * 40, "--trial", THREAD,
+                    "--rubric", str(rubric_path), "--output-dir", str(output)])
+            self.assertEqual(0, result)
+            receipt = json.loads((output / "receipt.json").read_bytes())
+            collector_module.validate_observations(receipt)
+            self.assertEqual(receipt["trials"][0]["task_id"], TASK_ID)
+            self.assertTrue(receipt["trials"][0]["rubric_evaluation"]["passed"])
+
     def test_native_accepted_reply_derives_task(self):
         accepted = {"user": BOT, "thread_ts": THREAD, "text": f"*{TASK_ID} — ACCEPTED*"}
         self.assertEqual(TASK_ID, collector_module.task_from_accepted(THREAD, [accepted], True, BOT))
+
+    def test_native_request_received_reply_derives_task(self):
+        gateway_text = (f"*{TASK_ID} — REQUEST RECEIVED*\n"
+            "The Director returned a valid intake receipt. Execution remains "
+            "subject to the configured safety gates.")
+        received = {"user": BOT, "thread_ts": THREAD, "text": gateway_text}
+        self.assertEqual(TASK_ID, collector_module.task_from_accepted(THREAD, [received], True, BOT))
 
     def test_absent_duplicate_forged_wrong_thread_or_incomplete_acceptance_refused(self):
         accepted = {"user": BOT, "thread_ts": THREAD, "text": f"*{TASK_ID} — ACCEPTED*"}
@@ -583,6 +634,28 @@ class TaskLookupAndRubricTests(unittest.TestCase):
                 ([{**accepted, "user": OWNER}], True), ([{**accepted, "thread_ts": FINAL_TS}], True)):
             with self.subTest(messages=messages, complete=complete), self.assertRaises(ValueError):
                 collector_module.task_from_accepted(THREAD, messages, complete, BOT)
+
+    def test_request_received_wrong_sender_wrong_thread_or_incomplete_refused(self):
+        gateway_text = (f"*{TASK_ID} — REQUEST RECEIVED*\n"
+            "The Director returned a valid intake receipt. Execution remains "
+            "subject to the configured safety gates.")
+        received = {"user": BOT, "thread_ts": THREAD, "text": gateway_text}
+        for messages, complete in (([], True), ([received, received], True), ([received], False),
+                ([{**received, "user": OWNER}], True), ([{**received, "thread_ts": FINAL_TS}], True)):
+            with self.subTest(messages=messages, complete=complete), self.assertRaises(ValueError):
+                collector_module.task_from_accepted(THREAD, messages, complete, BOT)
+
+    def test_mixed_accepted_and_request_received_wordings_are_ambiguous(self):
+        accepted = {"user": BOT, "thread_ts": THREAD, "text": f"*{TASK_ID} — ACCEPTED*"}
+        gateway_text = (f"*{TASK_ID} — REQUEST RECEIVED*\n"
+            "The Director returned a valid intake receipt. Execution remains "
+            "subject to the configured safety gates.")
+        received = {"user": BOT, "thread_ts": THREAD, "text": gateway_text}
+        with self.assertRaises(ValueError):
+            collector_module.task_from_accepted(THREAD, [accepted, received], True, BOT)
+        other_task_received = {**received, "text": received["text"].replace(TASK_ID, "DIR-LG-CD34")}
+        with self.assertRaises(ValueError):
+            collector_module.task_from_accepted(THREAD, [accepted, other_task_received], True, BOT)
 
     def test_structural_rubric_passes_without_claiming_full_qualification(self):
         row = structural_trial()
@@ -700,3 +773,4 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
