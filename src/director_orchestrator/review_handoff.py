@@ -1,3 +1,4 @@
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | BEGIN]]
@@ -21,6 +22,7 @@ from .models import (
     canonical_opaque_identifier_digest,
 )
 from .approvals import assignment_approval_digest, assignment_is_approved
+from .contact_families import UnknownContactError, share_provider_family
 from .policy import canonical_repository
 from .interactions import (
     CommunicationEvidenceFailure,
@@ -174,6 +176,18 @@ def bind_review_handoff(
     reviewer = reviewers[0]
     if reviewer.agent in candidate.material_authors:
         raise ValueError("review provider is listed as a material author")
+    # Directive #207, "Contact-family safety": separate contact lanes that are
+    # the same provider family (for example Direct Grok and Grok Bot, or
+    # GitHub Copilot and VS Code Coding Bot) never create false independence.
+    try:
+        reviewer_shares_family = any(
+            share_provider_family(reviewer.agent, author)
+            for author in candidate.material_authors
+        )
+    except UnknownContactError as exc:
+        raise ValueError("reviewer_family_unknown") from exc
+    if reviewer_shares_family:
+        raise ValueError("reviewer_shares_provider_family")
     if reviewer.allow_draft_pr:
         raise ValueError("review assignment cannot create another draft pull request")
     if reviewer.requires_approval:
@@ -510,3 +524,4 @@ def reconstruct_review_handoff(
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:10 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 17:18 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 23:18 UTC | END]]
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]

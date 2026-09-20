@@ -1,3 +1,4 @@
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
@@ -22,7 +23,9 @@ import tempfile
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+from director_orchestrator import contact_families
 from director_orchestrator import policy as policy_module
 from director_orchestrator.config import Settings
 from director_orchestrator.models import (
@@ -695,9 +698,75 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
             execution_policy_errors(guarded, self.settings),
         )
 
+    @staticmethod
+    def _implementation_and_review_plan(
+        *, reviewer_agent: ProviderName
+    ) -> DirectorPlan:
+        """A minimal plan with one implementation and one dependent review, for
+        direct whitebox tests of ``_independent_review_binding_errors``."""
+
+        implementation = Assignment(
+            sequence=1,
+            agent=ProviderName.CLAUDE,
+            kind=AssignmentKind.IMPLEMENTATION,
+            task="Implement the bounded change",
+            acceptance=["Tests pass"],
+            repository="example/demo",
+        )
+        review = Assignment(
+            sequence=2,
+            agent=reviewer_agent,
+            kind=AssignmentKind.INDEPENDENT_REVIEW,
+            task="Independently review the exact candidate",
+            acceptance=["Return findings tied to the candidate"],
+            repository="example/demo",
+            depends_on=[1],
+        )
+        return DirectorPlan(
+            project="demo",
+            normalized_outcome="Implement and independently review",
+            risk_level=RiskLevel.LOW,
+            approval_required=False,
+            max_hops=1,
+            max_revisions=0,
+            assignments=[implementation, review],
+            final_acceptance=["Accepted"],
+        )
+
+    def test_independent_review_family_unknown_fails_closed(self) -> None:
+        """Directive #207: a reviewer identity absent from the contact-family
+        table is never assumed independent of the producer it would review."""
+
+        plan = self._implementation_and_review_plan(reviewer_agent=ProviderName.OWNER)
+
+        errors = policy_module._independent_review_binding_errors(plan)
+
+        self.assertIn("assignment 2: reviewer_family_unknown", errors)
+
+    def test_independent_review_rejects_same_provider_family_reviewer(self) -> None:
+        """Directive #207, "Contact-family safety": a reviewer sharing the
+        producer's provider family is rejected even under a distinct contact
+        identity. No two ``ProviderName`` members share a family today, so
+        this test binds one family label to prove the check itself fires."""
+
+        plan = self._implementation_and_review_plan(reviewer_agent=ProviderName.CURSOR)
+
+        with patch.dict(
+            contact_families.CONTACT_LANES_BY_ID,
+            {
+                "cursor": contact_families.ContactLane(
+                    lane_id="cursor", product="Cursor Agent", provider_family="Anthropic"
+                )
+            },
+        ):
+            errors = policy_module._independent_review_binding_errors(plan)
+
+        self.assertIn("assignment 2: reviewer_shares_provider_family", errors)
+
 
 if __name__ == "__main__":
     unittest.main()
+# [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:05 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 05:23 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:29 UTC | END]]
