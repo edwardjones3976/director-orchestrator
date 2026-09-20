@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
@@ -55,10 +56,13 @@ python scripts/collect-offline-slack-trials.py `
 ```
 
 Repeat `--trial` at most ten times. One bounded paginated `conversations.replies`
-read per thread supplies exactly one `ACCEPTED` reply from the bot authenticated
-by `auth.test`. Missing, duplicate, foreign-bot or incomplete acceptance cannot
-select a task. The task API must bind its ID, engine header, intake thread,
-configured owner/channel, source event, and original message text together.
+read per thread supplies exactly one unambiguous task receipt in that thread from
+the bot authenticated by `auth.test`: the current gateway's `REQUEST RECEIVED`
+reply or the legacy `ACCEPTED` reply. Neither wording is approval or proof of
+successful execution. Missing, duplicate, mixed-wording, foreign-bot, wrong-thread
+or incomplete-readback evidence cannot select a task. The task API must bind its
+ID, engine header, intake thread, configured owner/channel, source event, and
+original message text together.
 
 The only network reads are GET-only: Slack `auth.test`, `conversations.replies`,
 Director `/health`, `/v1/tasks/{id}`, and `/v1/primary/tasks/{id}/deliveries`.
@@ -191,3 +195,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:25 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | END]] -->

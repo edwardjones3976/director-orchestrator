@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | BEGIN]]
 """Read explicit Director Slack trials; never post, approve, dispatch or score."""
@@ -197,12 +198,15 @@ class Collector:
 def task_from_accepted(thread, messages, complete, bot):
     if not complete:
         raise ValueError("Task lookup requires complete thread readback")
-    pattern = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+ACCEPTED\b")
+    # slack_bot.py:658 sends the current "REQUEST RECEIVED" wording; "ACCEPTED" is
+    # the retained legacy wording. Either binds a task ID the same way, and any
+    # duplicate or mixed-wording match within the thread stays ambiguous.
+    pattern = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
     matches = [match.group(1) for message in messages
         if message.get("user") == bot and message.get("thread_ts") == thread
         for match in pattern.finditer(html.unescape(str(message.get("text", ""))))]
     if len(matches) != 1:
-        raise ValueError("Exactly one native ACCEPTED task reply required")
+        raise ValueError("Exactly one native task receipt required")
     return matches[0]
 
 
@@ -485,3 +489,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]

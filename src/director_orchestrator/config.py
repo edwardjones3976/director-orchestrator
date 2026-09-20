@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex integration | GPT-6 Astra | 2026-09-13 | 03:32 UTC | BEGIN]]
@@ -71,6 +73,7 @@ import math
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -834,6 +837,21 @@ class Settings:
         "PERPLEXITY_DAILY_REQUEST_LIMIT", 100
     )
 
+    # Z.ai GLM Coding Plan: a trial-only, fail-closed contact lane (owner
+    # directive #207). `zai` is deliberately absent from every production enum;
+    # these settings only gate the bounded Lite trial route in `zai_lane`.
+    zai_trial_enabled: bool = _bool("ZAI_TRIAL_ENABLED", False)
+    zai_api_key: str = os.getenv("ZAI_API_KEY", "")
+    zai_api_base: str = os.getenv("ZAI_API_BASE", "https://api.z.ai/api/anthropic")
+    zai_mode: str = os.getenv("ZAI_MODE", "trial_only").strip().lower()
+    zai_model: str = os.getenv("ZAI_MODEL", "glm-5.3-flash").strip()
+    zai_cli_executable: str = os.getenv("ZAI_CLI_EXECUTABLE", "")
+    zai_trial_journal_dir: str = os.getenv("ZAI_TRIAL_JOURNAL_DIR", "")
+    zai_trial_ledger_path: str = os.getenv("ZAI_TRIAL_LEDGER_PATH", "")
+    zai_timeout_seconds: int = _int("ZAI_TIMEOUT_SECONDS", 60)
+    zai_lite_entitlement_verified: bool = _bool("ZAI_LITE_ENTITLEMENT_VERIFIED", False)
+    zai_production_activation: str = os.getenv("ZAI_PRODUCTION_ACTIVATION", "").strip()
+
     def completion_evidence_actor_allowlist(
         self,
     ) -> dict[str, dict[str, frozenset[str]]]:
@@ -890,6 +908,8 @@ class Settings:
     perplexity_allow_review_verdict: bool = _bool(
         "PERPLEXITY_ALLOW_REVIEW_VERDICT", False
     )
+    zai_allow_repository_write: bool = _bool("ZAI_ALLOW_REPOSITORY_WRITE", False)
+    zai_allow_review_verdict: bool = _bool("ZAI_ALLOW_REVIEW_VERDICT", False)
 
     def gemini_supplemental_readiness(self) -> dict[str, bool]:
         return {
@@ -926,6 +946,71 @@ class Settings:
             "repository_write_disabled": not self.perplexity_allow_repository_write,
             "review_verdict_disabled": not self.perplexity_allow_review_verdict,
         }
+
+    def zai_trial_readiness(self, *, moment: datetime | None = None) -> dict[str, bool]:
+        """Booleans only for the Z.ai trial-only contact lane; never a value.
+
+        Every check defaults to closed. The lane is ready only while the owner
+        directive #207 trial window is open and nothing has been widened.
+        """
+        # Lazy: zai_trial pulls in the packet runtime, which config must not import at load.
+        from .zai_trial import ENDPOINT, TRIAL_END
+
+        now = moment or datetime.now(timezone.utc)
+        executable = (
+            Path(self.zai_cli_executable).expanduser() if self.zai_cli_executable else None
+        )
+        return {
+            "trial_enabled": self.zai_trial_enabled,
+            "credential_configured": bool(self.zai_api_key)
+            and not any(character.isspace() for character in self.zai_api_key),
+            "official_endpoint": self.zai_api_base == ENDPOINT,
+            "trial_only_mode": self.zai_mode == "trial_only",
+            "glm_model_configured": self.zai_model.lower().startswith("glm-")
+            and not any(character.isspace() for character in self.zai_model),
+            "cli_configured": executable is not None
+            and executable.is_absolute()
+            and executable.is_file(),
+            "journal_configured": bool(self.zai_trial_journal_dir),
+            "ledger_configured": bool(self.zai_trial_ledger_path),
+            "ledger_isolated": self.zai_ledger_isolated(),
+            "timeout_valid": 1 <= self.zai_timeout_seconds <= 69,
+            "lite_entitlement_verified": self.zai_lite_entitlement_verified,
+            "trial_window_open": now < TRIAL_END,
+            "repository_write_disabled": not self.zai_allow_repository_write,
+            "review_verdict_disabled": not self.zai_allow_review_verdict,
+            "production_activation_absent": not self.zai_production_activation,
+        }
+
+    def zai_ledger_isolated(self) -> bool:
+        """True when the trial ledger names no other durable store (or is unset).
+
+        `ZaiTrialLedger` opens whatever path it is given, so a ledger path that
+        names the TaskStore, a LangGraph checkpoint or any other durable file would
+        write `zai_trial_*` tables into production storage. Same convention as the
+        LangGraph path checks: spelling and file identity, failing closed on races.
+        """
+
+        ledger = self.zai_trial_ledger_path.strip()
+        if not ledger:
+            return True
+        checkpoint = self.langgraph_checkpoint_path.strip()
+        others = (
+            self.sqlite_path,
+            checkpoint,
+            langgraph_resume_claim_path(checkpoint) if checkpoint else "",
+            self.langgraph_primary_acceptance_registry_path,
+            self.langgraph_primary_acceptance_journal_path,
+            self.langgraph_runtime_checkpoint_path,
+            self.langgraph_runtime_ledger_path,
+            self.completion_gate_store_path,
+            self.completion_gate_worker_store_path,
+            self.completion_gate_host_broker_path,
+            self.completion_gate_container_runtime_path,
+        )
+        return all(
+            _paths_are_isolated(ledger, other) for other in others if other and other.strip()
+        )
 
     def grok_primary_readiness(self) -> dict[str, bool]:
         repository_transport_required = (
@@ -987,6 +1072,7 @@ class Settings:
             "gemini": all(self.gemini_supplemental_readiness().values()),
             "grok": all(self.grok_primary_readiness().values()),
             "perplexity": all(self.perplexity_research_readiness().values()),
+            "zai": all(self.zai_trial_readiness().values()),
         }
 
     def usage_check_readiness(self) -> dict[str, bool]:
@@ -1157,6 +1243,49 @@ class Settings:
                 "TRUSTED_PROVIDER_COST_RANKS values must define a unique total order"
             )
         return dict(sorted(parsed.items()))
+
+    def validate_zai_trial_configuration(self) -> None:
+        """Refuse any Z.ai setting that would widen the Lite trial before startup.
+
+        Z.ai is a trial-only contact lane (owner directive #207): no production
+        credit, no review or merge authority, and no activation before the
+        owner's decision on or after 2026-09-29. These are environment values,
+        so model output cannot change them; an operator who sets one gets a
+        startup failure rather than a wider lane. This adds a gate; the
+        transport's own per-call refusals in `zai_trial` are unchanged.
+        """
+
+        from .zai_trial import ENDPOINT
+
+        if self.zai_mode != "trial_only":
+            raise ValueError(
+                "ZAI_MODE must be trial_only until the owner's activation decision"
+            )
+        if self.zai_allow_repository_write or self.zai_allow_review_verdict:
+            raise ValueError(
+                "ZAI_ALLOW_REPOSITORY_WRITE and ZAI_ALLOW_REVIEW_VERDICT must stay "
+                "false: Z.ai holds no repository or review authority"
+            )
+        if self.zai_production_activation:
+            raise ValueError(
+                "ZAI_PRODUCTION_ACTIVATION is not honoured: production activation "
+                "is an owner decision on or after 2026-09-29 and needs its own change"
+            )
+        if self.zai_api_base != ENDPOINT:
+            raise ValueError(
+                "ZAI_API_BASE must be the official Z.ai Anthropic-compatible endpoint"
+            )
+        if self.zai_trial_enabled and not self.zai_lite_entitlement_verified:
+            raise ValueError(
+                "ZAI_TRIAL_ENABLED requires ZAI_LITE_ENTITLEMENT_VERIFIED=true "
+                "(the owner has observed the Lite entitlement)"
+            )
+        if not self.zai_ledger_isolated():
+            raise ValueError(
+                "ZAI_TRIAL_LEDGER_PATH must be its own file: it names the TaskStore, a "
+                "LangGraph checkpoint, resume-claim, acceptance, runtime-ledger or "
+                "completion-gate store"
+            )
 
     def validate_intake_routing_defaults(self) -> None:
         """Refuse an unroutable intake profile or capability before startup.
@@ -2266,3 +2395,5 @@ class Settings:
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
