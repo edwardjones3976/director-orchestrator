@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | BEGIN]]
@@ -39,6 +40,8 @@ from director_orchestrator.conditional_allocation import (
     get_conditional_profile,
     shares_policy_family,
 )
+from director_orchestrator.zai_lane import ZAI_CONTACT_LANE
+from director_orchestrator.zai_trial import TRIAL_END
 
 VERIFIED_LEGACY_DIGESTS = {
     "engineering": "sha256:1928779a3d24e9172a8f74911b601bc01905dc2dbfd49c306f0dcff73e442a68",
@@ -340,8 +343,36 @@ class TestConditionalAllocation(unittest.TestCase):
         )
 
 
+
+class TrialLaneConsistencyTests(unittest.TestCase):
+    """The PROPOSED descriptor and the merged trial-only lane (#239) describe one Z.ai boundary."""
+
+    def test_zai_boundary_is_shared_with_the_trial_lane(self):
+        # One date: the descriptor's eligibility floor is the trial lane's TRIAL_END day.
+        self.assertEqual(CONDITIONAL_EFFECTIVE_DATE_FLOOR, TRIAL_END.date().isoformat())
+        self.assertIn(CONDITIONAL_EFFECTIVE_DATE_FLOOR, ZAI_CONTACT_LANE.activation)
+        # One lane id, still absent from the active registry: the descriptor stays PROPOSED.
+        self.assertEqual(ZAI_CONTACT_LANE.lane_id, "zai")
+        self.assertIn("zai", CONDITIONAL_LANES)
+        self.assertEqual(CONDITIONAL_TARGETS["zai"], 18)
+        self.assertNotIn("zai", LANES)
+        self.assertEqual(CONDITIONAL_PROFILE.status, "PROPOSED")
+        contact = CONDITIONAL_CONTACTS["zai"]
+        self.assertEqual(contact.binding_status, "unbound")
+        self.assertIsNone(contact.route_binding)
+        self.assertIn("2026-09-28", contact.boundary_note or "")
+        # Neither object grants anything before the owner's activation decision.
+        self.assertFalse(ZAI_CONTACT_LANE.production_lane)
+        self.assertFalse(ZAI_CONTACT_LANE.production_credit)
+        self.assertFalse(ZAI_CONTACT_LANE.review_authority)
+        self.assertFalse(ZAI_CONTACT_LANE.merge_authority)
+        self.assertFalse(CONDITIONAL_PROFILE.confers_runtime_readiness)
+        self.assertFalse(CONDITIONAL_PROFILE.confers_enrollment)
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]]
