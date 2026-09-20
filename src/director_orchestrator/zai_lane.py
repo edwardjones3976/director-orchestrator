@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 """Z.ai trial-only contact lane: typed identity, separate trial ledger, bounded dispatch.
@@ -202,16 +205,20 @@ class ZaiTrialLedger:
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._initializing = False
         self._initialize()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA secure_delete = ON")
-        connection.execute("PRAGMA foreign_keys = ON")
         try:
+            # Everything after connect() runs inside the try: a PRAGMA on a file that is
+            # not a database raises, and the handle must still be closed (Windows keeps
+            # the file locked otherwise). Same discipline as the reviewer asked of #242.
+            connection.row_factory = sqlite3.Row
             try:
+                connection.execute("PRAGMA secure_delete = ON")
+                connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError:
                 raise  # lock contention is not a schema problem
@@ -220,18 +227,21 @@ class ZaiTrialLedger:
             with connection:
                 # Every connection, not only the first: the file can be replaced between
                 # calls, and a foreign or older database must never be written.
-                self._verify_schema(connection)
+                self._verify_schema(connection, allow_empty=self._initializing)
                 yield connection
         finally:
             connection.close()
 
-    def _verify_schema(self, connection: sqlite3.Connection) -> None:
+    def _verify_schema(self, connection: sqlite3.Connection, *, allow_empty: bool) -> None:
         """Fail closed unless the file is empty or exactly this build's ledger.
 
         `CREATE TABLE IF NOT EXISTS` would accept any pre-existing database and
         silently lose the CHECK constraints and append-only triggers that carry the
         no-credit guarantee. There is no migration: an older, partial, weakened or
-        foreign file is refused. The error names no path.
+        foreign file is refused. The error names no path. An empty file is accepted only
+        while `_initialize` is creating the schema in the same transaction; on any later
+        connection an empty file means the ledger was replaced, and it is refused too
+        (first accepted Z.ai trial finding, 2026-09-20).
         """
 
         try:
@@ -246,7 +256,9 @@ class ZaiTrialLedger:
         except sqlite3.DatabaseError as exc:
             raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger") from exc
         if not actual:
-            return  # a fresh file: _initialize creates the schema in this transaction
+            if allow_empty:
+                return  # a fresh file: _initialize creates the schema in this transaction
+            raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger")
         if actual != _expected_schema():
             raise ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger")
         version = connection.execute(
@@ -256,13 +268,20 @@ class ZaiTrialLedger:
             raise ZaiTrialLedgerError("zai_ledger_version_mismatch")
 
     def _initialize(self) -> None:
-        with self._lock, self._connect() as connection:
-            for statement in _SCHEMA_STATEMENTS:
-                connection.execute(statement)
-            connection.execute(
-                "INSERT OR IGNORE INTO zai_trial_metadata (key, value) VALUES ('version', ?)",
-                (LEDGER_VERSION,),
-            )
+        # The flag is set and cleared while the lock is held: no other connection can
+        # observe allow_empty=True between the initialising transaction and the reset.
+        with self._lock:
+            self._initializing = True
+            try:
+                with self._connect() as connection:
+                    for statement in _SCHEMA_STATEMENTS:
+                        connection.execute(statement)
+                    connection.execute(
+                        "INSERT OR IGNORE INTO zai_trial_metadata (key, value) VALUES ('version', ?)",
+                        (LEDGER_VERSION,),
+                    )
+            finally:
+                self._initializing = False
 
     @staticmethod
     def _recorded_failures(connection: sqlite3.Connection) -> int:
@@ -617,3 +636,6 @@ class ZaiTrialLane:
         return ZaiTrialDispatch(attempt_id=attempt_id, latency_ms=latency_ms, result=result)
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]

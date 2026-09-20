@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 import json
@@ -501,6 +504,12 @@ class LedgerReuseTests(unittest.TestCase):
         _sqlite_exec(older, "UPDATE zai_trial_metadata SET value = 'zai-trial-ledger/v0' WHERE key = 'version'")
         text = self.root / "notes.sqlite3"
         text.write_text("not a database at all, just text", encoding="utf-8")
+        # The refused text file must be deletable straight away: no connection may leak
+        # when the PRAGMA or BEGIN fails on a file that is not a database (Windows locks).
+        with self.assertRaises(ZaiTrialLedgerError):
+            ZaiTrialLedger(str(text))
+        text.unlink()
+        text.write_text("not a database at all, just text", encoding="utf-8")
         for label, path in (("foreign TaskStore", foreign), ("partial schema", partial),
                             ("missing append-only trigger", weakened), ("older version", older),
                             ("not sqlite", text)):
@@ -516,6 +525,43 @@ class LedgerReuseTests(unittest.TestCase):
             db.close()
         self.assertFalse(any(name.startswith("zai_trial") for name in names), names)
         self.assertEqual(text.read_text(encoding="utf-8"), "not a database at all, just text")
+
+    def test_a_file_replaced_by_an_empty_database_is_refused_not_recreated(self):
+        ledger = ZaiTrialLedger(str(self.path))
+        self._reserve(ledger)
+        self.path.unlink()
+        _sqlite_exec(self.path, "PRAGMA user_version = 0")  # a valid but empty SQLite file
+        with self.assertRaises(ZaiTrialLedgerError) as caught:
+            ledger.status()
+        self.assertEqual(str(caught.exception), "zai_ledger_not_a_trial_ledger")
+        with self.assertRaises(ZaiTrialLedgerError):
+            self._reserve(ledger, key="k-2")
+        db = sqlite3.connect(self.path)
+        try:
+            names = {row[0] for row in db.execute("SELECT name FROM sqlite_master")}
+        finally:
+            db.close()
+        self.assertEqual(names, set(), "the ledger must never recreate its schema into a replaced file")
+        # A fresh ledger object may still initialise an empty file: that is the only sanctioned path.
+        self.assertEqual(ZaiTrialLedger(str(self.path)).status()["attempts"], 0)
+
+    def test_initialising_flag_is_never_observable_outside_the_lock(self):
+        ledger = ZaiTrialLedger(str(self.path))
+        self.assertFalse(ledger._initializing)
+        observed = []
+        original = ledger._verify_schema
+
+        def spy(connection, *, allow_empty):
+            observed.append(allow_empty)
+            return original(connection, allow_empty=allow_empty)
+
+        ledger._verify_schema = spy
+        ledger.status()
+        self._reserve(ledger)
+        self.assertEqual(observed, [False, False], "ordinary connections must never run with allow_empty")
+        with self.assertRaises(ZaiTrialLedgerError):  # a failure inside _initialize leaves the flag cleared
+            with patch.object(ZaiTrialLedger, "_verify_schema", side_effect=ZaiTrialLedgerError("zai_ledger_not_a_trial_ledger")):
+                ZaiTrialLedger(str(self.root / "other.sqlite3"))
 
     def test_a_file_replaced_after_opening_is_refused_on_the_next_call(self):
         ledger = ZaiTrialLedger(str(self.path))
@@ -651,3 +697,6 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:55 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:20 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:45 UTC | END]]
