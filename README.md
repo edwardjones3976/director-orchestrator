@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:40 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
@@ -11,17 +11,17 @@
 <!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | BEGIN]] -->
@@ -330,8 +330,9 @@ owner's PC through one stdio MCP server, `provider-dispatch`
 only). It wraps the same calls as the `dispatch.py` CLI beside it, so a tool call
 and a CLI call obey identical caps, receipts, secret markers and the Z.ai trial
 guard. Source of the design and the registration recipe: the "Thinker/Fable
-Ultra" Director-Orchestrator session's work order (`WORKORDER-mcp-server.md`) and
-`SKILL.md` in that folder; this section is the operator summary.
+Ultra" Director-Orchestrator session's work order (`WORKORDER-mcp-server.md`),
+`SKILL.md` in that folder, and that session's written answer of 2026-09-20; this
+section is the operator summary.
 
 ### What it exposes
 
@@ -352,12 +353,14 @@ hosted MCP in every host.
 
 ### The rules the server enforces (do not work around them)
 
-- **Keys never leave the server.** The five keys (`PERPLEXITY_API_KEY`,
-  `XAI_API_KEY`, `FIRECRAWL_API_KEY`, `COPILOT_GITHUB_TOKEN`, `ZAI_API_KEY`) are
-  read **by name** from the deployment `.env` inside the server process at call
-  time. No host configuration holds a value (`claude mcp add -e KEY=value` would
-  write it in plain text into the user config, which is why it is not used), and
-  every tool result is scrubbed of every key value before it is returned.
+- **Keys never leave the server.** The keys (`PERPLEXITY_API_KEY`,
+  `XAI_API_KEY`, `ZAI_API_KEY`; the CLI also knows `FIRECRAWL_API_KEY` and
+  `COPILOT_GITHUB_TOKEN`) are read **by name** from the deployment `.env` inside
+  the server process at call time. A host entry holds only `command` and `args`,
+  never an `env` block: `claude mcp add -e KEY=value` would write the value in
+  plain text into the user config, and `${VAR}` expansion in `.mcp.json` reads
+  only the process environment, where the keys are not set. Every tool result,
+  receipt, log and error is scrubbed of every key value before it is returned.
 - **Packets are checked before they are sent.** A packet containing what looks
   like a secret binding (`_KEY=`-style lines, DSNs, tokens) is refused; packets
   are capped (24 KB for the research and Z.ai routes); a `diff` is truncated to
@@ -369,13 +372,19 @@ hosted MCP in every host.
 - **Daily caps are server-side**: Perplexity 25, xAI 40, Z.ai ask 20. A cap, a
   secret marker, the trial window, or a missing argument comes back as an
   ordinary tool result with `isError: true` and a text beginning `refused:`,
-  never as a protocol error.
+  never as a protocol error. JSON-RPC errors (`-32700` parse, `-32601` unknown
+  method, `-32602` unknown tool, `-32603` internal) are reserved for malformed
+  requests, so a caller that sees one has a bug in the request, not a refused
+  call.
 - **Authority is nil.** Nothing returned by these tools is a verdict. Perplexity
   is public research only, is never sent repository context, task state or Slack
   text, and is never relayed to Slack. Z.ai is a trial-only lane with no
   production credit until the owner's activation decision. xAI answers are
   evidence for the calling model; the independent-review bar and every merge
   gate in `policy.py` are untouched by anything that comes through this server.
+  Z.ai's absence from every production provider enum (`ProviderName`,
+  `allocation_profiles.LANES`, the Postgres `provider_lane` check) is the
+  structural form of that guarantee, not a gap to fill.
 - **Timeouts are shorter than the CLI's** (Perplexity 90 s, xAI 120 s, Z.ai
   180 s) because agent hosts time tool calls out; Claude Code honours
   `MCP_TOOL_TIMEOUT` (milliseconds). xAI on a large diff routinely exceeds its
@@ -458,8 +467,8 @@ GitHub is the delegation, review and merge channel for this repository
   not authorization (rules 6 and 10).
 - **The GitHub MCP connector** (`plugin:engineering:github`) is available to
   Claude Code sessions once authorized in the owner's claude.ai connector
-  settings; an unauthorized session must say so rather than fall back to
-  browser automation. The `gh` CLI, authenticated as the owner, is the
+  settings (a host-managed OAuth grant, not a `claude mcp add` entry); an
+  unauthorized session must say so rather than fall back to browser automation. The `gh` CLI, authenticated as the owner, is the
   day-to-day route and is what every record in this repository was written with.
   The GitHub review bots (`chatgpt-codex-connector`, `copilot-pull-request-reviewer`,
   Cursor) run on their own; a usage-limit notice from one of them is not
@@ -704,17 +713,17 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:40 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 15:20 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 10:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 21:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:35 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 21:26 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 01:26 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 01:40 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-12 | 03:03 UTC | END]] -->
 <!-- [[Claude Code mechanical merge | Claude Opus 5 | 2026-09-12 | 05:35 UTC | END]] -->
@@ -727,4 +736,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
