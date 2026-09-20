@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | BEGIN]]
@@ -64,14 +65,20 @@ def failure_stdout(raw: bytes, key: str) -> str:
 
 
 class ZaiLiteTrialTransport:
-    def __init__(self, *, executable: Path, env_file: Path, journal: Path,
-                 model: str, lite_verified: bool):
+    def __init__(self, *, executable: Path, journal: Path, model: str, lite_verified: bool,
+                 env_file: Path | None = None, api_key: str | None = None):
         if lite_verified is not True:
             raise ValueError("Verified Lite entitlement is required")
         if not model.lower().startswith("glm-") or any(c.isspace() for c in model):
             raise ValueError("An explicit GLM model is required")
+        # Exactly one credential source: the owner-invoked fixture passes an env
+        # file; the in-process lane (`zai_lane`) passes the Settings value.
+        if (api_key is None) == (env_file is None):
+            raise ValueError("Exactly one credential source is required: env_file or api_key")
+        if api_key is not None and (not api_key or any(c.isspace() for c in api_key)):
+            raise ValueError("Exactly one nonempty ZAI_API_KEY binding is required")
         self.executable = executable.resolve(strict=True)
-        self.key = load_key(env_file)
+        self.key = api_key if api_key is not None else load_key(env_file)
         self.journal = journal.resolve()
         self.model = model
 
@@ -178,3 +185,4 @@ def build_zai_trial_adapter(**kwargs):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 06:40 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.1 Pro High (requested) | 2026-09-13 | 07:07 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 08:31 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]

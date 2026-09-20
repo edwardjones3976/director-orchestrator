@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | BEGIN]]
@@ -81,6 +82,8 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
 
 import hashlib
 import hmac
@@ -5098,6 +5101,73 @@ def database_binding(
     return identity, instance
 
 
+class _ProviderActivationOnlyStore:
+    """Expose only observed activation reads and authorized appends."""
+
+    def __init__(self, store):
+        self.__store = store
+
+    def load(self, binding, surface):
+        return self.__store.load(binding, surface)
+
+    def append_authorized(self, evidence, *, expected_revision, authorization):
+        return self.__store.append_authorized(evidence,
+            expected_revision=expected_revision, authorization=authorization)
+
+
+@contextmanager
+def open_provider_activation_store(dsn: str, *, schema: str,
+        accepted_storage_identity: str, accepted_instance_id: str,
+        allow_insecure_local_transport: bool = False, deadline: float | None = None):
+    """Open existing activation tables only; no DDL, saver or runtime authority.
+
+    Callers first verify the signed generation, restore proof and staged mode.
+    Every pooled connection rechecks the exact database instance. The returned
+    interface cannot construct a graph, acquire a writer or mutate task state.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+    from time import monotonic
+    def check_deadline():
+        if deadline is not None and monotonic() >= deadline:
+            raise PostgresCheckpointConfigurationError("activation publication deadline exceeded")
+    check_deadline()
+    schema = _require_schema(schema)
+    parsed = _parse_connection_target(dsn, conninfo_to_dict=conninfo_to_dict,
+        allow_insecure_local_transport=allow_insecure_local_transport)
+    if _storage_identity(parsed, schema=schema) != accepted_storage_identity:
+        raise PostgresCheckpointConfigurationError("activation database target differs")
+    try:
+        uuid.UUID(accepted_instance_id)
+    except (TypeError, ValueError, AttributeError):
+        raise PostgresCheckpointConfigurationError("activation database instance is invalid") from None
+    option = _search_path_option(schema)
+    pool = ConnectionPool(conninfo=dsn, min_size=1, max_size=1, open=False,
+        timeout=10, configure=_configure_connection(schema, option,
+            accepted_storage_identity=accepted_storage_identity,
+            accepted_instance_id=accepted_instance_id),
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row,
+            "connect_timeout": 10, "options": option + " -c statement_timeout=10000 -c lock_timeout=10000"})
+    try:
+        check_deadline()
+        pool.open(wait=True, timeout=10)
+        check_deadline()
+        with pool.connection() as connection:
+            # Existence is verified by reads, never by implicit setup or repair.
+            with connection.transaction():
+                connection.execute("SET TRANSACTION READ ONLY")
+                for table in ("director_provider_activation_evidence", "director_provider_activation_authorization"):
+                    check_deadline()
+                    connection.execute(f"SELECT 1 FROM {schema}.{table} LIMIT 0")
+        check_deadline()
+        yield _ProviderActivationOnlyStore(PostgresConditionalClaimStore(
+            _pool=pool, _schema=schema, storage_identity=accepted_storage_identity,
+            database_instance_id=accepted_instance_id, _store_provenance=_FACTORY_PROVENANCE))
+    finally:
+        pool.close()
+
+
 def open_postgres_control_plane(
     dsn: str,
     *,
@@ -5247,3 +5317,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:58 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]

@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:00 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]]
@@ -34,6 +36,58 @@ _MAX_RECOVERY_ANSWER_BYTES = 48_000
 _BRIDGE_PATH = "/v1/chatgpt-bridge"
 _ACK_PATH = "/v1/chatgpt-bridge/delivery-ack"
 _AMBIGUITY_PATH = "/v1/chatgpt-bridge/delivery-ambiguous"
+
+
+def _failure_diagnostics(
+    error: Exception, stage: str, response: httpx.Response | None, category: str
+) -> str:
+    """Persist only controlled labels, status and a strictly shaped request ID.
+
+    Never serialize exception text, request data, response text, arbitrary provider
+    labels or headers. Unknown provider codes are deliberately omitted.
+    """
+    exception_class = "Exception"
+    for known in (
+        httpx.HTTPStatusError, httpx.ReadTimeout, httpx.ConnectTimeout,
+        httpx.WriteTimeout, httpx.PoolTimeout, httpx.TimeoutException,
+        httpx.ConnectError, httpx.ReadError, httpx.WriteError,
+        httpx.RemoteProtocolError, json.JSONDecodeError, RuntimeError,
+    ):
+        if type(error) is known:
+            exception_class = known.__name__
+            break
+    result: dict[str, str | int] = {
+        "stage": stage if stage in {"transport", "http_status", "response_decode",
+                                    "answer_validation", "answer_store"} else "unknown",
+        "category": category if category in {"exception", "empty_response",
+                                              "incomplete_response"} else "exception",
+        "exception_class": exception_class,
+    }
+    if response is not None:
+        result["http_status"] = response.status_code
+        request_id = response.headers.get("x-request-id", "")
+        if re.fullmatch(r"req_[0-9a-f]{32}", request_id):
+            result["provider_request_id"] = request_id
+        if response.is_error and len(response.content) <= 16_384:
+            try:
+                payload = response.json()
+                provider_error = payload.get("error") if isinstance(payload, dict) else None
+                if isinstance(provider_error, dict):
+                    for field, allowed in (
+                        ("code", {"insufficient_quota", "rate_limit_exceeded",
+                                  "invalid_api_key", "model_not_found", "permission_denied",
+                                  "invalid_request_error", "server_error",
+                                  "integer_below_min_value"}),
+                        ("type", {"insufficient_quota", "invalid_request_error",
+                                  "rate_limit_error", "authentication_error",
+                                  "permission_error", "server_error"}),
+                    ):
+                        value = provider_error.get(field)
+                        if isinstance(value, str) and value in allowed:
+                            result[f"provider_error_{field}"] = value
+            except (ValueError, UnicodeError, RecursionError):
+                pass
+    return json.dumps(result, sort_keys=True, separators=(",", ":"))
 
 BridgeState = Literal[
     "OWNER_DECISION_REQUIRED",
@@ -385,6 +439,7 @@ class ChatGPTBridgeStore:
     """Durable owner decision, single dispatch, and encrypted answer recovery."""
 
     _ADDITIVE_COLUMNS = {
+        "failure_diagnostics_json": "TEXT",
         "request_reference": "TEXT NOT NULL DEFAULT ''",
         "prompt_digest": "TEXT NOT NULL DEFAULT ''",
         "decision_state": "TEXT NOT NULL DEFAULT 'LEGACY_TERMINAL'",
@@ -1110,7 +1165,7 @@ class ChatGPTBridgeStore:
             answer=answer,
         )
 
-    def fail_dispatch(self, request_reference: str) -> None:
+    def fail_dispatch(self, request_reference: str, diagnostics: str | None = None) -> None:
         connection = self._connect()
         try:
             with connection:
@@ -1120,10 +1175,10 @@ class ChatGPTBridgeStore:
                     UPDATE chatgpt_bridge_requests
                     SET status = 'failed', decision_state = 'FAILED', completed_at = ?,
                         answer_nonce = NULL, answer_ciphertext = NULL,
-                        answer_expires_at = NULL
+                        answer_expires_at = NULL, failure_diagnostics_json = ?
                     WHERE request_reference = ? AND decision_state = 'DISPATCHING'
                     """,
-                    (datetime.now(timezone.utc).isoformat(), request_reference),
+                    (datetime.now(timezone.utc).isoformat(), diagnostics, request_reference),
                 )
         finally:
             connection.close()
@@ -1237,7 +1292,7 @@ class ChatGPTBridgeService:
     def _validate_request(self, request: ChatGPTBridgeRequest) -> str:
         if not self.settings.chatgpt_bridge_enabled:
             raise BridgeRejected("ChatGPT bridge is disabled")
-        if not self.settings.allow_paid_runs:
+        if not (self.settings.allow_paid_runs or self.settings.chatgpt_bridge_allow_paid_runs):
             raise BridgeRejected("paid provider execution is disabled")
         if not self.settings.openai_api_key:
             raise BridgeRejected("OpenAI is not configured")
@@ -1327,6 +1382,9 @@ class ChatGPTBridgeService:
             "max_output_tokens": self.settings.chatgpt_bridge_max_output_tokens,
             "store": False,
         }
+        response = None
+        stage = "transport"
+        category = "exception"
         try:
             async with httpx.AsyncClient(timeout=90) as client:
                 response = await client.post(
@@ -1337,15 +1395,36 @@ class ChatGPTBridgeService:
                     },
                     json=body,
                 )
+                stage = "http_status"
                 response.raise_for_status()
-            answer = _output_text(response.json()).strip()
-            if not answer:
-                raise RuntimeError("empty bridge response")
+            stage = "response_decode"
+            payload = response.json()
+            stage = "answer_validation"
+            try:
+                answer = _output_text(payload).strip()
+                if not answer:
+                    raise RuntimeError("empty bridge response")
+            except RuntimeError:
+                category = ("incomplete_response" if isinstance(payload, dict)
+                            and payload.get("status") == "incomplete" else "empty_response")
+                raise
             answer = answer[:12_000]
+            stage = "answer_store"
             completed = self.store.complete_answer(result.request_reference, answer)
             return self._response(request, completed)
-        except Exception:
-            self.store.fail_dispatch(result.request_reference)
+        except Exception as error:
+            diagnostics = None
+            try:
+                diagnostics = _failure_diagnostics(error, stage, response, category)
+            except Exception:
+                # Optional diagnostics must never prevent the terminal transition.
+                pass
+            try:
+                self.store.fail_dispatch(result.request_reference, diagnostics)
+            except Exception:
+                # Keep the original failure; an uncommitted DISPATCHING reservation
+                # still prevents duplicate dispatch if persistence itself is down.
+                pass
             raise
 
     def acknowledge_delivery(
@@ -1392,3 +1471,5 @@ class ChatGPTBridgeService:
 # [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:04 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 23:00 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-23 | 21:49 UTC | BEGIN]]
@@ -243,6 +244,40 @@ class ChatGPTBridgeServiceTests(unittest.IsolatedAsyncioTestCase):
         RecordingAsyncClient.calls = []
         RecordingAsyncClient.responses = []
         RecordingAsyncClient.delay_seconds = 0
+
+    async def test_bridge_only_opt_in_keeps_global_paid_off_and_requires_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "bridge.sqlite3")
+            settings = _settings(database, allow_paid_runs=False,
+                                 chatgpt_bridge_allow_paid_runs=True)
+            service = ChatGPTBridgeService(settings, _store(database, settings))
+            self.assertFalse(settings.allow_paid_runs)
+            self.assertTrue(settings.chatgpt_bridge_readiness()["paid_execution_enabled"])
+            with patch("director_orchestrator.chatgpt_bridge.httpx.AsyncClient", RecordingAsyncClient):
+                pending = await service.reply(_signed_request(settings))
+                self.assertEqual("OWNER_DECISION_REQUIRED", pending.state)
+                self.assertEqual([], RecordingAsyncClient.calls)
+                RecordingAsyncClient.responses = [{"output_text": "Bounded bridge answer"}]
+                approval = _approval(settings, pending.request_reference)
+                answer = await service.reply(approval)
+                self.assertEqual("ANSWER_READY", answer.state)
+                await service.reply(approval)
+                self.assertEqual(1, len(RecordingAsyncClient.calls))
+                service.settings = replace(settings, chatgpt_bridge_enabled=False)
+                with self.assertRaisesRegex(BridgeRejected, "ChatGPT bridge is disabled"):
+                    await service.reply(_signed_request(settings, event_ts="1787450999.000001"))
+                self.assertEqual(1, len(RecordingAsyncClient.calls))
+
+    async def test_paid_bridge_remains_disabled_without_either_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "bridge.sqlite3")
+            settings = _settings(database, allow_paid_runs=False,
+                                 chatgpt_bridge_allow_paid_runs=False)
+            service = ChatGPTBridgeService(settings, _store(database, settings))
+            with self.assertRaisesRegex(BridgeRejected, "paid provider execution is disabled"):
+                await service.reply(_signed_request(settings))
+            self.assertFalse(settings.chatgpt_bridge_readiness()["paid_execution_enabled"])
+            self.assertEqual([], RecordingAsyncClient.calls)
 
     async def test_initial_message_stops_at_owner_decision_without_provider_call(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1339,3 +1374,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]

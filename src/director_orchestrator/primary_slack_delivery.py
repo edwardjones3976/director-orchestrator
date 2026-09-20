@@ -1,3 +1,7 @@
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:33 UTC | BEGIN]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
@@ -53,6 +57,7 @@ def render_notification(row: dict, settings) -> dict | None:
         lines.append("Historical execution mode is not recorded.")
     approval_display_complete = True
     if pending:
+        lines.append(f"Owner decision required for {pending['kind']}. Review the complete proposed scope below:")
         if record.plan:
             lines.append(record.plan.normalized_outcome)
             lines.append(f"Risk: {record.plan.risk_level.value}. Maximum hops: {record.plan.max_hops}; revisions: {record.plan.max_revisions}.")
@@ -73,8 +78,16 @@ def render_notification(row: dict, settings) -> dict | None:
         lines.append("Decision scope: " + pending["kind"] + ". Other safety gates still apply.")
         lines.append("Approve or reject this exact request using the buttons below.")
     else:
-        lines.append("Reason: " + str(projection.get("reason_code") or "not reported"))
-        lines.extend(f"{item.provider.value}: {item.result}" for item in record.assignment_outcomes)
+        reason_code = projection.get("reason_code")
+        if reason_code == "completion_passed":
+            lines.append("All planned assignments completed and passed verification.")
+        else:
+            lines.append("Reason: " + str(reason_code or "not reported"))
+        for item in record.assignment_outcomes:
+            result_text = str(item.result)
+            if simulation and result_text == "SIMULATION — NO PROVIDER INTERACTION":
+                result_text = "simulated result"
+            lines.append(f"{item.provider.value}: {result_text}")
         if not record.assignment_outcomes:
             lines.append("No completed provider result is recorded.")
         lines.append("Actual USD cost: not recorded; budget units are not billing evidence.")
@@ -385,3 +398,8 @@ class PrimarySlackDelivery:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:33 UTC | END]]
+# [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
