@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | BEGIN]] -->
@@ -585,8 +586,11 @@ name naming Z.ai or GLM, or equal to the attempt's model, is refused), and
 `status` derives the first-pass yield and correction rate the 2026-09-29 decision
 needs. The ledger issues no production credit and is not the canonical rolling
 allocation ledger.
-The conditional eleven-contact allocation profile is described separately and
-stays `PROPOSED` until that decision.
+The conditional eleven-contact allocation profile is the `PROPOSED` descriptor
+`conditional_20260929` in `src/director_orchestrator/conditional_allocation.py`
+(targets, policy families and named prerequisites; the table is in
+`docs/provider-allocation-profiles.md`). It shares this lane's 2026-09-29 boundary,
+binds no route, and stays `PROPOSED` until that decision.
 
 ## Antigravity subordinate profile
 
@@ -807,3 +811,4 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-16 | 18:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]] -->
