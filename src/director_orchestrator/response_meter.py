@@ -1,3 +1,4 @@
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
@@ -111,6 +112,15 @@ class EnrolledResponseMeter:
                         remaining()
                         return result
                 yield BoundedConnection()
+                # Refresh the commit-time timeouts from the time actually left:
+                # per-statement settings bound the earlier statements only, and
+                # the implicit COMMIT -- including deferred-trigger waits -- must
+                # be bounded by remaining budget, not by an earlier larger
+                # figure. Source-level staleness correction; no runtime
+                # reproduction is claimed.
+                milliseconds = str(max(1, ceil(remaining()*1000)))
+                connection.execute("SELECT set_config('statement_timeout',%s,true), "
+                    "set_config('lock_timeout',%s,true)", (milliseconds, milliseconds))
                 # Roll back rather than commit a settlement after its deadline.
                 remaining()
         except Error as exc:
@@ -268,3 +278,4 @@ def load_response_meter_registry(path, *, authority, pool):
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | END]]

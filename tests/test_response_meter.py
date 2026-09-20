@@ -1,3 +1,10 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | BEGIN]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | BEGIN]]
@@ -11,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import tempfile
+import time
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
@@ -279,6 +287,233 @@ class ResponseMeterTests(unittest.TestCase):
                     reservation=c.execute(f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend WHERE attempt_digest=%s",(self.attempt,)).fetchone()
                 self.assertEqual(self.budget.attempt_reservation_microusd,reservation["reserved_microusd"])
 
+    def test_responses_validation_bridge_runs_configured_factory_reservation_and_capture(self):
+        """Real configured factory, store, meter and budget; only HTTP is mocked.
+
+        Requires the documented disposable Windows PostgreSQL lane through the
+        inherited team fixtures.  The route builds against its own freshly
+        created, entitlement-only control-plane schema, so the factory's strict
+        inventory validation sees exactly the entitlement manifest tables, plus
+        a separate primary schema holding the team spend/usage tables and the
+        attempt ledger.  Production inventory guards, funding checks and daily
+        caps are unchanged.  setUp for this test only registers the owner-signed
+        canary budget in the route's own authority; the bridge performs the
+        single authoritative reservation through route.reserve_monetary_admission.
+        Requires the documented disposable PostgreSQL lane; not executed in an
+        environment without that lane.
+        """
+        import secrets
+        import time
+        import uuid
+        from dataclasses import asdict
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority, team_ddl
+        from director_orchestrator.entitlement_control_plane import (
+            entitlement_store_from_handle,
+            open_entitlement_control_plane,
+        )
+        from director_orchestrator.openai_responses_validation import responses_route_from_file
+        from director_orchestrator.provider_activation import ProviderActivationBinding
+        from director_orchestrator.provider_validation import (
+            CaptureVerifier,
+            PostgresValidationStore,
+            ValidationBridgeService,
+            ValidationError,
+            ValidationRequest,
+        )
+        from tests import test_entitlement_control_plane as entitlement_fixtures
+
+        attempt = "sha256:" + "4" * 64
+        task_id = "VALIDATION-meter-canary"
+        budget = team.signed(team.budget(self.g, grant_digest="d" * 64, provider_id="openai",
+            task_id=task_id, attempt_reservation_microusd=30), team.fixtures.OWNER_SECRET)
+        work = json.loads((Path(__file__).resolve().parents[1] /
+            "docs/schemas/model-work-packet-v1.example.json").read_text())
+        work.update(task_id=task_id, assignment_id=task_id, starting_ref="a" * 40,
+            allowed_tools=[], allowed_external_effects=[], idempotency_key=attempt)
+        work["limits"].update(max_hops=1, max_revisions=0, timeout_seconds=30)
+        # PostgresValidationStore.admit builds admission["packet"] with
+        # packet_contracts.canonical_json_bytes (RFC 8785), not this module's
+        # entitlement_contracts.canonical_json_bytes used for entitlement
+        # signing above -- the two disagree on number formatting (e.g.
+        # budget_usd as 1.0 vs 1), so a digest taken with the wrong
+        # canonicalizer never matches admission["packet"]'s real digest in
+        # OpenAIResponsesValidationRoute.validate_canary. This digest, which
+        # seeds the enrollment's work_packet_digest and therefore the route's
+        # canary pin, must be computed the same way admission actually will.
+        from director_orchestrator.packet_contracts import canonical_json_bytes as packet_canonical_json_bytes
+        packet = packet_canonical_json_bytes(work)
+        packet_digest = "sha256:" + hashlib.sha256(packet).hexdigest()
+        enrollment = team.signed(ResponseMeterEnrollment(
+            schema_version="responses-meter-enrollment/v1", authority_digest=budget.grant_digest,
+            attempt_digest=attempt, task_id=task_id, assignment_id=task_id,
+            project_id=self.g.project_id, work_packet_digest=packet_digest,
+            credential_digest=hashlib.sha256(b"test-key").hexdigest(), organization_id="org-test",
+            api_project_id="proj-test", model="synthetic-model-snapshot", service_tier="default",
+            origin="https://api.openai.com", tariff_id="synthetic-test-only",
+            input_microusd_per_million=4_000_000, cached_input_microusd_per_million=1_000_000,
+            output_microusd_per_million=8_000_000, valid_from=self.now - timedelta(seconds=10),
+            expires_at=self.now + timedelta(minutes=5), owner_signature="0" * 64),
+            team.fixtures.OWNER_SECRET)
+        native = dict(object="response", id="resp-validation-canary",
+            created_at=int(self.now.timestamp()), status="completed", model=enrollment.model,
+            service_tier="default",
+            output=[dict(type="message", role="assistant", status="completed",
+                content=[dict(type="output_text", text="Validation canary captured.")])],
+            usage=dict(input_tokens=8, output_tokens=4, total_tokens=12,
+                input_tokens_details=dict(cached_tokens=2),
+                output_tokens_details=dict(reasoning_tokens=3)))
+        headers = {"openai-organization": "org-test", "openai-project": "proj-test",
+                   "x-request-id": "req-validation-canary"}
+        requests = []
+        def respond(request):
+            requests.append(request)
+            body = ({"object": "response.input_tokens", "input_tokens": 8}
+                    if request.url.path.endswith("input_tokens") else native)
+            return httpx.Response(200, json=body, headers=headers)
+        original = httpx.AsyncClient
+        binding = asdict(ProviderActivationBinding(
+            "openai", "workspace", "v1", "v1", "v1", "v1", "v1"))
+        owner = "owner-fixture-" + "o" * 40
+        capture_key = "bridge-fixture-" + "k" * 40
+        route_schema = f"entitlement_meter_it_{uuid.uuid4().hex[:8]}_v1"
+        primary_schema = f"primary_meter_it_{uuid.uuid4().hex[:8]}_v1"
+        handle = None
+        meter_pool = None
+        try:
+            # Entitlement-only schema for the route: the factory's strict
+            # inventory validation must see exactly the entitlement manifest.
+            handle = open_entitlement_control_plane(
+                team.fixtures.TEST_DSN,
+                schema=route_schema,
+                trusted_verifier_secret_file=team.fixtures.VERIFIER_SECRET_FILE,
+                route_verifier_secret_file=team.fixtures.ROUTE_SECRET_FILE,
+                owner_authority_secret_file=team.fixtures.OWNER_SECRET_FILE,
+                allow_insecure_local_transport=True)
+            route_store = entitlement_store_from_handle(handle)
+            route_store.register_signed_template(entitlement_fixtures._signed_template())
+            route_store.register_verified_slack_destination(
+                destination_id="slack-owner-dm",
+                owner_signature_principal=entitlement_fixtures.OWNER_PRINCIPAL,
+                owner_signature_digest=entitlement_fixtures._owner_signature({
+                    "schema_version": "OwnerSlackDestination/v1",
+                    "destination_id": "slack-owner-dm",
+                    "owner_signature_principal": entitlement_fixtures.OWNER_PRINCIPAL,
+                }),
+                health_proof=entitlement_fixtures._slack_health_proof())
+            route_store.register_project(entitlement_fixtures._registration())
+            route_authority = PrimaryProviderBudgetAuthority(
+                route_store, primary_schema=primary_schema)
+            with handle.pool.connection() as c, c.transaction():
+                # PrimaryProviderBudgetAuthority.__init__ only validates the
+                # schema identifier via team_ddl; it runs no DDL itself. The
+                # isolated primary schema and its team spend/usage tables must
+                # be created explicitly, before the attempt ledger and before
+                # any registration touches them.
+                c.execute(f"CREATE SCHEMA {primary_schema}")
+                for statement in team_ddl(primary_schema):
+                    c.execute(statement)
+                c.execute(f"CREATE TABLE {primary_schema}.director_primary_provider_attempt"
+                          "(attempt_digest text PRIMARY KEY)")
+                route_authority.register(c, budget)
+            with tempfile.TemporaryDirectory() as directory:
+                enrollment_path = Path(directory) / "enrollments.json"
+                enrollment_path.write_text(json.dumps([enrollment.model_dump(mode="json")]))
+                config_path = Path(directory) / "responses-validation.json"
+                config_path.write_text(json.dumps({
+                    "model": enrollment.model,
+                    "api_url": "https://api.openai.com/v1/responses",
+                    "total_token_limit": 1000,
+                    "api_key": "test-key",
+                    "enrollment_file": str(enrollment_path.resolve()),
+                    "entitlements_postgres_dsn": team.fixtures.TEST_DSN,
+                    "entitlements_schema": route_schema,
+                    "primary_postgres_schema": primary_schema,
+                    "trusted_verifier_secret_file": team.fixtures.VERIFIER_SECRET_FILE,
+                    "route_verifier_secret_file": team.fixtures.ROUTE_SECRET_FILE,
+                    "owner_authority_secret_file": team.fixtures.OWNER_SECRET_FILE,
+                    "allow_insecure_local_postgres": True,
+                    "maximum_timeout_seconds": 60,
+                }))
+                route = responses_route_from_file(config_path)
+                meter_pool = route.transport.response_meter.pool
+                store = PostgresValidationStore(team.fixtures.TEST_DSN)
+                store.bootstrap()
+                generation = secrets.token_hex(32)
+                store.create_generation(generation=generation, candidate="a" * 40, tree="b" * 40,
+                    owner_token=owner, expires_at=int(time.time()) + 600, budget_units=1,
+                    lanes={"openai": {"binding": binding, "configuration_digest": route.configuration_digest,
+                                      "cost_units": 1, "work_packet": work}})
+                service = ValidationBridgeService(store=store, production_executor=None,
+                    capture_key=capture_key, owner_token=owner, account_files={},
+                    openai_responses_route=route)
+                request = ValidationRequest(generation=generation, provider="openai")
+                verifier = CaptureVerifier(store, capture_key=capture_key, candidate="a" * 40, tree="b" * 40,
+                    generation=generation, openai_responses_route=route)
+                # Finding 5: actual funding-schema contention against the
+                # real authority and pool. A blocker holds the project's
+                # advisory budget lock, so the monetary reservation waits on
+                # the funding schema itself; the transaction-local
+                # lock_timeout bound from the remaining budget aborts it,
+                # the transaction rolls back, and no spend row persists.
+                # Only after release does the bridge run below reserve once.
+                import psycopg
+                with handle.pool.connection() as blocker, blocker.transaction():
+                    blocker.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                                    ("primary-provider-budget:" + self.g.project_id,))
+                    started = time.monotonic()
+                    with self.assertRaises((psycopg.Error, ValidationError)):
+                        route.reserve_monetary_admission(remaining_seconds=lambda: 0.8)
+                    self.assertLess(time.monotonic() - started, 2.5)
+                with handle.pool.connection() as c:
+                    self.assertIsNone(c.execute(f"SELECT 1 FROM {primary_schema}.director_primary_provider_spend "
+                                                "WHERE attempt_digest=%s", (attempt,)).fetchone())
+                with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                        side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)):
+                    result = service.run(request, owner)
+                self.assertEqual(2, len(requests))
+                self.assertTrue(all(r.headers["OpenAI-Project"] == "proj-test" for r in requests))
+                self.assertEqual("default", json.loads(requests[1].content)["service_tier"])
+                self.assertEqual("responses-api", result["transport"])
+                self.assertTrue(verifier.verify(
+                    ProviderActivationBinding(**binding), result["evidence_digest"]))
+                # Exactly one authoritative reservation, made by the bridge, in
+                # the route's own primary schema.
+                with handle.pool.connection() as c:
+                    spend = c.execute(f"SELECT count(*) AS n, reserved_microusd "
+                        f"FROM {primary_schema}.director_primary_provider_spend "
+                        "WHERE attempt_digest=%s GROUP BY reserved_microusd", (attempt,)).fetchone()
+                    usage_rows = c.execute(f"SELECT count(*) AS n "
+                        f"FROM {primary_schema}.director_primary_provider_usage").fetchone()["n"]
+                self.assertIsNotNone(spend)
+                self.assertEqual((1, 30), (spend["n"], spend["reserved_microusd"]))
+                self.assertEqual(1, usage_rows)
+                # Durable no-replay refusal for the same admitted attempt.
+                with self.assertRaisesRegex(ValidationError, "already admitted"):
+                    service.run(request, owner)
+        finally:
+            # Best-effort, but every resource must still get a close attempt
+            # even if an earlier one raises: meter_pool.close() raising must
+            # not skip dropping the schemas or closing the control-plane
+            # handle, and the schema drop raising must not skip handle.close().
+            try:
+                if meter_pool is not None:
+                    meter_pool.close()
+            finally:
+                if handle is not None:
+                    try:
+                        with handle.pool.connection() as c:
+                            c.execute(f"DROP SCHEMA IF EXISTS {route_schema} CASCADE")
+                            c.execute(f"DROP SCHEMA IF EXISTS {primary_schema} CASCADE")
+                    finally:
+                        handle.close()
+
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:59 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
+# [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:41 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
