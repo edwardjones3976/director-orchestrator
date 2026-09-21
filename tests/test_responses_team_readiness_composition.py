@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
@@ -1606,6 +1607,41 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         self.assertEqual(["STARTED", "AMBIGUOUS"], statuses, "one attempt, retained, not repeated")
         self.assertEqual(1, len(digests))
 
+    def test_a_late_command_result_is_never_recorded_succeeded_or_resent_through_the_constructor(self):
+        """The child returns a valid envelope only after the carried bound has passed.
+
+        Same six-second bound and four-second delayed dispatch; the synthetic
+        wait then spends three more seconds on the transport's clock before
+        returning a perfectly valid native envelope. The shared helper
+        refuses it after the fact, the unchanged attempt recorder marks the
+        one admitted attempt AMBIGUOUS - never SUCCEEDED - with its identity
+        retained, and a second dispatch of the same reservation is refused
+        before admission, so nothing is resent.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        offset = [4.0]
+        with TemporaryDirectory() as directory:
+            transport = NativeCommandPacketTransport(
+                "openai", ("native-cli.exe", "--print"), cwd=directory, prompt_mode="stdin")
+            wave = self._ready_wave(transport=transport, provider_timeout_seconds=6)
+            launch = _FakeLaunch(stdout=NATIVE_ENVELOPE,
+                                 before_return=lambda: offset.__setitem__(0, offset[0] + 3.0))
+            with patch(LAUNCH_SEAM, launch), \
+                 patch("director_orchestrator.primary_transports.monotonic",
+                       lambda: real_monotonic() + offset[0]):
+                outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
+                self.assertEqual(1, len(launch.calls))
+                self.assertEqual(ParallelAssignmentStatus.AMBIGUOUS, outcome.status,
+                                 f"dispatch outcome: {outcome.status} / {outcome.reason_code}")
+                self.assertEqual("provider_outcome_unknown", outcome.reason_code)
+                with self.assertRaises(WorkloadAdmissionHold):
+                    wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual(1, len(launch.calls), "no second launch")
+        self.assertEqual([None], launch.resent, "nothing was resent through communicate")
+        statuses, digests = self._attempt_history(wave.task_id)
+        self.assertEqual(["STARTED", "AMBIGUOUS"], statuses, "the late result never became SUCCEEDED")
+        self.assertEqual(1, len(digests))
+
     def test_responses_requests_receive_only_the_remaining_carried_bound_through_the_constructor(self):
         """The narrow Responses counterpart: both requests are bounded by the carried remainder.
 
@@ -2555,3 +2591,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]

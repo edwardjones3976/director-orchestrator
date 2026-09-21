@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -299,50 +300,96 @@ def _command_cutoff(
     return cutoff
 
 
+def _remaining_before(cutoff: float, what: str) -> float:
+    """What is left of `cutoff` at this instant; a cutoff that is not a finite
+    number, or a remainder that is not, is refused rather than used."""
+
+    if (isinstance(cutoff, bool) or not isinstance(cutoff, (int, float))
+            or not math.isfinite(cutoff)):
+        raise RuntimeError(what + " cutoff is invalid")
+    remaining = cutoff - monotonic()
+    if not math.isfinite(remaining):
+        raise RuntimeError(what + " cutoff remainder is invalid")
+    return remaining
+
+
 def _run_bounded_command(
     argv: Sequence[str], *, cwd: Path, environment: Mapping[str, str],
     input_bytes: bytes | None, cutoff: float, what: str,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run one exact argv once, inside `cutoff`, owning its whole process tree.
 
-    The shared boundary for every ordinary command transport. What is left of
-    the cutoff is checked immediately before the launch - preparation that
-    consumed it launches nothing - and the wait is given only the remainder
-    at that moment, never the caller's original duration. The child is
-    launched through `launch_contained_process`: a kill-on-close Job Object
-    on Windows, a new session on POSIX. After it exits, and when the cutoff
-    passes first, `stop_contained_process` ends whatever the tree still holds
-    and closes the pipes under its own short bound; its refusal is
-    propagated, never swallowed into a result. A cutoff reached after the
+    The shared boundary for every ordinary command transport. The prepared
+    input, when there is one, is written to a binary temporary file and
+    rewound before the launch, so the child reads exactly those bytes from
+    stdin through EOF without this side holding a pipe open to it; empty
+    bytes are still a file (an immediate EOF), while no input at all is
+    `DEVNULL`, and nothing is ever handed to `communicate` a second time. The
+    file is this helper's to close, on return, refusal and launch failure
+    alike.
+
+    One finite absolute cutoff governs everything. What is left of it is
+    checked three times: after preparation, immediately before the launch -
+    preparation that consumed it launches nothing; after the launch, before
+    any wait - a launch that consumed it is ended and reported ambiguous
+    without entering a wait; and after the child returns, before its output
+    is accepted - a return after the cutoff, real or synthetic, is not a
+    successful attempt. The wait itself is given only the remainder at that
+    moment, never the caller's original duration, and no value is clamped
+    into a longer or fresh window. The child is launched through
+    `launch_contained_process`: a kill-on-close Job Object on Windows, a new
+    session on POSIX. On every exit from here `stop_contained_process` ends
+    whatever the tree still holds under its own short bound, and its refusal
+    is propagated, never swallowed into a result. A cutoff reached after the
     launch is an ambiguous outcome: the command ran, so it is neither retried
     here nor reported as unsubmitted.
     """
 
-    if cutoff - monotonic() <= 0:
-        raise RuntimeError(what + " timeout is exhausted before launch")
-    process, guard = launch_contained_process(
-        tuple(argv), cwd=cwd, env=environment,
-        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
-    )
-    cleaned = False
+    stdin_source = None
     try:
+        if input_bytes is not None:
+            stdin_source = tempfile.TemporaryFile()
+            stdin_source.write(input_bytes)
+            stdin_source.flush()
+            stdin_source.seek(0)
+        if _remaining_before(cutoff, what) <= 0:
+            raise RuntimeError(what + " timeout is exhausted before launch")
+        process, guard = launch_contained_process(
+            tuple(argv), cwd=cwd, env=environment,
+            stdin=stdin_source if stdin_source is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+        )
+        cleaned = False
         try:
-            stdout, stderr = process.communicate(
-                input=input_bytes, timeout=max(0.0, cutoff - monotonic()))
-        except subprocess.TimeoutExpired as exc:
+            remaining = _remaining_before(cutoff, what)
+            if remaining <= 0:
+                cleaned = True
+                stop_contained_process(process, guard)
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the launch consumed the cutoff")
+            try:
+                stdout, stderr = process.communicate(timeout=remaining)
+            except subprocess.TimeoutExpired as exc:
+                cleaned = True
+                stop_contained_process(process, guard)
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the cutoff passed after launch") from exc
             cleaned = True
+            # The immediate child exited; anything it left behind in its tree
+            # is ended here, and a cleanup that cannot be verified refuses the
+            # result.
             stop_contained_process(process, guard)
-            raise RuntimeError(
-                what + " outcome is ambiguous: the cutoff passed after launch") from exc
-        cleaned = True
-        # The immediate child exited; anything it left behind in its tree is
-        # ended here, and a cleanup that cannot be verified refuses the result.
-        stop_contained_process(process, guard)
-        return subprocess.CompletedProcess(tuple(argv), process.returncode, stdout, stderr)
+            if _remaining_before(cutoff, what) <= 0:
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the command returned after the cutoff")
+            return subprocess.CompletedProcess(
+                tuple(argv), process.returncode, stdout, stderr)
+        finally:
+            if not cleaned:
+                stop_contained_process(process, guard)
     finally:
-        if not cleaned:
-            stop_contained_process(process, guard)
+        if stdin_source is not None:
+            stdin_source.close()
 
 
 class BoundedJsonCommandTransport:
@@ -1611,3 +1658,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]

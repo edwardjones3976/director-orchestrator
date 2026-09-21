@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -183,6 +184,89 @@ class ProcessIsolationTests(unittest.TestCase):
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=0.01)
 
+    def _ordered_process(self, events, *, returncode):
+        """A safe fake child with two open streams that record their closing."""
+
+        class Stream:
+            def __init__(self, name):
+                self.name, self.closed = name, False
+
+            def close(self):
+                events.append("close:" + self.name)
+                self.closed = True
+
+        process = Mock(pid=77, returncode=returncode, stdin=None,
+                       stdout=Stream("stdout"), stderr=Stream("stderr"))
+        process.poll.side_effect = lambda: process.returncode
+
+        def kill():
+            events.append("kill")
+            process.returncode = -9
+
+        def wait(timeout=None):
+            events.append(("wait", timeout))
+            return process.returncode
+
+        process.kill.side_effect = kill
+        process.wait.side_effect = wait
+        return process
+
+    def test_stop_releases_ownership_before_streams_after_a_normal_exit(self):
+        """Ordering with safe fakes: tree, child, guard release, then streams.
+
+        The child has already exited, so it is not killed; the tree is ended,
+        the child reaped within the grace period, the guard released, and only
+        then are the streams closed. This asserts the ownership-release order
+        and the reported observations only.
+        """
+        events: list[object] = []
+        process = self._ordered_process(events, returncode=0)
+
+        class Guard:
+            active = True
+
+            def terminate(self):
+                events.append("terminate")
+
+            def close(self):
+                events.append("guard-close")
+
+        observed = process_isolation.stop_contained_process(process, Guard(), grace_seconds=0.5)
+        self.assertEqual(["terminate", ("wait", 0.5), "guard-close", "close:stdout", "close:stderr"], events)
+        self.assertEqual({"platform": os.name, "tree_terminated": True, "child_stopped": True,
+                          "guard_closed": True, "pipes_closed": True, "returncode": 0}, observed)
+
+    def test_stop_still_releases_the_guard_and_keeps_every_failure_when_termination_fails(self):
+        """A failed termination does not skip the guard release or hide what was seen.
+
+        The termination step reports a failure; the child is still killed and
+        reaped, the guard is still released before any stream is touched, the
+        streams are still closed, and the refusal carries the failure together
+        with every observation. No hang or stream-wait mechanism is reproduced
+        or claimed here - only the order and the retained evidence.
+        """
+        events: list[object] = []
+        process = self._ordered_process(events, returncode=None)
+
+        class Guard:
+            active = True
+
+            def terminate(self):
+                events.append("terminate")
+                raise process_isolation.ProcessContainmentError("Windows Job Object termination failed")
+
+            def close(self):
+                events.append("guard-close")
+
+        with self.assertRaises(process_isolation.ProcessContainmentError) as raised:
+            process_isolation.stop_contained_process(process, Guard(), grace_seconds=0.5)
+        self.assertEqual(["terminate", "kill", ("wait", 0.5), "guard-close", "close:stdout", "close:stderr"], events)
+        message = str(raised.exception)
+        self.assertIn("Windows Job Object termination failed", message)
+        for observation in ("'tree_terminated': False", "'child_stopped': True",
+                            "'guard_closed': True", "'pipes_closed': True", "'returncode': -9"):
+            self.assertIn(observation, message)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -191,3 +275,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 23:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]

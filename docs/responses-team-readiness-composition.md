@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
@@ -265,25 +266,44 @@ spawn with `timeout=30` for a carried bound already expired and for one with
 the context's own timeout and the transport's configured maximum, narrowed by
 the carried deadline when one exists; a carried bound that is not a finite
 number is refused, and one already spent refuses before anything is prepared.
-Prompt construction, the Grok prompt file and the spawn are all charged to
-that cutoff. `_run_bounded_command` checks what is left immediately before
-launching - preparation that consumed it launches nothing - launches through
-the existing `launch_contained_process` (a kill-on-close Job Object on
-Windows, a new session on POSIX), hands `communicate` only the remainder at
-that moment, and afterwards - on a normal exit and when the cutoff passes
-first - runs `stop_contained_process`, which ends whatever the tree still
-holds, reaps the child within its own five-second grace period rather than
-the spent cutoff, closes the pipes and releases the guard. A cleanup that
-cannot be verified is a raised `ProcessContainmentError` carrying what was
-observed, never a result. A cutoff reached after the launch is an ambiguous
-outcome: the command ran, so it is neither retried nor reported as
-unsubmitted, and the existing classification records the one admitted
-attempt AMBIGUOUS with its identity and slot retained. A refusal before the
-launch takes the same conservative classification - the existing rule for
-every non-transient dispatch exception, deliberately unchanged here.
-Provider identity, plan-mode restrictions, environment filtering, the exact
-literal argv, output caps, prompt-file removal and result normalization are
-as they were.
+Prompt construction, the Grok prompt file, the stdin file and the spawn are
+all charged to that cutoff. Since 22:30 UTC the prepared input travels the
+way the artifact launcher already feeds its child: written to a binary
+`tempfile.TemporaryFile`, rewound, and handed to the launch as the child's
+stdin, so the child reads exactly those bytes through EOF and nothing is
+passed to `communicate(input=...)` a second time; empty bytes are still a
+file (an immediate EOF) while the argument, prompt-file and public-search
+argv routes keep `DEVNULL`, and the helper owns and closes that file on
+return, refusal and launch failure alike. `_run_bounded_command` then holds
+one finite absolute cutoff and checks its remainder three times: after
+preparation, immediately before the launch - preparation that consumed it
+launches nothing; after the launch, before any wait - a launch that consumed
+it is ended and reported ambiguous without entering a wait; and after the
+child returns, before its output is accepted - a return after the cutoff,
+real or synthetic, is refused rather than becoming a successful attempt. A
+cutoff or remainder that is not a finite number is refused, and no value is
+clamped into a longer or fresh window. The launch goes through the existing
+`launch_contained_process` (a kill-on-close Job Object on Windows, a new
+session on POSIX); the wait is given only the remainder at that moment; and
+on every exit `stop_contained_process` ends whatever the tree still holds,
+reaps the child within its own five-second grace period rather than the
+spent cutoff, releases the guard - the ownership token - and only then
+closes the remaining streams, attempting each step even when an earlier one
+failed. A cleanup that cannot be verified is a raised
+`ProcessContainmentError` carrying every failure and what was observed,
+never a result. That ordering is a source-level ownership decision; no
+stream-wait failure was reproduced and none is claimed. A cutoff reached
+after the launch is an ambiguous outcome: the command ran, so it is neither
+retried nor reported as unsubmitted, and the existing classification records
+the one admitted attempt AMBIGUOUS with its identity and slot retained. A
+refusal before the launch takes the same conservative classification - the
+existing rule for every non-transient dispatch exception, deliberately
+unchanged here. The evidence-recording allowance in `primary_default`
+(`completion_deadline(dispatch_deadline)`) is untouched: it persists an
+already-started attempt's outcome after execution time is spent and grants
+no execution or retry. Provider identity, plan-mode restrictions,
+environment filtering, the exact literal argv, output caps, prompt-file
+removal and result normalization are as they were.
 
 What this does **not** prove, stated rather than implied: on POSIX the
 process group is signalled, so a descendant that called `setsid()` itself has
@@ -481,7 +501,7 @@ The 21:25 UTC revision changed `primary_transports.py` and
 same limit applies to the others.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  **51 tests, all passing**, this revision. 47 stood at 16:56 UTC; 18:52 UTC
+  **52 tests, all passing**, this revision. 47 stood at 16:56 UTC; 18:52 UTC
   added the writer-reacquisition regression, which reuses the independent
   witness unchanged - the real `_enrolled_wave`, the real coordinator and
   disposable PostgreSQL, the lease expired after the real
@@ -502,7 +522,13 @@ same limit applies to the others.
   retained; and the narrow Responses counterpart, where both the count and
   generation requests carry an HTTPX timeout of that remainder, under the
   relative timeout, and settle through the real meter, while the clock
-  advanced past the bound sends nothing at all.
+  advanced past the bound sends nothing at all. 22:30 UTC added the
+  constructor-level late result: the synthetic wait spends three more
+  seconds on the transport's clock and then returns a valid native
+  envelope; the shared helper refuses it, the unchanged attempt recorder
+  marks the one admitted attempt AMBIGUOUS - never SUCCEEDED - with its
+  identity retained, nothing is resent, and a second dispatch of the same
+  reservation is refused before admission.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
   `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
   passing**, at the 16:56 UTC revision on unchanged bytes, including every
@@ -515,9 +541,24 @@ same limit applies to the others.
 - `--group startup`: 1 test, passing at an earlier revision on unchanged
   bytes.
 - `--group transports` (`test_primary_transports`, `test_process_isolation`,
-  `test_openai_responses_validation`): **64 tests, all passing**, this
-  revision, in 9.9s with zero resource warnings. Its earlier 54-test result
-  predates `test_process_isolation` joining the group. Two fixtures there had
+  `test_openai_responses_validation`): **70 tests, all passing**, this
+  revision, with zero resource warnings; 64 of them stood at 21:25 UTC. Its
+  earlier 54-test result predates `test_process_isolation` joining the
+  group. Added at 22:30 UTC: the recording launch now reads the file-backed
+  stdin at launch exactly as a child would and records anything resent
+  through `communicate`, which every command test asserts is nothing; two
+  real local Python children read their stdin through EOF and report the
+  digest and length of what they received - a native stdin prompt compared
+  against the exact bytes a recording launch sees prepared for the same
+  packet, and the generic JSON packet and an empty packet compared directly;
+  across every discovered route a spawn that consumes the cutoff is ended
+  and reported ambiguous without entering a wait, and a valid envelope
+  returned after the cutoff is refused with the exited child's tree still
+  ended; a NaN, infinite, boolean or absent cutoff launches nothing. In
+  `test_process_isolation`, safe fakes assert the cleanup order - tree,
+  child, guard release, then streams - after a normal exit, and that a
+  termination failure still reaches the guard release and stream closure and
+  is retained with every observation in the refusal. Two fixtures there had
   gone stale against the current transport at 15:13 UTC: a finite `monotonic`
   `side_effect` list that additional legitimate cutoff checks exhausted, and
   a meter fake predating `verify_current`/`clock`/`sent_at`. Both were
@@ -939,7 +980,7 @@ and the real transport:
   document's claim that a hold is never raised after a generation request
   was wrong for the team lane and is corrected above, with the
   classification itself unchanged.
-- **2026-09-21 21:25 UTC (this revision)**: an independent synthetic probe
+- **2026-09-21 21:25 UTC**: an independent synthetic probe
   at the accepted C15 head showed the three ordinary command transports
   reaching `subprocess.run` with the full relative timeout while the carried
   deadline was already spent or had 0.2 seconds left. They now share one
@@ -954,6 +995,22 @@ and the real transport:
   real constructor-created dispatcher are exercised. The host bridge's
   missing shared-deadline contract, the POSIX `setsid` escape and the
   unrun root Linux lifetime test remain stated unknowns.
+- **2026-09-21 22:30 UTC (this revision)**: the ordinary command boundary
+  completed as a functional correction of C16. The shared helper now feeds
+  the child a rewound binary temporary file as stdin - the artifact
+  launcher's own pattern - instead of a pipe plus `communicate(input=...)`,
+  keeps empty bytes distinct from no input, and checks a finite positive
+  remainder of its one absolute cutoff after preparation, after the launch
+  and after the child returns, so a launch that consumes the cutoff never
+  enters a wait and a late return is never a successful attempt. Cleanup
+  now releases the guard before closing streams and attempts every step
+  after a failure, retaining the failures; that is an ownership-ordering
+  decision, and no stream-wait failure was reproduced or is claimed.
+  Coverage adds ordinary small valid round trips through real local
+  children, deterministic clock/launch/return cases across the discovered
+  routes, fake cleanup-ordering cases and one constructor-level late
+  result. The earlier security witnesses were neither retried nor
+  recreated; the first remains inconclusive and the recovery unexecuted.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -971,3 +1028,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]] -->

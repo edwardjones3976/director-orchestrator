@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
@@ -77,21 +78,27 @@ NATIVE_ENVELOPE = json.dumps({
 class _FakeLaunch:
     """Stands in for `launch_contained_process` at the shared command boundary.
 
-    It records the exact argv and launch options, the input and the wait
-    every launched process is handed, and what cleanup that process and its
-    guard receive - which is the real `stop_contained_process` acting on
-    them. It can spend synthetic clock time at the spawn and can let the
-    wait expire. Nothing is executed.
+    It records the exact argv and launch options, reads the prepared stdin
+    the way a child would - the whole file-backed input through EOF at the
+    moment of launch, or `None` for `DEVNULL` - and records the wait every
+    launched process is handed, anything the helper tries to resend through
+    `communicate(input=...)`, and what cleanup that process and its guard
+    receive, which is the real `stop_contained_process` acting on them. It
+    can spend synthetic clock time at the spawn, let the wait expire, or run
+    a hook before the wait returns. Nothing is executed.
     """
 
     def __init__(self, *, stdout=b"", stderr=b"", returncode=0, clock=None,
-                 spawn_seconds=0.0, expire=False):
+                 spawn_seconds=0.0, expire=False, before_return=None):
         self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
         self.clock, self.spawn_seconds, self.expire = clock, spawn_seconds, expire
-        self.calls, self.inputs, self.waits, self.stopped = [], [], [], []
+        self.before_return = before_return
+        self.calls, self.inputs, self.waits, self.resent, self.stopped = [], [], [], [], []
 
     def __call__(self, argv, **options):
         self.calls.append((tuple(argv), options))
+        stdin = options.get("stdin")
+        self.inputs.append(None if stdin is subprocess.DEVNULL else stdin.read())
         if self.clock is not None:
             self.clock[0] += self.spawn_seconds
         return _FakeProcess(self), _FakeGuard(self)
@@ -114,10 +121,12 @@ class _FakeProcess:
         self.stdin = self.stdout = self.stderr = None
 
     def communicate(self, input=None, timeout=None):
-        self.launch.inputs.append(input)
+        self.launch.resent.append(input)
         self.launch.waits.append(timeout)
         if self.launch.expire:
             raise subprocess.TimeoutExpired(cmd="synthetic", timeout=timeout)
+        if self.launch.before_return is not None:
+            self.launch.before_return()
         self.returncode = self.launch.returncode
         return self.launch.stdout, self.launch.stderr
 
@@ -305,7 +314,9 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertEqual("claude", result["provider"])
         self.assertEqual(1, len(launch.calls))
         self.assertFalse(launch.options["shell"])
-        self.assertEqual([b'{"schema_version":"1.0"}'], launch.inputs)
+        self.assertEqual([b'{"schema_version":"1.0"}'], launch.inputs,
+                         "the packet bytes are read from the file-backed stdin at launch")
+        self.assertEqual([None], launch.resent, "nothing is handed to communicate a second time")
 
     def test_command_transport_rejects_legacy_unfenced_context(self):
         context = self._context(generation=0)
@@ -1062,13 +1073,17 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
             b'{"schema_version":"1.0"}', b'{"provider":"claude"}')
         return routes
 
+    STDIN_ROUTES = frozenset({"claude", "antigravity", "generic-json"})
+
     def test_carried_deadline_shorter_than_the_relative_timeout_bounds_every_route(self):
         """Thirty seconds of relative timeout, a carried bound 0.2 seconds away.
 
         The spawn itself spends 0.05 of that on the synthetic clock, so the
         wait the child is handed is 0.15: the carried remainder at the moment
-        of launch, never the thirty. After a normal exit the tree is ended
-        and the guard released.
+        of launch, never the thirty. Stdin routes deliver their prepared
+        bytes through the file the child reads at launch and nothing is
+        resent; argument, prompt-file and argv routes get `DEVNULL`. After a
+        normal exit the tree is ended and the guard released.
         """
         with TemporaryDirectory() as directory:
             for route, (transport, packet, stdout) in self._discovered(directory).items():
@@ -1082,7 +1097,112 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
                     self.assertFalse(launch.options["shell"])
                     self.assertAlmostEqual(0.15, launch.waits[0], places=6)
                     self.assertLess(launch.waits[0], context.timeout_seconds)
+                    self.assertEqual([None], launch.resent)
+                    if route == "antigravity":
+                        # The closed directive, never the private packet.
+                        self.assertIn(ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA.encode(), launch.inputs[0])
+                        self.assertNotIn(packet, launch.inputs[0])
+                    elif route in self.STDIN_ROUTES:
+                        self.assertIsInstance(launch.inputs[0], bytes)
+                        self.assertTrue(launch.inputs[0].endswith(packet),
+                                        "the prepared bytes end with the exact packet")
+                    else:
+                        self.assertEqual([None], launch.inputs)
                     self.assertEqual(["terminate", ("wait", 5.0), "close"], launch.stopped)
+
+    def test_a_launch_that_consumes_the_cutoff_never_waits_and_is_ambiguous(self):
+        """The spawn itself outlives the bound: no wait is entered, the tree is ended."""
+
+        with TemporaryDirectory() as directory:
+            for route, (transport, packet, stdout) in self._discovered(directory).items():
+                with self.subTest(route=route):
+                    clock = [1000.0]
+                    launch = _FakeLaunch(stdout=stdout, clock=clock, spawn_seconds=0.3)
+                    context = replace(self._context(), deadline=1000.2)
+                    with patch(CLOCK_SEAM, lambda: clock[0]), patch(LAUNCH_SEAM, launch):
+                        with self.assertRaisesRegex(RuntimeError, "launch consumed the cutoff"):
+                            transport.send(packet, context=context)
+                    self.assertEqual(1, len(launch.calls), "launched once, never again")
+                    self.assertEqual([], launch.waits, "no work wait is entered")
+                    self.assertEqual(["terminate", "kill", ("wait", 5.0), "close"], launch.stopped)
+
+    def test_a_result_returned_after_the_cutoff_is_not_a_successful_attempt(self):
+        """The wait returns a valid envelope, but only after the cutoff has passed."""
+
+        with TemporaryDirectory() as directory:
+            for route, (transport, packet, stdout) in self._discovered(directory).items():
+                with self.subTest(route=route):
+                    clock = [1000.0]
+                    launch = _FakeLaunch(stdout=stdout, clock=clock,
+                                         before_return=lambda: clock.__setitem__(0, clock[0] + 1.0))
+                    context = replace(self._context(), deadline=1000.2)
+                    with patch(CLOCK_SEAM, lambda: clock[0]), patch(LAUNCH_SEAM, launch):
+                        with self.assertRaisesRegex(RuntimeError, "returned after the cutoff"):
+                            transport.send(packet, context=context)
+                    self.assertEqual(1, len(launch.calls))
+                    self.assertAlmostEqual(0.2, launch.waits[0], places=6)
+                    self.assertEqual(["terminate", ("wait", 5.0), "close"], launch.stopped,
+                                     "the exited child's tree is still ended and the guard released")
+
+    def test_a_cutoff_that_is_not_a_finite_instant_launches_nothing(self):
+        from director_orchestrator.primary_transports import _run_bounded_command
+        with TemporaryDirectory() as directory:
+            for cutoff in (float("nan"), float("inf"), float("-inf"), True, None):
+                with self.subTest(cutoff=cutoff):
+                    launch = _FakeLaunch()
+                    with patch(LAUNCH_SEAM, launch):
+                        with self.assertRaisesRegex(RuntimeError, "cutoff is invalid"):
+                            _run_bounded_command(("never.exe",), cwd=Path(directory), environment={},
+                                                 input_bytes=b"{}", cutoff=cutoff, what="native transport")
+                    self.assertEqual([], launch.calls)
+
+    ECHO_NATIVE = (
+        "import hashlib,json,sys; data=sys.stdin.buffer.read(); "
+        "print(json.dumps({'session_id':'round-trip','result':json.dumps({"
+        "'outcome':'sha256:'+hashlib.sha256(data).hexdigest()+':'+str(len(data)),"
+        "'status':'SUCCEEDED'})}))"
+    )
+    ECHO_JSON = (
+        "import hashlib,json,sys; data=sys.stdin.buffer.read(); "
+        "print(json.dumps({'provider':'claude','sha256':hashlib.sha256(data).hexdigest(),"
+        "'length':len(data)}))"
+    )
+
+    def test_small_inputs_round_trip_byte_for_byte_through_the_real_helper(self):
+        """Ordinary small valid inputs, real local children, exact bytes and EOF.
+
+        A native stdin route and the generic JSON route each launch a real
+        Python child that reads its stdin through EOF and reports the digest
+        and length of what it received. The native prompt is compared
+        against the exact bytes a recording launch sees prepared for the
+        same packet, so the header is never restated here; the generic
+        packet and an empty packet are compared directly. No provider binary
+        is involved.
+        """
+        import hashlib
+        work = json.dumps(self._work()).encode()
+        with TemporaryDirectory() as directory:
+            native = NativeCommandPacketTransport(
+                "claude", (sys.executable, "-c", self.ECHO_NATIVE), cwd=directory, prompt_mode="stdin")
+            recording = _FakeLaunch(stdout=NATIVE_ENVELOPE)
+            with patch(LAUNCH_SEAM, recording):
+                native.send(work, context=self._context())
+            [prepared] = recording.inputs
+            self.assertTrue(prepared.endswith(work))
+            result = native.send(work, context=self._context())
+            self.assertEqual(
+                "sha256:" + hashlib.sha256(prepared).hexdigest() + ":" + str(len(prepared)),
+                result["outcome"], "the child received exactly the prepared bytes, then EOF")
+            self.assertEqual("round-trip", result["run_reference"])
+
+            generic = BoundedJsonCommandTransport(
+                "claude", (sys.executable, "-c", self.ECHO_JSON), cwd=directory)
+            for packet in (work, b""):
+                with self.subTest(length=len(packet)):
+                    echoed = generic.send(packet, context=self._context())
+                    self.assertEqual(
+                        {"provider": "claude", "sha256": hashlib.sha256(packet).hexdigest(),
+                         "length": len(packet)}, echoed)
 
     def test_prompt_file_preparation_is_charged_and_can_exhaust_the_bound(self):
         """The Grok prompt file is real preparation between entry and launch.
@@ -1227,3 +1347,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]
