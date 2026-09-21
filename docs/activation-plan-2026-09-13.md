@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
@@ -543,7 +544,7 @@ recorded verbatim.
 | `LIVE_OK` lapses before `Activate` | Low | `ValidateProviders` Saturday 09:00 for a 13:00 `Activate` |
 | Canary produces an ambiguous effect | Low | Single Slack-only effect; keep-live is an acceptable outcome |
 
-*Correction note, 2026-09-21: The historical "Grok as second reviewer" wording is preserved above. Current exact-head acceptance policy requires a single independently assigned non-author reviewer. In this historical plan, "second reviewer" meant an alternate or fallback eligible reviewer in case Cursor was unavailable, not an additive second required opinion.*
+*Correction note, 2026-09-21: The historical "Grok as second reviewer" wording is preserved above. Current ordinary engineering review requires one assigned independent non-author reviewer on the exact candidate; do not claim what historical words meant. This ordinary engineering requirement is distinct from formal runtime activation contracts and their mode-specific exact-head acceptance rules.*
 
 ## 10. Open hygiene item
 
@@ -558,3 +559,4 @@ not urgent enough to spend deadline time on now.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->
