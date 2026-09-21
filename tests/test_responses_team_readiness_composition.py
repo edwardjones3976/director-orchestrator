@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
@@ -1456,6 +1457,59 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         self.assertEqual("readiness_selection_changed_before_admission", raised.exception.reason_code)
         self._assert_no_admission_rows()
 
+    def test_writer_reacquired_for_admission_cannot_admit_the_stale_selection(self):
+        """The writer admission actually runs under, not the one dispatch read first.
+
+        The independent witness (writer-selection-after14): this task's
+        writer lease expires after the real `live_provider_admissions` lookup
+        returns and before the real coordinator resolves the writer for
+        admission, so the coordinator reacquires it - generation 1 becomes 2.
+        Readiness was checked under generation 1, and so was the writer
+        dispatch captured when it began, so the comparison between those two
+        passed and admission committed under generation 2: two attempt rows
+        including a STARTED one, a spend row, a workload row and one HTTP
+        client construction were observed at the frozen C14 head. The
+        generation readiness selected is now bound to the writer the
+        coordinator resolves, before the admission transaction: nothing is
+        written, and no client is constructed.
+        """
+        from director_orchestrator import primary_default
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+        original = primary_default.live_provider_admissions
+        observed = {"admissions": 0, "http": 0}
+
+        def admissions(**kwargs):
+            result = original(**kwargs)
+            observed["admissions"] += 1
+            # Only the synthetic task's lease, after the real authority lookup
+            # and before the coordinator resolves the writer for admission.
+            with self.handle.pool.connection() as connection, connection.transaction():
+                connection.execute(
+                    f"UPDATE {self.schema}.director_primary_task_writer "
+                    "SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE task_id=%s",
+                    (wave.task_id,))
+            return result
+
+        def no_http(*_args, **_kwargs):
+            observed["http"] += 1
+            raise AssertionError("HTTP constructor reached; network prevented")
+
+        with patch.object(primary_default, "live_provider_admissions", side_effect=admissions), \
+             patch("director_orchestrator.primary_transports.httpx.AsyncClient", side_effect=no_http), \
+             self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("readiness_writer_changed_before_admission", raised.exception.reason_code)
+        self.assertEqual({"admissions": 1, "http": 0}, observed,
+                         "the witness reached the real admission lookup once and no provider client")
+        with self.handle.pool.connection() as connection:
+            generation = connection.execute(
+                f"SELECT fencing_generation FROM {self.schema}.director_primary_task_writer "
+                "WHERE task_id=%s", (wave.task_id,)).fetchone()["fencing_generation"]
+        self.assertEqual(wave.writer.fencing_generation + 1, generation,
+                         "the coordinator reacquired the expired lease, and that writer was refused")
+        self._assert_no_admission_rows()
+
     def test_added_signed_budget_after_readiness_fails_closed(self):
         """Registry replacement is refused, not silently re-resolved.
 
@@ -2337,3 +2391,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

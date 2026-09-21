@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -221,14 +222,19 @@ def _execute_three_attempt_roster(
             result = dispatch_attempt(attempt)
         except WorkloadAdmissionHold:
             # A proven policy hold - cancellation, a changed selection, a
-            # replaced enrollment, a lost writer lease. It is raised only
-            # before the provider's real request: either before
-            # `adapter.dispatch` is entered at all, or at the generation
-            # boundary a transport reaches before sending anything billable.
-            # No generated result exists to be ambiguous about, so propagate
-            # the owner decision and leave this admitted attempt's rows, slot
-            # and recorded usage exactly as they are, rather than recording an
-            # AMBIGUOUS paid outcome and stopping the roster on a guess.
+            # replaced enrollment, a lost writer lease. A provider transport
+            # raises it before its real request: before `adapter.dispatch` is
+            # entered at all, or at the generation boundary it reaches before
+            # sending anything billable. The native team lane can also raise
+            # it *after* its native execution has happened - at a
+            # local-command boundary, or immediately before its candidate is
+            # integrated - so a generated result may already exist. Either
+            # way the attempt's durable STARTED row remains, and admission
+            # refuses to redispatch a STARTED attempt until it is reconciled,
+            # so propagating the owner decision replays nothing: this admitted
+            # attempt's rows, slot and recorded usage are left exactly as they
+            # are rather than recorded as an AMBIGUOUS paid outcome that stops
+            # the roster on a guess.
             raise
         except BaseException as exc:
             failure_kind = classify_provider_dispatch_exception(exc)
@@ -334,22 +340,31 @@ def _require_current_dispatch_authority(
     handle: Any, *, task_id: str, assignment_id: str, reservation_digest: str,
     provider: str, owner_token: str, fencing_generation: int,
     attempt_digest: str, deadline: float | None,
+    connection: Any = None, stage: str = "generation",
 ) -> None:
     """Durable cancellation, writer and plan binding for one in-flight attempt.
 
-    One bounded read of the rows the live lane already treats as authoritative:
-    the wave's kill switch, this task's `langgraph` writer lease and fencing
+    One read of the rows the live lane already treats as authoritative: the
+    wave's kill switch, this task's `langgraph` writer lease and fencing
     generation, this assignment's ACTIVE reservation binding, and this
     attempt's own latest event. Raising `WorkloadAdmissionHold` here is a
-    proven policy refusal - nothing has been generated - and leaves the
-    admitted rows, slot and any recorded usage exactly as they are.
+    proven policy refusal that leaves the admitted rows, slot and any recorded
+    usage exactly as they are; `stage` names the boundary it was refused at.
+
+    Without `connection` the read runs in its own bounded transaction, which
+    is what the generation boundary needs. The team candidate integrator
+    passes the connection of its own transaction instead - after it holds
+    this task's writer row and before its first Git mutation - so the read is
+    serialized against a same-owner cancellation, which locks that same row
+    before committing, rather than racing it from a separate transaction.
     """
 
     from .langgraph_postgres import bounded_transaction
     from .primary_workload import WorkloadAdmissionHold
 
     schema = handle.schema
-    with bounded_transaction(handle.pool, deadline) as connection:
+
+    def read(connection: Any) -> tuple[Any, Any]:
         row = connection.execute(
             f"""SELECT b.kill_switch, w.owner_token, w.fencing_generation,
                    (w.lease_expires_at > clock_timestamp()) AS lease_live,
@@ -368,18 +383,25 @@ def _require_current_dispatch_authority(
             ORDER BY event_sequence DESC LIMIT 1""",
             {"attempt_digest": attempt_digest},
         ).fetchone()
+        return row, attempt
+
+    if connection is None:
+        with bounded_transaction(handle.pool, deadline) as opened:
+            row, attempt = read(opened)
+    else:
+        row, attempt = read(connection)
     if row is None or bool(row["kill_switch"]):
-        raise WorkloadAdmissionHold("wave_cancelled_before_generation")
+        raise WorkloadAdmissionHold("wave_cancelled_before_" + stage)
     if (row["owner_token"] != owner_token
             or row["fencing_generation"] != fencing_generation
             or not row["lease_live"]):
-        raise WorkloadAdmissionHold("writer_authority_changed_before_generation")
+        raise WorkloadAdmissionHold("writer_authority_changed_before_" + stage)
     if (row["assignment_status"] != "ACTIVE"
             or row["provider_id"] != provider
             or row["reservation_digest"] != reservation_digest):
-        raise WorkloadAdmissionHold("assignment_binding_changed_before_generation")
+        raise WorkloadAdmissionHold("assignment_binding_changed_before_" + stage)
     if attempt is None or attempt["status"] != "STARTED":
-        raise WorkloadAdmissionHold("provider_attempt_reconciled_before_generation")
+        raise WorkloadAdmissionHold("provider_attempt_reconciled_before_" + stage)
 
 
 def _reselect_authority_digest(
@@ -2963,6 +2985,16 @@ class DefaultPrimaryActivation:
                             budget_evidence_digest=budget_evidence_digest,
                             deadline=selected.deadline,
                             expected_authority_digest=selected.authority_digest,
+                            # The coordinator resolves - and may renew or
+                            # reacquire - the writer this admission runs
+                            # under. The `writer` this dispatch read when it
+                            # began is compared above, but a lease that
+                            # expired since then is reacquired under a new
+                            # generation at exactly this call, so the
+                            # generation readiness was checked under is bound
+                            # to the writer actually resolved, before the
+                            # admission transaction is entered.
+                            expected_writer_generation=selected.writer_fencing_generation,
                             revalidate_selection=revalidate_selection,
                             **admissions,
                         )
@@ -3011,7 +3043,8 @@ class DefaultPrimaryActivation:
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
 
-                        def authority_recheck() -> None:
+                        def authority_recheck(*, connection: Any = None,
+                                              stage: str = "generation") -> None:
                             """The same durable authority, re-read at the send.
 
                             A transport that must wait on the provider before
@@ -3024,6 +3057,15 @@ class DefaultPrimaryActivation:
                             These are the same rows admission itself holds
                             authority over, read again rather than compared
                             against values captured earlier.
+
+                            The native team lane calls it again after its
+                            execution, at each local-command boundary and
+                            before its candidate is integrated. The candidate
+                            integrator passes the connection of its own
+                            transaction with `stage="candidate"`, after it
+                            holds the writer row and before its first Git
+                            mutation, so that final read is serialized against
+                            a same-owner cancellation instead of racing it.
                             """
 
                             _require_current_dispatch_authority(
@@ -3036,6 +3078,8 @@ class DefaultPrimaryActivation:
                                 fencing_generation=writer.fencing_generation,
                                 attempt_digest=attempt.attempt_digest,
                                 deadline=selected.deadline,
+                                connection=connection,
+                                stage=stage,
                             )
                         return adapter.dispatch(
                             packet,
@@ -3563,3 +3607,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

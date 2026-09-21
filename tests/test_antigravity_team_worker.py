@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
@@ -1135,6 +1136,130 @@ class TeamCandidatePostgresTests(unittest.TestCase):
             self.assertEqual(0,c.execute(
                 f"SELECT count(*) AS n FROM {self.schema}.director_primary_team_candidate"
             ).fetchone()["n"])
+
+    # --- candidate integration under current primary authority ---
+
+    def _capturing_worker(self, content=b"integrated under authority\n"):
+        """A synthetic worker whose capture returns one granted file.
+
+        It declares the primary bound, so the real transport hands it the
+        carried deadline; host qualification and the native provider are not
+        run here, only the authenticated capture contract.
+        """
+        entry={"path":"src/allowed.py","sha256":hashlib.sha256(content).hexdigest(),"content_base64":base64.b64encode(content).decode()}
+        packet=json.loads((Path(__file__).parents[1]/"docs/schemas/model-result-packet-v1.example.json").read_text())
+        packet.update({key:self.work[key] for key in ("task_id","assignment_id","idempotency_key","authority_snapshot_digest","correlation")})
+        packet.update(provider="antigravity",checks=[],artifacts=[],side_effects=[])
+        test=self
+        class Worker:
+            accepts_primary_deadline=True
+            def prepare(self,**kwargs):
+                self.challenge=kwargs["challenge"]
+                return sign(b"w"*32,dict(grant_digest=kwargs["grant_digest"],attempt_digest=kwargs["attempt_digest"],
+                    challenge=self.challenge,binding_digest=test.g.binding_digest,workspace_id=test.g.workspace_id,
+                    containment_evidence_digest="f"*64,expires_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat(),
+                    denied_access=["unassigned_source","git_history","coordinator_credentials","broker_keys","launcher_mutation","production_network"],
+                    authentication_mode="native-account"))
+            def exchange(self,**kwargs):
+                kwargs["before_execute"]()
+                proposal={"packet":packet,"returned_files":[entry]}
+                stream="\n".join(json.dumps(e) for e in [{"event":"init","conversation_id":"native-fixture","init":{"cwd":"/isolated","model":test.g.model}},
+                    {"event":"result","result":{"conversation_id":"native-fixture","status":"SUCCESS","structured_output":proposal,"usage":{"total_tokens":3,"input_tokens":2,"output_tokens":1}}}])
+                evidence={key:getattr(test.g,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","workspace_id")}
+                evidence.update(grant_digest=test.g.digest,attempt_digest=test.attempt,packet_digest=test.g.packet_digest,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    native_project_id=test.g.native_project_id,native_identity_observations={"requested_project_id":test.g.native_project_id,"observed_project_id":None,"observed_account_id":None},
+                    native_state_manifest_after={},authentication_mode="native-account",cwd="/isolated",challenge=self.challenge,
+                    source_manifest_digest=document_digest({"source":[b.model_dump() for b in test.g.source]}),
+                    containment_evidence_digest="f"*64,native_stream=stream,exit_code=0,
+                    changed_files=[{"path":entry["path"],"sha256":entry["sha256"]}],returned_files=[entry],executed_commands=[],checks=[])
+                return sign(b"w"*32,evidence)
+            def close(self):
+                pass
+        return Worker()
+
+    def _wave_rows(self):
+        """This task's batch and ACTIVE assignment: the rows the live recheck reads besides the writer and attempt."""
+        with self.store._pool.connection() as c,c.transaction():
+            c.execute(f"CREATE TABLE {self.schema}.director_primary_parallel_batch(task_id text PRIMARY KEY,kill_switch boolean NOT NULL DEFAULT false)")
+            c.execute(f"CREATE TABLE {self.schema}.director_primary_parallel_assignment(task_id text,assignment_id text,status text,provider_id text,reservation_digest text)")
+            c.execute(f"INSERT INTO {self.schema}.director_primary_parallel_batch(task_id) VALUES(%s)",(self.g.task_id,))
+            c.execute(f"INSERT INTO {self.schema}.director_primary_parallel_assignment VALUES(%s,%s,'ACTIVE','antigravity',%s)",
+                      (self.g.task_id,self.g.assignment_id,"r"*64))
+
+    def _live_recheck(self):
+        """The live coordinator's own durable recheck, bound to this fixture's rows and writer."""
+        from director_orchestrator.primary_default import _require_current_dispatch_authority
+        handle=SimpleNamespace(schema=self.schema,pool=self.store._pool)
+        def authority_recheck(*,connection=None,stage="generation"):
+            _require_current_dispatch_authority(handle,task_id=self.g.task_id,assignment_id=self.g.assignment_id,
+                reservation_digest="r"*64,provider="antigravity",owner_token="writer-one",fencing_generation=1,
+                attempt_digest=self.attempt,deadline=None,connection=connection,stage=stage)
+        return authority_recheck
+
+    def _cancel_wave(self):
+        """Exactly what `engage_kill_switch` does: hold the writer row, set the switch, commit."""
+        with self.store._pool.connection() as c,c.transaction():
+            c.execute(f"SELECT task_id FROM {self.schema}.director_primary_task_writer WHERE task_id=%s FOR UPDATE",(self.g.task_id,))
+            c.execute(f"UPDATE {self.schema}.director_primary_parallel_batch SET kill_switch=true WHERE task_id=%s",(self.g.task_id,))
+
+    def _retention_refs(self):
+        return self.git_command("for-each-ref","--format=%(refname)","refs/director/team/").splitlines()
+
+    def test_candidate_integration_under_current_authority_records_the_candidate(self):
+        """Positive control: the live recheck passes at every boundary, including inside the integrator."""
+
+        self._wave_rows()
+        transport=self._primary_transport(self._capturing_worker())
+        result=transport.send(json.dumps(self.work).encode(),
+                              context=self._primary_context(authority_recheck=self._live_recheck()))
+        candidate=result["artifacts"][-1]["location"].split("@")[-1]
+        self.assertEqual("integrated under authority",self.git_command("show",candidate+":src/allowed.py"))
+        self.assertEqual(["refs/director/team/"+self.attempt.removeprefix("sha256:")],self._retention_refs())
+        self.assertEqual(["disclosure","execution","result","result"],self._boundary_stages())
+        self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
+
+    def test_cancellation_completed_before_the_integrator_lock_gains_no_candidate(self):
+        """Same-owner cancellation between the transport's recheck and the integrator's writer lock.
+
+        The transport's own recheck ran in its separate transaction and
+        passed. The cancellation then holds the writer row, commits the kill
+        switch and releases, and the integrator takes the writer row next.
+        Its in-transaction recheck sees the engaged switch: no Git object,
+        retention ref or candidate row is created, while the capture the
+        transport already stored and the STARTED attempt remain for
+        reconciliation. Previously the integrator checked grant, proof and
+        reservation but not the current switch, and created the candidate.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        self._wave_rows()
+        transport=self._primary_transport(self._capturing_worker())
+        original=self.integrator.integrate
+        carried=[]
+        def cancel_then_integrate(**kwargs):
+            carried.append(kwargs.get("authority_recheck") is not None)
+            self._cancel_wave()
+            return original(**kwargs)
+        self.integrator.integrate=cancel_then_integrate
+        self.addCleanup(lambda:setattr(self.integrator,"integrate",original))
+        artifacts_before=sorted(p.name for p in self.artifacts.root.glob("*.json"))
+        with self.assertRaises(WorkloadAdmissionHold) as raised:
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context(authority_recheck=self._live_recheck()))
+        self.assertEqual("wave_cancelled_before_candidate",raised.exception.reason_code)
+        self.assertEqual([True],carried,"the transport carried its recheck into the integrator")
+        with self.store._pool.connection() as c:
+            self.assertEqual(0,c.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_team_candidate").fetchone()["n"])
+            self.assertEqual("STARTED",c.execute(
+                f"SELECT status FROM {self.schema}.director_primary_provider_attempt WHERE attempt_digest=%s",
+                (self.attempt,)).fetchone()["status"])
+        self.assertEqual([],self._retention_refs(),"no retention ref, so no candidate object is anchored")
+        self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
+        artifacts_after=sorted(p.name for p in self.artifacts.root.glob("*.json"))
+        self.assertEqual(len(artifacts_before)+1,len(artifacts_after),"the captured raw evidence is retained")
+        self.assertEqual(["disclosure","execution","result"],self._boundary_stages(),
+                         "refused before the integrator claims its own result boundary")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
@@ -1146,3 +1271,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

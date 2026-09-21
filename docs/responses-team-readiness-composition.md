@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]] -->
@@ -74,6 +75,22 @@ the enrollment document is compared again. A competing authority registered
 while admission waits therefore rolls the monetary, workload and STARTED writes
 back together.
 
+The writer generation is bound to the writer admission **actually resolves**,
+not the one dispatch read when it began. The live coordinator resolves - and
+renews or, after an expired lease, reacquires - the task writer at the moment
+it enters admission, and a reacquired lease carries a new fencing generation.
+An independent real-PostgreSQL probe expired the lease after the real
+authority lookup and before that resolution: readiness had selected generation
+1, dispatch had captured generation 1, so the comparison between those two
+passed while admission committed under generation 2, leaving a STARTED
+attempt, a spend row, a workload row and a constructed HTTP client behind.
+The coordinator now receives the generation the selection was checked under
+(`expected_writer_generation`) and refuses a resolved writer of any other
+generation (`readiness_writer_changed_before_admission`) before the admission
+transaction is entered, so nothing is written and no provider client is
+constructed. The reacquired lease itself stands: a new generation is a
+different selection, not a renewal.
+
 `OpenAIResponsesPacketTransport.send` then compares the enrollment it actually
 resolved against the carried `enrollment_digest`, so a registry substituted
 after the caller's own comparison - or a meter lost entirely - cannot reach the
@@ -100,12 +117,19 @@ are preserved. A transport with no such callback holds no authority of its own
 and invents none.
 
 A `WorkloadAdmissionHold` propagates out of `_execute_three_attempt_roster`
-instead of being classified. It arises at two places: before `adapter.dispatch`
-is entered at all, and - since this revision - from `authority_recheck` inside
-the Responses path, after the input-token count and strictly before the
-generation request. In both cases no generated result exists to be ambiguous
-about, so the hold is an owner decision and the admitted attempt keeps its
-rows, slot and evidence. It is never raised after a generation request is sent.
+instead of being classified. For a provider transport it arises before the
+real request: before `adapter.dispatch` is entered at all, or from
+`authority_recheck` inside the Responses path, after the input-token count and
+strictly before the generation request. An earlier revision of this document
+said it was never raised after a generation request; that was wrong for the
+native team lane, whose callbacks run the same recheck *after* native
+execution - at each local-command boundary and immediately before candidate
+integration - so a generated result may already exist when the hold is
+raised. The classification is unchanged because it is still correct: the
+attempt's durable STARTED row remains, admission refuses to redispatch a
+STARTED attempt until it is reconciled, and the hold is propagated as an owner
+decision with the admitted rows, slot and evidence left as they are. Nothing is
+replayed and nothing is recorded as an AMBIGUOUS paid outcome on a guess.
 
 ## The team lane
 
@@ -117,11 +141,21 @@ prepared, and is handed to a worker that declares `accepts_primary_deadline`
 so preparation and the remote exchange narrow their own grant timer instead of
 restarting a full one each. `context.authority_recheck` runs inside
 `before_execute` - after preparation has waited, immediately before the
-execution entitlement and any native run - and again immediately before the
-durable candidate is integrated. Work after the exchange spends this
-operation's one completion allowance rather than a fresh budget, and a failure
-there is refused conservatively: the capture and the durable attempt remain,
-and nothing is retried.
+execution entitlement and any native run - at each local-command boundary,
+again immediately before the durable candidate is integrated, and once more
+**inside the integrator's own transaction**, on its connection, after it holds
+the writer row and before it writes any Git object. That last read is the one
+that matters against a same-owner cancellation: `engage_kill_switch` locks the
+same writer row before committing its switch, so a cancellation that completed
+before the integrator's lock is seen there and refused
+(`wave_cancelled_before_candidate`) with no candidate object, retention ref or
+row created, while one still waiting behind the lock is serialized after the
+candidate rather than racing it. The transport's read a moment earlier ran in
+a separate transaction and could not see that ordering. Work after the
+exchange spends this operation's one completion allowance rather than a fresh
+budget, and a failure there is refused conservatively: the capture the
+transport already stored and the STARTED attempt remain, and nothing is
+retried.
 
 A standalone caller carries neither value; every one of these checks is then a
 no-op, and a worker that declares no support keeps its previous call signature
@@ -384,13 +418,24 @@ author window and produced no result; those receipts stand as they are and
 nothing here is claimed from them. The 17:31 and 18:02 UTC revisions changed
 one production module, `antigravity_team_worker.py`, its test module, this
 document and (at 18:02 UTC only) the extraction names in the root-only
-`tests/test_team_process_lifetime.py`, which no selected group runs; of the
-selected groups only `--group team` imports that module, so it is the only
-group rerun here, and every other figure is the earlier revision's result on
-bytes these revisions did not touch.
+`tests/test_team_process_lifetime.py`, which no selected group runs. The
+18:52 UTC revision changed `primary_coordinator.py`, `primary_default.py`,
+`langgraph_runtime.py`, `antigravity_team_transport.py` and
+`antigravity_team_artifacts.py`, which the admission, full, startup and
+readiness groups also import; only `--group composition` and `--group team`,
+which carry the two new regressions, were rerun for it. The figures for the
+other groups are therefore the earlier revisions' results on bytes that have
+since changed - reused as prior evidence with that limit stated, not claimed
+for this revision - until the Director's host QA covers the current bytes.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  **47 tests, all passing**, at the 16:56 UTC revision on unchanged bytes.
+  **48 tests, all passing**, this revision: the previous 47 plus the
+  writer-reacquisition regression, which reuses the independent witness
+  unchanged - the real `_enrolled_wave`, the real coordinator and
+  disposable PostgreSQL, the lease expired after the real
+  `live_provider_admissions` lookup, and an `httpx.AsyncClient` constructor
+  sentinel - and asserts the hold's reason code, a reacquired generation 2,
+  zero attempt, spend and workload rows and zero client constructions.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
   `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
   passing**, at the 16:56 UTC revision on unchanged bytes, including every
@@ -415,8 +460,22 @@ bytes these revisions did not touch.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
   check): **2 tests, passing**, at the 16:56 UTC revision on unchanged bytes.
-- `--group team` (`test_antigravity_team_worker`): **35 tests, all passing**,
-  this revision. The 16:56 UTC revision's 28 included nine tests that were
+- `--group team` (`test_antigravity_team_worker`): **37 tests, all passing**,
+  this revision: the 35 below plus, at 18:52 UTC, a positive control that
+  runs the live coordinator's own `_require_current_dispatch_authority` at
+  every boundary of the real transport - including inside the real
+  integrator's transaction - against the real disposable PostgreSQL and the
+  local fixture Git repository and records the candidate, and the
+  cancellation case: the switch is engaged exactly as `engage_kill_switch`
+  does (writer row held, switch set, committed) after the transport's own
+  recheck has passed and before the integrator takes the writer row, and the
+  integrator refuses with `wave_cancelled_before_candidate` - no candidate
+  row, no `refs/director/team/` retention ref, repository head untouched,
+  the STARTED attempt and the stored capture retained, and the integrator's
+  result boundary never claimed. Reverse ordering - a cancellation waiting
+  behind the integrator's writer lock - is the unchanged row-lock
+  serialization and is not newly tested here. The 16:56 UTC revision's 28
+  included nine tests that were
   removed at 17:31 UTC rather than kept: five exercised only the cutoff
   helpers or compared dictionaries the implementation also built (the one
   named for `serve` never called `FrameChannel`, `serve` or
@@ -593,6 +652,8 @@ and the real transport:
 | Complete replies survive response/client cleanup failure | Done, exercised |
 | A lost selection is refused before any database call | Done, exercised |
 | Team lane honours the primary recheck and shared budget | Done, exercised |
+| Readiness generation bound to the writer admission resolves | Done, exercised |
+| Candidate integration re-reads authority inside its writer-locked transaction | Done, exercised |
 | One anchored bound; transit and pauses spent, never returned or renewed | Done, exercised |
 | Remote support acknowledged before any private source | Done, exercised |
 | Legacy bound-bearing frames refused; explicit standalone kept deliberate | Done, exercised |
@@ -762,7 +823,7 @@ and the real transport:
   were named for were removed; their replacements drive the real
   `PinnedSshTeamWorker` and `serve` over OS pipes with distinct clocks and
   need no database.
-- **2026-09-21 18:02 UTC (this revision)**: two minimal corrections from the
+- **2026-09-21 18:02 UTC**: two minimal corrections from the
   Director's review of the above. `anchored_primary_bound` accepted any finite
   positive remaining, including values no valid grant could produce, and did
   not validate its own anchor; it now refuses a remaining above `TeamGrant`'s
@@ -772,6 +833,23 @@ and the real transport:
   regression, extracts `run_unprivileged` by AST and lacked the two helpers
   it has called since 16:56 UTC; only those two names were added, and that
   extraction is checked by the Director separately from any kernel run.
+- **2026-09-21 18:52 UTC (this revision)**: two confirmed functional gaps and
+  one inaccurate claim. An independent real-PostgreSQL probe expired the task
+  writer's lease after the real authority lookup and before the coordinator
+  resolved the writer for admission; the coordinator reacquired it under a
+  new generation and admission committed against a selection checked under
+  the old one, because the comparison used the writer dispatch had captured
+  earlier. The coordinator now refuses a resolved writer whose generation is
+  not the selection's, before the admission transaction. Two static reviews
+  established that the candidate integrator, which locks the writer row,
+  checked grant, proof and reservation but not the wave's current kill
+  switch, assignment or latest attempt, so a same-owner cancellation
+  completing after the transport's separate-transaction recheck could still
+  gain a candidate; the integrator now runs the same durable recheck on its
+  own connection after the lock and before any Git object is written. This
+  document's claim that a hold is never raised after a generation request
+  was wrong for the team lane and is corrected above, with the
+  classification itself unchanged.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -787,3 +865,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]] -->

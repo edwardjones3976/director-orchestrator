@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -564,14 +565,28 @@ class PrimaryTaskCoordinator:
         budget_limits=None,
         deadline: float | None = None,
         expected_authority_digest: str | None = None,
+        expected_writer_generation: int | None = None,
         revalidate_selection=None,
     ) -> ProviderAttemptReservation:
+        # Resolving the writer can itself read, renew or reacquire a lease;
+        # that work belongs inside the same bound as the admission it is
+        # for, not ahead of it.
+        writer = self._task_writer(reservation.task_id, deadline=deadline)
+        if (expected_writer_generation is not None
+                and writer.fencing_generation != expected_writer_generation):
+            # The writer this admission would actually run under is not the
+            # one the caller's readiness selection was checked under: the
+            # lease was reacquired or taken over between that check and this
+            # resolution. A new fencing generation is a different selection,
+            # not a renewal, and the writer dispatch read when it began proves
+            # nothing about the one resolved here. Refused before the
+            # admission transaction, so no monetary, workload or STARTED row
+            # is attempted and no provider call can follow.
+            from .primary_workload import WorkloadAdmissionHold
+            raise WorkloadAdmissionHold("readiness_writer_changed_before_admission")
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
-            # Resolving the writer can itself read, renew or reacquire a lease;
-            # that work belongs inside the same bound as the admission it is
-            # for, not ahead of it.
-            writer=self._task_writer(reservation.task_id, deadline=deadline),
+            writer=writer,
             attempt_ordinal=attempt_ordinal,
             format_roster=format_roster,
             idempotency_key_digest=idempotency_key_digest,
@@ -1030,3 +1045,4 @@ class PrimaryTaskCoordinator:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

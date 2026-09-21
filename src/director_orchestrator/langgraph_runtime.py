@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
@@ -140,9 +141,13 @@ class ProviderAdapterContext:
     # waits on the provider before its real request (Responses counts input
     # tokens first) calls this at that instant, so a cancellation or writer
     # takeover during the wait stops the request instead of being noticed
-    # afterwards. It raises rather than returning a verdict, and no transport
-    # may treat its absence as authority.
-    authority_recheck: Callable[[], None] | None = None
+    # afterwards. The native team lane calls it again after execution, at
+    # each local-command boundary and before candidate integration; its
+    # integrator calls it as `authority_recheck(connection=..., stage=
+    # "candidate")` on its own writer-locked connection. It raises rather
+    # than returning a verdict, and no transport may treat its absence as
+    # authority.
+    authority_recheck: Callable[..., None] | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1266,3 +1271,4 @@ class LangGraphPacketRuntime:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

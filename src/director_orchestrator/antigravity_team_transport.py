@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -284,7 +285,14 @@ class NativeTeamPacketTransport:
             # The same fixed completion bound the rest of this settlement uses,
             # carried through the integrator's Git and database work rather
             # than replaced by a timer of its own.
-            **({} if settlement is None else {"deadline": settlement}))
+            **({} if settlement is None else {"deadline": settlement}),
+            # The read just above ran in its own transaction. A same-owner
+            # cancellation completing between it and the integrator's writer
+            # lock would still be seen only by a read *inside* that lock, so
+            # the integrator runs this same recheck once more on its own
+            # connection before any Git object is written. A standalone caller
+            # carries no recheck and the integrator keeps its previous contract.
+            **({} if recheck is None else {"authority_recheck": recheck}))
         validated["artifacts"]=[a for a in validated["artifacts"] if a["kind"]!="git_commit"]+[
             {"kind":"git_commit","location":grant.repository+"@"+candidate,"digest":"sha256:"+capture_digest}]
         return validate_packet("result",validated)
@@ -385,3 +393,4 @@ def team_packet_adapter(settings, **transport_arguments):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
