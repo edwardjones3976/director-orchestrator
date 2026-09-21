@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:33 UTC | BEGIN]]
@@ -25,6 +27,29 @@ import httpx
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .langgraph_postgres import _require_schema
 from .models import IntakeAuthentication, TaskRecord
+
+# Slack documents HTTP 429 with a Retry-After delay in whole seconds and asks
+# that no call be made again until that full delay has elapsed. The value is
+# honored in full: no ceiling shortens it, and a delay that outlives the current
+# worker simply keeps the worker deferring for as long as it lives. A missing
+# or malformed header still means "not now"; the conservative default below
+# avoids an immediate re-poll without trusting an unparseable value.
+RETRY_AFTER_DEFAULT_SECONDS = 30
+
+
+class SlackRateLimited(Exception):
+    """Slack answered HTTP 429: the request was not processed."""
+
+    def __init__(self, retry_after_seconds: int):
+        super().__init__(f"slack_rate_limited:retry_after={retry_after_seconds}")
+        self.retry_after_seconds = retry_after_seconds
+
+
+def parse_retry_after(value) -> int:
+    """Whole seconds from a Slack Retry-After header, honored in full."""
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,9}", value.strip()):
+        return max(1, int(value.strip()))
+    return RETRY_AFTER_DEFAULT_SECONDS
 
 
 def approval_value(task_id: str, projection_digest: str, pending: dict) -> str:
@@ -139,6 +164,20 @@ class PrimarySlackDelivery:
         self.last_scan_at = None
         self.bot_user_id = None
         self._auth_attempts = 0
+        # Process-local Retry-After horizon (monotonic). The delivery ledger
+        # forbids requeueing a claimed row, so the horizon only withholds new
+        # Slack calls; it never resends a settled post.
+        self.rate_limited_until = None
+        self.last_retry_after_seconds = None
+
+    def _rate_limited(self) -> bool:
+        return self.rate_limited_until is not None and time.monotonic() < self.rate_limited_until
+
+    def _observe_rate_limit(self, limited: SlackRateLimited) -> None:
+        self.last_retry_after_seconds = limited.retry_after_seconds
+        horizon = time.monotonic() + limited.retry_after_seconds
+        if self.rate_limited_until is None or horizon > self.rate_limited_until:
+            self.rate_limited_until = horizon
 
     async def _authenticate(self, client) -> bool:
         if self.bot_user_id is not None:
@@ -154,6 +193,11 @@ class PrimarySlackDelivery:
                 self.bot_user_id = data["user_id"]
                 return True
             self._auth_attempts = 2  # An explicit refusal is not transient.
+        except SlackRateLimited as limited:
+            # Rate limiting is neither a refusal nor a transport fault: honor
+            # the horizon and keep the bounded auth attempts for later scans.
+            self._observe_rate_limit(limited)
+            self._auth_attempts -= 1
         except (httpx.HTTPError, TimeoutError):
             pass  # One recovery attempt for a transport failure.
         except ValueError:
@@ -171,6 +215,7 @@ class PrimarySlackDelivery:
         result = {"configured": configured, "ledger_readable": False,
                   "identity_verified": self.bot_user_id is not None,
                   "worker_recent": self.last_scan_at is not None and time.monotonic() - self.last_scan_at < 30,
+                  "rate_limited": self._rate_limited(),
                   "pending_deliveries": None, "ambiguous_deliveries": None,
                   "unverified_readbacks": None}
         try:
@@ -196,6 +241,13 @@ class PrimarySlackDelivery:
                     body.extend(chunk)
                     if len(body) > 262144:
                         raise ValueError("Slack response exceeds the bounded readback limit")
+                # HTTP 429 is Slack's documented rate-limit refusal: the request
+                # was not processed, whatever the (bounded, discarded) body says.
+                # It is recognized before body parsing so a malformed or
+                # non-JSON body cannot turn a definite refusal into ambiguity.
+                # Every other non-success status keeps its ambiguous path.
+                if response.status_code == 429:
+                    raise SlackRateLimited(parse_retry_after(response.headers.get("retry-after")))
                 data = json.loads(body)
                 if not isinstance(data, dict):
                     raise ValueError("Slack returned no response envelope")
@@ -323,6 +375,7 @@ class PrimarySlackDelivery:
                 RETURNING task_id""", (row["task_id"], row["notification_key"])).fetchone()
         if claimed is None:
             return False
+        error = "readback_unverified"
         try:
             params = {"channel": payload["channel"], "ts": payload["thread_ts"], "limit": 100}
             if row.get("slack_ts"):
@@ -345,15 +398,20 @@ class PrimarySlackDelivery:
                             and (not row.get("slack_ts") or item["ts"] == row["slack_ts"])):
                         self.settle(row, "DELIVERED", slack_ts=item["ts"])
                         return True
+        except SlackRateLimited as limited:
+            # The consumed readback attempt stays consumed (the ledger never
+            # rewinds it); the horizon stops further reads this scan.
+            self._observe_rate_limit(limited)
+            error = str(limited)
         except (httpx.HTTPError, ValueError, TimeoutError):
             pass
         # Failed readback is not authority to post again. Retry reads at most
         # twice; absence of the necessary Slack scope remains visible evidence.
         with self.pool.connection() as connection:
             connection.execute(f"""UPDATE {self.schema}.director_primary_slack_delivery
-                SET last_error='readback_unverified'
+                SET last_error=%s
                 WHERE task_id=%s AND notification_key=%s AND state IN ('ACKNOWLEDGED','AMBIGUOUS')""",
-                (row["task_id"], row["notification_key"]))
+                (error, row["task_id"], row["notification_key"]))
         return False
 
     async def run_once(self) -> int:
@@ -361,11 +419,19 @@ class PrimarySlackDelivery:
             return 0
         self.enqueue()
         sent = 0
+        # Honoring Retry-After: no Slack call of any kind before the horizon,
+        # and no claim either, so a withheld post never ages into AMBIGUOUS.
+        if self._rate_limited():
+            self.last_scan_at = time.monotonic()
+            return 0
         async with httpx.AsyncClient(timeout=10, transport=self.transport,
                 headers={"Authorization": "Bearer " + self.settings.slack_bot_token}) as client:
             if not await self._authenticate(client):
+                self.last_scan_at = time.monotonic()
                 return 0
             for _ in range(4):
+                if self._rate_limited():
+                    break
                 row = self.claim()
                 if row is None:
                     break
@@ -383,6 +449,13 @@ class PrimarySlackDelivery:
                         self.settle(row, "REFUSED", error="slack_refused")
                     else:
                         self.settle(row, "AMBIGUOUS", error="post_ack_invalid")
+                except SlackRateLimited as limited:
+                    # Slack explicitly did not post: a definite refusal, not
+                    # an ambiguous outcome, and never a repost of this row.
+                    # The ledger forbids requeueing a claimed row, so the
+                    # not-before evidence lives in last_error and the horizon.
+                    self._observe_rate_limit(limited)
+                    self.settle(row, "REFUSED", error=str(limited))
                 except (httpx.HTTPError, ValueError, TimeoutError):
                     self.settle(row, "AMBIGUOUS", error="post_ack_missing")
             with self.pool.connection() as connection:
@@ -390,6 +463,8 @@ class PrimarySlackDelivery:
                     WHERE state IN ('ACKNOWLEDGED','AMBIGUOUS') AND readback_attempts<2
                     ORDER BY created_at LIMIT 4""").fetchall()
             for row in pending:
+                if self._rate_limited():
+                    break
                 await self.readback(client, row)
         self.last_scan_at = time.monotonic()
         return sent
@@ -403,3 +478,5 @@ class PrimarySlackDelivery:
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:37 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]

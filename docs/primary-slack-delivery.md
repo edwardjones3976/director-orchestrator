@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]] -->
@@ -63,6 +65,27 @@ Delivery states distinguish an API acknowledgement from remote verification:
 | `SUPPRESSED` | Intake lacked owner Slack authority or its configured channel changed |
 | `SUPERSEDED` | An unsent decision is no longer the current projection |
 
+Slack rate limiting ([HTTP 429 with `Retry-After` seconds](https://docs.slack.dev/apis/web-api/rate-limits/#responding-to-rate-limiting-conditions))
+is handled narrowly. HTTP 429 is recognized from the status alone, before the
+bounded body is parsed, so an envelope-less, non-JSON or malformed 429 body is
+still Slack's definite non-acceptance rather than an ambiguous outcome. A 429
+on `chat.postMessage` settles the claimed row as `REFUSED` with `last_error`
+`slack_rate_limited:retry_after=N`: Slack did not post, so the row is never
+reposted. The worker then records a process-local not-before horizon for the
+**full** `Retry-After` delay (whole seconds, honored without any ceiling; a
+missing or malformed header defaults to 30 seconds) and makes no Slack call of
+any kind, and claims no further row, until it passes; withheld rows stay
+`PENDING` instead of ageing into `AMBIGUOUS`, and a delay that outlives the
+worker keeps it deferring for as long as it runs. A 429 on `auth.test` keeps
+the bounded identity attempts, and a 429 on `conversations.replies` consumes
+that one readback attempt without posting again. Other non-success statuses
+keep the existing ambiguous classification.
+`/health.primary_slack_delivery.rate_limited` reports the horizon. The horizon
+is not durable across a worker restart, and because the guard trigger forbids
+`POSTING → PENDING`, a durable requeue of the refused notice would need a
+ledger-identity change in `langgraph_postgres.py`; neither is part of this
+change.
+
 A crashed `POSTING` attempt becomes ambiguous after sixty seconds. Up to two
 read-only lookups may resolve a found message, including after a lost post
 acknowledgement. An absent message is never evidence that reposting is safe.
@@ -103,3 +126,5 @@ deployment are part of those tests.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->

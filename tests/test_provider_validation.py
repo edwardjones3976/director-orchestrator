@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
@@ -30,6 +32,7 @@ from director_orchestrator.provider_validation import (
     SCHEMA,CHECKPOINT_NAMESPACE,PostgresValidationStore,ValidationError,ValidationRequest,
     CaptureVerifier,capture_verifier_from_environment,make_capture,digest,normalize_capture,
     ValidationBridgeService,production_configuration_digest,
+    CANONICAL_LANES,ADDITIONAL_CONTACTS,preflight_fixture,read_only_lane_preflight,
 )
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -37,6 +40,108 @@ OWNER="owner-fixture-"+"o"*40
 KEY="bridge-fixture-"+"k"*40
 CANDIDATE="a"*40
 TREE="b"*40
+
+
+class ReadOnlyLanePreflightTests(unittest.TestCase):
+    """Section 5 tooling: one synthetic fixture, every lane, zero calls."""
+
+    def test_static_inventory_lists_eight_lanes_and_three_separate_contacts_all_unknown(self):
+        report=read_only_lane_preflight()
+        self.assertEqual([name for name,_,_ in CANONICAL_LANES],[row["lane"] for row in report["lanes"]])
+        self.assertEqual(8,len(report["lanes"]))
+        self.assertEqual(["grok-bot","z-ai","vscode-coding-bot"],[row["contact"] for row in report["additional_contacts"]])
+        self.assertEqual(3,len(ADDITIONAL_CONTACTS))
+        for row in report["lanes"]:
+            self.assertEqual("UNKNOWN",row["verdict"])
+            self.assertEqual("UNKNOWN",row["enrollment_and_live_eligibility"])
+            self.assertIsNone(row["asserted_evidence"])
+            self.assertEqual("no_authenticated_collector",row["reason"])
+        for contact in report["additional_contacts"]:
+            self.assertIsNone(contact["canonical_lane"])
+            self.assertEqual("UNKNOWN",contact["general_enrollment"])
+            self.assertEqual("UNKNOWN",contact["separate_contact_qualification"])
+        self.assertEqual((0,0,0),(report["provider_calls"],report["work_reservations"],report["spend_reservations"]))
+        self.assertEqual(0,report["qualified_lane_count"])
+        self.assertEqual(8,report["unknown_lane_count"])
+        self.assertTrue(report["read_only"])
+
+    def test_same_fixture_digest_for_every_lane_and_research_lanes_keep_zero_engineering(self):
+        first=read_only_lane_preflight(["claude"]);second=read_only_lane_preflight(["perplexity","firecrawl"])
+        self.assertEqual(first["fixture_sha256"],second["fixture_sha256"])
+        self.assertEqual(digest(canonical_json_bytes(preflight_fixture())),first["fixture_sha256"])
+        for row in second["lanes"]:
+            self.assertTrue(row["research_only"])
+            self.assertEqual(0,row["engineering_target_percent"])
+        self.assertFalse(first["lanes"][0]["research_only"])
+
+    def test_preflight_makes_no_store_bridge_or_transport_call(self):
+        import director_orchestrator.provider_validation as module
+        with patch.object(module.PostgresValidationStore,"__init__",side_effect=AssertionError("store constructed")), \
+             patch.object(module.ValidationBridgeService,"run",side_effect=AssertionError("bridge ran")):
+            report=read_only_lane_preflight(["openai","claude","grok"])
+        self.assertEqual(3,len(report["lanes"]))
+
+    def test_unknown_lane_names_and_grok_bot_are_not_admitted_through_grok_evidence(self):
+        evidence={"grok":{"collected":True,"enrollment_and_live_eligibility":"ENROLLED","source":"fixture"}}
+        report=read_only_lane_preflight(["grok","grok-bot","z-ai"],evidence=evidence)
+        by_lane={row["lane"]:row for row in report["lanes"]}
+        # A caller string is recorded as an assertion; it never becomes eligibility.
+        self.assertEqual("UNKNOWN",by_lane["grok"]["enrollment_and_live_eligibility"])
+        self.assertEqual(evidence["grok"],by_lane["grok"]["asserted_evidence"])
+        self.assertEqual("asserted_evidence_recorded_not_verified",by_lane["grok"]["reason"])
+        self.assertEqual("UNKNOWN",by_lane["grok"]["verdict"])
+        for name in ("grok-bot","z-ai"):
+            self.assertEqual("not_a_canonical_lane",by_lane[name]["reason"])
+            self.assertEqual("UNKNOWN",by_lane[name]["verdict"])
+        self.assertEqual(0,report["qualified_lane_count"])
+
+    def test_no_asserted_string_changes_enrollment_or_eligibility(self):
+        for evidence in ({"claude":{"collected":False,"enrollment_and_live_eligibility":"ENROLLED"}},
+                         {"claude":{"collected":True,"enrollment_and_live_eligibility":"PASS"}},
+                         {"claude":{"collected":True,"enrollment_and_live_eligibility":"ENROLLED","verified":True}},
+                         {"claude":"ENROLLED"}):
+            with self.subTest(evidence=evidence):
+                row=read_only_lane_preflight(["claude"],evidence=evidence)["lanes"][0]
+                self.assertEqual("UNKNOWN",row["enrollment_and_live_eligibility"])
+                self.assertEqual("UNKNOWN",row["verdict"])
+                self.assertNotIn("verified",row["reason"].replace("not_verified",""))
+
+    def test_allocation_weights_come_from_the_allocation_authority(self):
+        from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES,LANES,allocation_targets
+        self.assertEqual(list(LANES),[name for name,_,_ in CANONICAL_LANES])
+        for name,_,profiles in CANONICAL_LANES:
+            self.assertEqual({profile:targets[name] for profile,targets in ALLOCATION_PROFILES.items()},profiles)
+            self.assertEqual(allocation_targets("engineering")[name],profiles["engineering"])
+        report=read_only_lane_preflight()
+        self.assertEqual([allocation_targets("engineering")[row["lane"]] for row in report["lanes"]],
+                         [row["engineering_target_percent"] for row in report["lanes"]])
+
+    def test_fixture_that_reserves_tools_effects_or_budget_is_refused(self):
+        for change in ({"allowed_tools":["shell"]},{"allowed_external_effects":["slack"]},
+                       {"limits":{"budget_units":1}}):
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                read_only_lane_preflight(fixture={**preflight_fixture(),**change})
+
+    def test_cli_preflight_needs_no_dsn_owner_token_or_bridge_url(self):
+        from director_orchestrator import provider_validation_cli as cli
+        manifest={"generation":"f"*64,"candidate":CANDIDATE,"tree":TREE,"expires_at":0,"budget_units":0,
+                  "lanes":["openai","claude","perplexity"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"manifest.json";path.write_text(json.dumps(manifest),encoding="utf-8")
+            environment={"DIRECTOR_PROVIDER_VALIDATION_MANIFEST":str(path)}
+            import io
+            from contextlib import redirect_stdout
+            printed=io.StringIO()
+            with patch.dict(os.environ,environment,clear=True), \
+                 patch.object(cli,"PostgresValidationStore",side_effect=AssertionError("store constructed")), \
+                 patch.object(cli.urllib.request,"build_opener",side_effect=AssertionError("network opener built")), \
+                 redirect_stdout(printed):
+                self.assertEqual(0,cli.main(["preflight"]))
+        report=json.loads(printed.getvalue())
+        self.assertEqual(["openai","claude","perplexity"],[row["lane"] for row in report["lanes"]])
+        self.assertEqual((0,0,0),(report["provider_calls"],report["work_reservations"],report["spend_reservations"]))
+        self.assertEqual(CANDIDATE,report["candidate"])
+        self.assertTrue(all(row["verdict"]=="UNKNOWN" for row in report["lanes"]))
 
 
 def work_packet():
@@ -1280,3 +1385,5 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]

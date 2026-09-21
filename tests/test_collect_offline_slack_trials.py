@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:21 UTC | BEGIN]]
@@ -260,6 +261,93 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(report["independent_correctness_verified"])
         self.assertIsNone(report["global_task_deduplication_verified"])
         self.assertEqual(report["verdict"], "EVIDENCE_ONLY_NOT_QUALIFIED")
+
+    def test_qualification_evidence_links_exposed_identities_and_leaves_provider_edges_unknown(self):
+        evidence = self.summarize()["qualification_evidence"]
+        chain, stamps = evidence["chain"], evidence["timestamps"]
+        self.assertEqual(chain["task_id"], TASK_ID)
+        self.assertEqual(chain["source_event_id_sha256"], collector_module.digest(collector_module.encode(SOURCE_EVENT)))
+        self.assertEqual(chain["effect_ids"], [FINAL_ID])
+        self.assertEqual(chain["slack_delivery_ts"], FINAL_TS)
+        self.assertEqual(chain["slack_readback_state"], "DELIVERED")
+        self.assertEqual((chain["assignment_ids"], chain["attempt_ids"], chain["provider_result_digests"]), ([], [], []))
+        self.assertEqual(stamps["request_ts"], THREAD)
+        self.assertEqual(stamps["delivery_at"], "2026-09-12T10:00:30+00:00")
+        self.assertEqual(stamps["readback_at"], "2026-09-12T10:00:31+00:00")
+        self.assertIsNone(stamps["first_byte_at"])
+        self.assertIsNone(stamps["completion_at"])
+        self.assertIsNone(stamps["validation_at"])
+        self.assertEqual(evidence["effect_state"], "ZERO_PROVIDER_EFFECT")
+        self.assertEqual(evidence["usage"], {"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"})
+        self.assertEqual(evidence["status_receipts"]["dependency"], collector_module.STATUS_RECEIPT_DEPENDENCY)
+        self.assertTrue(all(evidence["status_receipts"][key] is None for key in
+            ("tasks_created", "assignments_created", "provider_attempts_created", "deduplicated_receipts")))
+        self.assertEqual(evidence["allocation"], {"rolling_twenty": "UNKNOWN", "deviation_from_target_points": None})
+        self.assertIsNone(evidence["lineage"]["transport"])
+        self.assertIsNone(evidence["lineage"]["fallback_observed"])
+        self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 0)
+        self.assertIsNone(evidence["revision_binding"])
+        self.assertEqual(evidence["terminal_message_ts"], FINAL_TS)
+
+    def test_qualification_evidence_distinguishes_ambiguous_delivery_from_recorded_attempts(self):
+        self.deliveries[0]["state"] = "AMBIGUOUS"
+        self.assertEqual(self.summarize()["qualification_evidence"]["effect_state"], "AMBIGUOUS_DELIVERY_EFFECT")
+        self.deliveries[0]["state"] = "DELIVERED"
+        self.task["provider_runs"] = [{"run_id": "attempt-1", "provider": "openai"}]
+        self.task["provider_run_history"] = [{"run_id": "attempt-0"}]
+        self.task["assignment_outcomes"][0].update(assignment_id="ASSIGN-1", provider="openai",
+                                                   provider_result_digest="a" * 64)
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["effect_state"], "PROVIDER_EFFECT_RECORDED")
+        self.assertEqual(evidence["chain"]["attempt_ids"], ["attempt-0", "attempt-1"])
+        self.assertEqual(evidence["chain"]["assignment_ids"], ["ASSIGN-1"])
+        self.assertEqual(evidence["chain"]["provider_result_digests"], ["a" * 64])
+        self.assertEqual(evidence["lineage"]["provider_routes"], ["openai"])
+        self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 1)
+        self.assertEqual(evidence["lineage"]["attempt_history_count"], 1)
+
+    def test_qualification_evidence_stays_unknown_without_exposed_attempt_lists_or_bound_rows(self):
+        self.task.pop("provider_runs")
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertIsNone(evidence["effect_state"])
+        self.assertIsNone(evidence["lineage"]["recorded_attempt_count"])
+        self.task, self.deliveries, self.messages, self.headers = sample()
+        self.deliveries[0]["task_id"] = "DIR-LG-CD34"
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["chain"]["effect_ids"], [])
+        self.assertIsNone(evidence["chain"]["slack_delivery_ts"])
+        self.assertIsNone(evidence["timestamps"]["delivery_at"])
+
+    def test_provider_reported_cost_is_recorded_only_when_numeric_and_never_invented(self):
+        for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None)):
+            with self.subTest(value=value):
+                self.task["actual_cost_usd"] = value
+                usage = self.summarize()["qualification_evidence"]["usage"]
+                self.assertEqual(usage["actual_cost_usd"], expected)
+                self.assertEqual(usage["cost_basis"], "provider_reported" if expected is not None else "UNKNOWN")
+        self.assertIsNone(self.summarize()["actual_cost_usd"])  # the older scorecard field stays unmeasured
+
+    def test_revision_binding_digests_environment_names_only(self):
+        runtime = {"container_id": "c", "image_id": "sha256:" + "d" * 64, "runtime_head": "e" * 40,
+                   "started_at": None, "offline_configured": True, "paid_configured": False}
+        binding = collector_module.revision_binding(runtime, ENV)
+        self.assertEqual(binding["runtime_head"], "e" * 40)
+        self.assertEqual(binding["image_id"], "sha256:" + "d" * 64)
+        self.assertNotIn("container_id", binding)
+        serialized = json.dumps(binding)
+        for value in ENV.values():
+            self.assertNotIn(value, serialized)
+        same_names = collector_module.revision_binding(runtime, {key: "other" for key in ENV})
+        self.assertEqual(binding["configuration_digest"], same_names["configuration_digest"])
+        more_names = collector_module.revision_binding(runtime, {**ENV, "NEW_SWITCH": "x"})
+        self.assertNotEqual(binding["configuration_digest"], more_names["configuration_digest"])
+        schema = json.loads((COLLECTOR_PATH.parents[1] / "docs/schemas/director-slack-trial-observations-v1.schema.json").read_bytes())
+        receipt = receipt_fixture()
+        receipt["trials"][0]["qualification_evidence"]["revision_binding"] = binding
+        jsonschema.validate(receipt, schema)
+        receipt["trials"][0]["qualification_evidence"]["allocation"]["rolling_twenty"] = "PASS"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(receipt, schema)
 
 
 class CollectorTransportTests(unittest.TestCase):
@@ -774,3 +862,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]

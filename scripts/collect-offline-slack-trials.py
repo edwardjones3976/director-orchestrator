@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | BEGIN]]
@@ -238,6 +239,93 @@ def owner_pause(rows, wall, input_ts, final_ts):
         return None, None
 
 
+UNKNOWN = "UNKNOWN"
+STATUS_RECEIPT_DEPENDENCY = "issue-230-status-receipt-interface-not-accepted"
+
+
+def _identities(items, key):
+    return sorted({item[key] for item in items if isinstance(item, dict)
+                   and isinstance(item.get(key), str) and item[key]})
+
+
+def _typed_list(task, key):
+    return task.get(key) if isinstance(task.get(key), list) else None
+
+
+def qualification_evidence(task_id, task, rows, rows_bound, input_message, final):
+    """Section 4 correlation chain derived only from observed sources.
+
+    Every link the exposed task/delivery projections do not carry is null and
+    reported as UNKNOWN; nothing here manufactures a receipt, an attempt or a
+    cost. Status-receipt counts stay an explicit Issue #230 dependency.
+    """
+    intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
+    outcomes = _typed_list(task, "assignment_outcomes") or []
+    runs, history = _typed_list(task, "provider_runs"), _typed_list(task, "provider_run_history")
+    contacts = _typed_list(task, "provider_contact_attempts")
+    contact_history = _typed_list(task, "provider_contact_attempt_history")
+    ledger = _typed_list(task, "provider_interaction_ledger")
+    terminal = [r for r in rows if r.get("notification_key") == "terminal"] if rows_bound else []
+    delivery = terminal[0] if len(terminal) == 1 else {}
+    states = {r.get("state") for r in rows} if rows_bound else set()
+    lists_known = all(value is not None for value in (runs, history, contacts, contact_history, ledger))
+    if not lists_known:
+        effect_state = None
+    elif states & {"AMBIGUOUS"}:
+        effect_state = "AMBIGUOUS_DELIVERY_EFFECT"
+    elif not any((runs, history, contacts, contact_history, ledger)):
+        effect_state = "ZERO_PROVIDER_EFFECT"
+    else:
+        effect_state = "PROVIDER_EFFECT_RECORDED"
+    cost = task.get("actual_cost_usd")
+    usage = task.get("usage") if isinstance(task.get("usage"), dict) else None
+    measured_cost = cost if type(cost) in (int, float) and cost >= 0 else None
+    return {
+        "chain": {
+            "source_event_id_sha256": digest(encode(intake["source_event_id"]))
+                if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
+            "task_id": task_id,
+            "assignment_ids": _identities(outcomes, "assignment_id"),
+            "attempt_ids": _identities((runs or []) + (history or []), "run_id"),
+            "effect_ids": _identities(rows, "client_msg_id") if rows_bound else [],
+            "provider_result_digests": _identities(outcomes, "provider_result_digest"),
+            "slack_delivery_ts": delivery.get("slack_ts") if TS.fullmatch(str(delivery.get("slack_ts", ""))) else None,
+            "slack_readback_state": delivery.get("state") if isinstance(delivery.get("state"), str) else None,
+        },
+        # Distinct timestamps; the exposed projections carry only the Slack
+        # request and delivery/readback edges. Provider-side edges are UNKNOWN.
+        "timestamps": {
+            "request_ts": input_message.get("ts") if input_message else None,
+            "first_byte_at": None, "completion_at": None, "validation_at": None,
+            "delivery_at": delivery.get("acknowledged_at") if isinstance(delivery.get("acknowledged_at"), str) else None,
+            "readback_at": delivery.get("delivered_at") if isinstance(delivery.get("delivered_at"), str) else None,
+        },
+        "lineage": {
+            "provider_routes": _identities(outcomes, "provider"),
+            "transport": None,
+            "recorded_attempt_count": len(runs) if runs is not None else None,
+            "attempt_history_count": len(history) if history is not None else None,
+            "contact_attempt_count": len(contacts) if contacts is not None else None,
+            "fallback_observed": None,
+        },
+        "effect_state": effect_state,
+        "usage": {"actual_usage": usage, "actual_cost_usd": measured_cost,
+                  "cost_basis": "provider_reported" if measured_cost is not None else UNKNOWN},
+        "status_receipts": {"tasks_created": None, "assignments_created": None,
+                            "provider_attempts_created": None, "deduplicated_receipts": None,
+                            "dependency": STATUS_RECEIPT_DEPENDENCY},
+        "allocation": {"rolling_twenty": UNKNOWN, "deviation_from_target_points": None},
+        "revision_binding": None,
+        "terminal_message_ts": final.get("ts") if final else None,
+    }
+
+
+def revision_binding(runtime, env):
+    """Exact revision plus a configuration digest over names only, never values."""
+    public = {key: runtime.get(key) for key in ("runtime_head", "image_id", "offline_configured", "paid_configured")}
+    return {**public, "configuration_digest": digest(encode({**public, "environment_names": sorted(env)}))}
+
+
 def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot, headers, channel):
     """Summarize observed source data; this cannot create scorecard observations."""
     task = task if isinstance(task, dict) else {}
@@ -317,7 +405,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "simulation_charge_basis": "offline double outcomes and empty exposed attempt/interaction lists; not billing or complete runtime-attempt authority",
         "actual_cost_usd": None, "operational_provider_attempts_verified": None,
         "independent_correctness_verified": None, "global_task_deduplication_verified": None,
-        "execution_image_binding_verified": None, "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED"}
+        "execution_image_binding_verified": None, "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED",
+        "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final)}
 
 
 RUBRIC_REQUIREMENTS = {
@@ -425,6 +514,9 @@ def main(argv=None):
                 row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
                 row["rubric_evaluation"] = evaluate_rubric(row, rubric, rubric_digest)
                 row["source_errors"] = errors + ([error] if error else [])
+                # Read-time revision/configuration identity, not proof of the
+                # image that executed the task (see limitations).
+                row["qualification_evidence"]["revision_binding"] = revision_binding(before, env)
                 records.append(row)
         stable = None
         try:
@@ -453,7 +545,8 @@ def main(argv=None):
                 "Complete bounded replies are a snapshot, not assurance against a later duplicate or edit.",
                 "Simulation zero-call support is separate from actual billing; unknown actual cost remains null.",
                 "Structural correctness is not provider answer quality or complete operational-attempt evidence.",
-                "Private capture is optional, uses platform access controls and withholds sensitive originals; copied receipts are not self-authenticating."]}
+                "Private capture is optional, uses platform access controls and withholds sensitive originals; copied receipts are not self-authenticating.",
+                "Qualification evidence links only exposed identities; provider first-byte/completion/validation times, transport, fallback, status receipts and allocation remain UNKNOWN until their collectors exist."]}
         path = args.output_dir / "receipt.json"
         validate_observations(report)
         serialized = encode(report) + b"\n"
@@ -490,3 +583,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]

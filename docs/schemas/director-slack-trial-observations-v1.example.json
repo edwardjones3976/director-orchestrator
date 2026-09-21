@@ -113,6 +113,65 @@
           "terminal_cost_text": true,
           "native_delivery": true
         }
+      },
+      "qualification_evidence": {
+        "chain": {
+          "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "DIR-LG-AB12",
+          "assignment_ids": [],
+          "attempt_ids": [],
+          "effect_ids": [
+            "synthetic-terminal-message"
+          ],
+          "provider_result_digests": [
+            "1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "slack_delivery_ts": "1789300830.100000",
+          "slack_readback_state": "DELIVERED"
+        },
+        "timestamps": {
+          "request_ts": "1789300800.100000",
+          "first_byte_at": null,
+          "completion_at": null,
+          "validation_at": null,
+          "delivery_at": "2026-09-13T12:00:30Z",
+          "readback_at": "2026-09-13T12:00:31Z"
+        },
+        "lineage": {
+          "provider_routes": [
+            "openai"
+          ],
+          "transport": null,
+          "recorded_attempt_count": 0,
+          "attempt_history_count": 0,
+          "contact_attempt_count": 0,
+          "fallback_observed": null
+        },
+        "effect_state": "ZERO_PROVIDER_EFFECT",
+        "usage": {
+          "actual_usage": null,
+          "actual_cost_usd": null,
+          "cost_basis": "UNKNOWN"
+        },
+        "status_receipts": {
+          "tasks_created": null,
+          "assignments_created": null,
+          "provider_attempts_created": null,
+          "deduplicated_receipts": null,
+          "dependency": "issue-230-status-receipt-interface-not-accepted"
+        },
+        "allocation": {
+          "rolling_twenty": "UNKNOWN",
+          "deviation_from_target_points": null
+        },
+        "revision_binding": {
+          "runtime_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "offline_configured": true,
+          "paid_configured": false,
+          "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "terminal_message_ts": "1789300830.100000"
       }
     }
   ],
