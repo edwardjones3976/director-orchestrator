@@ -1,3 +1,5 @@
+# [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | BEGIN]]
+# Fallback-author correction: concurrent-fixture import race only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | BEGIN]]
 # Fallback-author correction: frozen/slotted store fixture only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | BEGIN]]
@@ -13,6 +15,7 @@ import importlib
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -599,6 +602,12 @@ class StatusReceiptPostgresTests(unittest.TestCase):
         self.assert_no_work_side_effects(before)
 
     def test_concurrent_receipt_writes_linearize_on_binding_recheck(self) -> None:
+        # `open_api` mutates os.environ / sys.modules and reimports `main`;
+        # calling it from each worker races that shared process-global state
+        # (KeyError inside importlib). Build the client once, outside the
+        # pool, and only overlap the actual concurrent HTTP requests --
+        # matching the established pattern in
+        # test_conflicting_replay_and_concurrent_delivery.
         other_task = self.fixture.application.create_intake(
             self.fixture.intake().model_copy(
                 update={
@@ -609,31 +618,33 @@ class StatusReceiptPostgresTests(unittest.TestCase):
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
         )
         before = self.counts()
+        barrier = threading.Barrier(2)
 
-        def submit(source_suffix: str, task_id: str, thread_ts: str) -> int:
+        def submit(api, source_suffix: str, task_id: str, thread_ts: str) -> int:
             payload = self.receipt(
                 source_event_id=f"CDEFAULT:1720000501.{source_suffix}",
                 task_id=task_id,
                 thread_ts=thread_ts,
             )
-            with self.open_api() as api:
-                response = api.post(
-                    "/v1/status-receipts",
-                    headers=self.headers(payload),
-                    json=payload.model_dump(mode="json"),
-                )
+            barrier.wait(timeout=5)
+            response = api.post(
+                "/v1/status-receipts",
+                headers=self.headers(payload),
+                json=payload.model_dump(mode="json"),
+            )
             return response.status_code
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            statuses = list(
-                pool.map(
-                    lambda item: submit(item[0], item[1], item[2]),
-                    (
-                        ("000010", self.task.task_id, "1720000000.000001"),
-                        ("000011", other_task.task_id, "1720000500.000001"),
-                    ),
+        with self.open_api() as api:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                statuses = list(
+                    pool.map(
+                        lambda item: submit(api, item[0], item[1], item[2]),
+                        (
+                            ("000010", self.task.task_id, "1720000000.000001"),
+                            ("000011", other_task.task_id, "1720000500.000001"),
+                        ),
+                    )
                 )
-            )
         self.assertEqual({200}, set(statuses))
         self.assertEqual(before["receipts"] + 2, self.counts()["receipts"])
         self.assert_no_work_side_effects(before)
@@ -919,3 +930,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | END]]
+# [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | END]]
