@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
@@ -134,6 +135,14 @@ class ProviderAdapterContext:
     # send cannot slip a different signed tariff into the same attempt.
     # None means no meter was enrolled for this selection.
     enrollment_digest: str | None = None
+    # Supplied by the live coordinator: re-reads this task's durable
+    # cancellation, writer lease/fencing and plan binding. A transport that
+    # waits on the provider before its real request (Responses counts input
+    # tokens first) calls this at that instant, so a cancellation or writer
+    # takeover during the wait stops the request instead of being noticed
+    # afterwards. It raises rather than returning a verdict, and no transport
+    # may treat its absence as authority.
+    authority_recheck: Callable[[], None] | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1256,3 +1265,4 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

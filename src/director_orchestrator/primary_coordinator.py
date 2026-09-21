@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
@@ -59,6 +60,7 @@ from .primary_parallel import (
     ParallelReservation,
     ProviderAttemptReservation,
     PostgresParallelDispatch,
+    completion_deadline,
 )
 from .primary_effects import DeterministicExternalEffectExecutor
 from .primary_completion import CompletionEvidence
@@ -324,10 +326,14 @@ class PrimaryTaskCoordinator:
         return renewed
 
     def _persist_outcome(
-        self, outcome: PrimaryOutcome, writer: TaskWriterLease
+        self, outcome: PrimaryOutcome, writer: TaskWriterLease,
+        *, deadline: float | None = None,
     ) -> PrimaryTaskProjection:
+        """Publish one outcome projection, optionally under a completion cutoff."""
+
         payload = _outcome_projection(outcome)
-        current = self._store.read_primary_task_projection(outcome.task_id)
+        current = self._store.read_primary_task_projection(
+            outcome.task_id, deadline=deadline)
         application = (
             self._application_projection_provider(outcome.task_id)
             if self._application_projection_provider is not None
@@ -347,6 +353,7 @@ class PrimaryTaskCoordinator:
             owner_token=self._owner_token,
             fencing_generation=writer.fencing_generation,
             projection=payload,
+            deadline=deadline,
         )
 
     def create_intake(self, command: PrimaryRequest) -> PrimaryTaskProjection:
@@ -584,13 +591,21 @@ class PrimaryTaskCoordinator:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
+        """Record one attempt's outcome under the caller's completion cutoff.
+
+        Resolving the writer can itself read, renew or reacquire a lease, so it
+        is inside the same bound as the write it is for.
+        """
+
         self.parallel.record_provider_attempt(
             attempt=attempt,
-            writer=self._task_writer(attempt.task_id),
+            writer=self._task_writer(attempt.task_id, deadline=deadline),
             status=status,
             result_digest=result_digest,
             reason_code=reason_code,
+            deadline=deadline,
         )
 
     def record_parallel_result(
@@ -695,7 +710,13 @@ class PrimaryTaskCoordinator:
             dispatcher=dispatcher,
             deadline=deadline,
         )
-        aggregate = self.parallel.aggregate(task_id)
+        # Execution is over here, in either direction. Aggregating what the
+        # wave did, checkpointing it and publishing the projection are
+        # recording work, so they draw on this operation's single completion
+        # allowance - computed once from the same absolute deadline - instead
+        # of running unbounded or minting a fresh window.
+        completion = completion_deadline(deadline)
+        aggregate = self.parallel.aggregate(task_id, deadline=completion)
         self._persist_outcome(
             self._runtime.record_parallel_aggregate(
                 task_id,
@@ -705,8 +726,10 @@ class PrimaryTaskCoordinator:
                 succeeded=aggregate.succeeded,
                 ambiguous_slot_count=aggregate.ambiguous_slot_count,
                 setup_hold_reasons=aggregate.setup_hold_reasons,
+                deadline=completion,
             ),
             writer,
+            deadline=completion,
         )
         return aggregate
 
@@ -1006,3 +1029,4 @@ class PrimaryTaskCoordinator:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

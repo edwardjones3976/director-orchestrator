@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
@@ -425,6 +426,10 @@ class OpenAIResponsesPacketTransport:
 
         meter = self.response_meter
         expected_enrollment = getattr(context, "enrollment_digest", None)
+        # Supplied by the live coordinator only. Historical/offline callers
+        # carry none, and this transport never invents one: it re-reads
+        # nothing itself and holds no authority of its own.
+        authority_recheck = getattr(context, "authority_recheck", None)
         if meter is not None:
             from .response_meter import ACCOUNTING_ALLOWANCE_SECONDS, ResponseMeterRegistry
             if isinstance(meter, ResponseMeterRegistry):
@@ -481,11 +486,15 @@ class OpenAIResponsesPacketTransport:
                 # This is a token bound, never a converted or vendor USD cap.
                 body["max_output_tokens"] = output_allowance
                 # Immediately before the generation request itself: the carried
-                # execution bound must still hold, and the enrollment whose
-                # tariff will price this request must still be current and
-                # correctly signed. Token counting above may have outlived
-                # either, and it is this request - not that one - being sent.
+                # execution bound must still hold, this task's durable
+                # authority must still allow the request, and the enrollment
+                # whose tariff will price it must still be current and
+                # correctly signed. Token counting above waits on the provider
+                # and may have outlived any of them, and it is this request -
+                # not that one - being sent.
                 remaining_seconds()
+                if authority_recheck is not None:
+                    authority_recheck()
                 if meter is not None:
                     meter.verify_current()
                     sent_at = meter.clock()
@@ -1461,3 +1470,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

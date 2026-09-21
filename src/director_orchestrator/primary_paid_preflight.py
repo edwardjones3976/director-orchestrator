@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | BEGIN]]
@@ -100,7 +101,16 @@ def _admit_spend_ceilings(*, connection, schema, budget, limits, wave_budget_usa
     wave[day_key] = wave.get(day_key, 0) + amount
 
 
-def check_budget_setup(*, connection, routing, settings, provider, packet, attempt_usd, wave_budget_usage=None):
+def select_budget_authority(*, connection, routing, provider, packet):
+    """The one current signed budget for this task, provider, project and day.
+
+    The authority-selection half of `check_budget_setup`: identical
+    uniqueness, signature, binding and UTC-day rules, and no spend accounting.
+    Atomic admission re-runs exactly this after its own lock waits, on its own
+    transaction's connection - no nested pool acquisition - where repeating
+    the ceiling checks would double-count the reservation it just inserted.
+    """
+
     authority = routing.authority
     day = authority.entitlements._clock().astimezone(timezone.utc).date().isoformat()
     rows = connection.execute(
@@ -116,6 +126,13 @@ def check_budget_setup(*, connection, routing, settings, provider, packet, attem
             or budget.task_id != packet['task_id'] or budget.provider_id != provider
             or budget.project_id != packet['project']):
         raise PaidSetupHold()
+    return budget
+
+
+def check_budget_setup(*, connection, routing, settings, provider, packet, attempt_usd, wave_budget_usage=None):
+    authority = routing.authority
+    budget = select_budget_authority(connection=connection, routing=routing,
+                                     provider=provider, packet=packet)
     limits = ProviderAttemptBudget.from_usd(project_id=packet['project'],
         attempt_usd=attempt_usd, task_usd=settings.max_task_budget_usd,
         daily_usd=settings.max_daily_provider_budget_usd)
@@ -125,15 +142,17 @@ def check_budget_setup(*, connection, routing, settings, provider, packet, attem
     return budget
 
 
-def check_team_setup(*, connection, team_routing, settings, packet, attempt_usd, wave_budget_usage=None):
-    """Pure signed-grant readiness check for one Antigravity team assignment.
+def select_team_authority(*, connection, team_routing, packet):
+    """The one current, unrevoked signed grant/budget pair for this assignment.
 
-    Loads and verifies the registered grant/budget pair the same way
+    Loads and verifies the registered pair the same way
     ``PrimaryTeamRouting.grant_for`` does, but on the caller's own bounded
     connection and without ``query_factory``, ``worker_factory``,
-    ``TeamAuthority.authorize`` or ``admissions``: this is eligibility
-    prediction, not the atomic entitlement admission that stays at dispatch.
+    ``TeamAuthority.authorize`` or ``admissions``. Admission re-runs this on
+    its own transaction after its lock waits, for the same reason as the
+    budget lane.
     """
+
     authority = team_routing.authority
     rows = connection.execute(
         f"SELECT grant_digest FROM {authority.schema}.director_primary_team_grant "
@@ -152,6 +171,18 @@ def check_team_setup(*, connection, team_routing, settings, packet, attempt_usd,
     # defeating the early setup hold. Mirrors check_budget_setup's day check.
     if budget.day != authority.entitlements._clock().astimezone(timezone.utc).date().isoformat():
         raise PaidSetupHold()
+    return grant, budget
+
+
+def check_team_setup(*, connection, team_routing, settings, packet, attempt_usd, wave_budget_usage=None):
+    """Pure signed-grant readiness check for one Antigravity team assignment.
+
+    Eligibility prediction, not the atomic entitlement admission that stays at
+    dispatch: the selected authority plus this lane's read-only ceilings.
+    """
+    authority = team_routing.authority
+    grant, budget = select_team_authority(connection=connection,
+                                          team_routing=team_routing, packet=packet)
     limits = ProviderAttemptBudget.from_usd(project_id=packet['project'],
         attempt_usd=attempt_usd, task_usd=settings.max_task_budget_usd,
         daily_usd=settings.max_daily_provider_budget_usd)
@@ -165,3 +196,4 @@ def check_team_setup(*, connection, team_routing, settings, packet, attempt_usd,
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

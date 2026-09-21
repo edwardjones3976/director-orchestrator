@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
@@ -727,7 +728,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         finally:
             self.handle.close()
 
-    def _build_activation(self, transport):
+    def _build_activation(self, transport, *, provider_timeout_seconds=None):
         registry = ExactEffectGatewayRegistry(
             (SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE,
                 mutate=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no effect")),
@@ -737,6 +738,8 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 readback=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no effect")))),
             allowed_actions=frozenset({("slack", SLACK_POST_MESSAGE), ("github", GITHUB_MARK_READY)}),
         )
+        bound = ({} if provider_timeout_seconds is None
+                 else {"provider_timeout_seconds": provider_timeout_seconds})
         settings = replace(
             Settings(),
             langgraph_primary_enabled=True,
@@ -747,6 +750,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             repository_allowlist=("owner/repository",),
             allowed_starting_refs=("main",),
             repository_snapshot_root=str(Path.cwd()),
+            **bound,
         )
         budget_routing = PrimaryProviderBudgetRouting(authority=self.authority, pool=self.handle.pool)
         adapter = PacketBoundaryAdapter("openai", transport)
@@ -971,7 +975,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 self.assertEqual(0, connection.execute(
                     f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"])
 
-    def _enrolled_wave(self, *, daily_limit_ratio=None):
+    def _enrolled_wave(self, *, daily_limit_ratio=None, provider_timeout_seconds=None):
         """`_ready_wave` plus the real signed enrollment for its first attempt.
 
         The registry is attached before readiness runs, so the selection
@@ -980,7 +984,8 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         """
         api_key, model = "test-secret-key", "configured-model"
         transport = OpenAIResponsesPacketTransport(api_key=api_key, model=model, response_meter=None)
-        activation, settings = self._build_activation(transport)
+        activation, settings = self._build_activation(
+            transport, provider_timeout_seconds=provider_timeout_seconds)
         task_id = "DIR-PG-ENROL-" + uuid.uuid4().hex[:8].upper()
         assignment_id, sequence, packet = self._register(activation, settings, task_id=task_id)
         attempt_usd = float(packet["limits"]["budget_usd"]) / 3.0
@@ -1100,6 +1105,172 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                           "an admitted attempt keeps its rows, slot and evidence")
         self.assertEqual(0, usage, "nothing was sent, so nothing was metered")
 
+    # --- authority at the real generation boundary, after token counting ---
+
+    def _counting_provider(self, during_count):
+        """A synthetic Responses endpoint that acts while counting input tokens.
+
+        The count request is the one the provider can make the caller wait on
+        before anything billable is sent. `during_count` runs at exactly that
+        point; a generation request reaching this endpoint fails the test.
+        """
+        seen = []
+
+        def handle_request(request):
+            seen.append(str(request.url))
+            if str(request.url).endswith("/input_tokens"):
+                during_count()
+                return httpx.Response(200, json={"object": "response.input_tokens",
+                                                  "input_tokens": 100})
+            raise AssertionError("a generation request must never be made")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+        return seen, patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                           return_value=client)
+
+    def _assert_admitted_attempt_survives_unsent(self, wave, seen):
+        """One count request, no generation, and the admitted facts intact."""
+
+        self.assertEqual(1, len(seen), seen)
+        with self.handle.pool.connection() as connection:
+            statuses = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_provider_attempt "
+                "WHERE task_id=%s ORDER BY event_sequence", (wave.task_id,)).fetchall()]
+            counts = tuple(connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"]
+                for table in ("director_primary_provider_spend",
+                              "director_primary_workload_assignment",
+                              "director_primary_provider_usage"))
+        self.assertEqual(["STARTED"], statuses,
+                          "the admitted attempt is preserved, not retried or overwritten")
+        self.assertEqual((1, 1, 0), counts,
+                          "its reservation and slot remain; nothing was generated or metered")
+
+    def test_cancellation_during_token_counting_never_reaches_generation(self):
+        """A real cancellation ordered while the count request is in flight.
+
+        `coordinator.cancel` engages this same kill switch. Every earlier check
+        ran before the transport started waiting on the provider, so the
+        request would otherwise be sent against a cancelled wave.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+        seen, mocked = self._counting_provider(
+            lambda: self.ledger.engage_kill_switch(task_id=wave.task_id, writer=wave.writer))
+        with mocked, self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("wave_cancelled_before_generation", raised.exception.reason_code)
+        self._assert_admitted_attempt_survives_unsent(wave, seen)
+
+    def test_writer_takeover_during_token_counting_never_reaches_generation(self):
+        """A legitimate successor takes the writer while counting waits."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+
+        def take_over():
+            taken = self.handle.claim_store.acquire_task_writer(
+                wave.task_id, engine_owner="langgraph",
+                owner_token=wave.settings.langgraph_primary_owner_token,
+                expected_generation=wave.writer.fencing_generation)
+            self.assertGreater(taken.fencing_generation, wave.writer.fencing_generation)
+
+        seen, mocked = self._counting_provider(take_over)
+        with mocked, self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("writer_authority_changed_before_generation",
+                          raised.exception.reason_code)
+        self._assert_admitted_attempt_survives_unsent(wave, seen)
+
+    def test_expired_writer_lease_during_token_counting_never_reaches_generation(self):
+        """The lease simply runs out during the wait; no successor required."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+
+        def expire():
+            with self.handle.pool.connection() as connection, connection.transaction():
+                connection.execute(
+                    f"UPDATE {self.schema}.director_primary_task_writer "
+                    "SET lease_expires_at = now() - interval '1 second' WHERE task_id=%s",
+                    (wave.task_id,))
+
+        seen, mocked = self._counting_provider(expire)
+        with mocked, self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("writer_authority_changed_before_generation",
+                          raised.exception.reason_code)
+        self._assert_admitted_attempt_survives_unsent(wave, seen)
+
+    def test_attempt_outcome_write_is_bounded_and_keeps_the_usage_it_recorded(self):
+        """The attempt's own outcome write spends the completion allowance.
+
+        The provider has answered and its usage is already metered when the
+        writer row is held by a second connection. Recording the outcome
+        therefore waits - inside the real coordinator's `_task_writer` and the
+        ledger's own transaction - and ends at the completion cutoff rather
+        than blocking the wave indefinitely. Nothing already recorded is lost.
+        """
+        from contextlib import ExitStack
+        from time import monotonic as _monotonic
+        from director_orchestrator.primary_parallel import COMPLETION_ALLOWANCE_SECONDS
+
+        wave = self._enrolled_wave(provider_timeout_seconds=3)
+        held = ExitStack()
+        seen = []
+
+        def handle_request(request):
+            seen.append(str(request.url))
+            if str(request.url).endswith("/input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens",
+                                                  "input_tokens": 100})
+            # Taken once the generation request is answered: admission and the
+            # provider call are done, so only the completion path can wait.
+            connection = held.enter_context(self.handle.pool.connection())
+            held.enter_context(connection.transaction())
+            connection.execute(
+                f"SELECT 1 FROM {self.schema}.director_primary_task_writer "
+                "WHERE task_id=%s FOR UPDATE", (wave.task_id,))
+            return httpx.Response(200, json={
+                "object": "response", "id": "resp-completion-bound", "status": "completed",
+                "model": wave.model, "service_tier": "default",
+                "created_at": int(datetime.now(timezone.utc).timestamp()),
+                "output": [{"type": "message", "role": "assistant", "status": "completed",
+                            "content": [{"type": "output_text", "text": "synthetic evidence"}]}],
+                "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+                          "input_tokens_details": {"cached_tokens": 0},
+                          "output_tokens_details": {"reasoning_tokens": 0}}},
+                headers={"openai-organization": "org-synthetic",
+                         "openai-project": "proj-synthetic",
+                         "x-request-id": "req-synthetic-completion"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+        started = _monotonic()
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=client):
+                with self.assertRaises(Exception):
+                    wave.activation.application._parallel_dispatcher(wave.reservation)
+            elapsed = _monotonic() - started
+        finally:
+            held.close()
+        self.assertEqual(2, len(seen))
+        self.assertLess(elapsed, 3 + COMPLETION_ALLOWANCE_SECONDS + 6.0,
+                        "the allowance bounds the outcome write; it does not remove it")
+        with self.handle.pool.connection() as connection:
+            statuses = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_provider_attempt "
+                "WHERE task_id=%s ORDER BY event_sequence", (wave.task_id,)).fetchall()]
+            usage = connection.execute(
+                f"SELECT observed_tokens FROM {self.schema}.director_primary_provider_usage "
+                "WHERE attempt_digest=%s", (wave.attempt_digest,)).fetchone()
+        self.assertEqual(["STARTED"], statuses,
+                          "the admitted attempt stays open for reconciliation")
+        self.assertIsNotNone(usage, "authenticated usage already recorded is retained")
+        self.assertEqual(150, usage["observed_tokens"])
+
     # --- the enrollment the selection checked is the only one that is used ---
 
     def test_enrollment_replaced_during_the_admission_wait_rolls_back(self):
@@ -1130,6 +1301,48 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             with self.assertRaises(WorkloadAdmissionHold) as raised:
                 admitting.result(timeout=30)
         self.assertEqual("readiness_enrollment_changed_during_admission",
+                          raised.exception.reason_code)
+        self._assert_no_admission_rows()
+
+    def test_competing_authority_registered_during_the_wait_rolls_back(self):
+        """The authority is re-selected after the waits, not just compared.
+
+        A second, individually valid signed budget for the same task, provider,
+        project and day is registered through the real table while admission is
+        genuinely blocked on the batch row. Resolution is no longer unambiguous,
+        so the selection readiness made no longer holds and every write of this
+        admission rolls back together.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from time import sleep
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._ready_wave()
+        competing = budget(grant(task_id=wave.task_id, project_id=wave.packet["project"],
+                                  grant_id="grant-competing"),
+            provider_id="openai", project_id=wave.packet["project"], token_limit=999,
+            day=datetime.now(timezone.utc).date().isoformat(),
+            task_limit_microusd=wave.budget.task_limit_microusd,
+            daily_limit_microusd=wave.budget.daily_limit_microusd,
+            attempt_reservation_microusd=wave.budget.attempt_reservation_microusd)
+        self.assertNotEqual(wave.budget.grant_digest, competing.grant_digest)
+        dispatcher = wave.activation.application._parallel_dispatcher
+        with ThreadPoolExecutor(max_workers=1) as pool, self._no_provider_call():
+            with self.handle.pool.connection() as blocker, blocker.transaction():
+                blocker.execute(
+                    f"SELECT * FROM {self.schema}.director_primary_parallel_batch "
+                    "WHERE task_id=%s FOR UPDATE", (wave.task_id,))
+                admitting = pool.submit(dispatcher, wave.reservation)
+                sleep(0.75)
+                self.assertFalse(admitting.done(),
+                                  "admission must still be waiting on the locked batch row")
+                with self.handle.pool.connection() as registrar, registrar.transaction():
+                    registrar.execute(
+                        f"INSERT INTO {self.schema}.director_primary_provider_budget"
+                        "(authority_digest,document) VALUES(%s,%s::jsonb)",
+                        (competing.grant_digest, competing.model_dump_json()))
+            with self.assertRaises(WorkloadAdmissionHold) as raised:
+                admitting.result(timeout=30)
+        self.assertEqual("readiness_authority_changed_during_admission",
                           raised.exception.reason_code)
         self._assert_no_admission_rows()
 
@@ -1838,3 +2051,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

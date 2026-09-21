@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
@@ -86,6 +87,7 @@ with an explicit ``sslrootcert``; a loopback test may opt out only through
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 import hashlib
 import hmac
@@ -494,9 +496,12 @@ def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
     deferred constraint trigger performs *during* COMMIT: a transaction can
     complete successfully well past an absolute deadline that every individual
     statement respected. `transaction_timeout` (PostgreSQL 17) bounds the whole
-    transaction including that commit-time work. Its assign hook arms the timer
-    from the moment it is set and will not re-arm while already active, so this
-    is a bound that later calls can only observe, never extend.
+    transaction including that commit-time work.
+
+    Binding is idempotent and tightens only: the earliest absolute deadline
+    bound to this transaction wins, and a later caller's larger bound changes
+    nothing. Tightening is enforced against the running server timer, which
+    does not re-arm on assignment alone; see below.
 
     All three are set `LOCAL`, so they revert with the transaction and never
     leak onto a pooled connection. When `transaction_timeout` fires PostgreSQL
@@ -508,15 +513,113 @@ def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
     remaining = require_deadline_remaining(deadline, "transaction")
     if remaining is None:
         return
+    # The earliest bound already placed on *this* transaction, if any. It is
+    # kept in a transaction-local setting, so it reverts with the transaction
+    # and a pooled connection reused for a later transaction starts clean.
+    row = connection.execute(
+        "SELECT current_setting('director.transaction_deadline',true) AS bound"
+    ).fetchone()
+    existing = None
+    if row is not None:
+        recorded = row.get("bound") if hasattr(row, "get") else row[0]
+        if recorded:
+            existing = float(recorded)
+    # Tighten only. A later caller's larger bound is observed and discarded,
+    # never applied, so no call can extend the earliest deadline in force.
+    effective = deadline if existing is None else min(existing, deadline)
+    remaining = require_deadline_remaining(effective, "transaction")
     milliseconds = str(max(1, ceil(remaining * 1000)))
     connection.execute(
-        "SELECT set_config('statement_timeout',%s,true), set_config('lock_timeout',%s,true)",
-        (milliseconds, milliseconds),
+        "SELECT set_config('statement_timeout',%(ms)s,true),"
+        " set_config('lock_timeout',%(ms)s,true),"
+        " set_config('director.transaction_deadline',%(bound)s,true)",
+        {"ms": milliseconds, "bound": repr(float(effective))},
     )
-    if getattr(connection.info, "server_version", 0) >= 170000:
-        connection.execute(
-            "SELECT set_config('transaction_timeout',%s,true)", (milliseconds,)
-        )
+    if getattr(connection.info, "server_version", 0) < 170000:
+        return
+    if existing is not None and effective >= existing:
+        return
+    # PostgreSQL 17's `assign_transaction_timeout` hook enables the timer only
+    # while it is *inactive*, so assigning a smaller value to a transaction
+    # already running updates the GUC and leaves the original, longer timer in
+    # force: an independent probe on 17.11 saw `SHOW` report 234ms while the
+    # transaction still committed a durable row at 0.312s against a 0.25s
+    # bound. Assigning zero deactivates the timer; the assignment that follows
+    # re-arms it from now with the tightened window. This runs only when the
+    # effective bound has actually become earlier.
+    connection.execute("SELECT set_config('transaction_timeout','0',true)")
+    connection.execute(
+        "SELECT set_config('transaction_timeout',%s,true)", (milliseconds,)
+    )
+
+
+# The checkpointer acquires its own connections from this same pool, so a
+# caller cannot hand a cutoff to `get_state`/`update_state` directly. One
+# absolute cutoff is published for the current context instead, and the pool
+# applies it to every acquisition made inside that scope. No thread, queue or
+# background writer is created: when the block exits, the bound is gone.
+_CHECKPOINT_DEADLINE: ContextVar[float | None] = ContextVar(
+    "director_checkpoint_deadline", default=None
+)
+
+
+@contextmanager
+def checkpoint_deadline(deadline: float | None):
+    """Bound the checkpoint storage this context reaches, for this block only."""
+
+    token = _CHECKPOINT_DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _CHECKPOINT_DEADLINE.reset(token)
+
+
+def _bind_checkpoint_deadline_to_pool(pool: Any) -> Any:
+    """Apply whatever cutoff the current context published to this pool.
+
+    The pool keeps its own type and identity - the checkpointer's own
+    `isinstance` dispatch still recognises it - and only its `connection`
+    accessor is wrapped. Checkpoint connections are autocommit, so each
+    operation is its own transaction and `statement_timeout`/`lock_timeout`
+    bound it completely; they are set for the session and cleared when the
+    connection is returned, because there is no surrounding transaction to
+    revert them. An already expired cutoff refuses the acquisition outright.
+    """
+
+    acquire = pool.connection
+
+    @contextmanager
+    def connection(*args: Any, **kwargs: Any) -> Any:
+        deadline = _CHECKPOINT_DEADLINE.get()
+        if deadline is None:
+            with acquire(*args, **kwargs) as bound:
+                yield bound
+            return
+        remaining = require_deadline_remaining(deadline, "checkpoint")
+        supplied = kwargs.get("timeout")
+        kwargs["timeout"] = remaining if supplied is None else min(remaining, supplied)
+        with acquire(*args, **kwargs) as bound:
+            milliseconds = str(
+                max(1, ceil(require_deadline_remaining(deadline, "checkpoint") * 1000))
+            )
+            bound.execute(
+                "SELECT set_config('statement_timeout',%(ms)s,false),"
+                " set_config('lock_timeout',%(ms)s,false)",
+                {"ms": milliseconds},
+            )
+            try:
+                yield bound
+            finally:
+                try:
+                    bound.execute("RESET statement_timeout")
+                    bound.execute("RESET lock_timeout")
+                except Exception:
+                    # A connection the server already terminated cannot be
+                    # reset; the pool discards it rather than reusing it.
+                    pass
+
+    pool.connection = connection
+    return pool
 
 
 def _build_strict_serializer(serializer_type: type[Any]) -> Any:
@@ -2338,8 +2441,13 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         fencing_generation: int,
         projection: Mapping[str, Any],
+        deadline: float | None = None,
     ) -> PrimaryTaskProjection:
-        """Advance the projection once under the task's current writer fence."""
+        """Advance the projection once under the task's current writer fence.
+
+        `deadline` bounds the foreground completion write; callers with no
+        bound (legacy, background reconciliation) keep the previous behaviour.
+        """
 
         _require_id(task_id, "task_id")
         _require_id(owner_token, "owner_token")
@@ -2348,8 +2456,9 @@ class PostgresConditionalClaimStore:
         )
         encoded, digest = _projection_payload(projection)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 row = self._optional_row(
                     connection,
                     f"""
@@ -2387,10 +2496,11 @@ class PostgresConditionalClaimStore:
         return _projection_from_row(row)
 
     def read_primary_task_projection(
-        self, task_id: str
+        self, task_id: str, *, deadline: float | None = None
     ) -> PrimaryTaskProjection | None:
         _require_id(task_id, "task_id")
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
+            bind_transaction_deadline(connection, deadline)
             row = self._optional_row(
                 connection,
                 f"""
@@ -3561,8 +3671,13 @@ class PostgresConditionalClaimStore:
         packet: Mapping[str, Any],
         owner_token: str,
         fencing_generation: int,
+        deadline: float | None = None,
     ) -> PrimaryResultPacketArtifact:
-        """Append one validated result packet under the current writer fence."""
+        """Append one validated result packet under the current writer fence.
+
+        `deadline` bounds this foreground completion write, including its
+        advisory-lock wait. Callers with no bound are unchanged.
+        """
 
         _require_id(task_id, "task_id")
         _require_id(assignment_id, "assignment_id")
@@ -3585,8 +3700,9 @@ class PostgresConditionalClaimStore:
             "owner_token": owner_token,
             "generation": generation,
         }
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._optional_row(
                     connection,
                     "SELECT pg_advisory_xact_lock(%(key)s)",
@@ -5321,6 +5437,7 @@ def open_postgres_control_plane(
             "options": search_path_option,
         },
     )
+    _bind_checkpoint_deadline_to_pool(pool)
     try:
         pool.open(wait=True, timeout=limits.connect_timeout_seconds)
         database_instance_id = _setup_control_plane(
@@ -5408,3 +5525,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

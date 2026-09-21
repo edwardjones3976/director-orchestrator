@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
@@ -171,6 +172,7 @@ from .primary_parallel import (
     authorize_provider_retry,
     classify_provider_dispatch_exception,
     classify_provider_result_failure,
+    completion_deadline,
     deterministic_format_roster,
 )
 from .workload_policy import FailureKind
@@ -216,12 +218,15 @@ def _execute_three_attempt_roster(
         try:
             result = dispatch_attempt(attempt)
         except WorkloadAdmissionHold:
-            # A proven pre-I/O policy hold - cancellation, a changed selection
-            # or a replaced enrollment - is never raised after `adapter.dispatch`
-            # is entered, so no provider request exists to be ambiguous about.
-            # Propagate it as the owner decision it is, leaving this admitted
-            # attempt's rows, slot and evidence exactly as they are, rather than
-            # recording an AMBIGUOUS paid outcome for a call never made.
+            # A proven policy hold - cancellation, a changed selection, a
+            # replaced enrollment, a lost writer lease. It is raised only
+            # before the provider's real request: either before
+            # `adapter.dispatch` is entered at all, or at the generation
+            # boundary a transport reaches before sending anything billable.
+            # No generated result exists to be ambiguous about, so propagate
+            # the owner decision and leave this admitted attempt's rows, slot
+            # and recorded usage exactly as they are, rather than recording an
+            # AMBIGUOUS paid outcome and stopping the roster on a guess.
             raise
         except BaseException as exc:
             failure_kind = classify_provider_dispatch_exception(exc)
@@ -321,6 +326,85 @@ def _execute_three_attempt_roster(
         last_digest,
         PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
     )
+
+
+def _require_current_dispatch_authority(
+    handle: Any, *, task_id: str, assignment_id: str, reservation_digest: str,
+    provider: str, owner_token: str, fencing_generation: int,
+    attempt_digest: str, deadline: float | None,
+) -> None:
+    """Durable cancellation, writer and plan binding for one in-flight attempt.
+
+    One bounded read of the rows the live lane already treats as authoritative:
+    the wave's kill switch, this task's `langgraph` writer lease and fencing
+    generation, this assignment's ACTIVE reservation binding, and this
+    attempt's own latest event. Raising `WorkloadAdmissionHold` here is a
+    proven policy refusal - nothing has been generated - and leaves the
+    admitted rows, slot and any recorded usage exactly as they are.
+    """
+
+    from .langgraph_postgres import bind_transaction_deadline, bounded_connection
+    from .primary_workload import WorkloadAdmissionHold
+
+    schema = handle.schema
+    with bounded_connection(handle.pool, deadline) as connection:
+        bind_transaction_deadline(connection, deadline)
+        row = connection.execute(
+            f"""SELECT b.kill_switch, w.owner_token, w.fencing_generation,
+                   (w.lease_expires_at > now()) AS lease_live,
+                   a.status AS assignment_status, a.provider_id, a.reservation_digest
+            FROM {schema}.director_primary_parallel_batch b
+            LEFT JOIN {schema}.director_primary_task_writer w
+              ON w.task_id = b.task_id AND w.engine_owner = 'langgraph'
+            LEFT JOIN {schema}.director_primary_parallel_assignment a
+              ON a.task_id = b.task_id AND a.assignment_id = %(assignment_id)s
+            WHERE b.task_id = %(task_id)s""",
+            {"assignment_id": assignment_id, "task_id": task_id},
+        ).fetchone()
+        attempt = connection.execute(
+            f"""SELECT status FROM {schema}.director_primary_provider_attempt
+            WHERE attempt_digest = %(attempt_digest)s
+            ORDER BY event_sequence DESC LIMIT 1""",
+            {"attempt_digest": attempt_digest},
+        ).fetchone()
+    if row is None or bool(row["kill_switch"]):
+        raise WorkloadAdmissionHold("wave_cancelled_before_generation")
+    if (row["owner_token"] != owner_token
+            or row["fencing_generation"] != fencing_generation
+            or not row["lease_live"]):
+        raise WorkloadAdmissionHold("writer_authority_changed_before_generation")
+    if (row["assignment_status"] != "ACTIVE"
+            or row["provider_id"] != provider
+            or row["reservation_digest"] != reservation_digest):
+        raise WorkloadAdmissionHold("assignment_binding_changed_before_generation")
+    if attempt is None or attempt["status"] != "STARTED":
+        raise WorkloadAdmissionHold("provider_attempt_reconciled_before_generation")
+
+
+def _reselect_authority_digest(
+    connection: Any, *, provider: str, packet: Mapping[str, Any],
+    team_routing: Any, budget_routing: Any,
+) -> str | None:
+    """The authority the current signed documents select for this attempt now.
+
+    Runs readiness's own selection again - uniqueness, signature, revocation,
+    grant/packet binding and UTC day - on a connection the caller already
+    owns, so atomic admission can prove its choice after its lock waits
+    without acquiring a second pooled connection while holding them. Returns
+    None only when this lane carries no monetary authority to select.
+    """
+
+    from .primary_paid_preflight import select_budget_authority, select_team_authority
+
+    if team_routing is not None and provider == "antigravity":
+        grant, _budget = select_team_authority(
+            connection=connection, team_routing=team_routing, packet=packet)
+        return grant.digest
+    if budget_routing is None:
+        return None
+    return select_budget_authority(
+        connection=connection, routing=budget_routing, provider=provider,
+        packet=packet).grant_digest
 
 
 def _enrollment_digest_for(transport: Any, attempt_digest: str) -> str | None:
@@ -2810,18 +2894,46 @@ class DefaultPrimaryActivation:
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=selected.budget_evidence_digest)
 
-                        def revalidate_selection():
+                        def revalidate_selection(connection):
                             """Re-checked after admission's locks, before COMMIT.
 
                             The comparisons above happen before this
-                            transaction waits on anything. Authority can be
-                            revoked, an enrollment replaced or the writer taken
-                            over during those waits, so the same selection is
-                            proved again here, where raising still rolls the
-                            monetary, workload and STARTED writes back as one.
+                            transaction waits on anything. A competing
+                            authority can be registered, one revoked, an
+                            enrollment replaced or a writer lease lost during
+                            those waits, so the same selection is proved again
+                            here, where raising still rolls the monetary,
+                            workload and STARTED writes back as one.
+
+                            The authority is re-*selected*, not merely
+                            compared: the same uniqueness, signature,
+                            revocation and UTC-day rules readiness applied,
+                            re-run on this transaction's own connection. The
+                            spend ceilings are deliberately not repeated -
+                            this attempt's own reservation is already inserted
+                            here, and counting it twice would refuse a
+                            correctly funded attempt.
                             """
 
                             live = current_selection()
+                            from .antigravity_team import TeamAuthorizationError
+                            from .primary_parallel import PaidSetupHold
+                            try:
+                                reselected = _reselect_authority_digest(
+                                    connection, provider=provider, packet=packet,
+                                    team_routing=team_routing,
+                                    budget_routing=getattr(
+                                        live_dependencies, "budget_routing", None))
+                            except (PaidSetupHold, TeamAuthorizationError) as hold:
+                                # Registered, revoked or made ambiguous while
+                                # this admission waited: a proven policy state,
+                                # not a provider outcome.
+                                raise WorkloadAdmissionHold(
+                                    "readiness_authority_changed_during_admission") from hold
+                            if (reselected is not None
+                                    and reselected != live.authority_digest):
+                                raise WorkloadAdmissionHold(
+                                    "readiness_authority_changed_during_admission")
                             if live.enrollment_digest is None:
                                 return
                             registry_adapter = live_dependencies.adapter_for_format(
@@ -2849,11 +2961,17 @@ class DefaultPrimaryActivation:
                         result_digest: str | None,
                         reason_code: str,
                     ) -> None:
+                        # What the provider already did must become durable
+                        # even when this attempt's execution bound is spent,
+                        # so this write draws on the completion allowance
+                        # derived from that same absolute deadline. It renews
+                        # no execution, retry or eligibility.
                         self.coordinator.record_provider_attempt(
                             attempt=attempt,
                             status=status,
                             result_digest=result_digest,
                             reason_code=reason_code,
+                            deadline=completion_deadline(dispatch_deadline),
                         )
 
                     def dispatch_attempt(
@@ -2881,6 +2999,33 @@ class DefaultPrimaryActivation:
                                 raise WorkloadAdmissionHold(
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
+
+                        def authority_recheck() -> None:
+                            """The same durable authority, re-read at the send.
+
+                            A transport that must wait on the provider before
+                            its real request - Responses counts input tokens
+                            first - calls this immediately before that request.
+                            Everything above was read before that wait, so a
+                            cancellation, a lost or taken-over writer lease, a
+                            changed plan binding or a reconciled attempt during
+                            it would otherwise reach the provider unnoticed.
+                            These are the same rows admission itself holds
+                            authority over, read again rather than compared
+                            against values captured earlier.
+                            """
+
+                            _require_current_dispatch_authority(
+                                handle,
+                                task_id=record.task_id,
+                                assignment_id=assignment_id,
+                                reservation_digest=reservation.reservation_digest,
+                                provider=provider,
+                                owner_token=writer.owner_token,
+                                fencing_generation=writer.fencing_generation,
+                                attempt_digest=attempt.attempt_digest,
+                                deadline=selected.deadline,
+                            )
                         return adapter.dispatch(
                             packet,
                             context=ProviderAdapterContext(
@@ -2907,6 +3052,7 @@ class DefaultPrimaryActivation:
                                 # selection checked, rather than trusting a
                                 # comparison made before it resolved one.
                                 enrollment_digest=selected.enrollment_digest,
+                                authority_recheck=authority_recheck,
                             ),
                         )
 
@@ -2939,6 +3085,10 @@ class DefaultPrimaryActivation:
                         packet=result,
                         owner_token=writer.owner_token,
                         fencing_generation=writer.fencing_generation,
+                        # The authenticated result already exists; persisting
+                        # it, including its advisory-lock wait, spends the
+                        # completion allowance rather than running unbounded.
+                        deadline=completion_deadline(dispatch_deadline),
                     )
                     if persisted.document_digest != result_digest:
                         raise RuntimeError("parallel result-packet persistence changed")
@@ -3399,3 +3549,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

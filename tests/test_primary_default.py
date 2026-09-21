@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -481,7 +482,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         bounds = []
 
         class BatchRow:
-            """The existing `director_primary_parallel_batch` kill switch."""
+            """The existing `director_primary_parallel_batch` kill switch.
+
+            Answers the same statements the real connection does: the
+            transaction's recorded bound (none yet, on a fresh transaction)
+            and the wave's kill switch.
+            """
 
             info = SimpleNamespace(server_version=170000)
 
@@ -491,8 +497,10 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             def __exit__(self, *_exception):
                 return False
 
-            def execute(self, *_args, **_kwargs):
-                return SimpleNamespace(fetchone=lambda: {"kill_switch": False})
+            def execute(self, statement, *_args, **_kwargs):
+                row = ({"bound": None} if "director.transaction_deadline" in statement
+                       else {"kill_switch": False})
+                return SimpleNamespace(fetchone=lambda: row)
 
         def batch_connection(*_args, **kwargs):
             bounds.append(("cancellation", kwargs.get("timeout")))
@@ -1941,6 +1949,128 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
 
+    def _contended_wave(self, contend, *, wave_seconds=2.0):
+        """Drive one real wave that contends for a row `contend` locks.
+
+        The contended lock is taken from inside the dispatcher, so readiness
+        and admission are already done: what waits is the foreground
+        completion path the real coordinator runs after execution, with
+        `executor.map` still holding the wave open.
+        """
+        from contextlib import ExitStack
+        from time import monotonic
+
+        held = ExitStack()
+        self.addCleanup(held.close)
+        blocked = []
+
+        def dispatch(reservation):
+            if not blocked:
+                blocked.append(reservation.assignment_id)
+                connection = held.enter_context(self.handle.pool.connection())
+                held.enter_context(connection.transaction())
+                contend(connection, reservation)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"parallel-result-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+
+        dispatch.readiness_deadline = lambda: monotonic() + wave_seconds
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake(),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        started = monotonic()
+        raised: Exception | None = None
+        try:
+            try:
+                self.approve(self.application, self.coordinator, pending.task_id)
+            except Exception as error:  # returned to the caller, never swallowed
+                raised = error
+            elapsed = monotonic() - started
+        finally:
+            # Released here, not in cleanup: the schema drop in tearDown would
+            # otherwise wait on this same lock.
+            held.close()
+        return SimpleNamespace(task_id=pending.task_id, elapsed=elapsed, raised=raised,
+                                blocked=blocked[0] if blocked else None)
+
+    def _assert_completion_bound(self, wave, *, wave_seconds=2.0):
+        from director_orchestrator.primary_parallel import COMPLETION_ALLOWANCE_SECONDS
+
+        self.assertIsNotNone(wave.blocked, "the wave never dispatched")
+        self.assertIsNotNone(wave.raised,
+                             "the contended completion write must not have succeeded")
+        self.assertGreater(wave.elapsed, 1.0,
+                            "it must have actually waited on the contended lock")
+        self.assertLess(wave.elapsed, wave_seconds + COMPLETION_ALLOWANCE_SECONDS + 5.0,
+                        "the completion allowance is a bound, not a licence to wait")
+
+    def test_result_settlement_lock_is_bounded_by_the_completion_allowance(self):
+        """`record_result`, called while `executor.map` still waits, is bounded.
+
+        The wave's own bound is two seconds. Settling what already happened may
+        spend the one completion allowance beyond it and nothing more, and an
+        unsettled slot keeps its ACTIVE reservation rather than being released
+        or guessed at.
+        """
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_parallel_assignment "
+            "WHERE task_id=%s AND assignment_id=%s FOR UPDATE",
+            (reservation.task_id, reservation.assignment_id)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            statuses = {row["assignment_id"]: row["status"] for row in connection.execute(
+                f"SELECT assignment_id, status FROM {self.schema}"
+                ".director_primary_parallel_assignment WHERE task_id=%s",
+                (wave.task_id,)).fetchall()}
+        self.assertEqual("ACTIVE", statuses[wave.blocked],
+                          "an unsettled slot is retained for reconciliation")
+
+    def test_outcome_projection_write_is_bounded_by_the_completion_allowance(self):
+        """The same allowance covers publishing the wave's outcome projection."""
+
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_task_projection "
+            "WHERE task_id=%s FOR UPDATE", (reservation.task_id,)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertIn("SUCCEEDED", settled,
+                      "the ledger keeps what it settled before the projection write")
+
+    def test_checkpoint_completion_write_is_bounded_by_the_completion_allowance(self):
+        """The checkpointer's own storage is bounded by the same cutoff.
+
+        `record_parallel_aggregate` reads the snapshot, updates the state and
+        reads the outcome on connections it acquires itself, so the cutoff is
+        published for that call rather than passed to LangGraph.
+        """
+        wave = self._contended_wave(lambda connection, _reservation: connection.execute(
+            f"LOCK TABLE {self.schema}.checkpoints IN ACCESS EXCLUSIVE MODE"))
+        self._assert_completion_bound(wave)
+        # Persistence that could not be confirmed is classified conservatively:
+        # the call fails, nothing claims a completed wave, and the durable
+        # ledger rows stay exactly as they were for reconciliation.
+        projection = self.coordinator.get_projection(wave.task_id)
+        self.assertNotEqual("SUCCEEDED",
+                            (projection.projection.get("terminal_classification")
+                             if projection is not None else None),
+                            f"raised={wave.raised!r}")
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertTrue(settled, "the ledger rows survive an unconfirmed checkpoint")
+
     def test_paid_setup_hold_preserves_approved_pause_and_recovers_ready_waves(self):
         from director_orchestrator.primary_parallel import PaidSetupHold
         ready = False
@@ -3256,3 +3386,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

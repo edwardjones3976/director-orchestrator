@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
@@ -58,6 +59,22 @@ from .langgraph_postgres import (
 
 
 from .workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
+
+
+# One bounded window for durably recording what has already happened - an
+# attempt outcome, a settled slot, the wave aggregate and its checkpoint -
+# once the operation's own execution deadline is spent. It is derived from
+# that same absolute deadline, so every call in one operation computes the
+# identical instant and no call can renew it. It buys no execution, no retry
+# authority and no eligibility: a spent operation stays spent, and its facts
+# are simply not lost.
+COMPLETION_ALLOWANCE_SECONDS = 5.0
+
+
+def completion_deadline(deadline: float | None) -> float | None:
+    """The one completion cutoff for an operation bounded by `deadline`."""
+
+    return None if deadline is None else deadline + COMPLETION_ALLOWANCE_SECONDS
 
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -1341,10 +1358,19 @@ class PostgresParallelDispatch:
                     # the STARTED row it is about to write: the caller
                     # re-checks the complete selection it chose this attempt
                     # under - signed authority, enrollment document, packet,
-                    # writer generation. Anything raised here rolls the
-                    # monetary, workload and attempt writes back together,
-                    # because they are all still uncommitted.
-                    revalidate_selection()
+                    # writer generation. It is handed this transaction's own
+                    # connection so it can re-select the current authority
+                    # without acquiring a second pooled connection while these
+                    # locks are held. Anything raised here rolls the monetary,
+                    # workload and attempt writes back together, because they
+                    # are all still uncommitted.
+                    self._writer(
+                        connection,
+                        task_id=reservation.task_id,
+                        owner_token=writer.owner_token,
+                        fencing_generation=writer.fencing_generation,
+                    )
+                    revalidate_selection(connection)
                 if deadline is not None and deadline - monotonic() <= 0:
                     # Already past it before the final write: refuse here
                     # rather than rely on the server timer alone. Anything the
@@ -1405,8 +1431,14 @@ class PostgresParallelDispatch:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
-        """Append the immutable outcome for one exact child attempt."""
+        """Append the immutable outcome for one exact child attempt.
+
+        `deadline` is the completion cutoff for recording what the provider
+        already did. It bounds this write and its lock waits; it grants no
+        execution, retry or eligibility. Unbounded callers are unchanged.
+        """
 
         if status not in {
             ParallelAssignmentStatus.SUCCEEDED,
@@ -1434,8 +1466,9 @@ class PostgresParallelDispatch:
                 "reason_code": reason_code,
             }
         )
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=attempt.task_id,
@@ -1485,8 +1518,13 @@ class PostgresParallelDispatch:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
-        """Settle any reservation order; ambiguous outcomes keep their slot."""
+        """Settle any reservation order; ambiguous outcomes keep their slot.
+
+        `deadline` is the completion cutoff: it bounds recording an outcome
+        that already happened and authorises nothing further.
+        """
 
         if status not in {
             ParallelAssignmentStatus.OWNER_DECISION_REQUIRED,
@@ -1501,8 +1539,9 @@ class PostgresParallelDispatch:
             _require_digest(result_digest, "result_digest")
         if _CODE.fullmatch(reason_code) is None:
             raise ParallelDispatchError("reason_code is invalid")
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=reservation.task_id,
@@ -1873,12 +1912,17 @@ class PostgresParallelDispatch:
                     result_digest=None,
                     reason_code="provider_outcome_unknown",
                 )
+            # Recording what already happened draws on the completion
+            # allowance, not on execution time: every slot's outcome must be
+            # durable even when the wave's own deadline has just passed, and
+            # `executor.map` below is still waiting for this call.
             self.record_result(
                 reservation=reservation,
                 writer=writer,
                 status=outcome.status,
                 result_digest=outcome.result_digest,
                 reason_code=outcome.reason_code,
+                deadline=completion_deadline(deadline),
             )
 
         with ThreadPoolExecutor(
@@ -1888,10 +1932,11 @@ class PostgresParallelDispatch:
             tuple(executor.map(invoke, reservations))
         return reservations
 
-    def aggregate(self, task_id: str) -> ParallelAggregate:
+    def aggregate(self, task_id: str, *, deadline: float | None = None) -> ParallelAggregate:
         """Return a stable aggregation independent of completion arrival order."""
 
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
+            bind_transaction_deadline(connection, deadline)
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
@@ -2003,3 +2048,4 @@ class PostgresParallelDispatch:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

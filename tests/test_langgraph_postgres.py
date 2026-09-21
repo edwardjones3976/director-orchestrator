@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 03:05 UTC | BEGIN]]
@@ -44,6 +45,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from unittest.mock import patch
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -54,6 +56,8 @@ from director_orchestrator.langgraph_postgres import (
     DEFAULT_CONTROL_PLANE_SCHEMA,
     FINAL_DISPOSITIONS,
     INITIAL_FENCING_GENERATION,
+    DeadlineExpired,
+    bind_transaction_deadline,
     MAX_LEASE_SECONDS,
     MAX_POOL_SIZE,
     MIN_LEASE_SECONDS,
@@ -3559,6 +3563,154 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
                         connection.execute(statement, (key,))
 
 
+class TransactionDeadlineBindingTests(unittest.TestCase):
+    """What the bound actually does to a real PostgreSQL 17 transaction.
+
+    Every assertion here is wall clock plus durable state. `SHOW` is recorded
+    for the record only: an independent probe observed 17.11 reporting a
+    tightened `transaction_timeout` while the original, longer timer was still
+    the one in force, so the reported setting proves nothing on its own.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not _TEST_DSN:
+            raise RuntimeError(
+                f"{TEST_DSN_VARIABLE} is required for the real-Postgres suite"
+            )
+        cls.schema = f"director_timer_it_{uuid.uuid4().hex[:8]}_v1"
+        # One connection only, so "the same pooled connection" is not a guess.
+        cls.handle = open_postgres_control_plane(
+            _TEST_DSN,
+            schema=cls.schema,
+            bounds=PostgresPoolBounds(min_size=1, max_size=1),
+            allow_insecure_local_transport=True,
+            completion_authority_verifier=COMPLETION_VERIFIER,
+        )
+        with cls.handle.pool.connection() as connection:
+            connection.execute(
+                f"CREATE TABLE {cls.schema}.timer_probe (id serial PRIMARY KEY)")
+            connection.execute(
+                f"""CREATE FUNCTION {cls.schema}.timer_delay() RETURNS trigger
+                LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $$""")
+            connection.execute(
+                f"""CREATE CONSTRAINT TRIGGER timer_commit_delay AFTER INSERT ON
+                {cls.schema}.timer_probe DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION {cls.schema}.timer_delay()""")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if getattr(cls, "handle", None) is None:
+            return
+        try:
+            with cls.handle.pool.connection() as connection:
+                connection.execute(f"DROP SCHEMA IF EXISTS {cls.schema} CASCADE")
+        finally:
+            cls.handle.close()
+
+    def setUp(self) -> None:
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"DELETE FROM {self.schema}.timer_probe")
+
+    def rows(self) -> int:
+        with self.handle.pool.connection() as connection:
+            return connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.timer_probe").fetchone()["n"]
+
+    def test_a_tightened_bound_ends_the_transaction_at_the_earlier_instant(self):
+        """Cumulative statements, each individually short, must still stop.
+
+        Exactly the independently observed shape: bind one second, then a
+        quarter of a second, then spend 0.30s across two statements and try to
+        insert. Assigning the smaller value alone leaves the original timer
+        running, and the row commits.
+        """
+        started = monotonic()
+        reported = None
+        with self.assertRaises(Exception):
+            with self.handle.pool.connection() as connection, connection.transaction():
+                bind_transaction_deadline(connection, started + 1.0)
+                bind_transaction_deadline(connection, started + 0.25)
+                reported = connection.execute(
+                    "SHOW transaction_timeout").fetchone()["transaction_timeout"]
+                for _ in range(2):
+                    connection.execute("SELECT pg_sleep(0.15)")
+                connection.execute(
+                    f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
+        elapsed = monotonic() - started
+        self.assertIsNotNone(reported)
+        self.assertGreater(elapsed, 0.2, "it must not end before its own bound")
+        self.assertLess(elapsed, 0.9, "the tightened bound, not the first one, must end it")
+        self.assertEqual(0, self.rows())
+
+    def test_a_later_bound_cannot_extend_the_earliest_one(self):
+        """Tightening is one-way: a generous re-bind changes nothing."""
+
+        started = monotonic()
+        with self.assertRaises(Exception):
+            with self.handle.pool.connection() as connection, connection.transaction():
+                bind_transaction_deadline(connection, started + 0.25)
+                bind_transaction_deadline(connection, started + 5.0)
+                for _ in range(4):
+                    connection.execute("SELECT pg_sleep(0.15)")
+                connection.execute(
+                    f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
+        elapsed = monotonic() - started
+        self.assertLess(elapsed, 1.5, "the first, earlier bound must still be in force")
+        self.assertEqual(0, self.rows())
+
+    def test_deferred_commit_work_is_bound_by_the_tightened_deadline(self):
+        """The COMMIT itself, including a deferred constraint trigger.
+
+        The trigger sleeps half a second during COMMIT. Under the first bound
+        that commit would succeed; under the tightened one it must not, and no
+        row may survive.
+        """
+        started = monotonic()
+        with self.assertRaises(Exception):
+            with self.handle.pool.connection() as connection, connection.transaction():
+                bind_transaction_deadline(connection, started + 2.0)
+                bind_transaction_deadline(connection, started + 0.3)
+                connection.execute(
+                    f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
+        elapsed = monotonic() - started
+        self.assertLess(elapsed, 0.9, "the deferred COMMIT must not outlive the bound")
+        self.assertEqual(0, self.rows())
+
+    def test_an_expired_bound_is_refused_before_and_after_an_earlier_one(self):
+        """An already-spent bound never becomes a one-millisecond allowance."""
+
+        with self.handle.pool.connection() as connection, connection.transaction():
+            with self.assertRaises(DeadlineExpired):
+                bind_transaction_deadline(connection, monotonic() - 0.001)
+            bind_transaction_deadline(connection, monotonic() + 5.0)
+            with self.assertRaises(DeadlineExpired):
+                bind_transaction_deadline(connection, monotonic() - 0.001)
+            # The transaction itself is untouched by a refusal.
+            self.assertEqual(1, connection.execute("SELECT 1 AS n").fetchone()["n"])
+
+    def test_a_reused_pooled_connection_starts_its_next_transaction_clean(self):
+        """The bound is transaction-local, so reuse inherits nothing."""
+
+        started = monotonic()
+        with self.handle.pool.connection() as connection:
+            reused = connection.info.backend_pid
+            with connection.transaction():
+                bind_transaction_deadline(connection, started + 0.3)
+                connection.execute("SELECT 1")
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(reused, connection.info.backend_pid,
+                             "this case is only meaningful on the same connection")
+            with connection.transaction():
+                bind_transaction_deadline(connection, monotonic() + 8.0)
+                # Well past the previous transaction's absolute deadline.
+                connection.execute("SELECT pg_sleep(0.6)")
+                connection.execute(
+                    f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
+        self.assertGreater(monotonic() - started, 0.6)
+        self.assertEqual(1, self.rows())
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-31 | 09:35 UTC | END]]
@@ -3587,3 +3739,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
