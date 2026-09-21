@@ -115,14 +115,38 @@
         }
       },
       "qualification_evidence": {
+        "readback": {
+          "state": "collected",
+          "reason": null,
+          "source": "http://127.0.0.1:8080/v1/tasks/DIR-LG-AB12?include_qualification_evidence=true",
+          "complete": true,
+          "truncated": [],
+          "absent": [
+            "provider_usage"
+          ],
+          "snapshot": {
+            "isolation": "REPEATABLE READ",
+            "read_only": true,
+            "single_transaction": true,
+            "covers_task_record": true
+          },
+          "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
         "chain": {
           "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "task_id": "DIR-LG-AB12",
-          "assignment_ids": [],
+          "assignment_ids": [
+            "DIR-LG-AB12-A1"
+          ],
+          "assignment_sequences": [
+            1
+          ],
           "attempt_ids": [],
-          "effect_ids": [
+          "effect_ids": [],
+          "delivery_ids": [
             "synthetic-terminal-message"
           ],
+          "status_receipt_ids": [],
           "provider_result_digests": [
             "1111111111111111111111111111111111111111111111111111111111111111"
           ],
@@ -135,7 +159,12 @@
           "completion_at": null,
           "validation_at": null,
           "delivery_at": "2026-09-13T12:00:30Z",
-          "readback_at": "2026-09-13T12:00:31Z"
+          "readback_at": "2026-09-13T12:00:31Z",
+          "unknown_reasons": {
+            "first_byte_at": "no producer records provider first-byte time",
+            "validation_at": "no producer records a separate validation time",
+            "completion_at": "no settled provider attempt row"
+          }
         },
         "lineage": {
           "provider_routes": [
@@ -148,6 +177,8 @@
           "fallback_observed": null
         },
         "effect_state": "ZERO_PROVIDER_EFFECT",
+        "provider_effect_state": "ZERO_PROVIDER_ATTEMPT",
+        "external_effect_state": "NO_EXTERNAL_EFFECT_RESERVATION",
         "usage": {
           "actual_usage": null,
           "actual_cost_usd": null,
@@ -157,8 +188,8 @@
           "tasks_created": null,
           "assignments_created": null,
           "provider_attempts_created": null,
-          "deduplicated_receipts": null,
-          "dependency": "issue-230-status-receipt-interface-not-accepted"
+          "deduplicated_receipts": 0,
+          "dependency": "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
         },
         "allocation": {
           "rolling_twenty": "UNKNOWN",
@@ -169,7 +200,9 @@
           "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "offline_configured": true,
           "paid_configured": false,
-          "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+          "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "configuration_scope": "read-time-environment-names-and-public-flags",
+          "execution_time_binding": "UNKNOWN"
         },
         "terminal_message_ts": "1789300830.100000"
       }

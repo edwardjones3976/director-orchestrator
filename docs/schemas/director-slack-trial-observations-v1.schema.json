@@ -251,6 +251,75 @@
     "qualificationEvidence": {
       "type": "object",
       "properties": {
+        "readback": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "collected",
+                "incomplete",
+                "rejected",
+                "absent"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^http://127\\.0\\.0\\.1:8080/v1/tasks/DIR-LG-[A-F0-9]+\\?include_qualification_evidence=true$"
+            },
+            "complete": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "truncated": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10
+            },
+            "absent": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10
+            },
+            "snapshot": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "projection_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "source",
+            "complete",
+            "truncated",
+            "absent",
+            "snapshot",
+            "projection_digest"
+          ],
+          "additionalProperties": false
+        },
         "chain": {
           "type": "object",
           "properties": {
@@ -268,10 +337,24 @@
             "assignment_ids": {
               "$ref": "#/$defs/identityList"
             },
+            "assignment_sequences": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxItems": 20
+            },
             "attempt_ids": {
               "$ref": "#/$defs/identityList"
             },
             "effect_ids": {
+              "$ref": "#/$defs/identityList"
+            },
+            "delivery_ids": {
+              "$ref": "#/$defs/identityList"
+            },
+            "status_receipt_ids": {
               "$ref": "#/$defs/identityList"
             },
             "provider_result_digests": {
@@ -295,8 +378,11 @@
             "source_event_id_sha256",
             "task_id",
             "assignment_ids",
+            "assignment_sequences",
             "attempt_ids",
             "effect_ids",
+            "delivery_ids",
+            "status_receipt_ids",
             "provider_result_digests",
             "slack_delivery_ts",
             "slack_readback_state"
@@ -327,6 +413,12 @@
             },
             "readback_at": {
               "$ref": "#/$defs/nullableIso"
+            },
+            "unknown_reasons": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -335,7 +427,8 @@
             "completion_at",
             "validation_at",
             "delivery_at",
-            "readback_at"
+            "readback_at",
+            "unknown_reasons"
           ],
           "additionalProperties": false
         },
@@ -385,6 +478,22 @@
             null
           ]
         },
+        "provider_effect_state": {
+          "enum": [
+            "ZERO_PROVIDER_ATTEMPT",
+            "PROVIDER_ATTEMPT_STARTED_UNSETTLED",
+            "PROVIDER_ATTEMPT_AMBIGUOUS",
+            "PROVIDER_RESULT_RECORDED",
+            null
+          ]
+        },
+        "external_effect_state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(NO_EXTERNAL_EFFECT_RESERVATION|EXTERNAL_EFFECT_RESERVED_NO_EFFECT|EXTERNAL_EFFECT_BOUND_UNCONFIRMED|EXTERNAL_EFFECT_AMBIGUOUS|EXTERNAL_EFFECT_TERMINAL:[A-Z_,]+)$"
+        },
         "usage": {
           "type": "object",
           "properties": {
@@ -403,6 +512,7 @@
             },
             "cost_basis": {
               "enum": [
+                "authenticated_usage_table",
                 "provider_reported",
                 "UNKNOWN"
               ]
@@ -431,7 +541,7 @@
               "$ref": "#/$defs/nullableCount"
             },
             "dependency": {
-              "const": "issue-230-status-receipt-interface-not-accepted"
+              "const": "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
             }
           },
           "required": [
@@ -487,6 +597,12 @@
                 "configuration_digest": {
                   "type": "string",
                   "pattern": "^[a-f0-9]{64}$"
+                },
+                "configuration_scope": {
+                  "const": "read-time-environment-names-and-public-flags"
+                },
+                "execution_time_binding": {
+                  "const": "UNKNOWN"
                 }
               },
               "required": [
@@ -494,7 +610,9 @@
                 "image_id",
                 "offline_configured",
                 "paid_configured",
-                "configuration_digest"
+                "configuration_digest",
+                "configuration_scope",
+                "execution_time_binding"
               ],
               "additionalProperties": false
             }
@@ -509,10 +627,13 @@
         }
       },
       "required": [
+        "readback",
         "chain",
         "timestamps",
         "lineage",
         "effect_state",
+        "provider_effect_state",
+        "external_effect_state",
         "usage",
         "status_receipts",
         "allocation",

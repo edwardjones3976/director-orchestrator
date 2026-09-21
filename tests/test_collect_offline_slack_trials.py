@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
@@ -75,6 +76,59 @@ def sample():
     }]
     headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest"}
     return task, deliveries, messages, headers
+
+
+def readback_fixture():
+    """A serialized opt-in qualification_evidence in the typed API shape."""
+    assignment = TASK_ID + "-A1"
+    return {
+        "schema_version": "director-qualification-readback/v1", "task_id": TASK_ID, "engine_owner": "langgraph",
+        "projection_version": 3, "projection_digest": "fixture-digest", "source_event_id": SOURCE_EVENT,
+        "execution_mode": "offline_simulation", "terminal_classification": "SUCCEEDED",
+        "terminal_reason_code": "effect_readback_verified", "task_created_at": "2026-09-12T10:00:00+00:00",
+        "task_updated_at": "2026-09-12T10:00:31+00:00",
+        "snapshot": {"isolation": "REPEATABLE READ", "read_only": True, "single_transaction": True,
+                     "covers_task_record": True},
+        "bounds": {"row_limit": 200, "byte_limit": 262144, "wall_seconds": 5.0, "elapsed_seconds": 0.01},
+        "truncated": [], "absent": [], "complete": True,
+        "assignments": [{"assignment_id": assignment, "sequence": 1, "provider_id": "claude",
+                         "deployment_id": "dep-1", "status": "SUCCEEDED", "reservation_digest": "sha256:" + "a" * 64,
+                         "result_digest": "sha256:" + "2" * 64, "reason_code": "completed",
+                         "reserved_at": "2026-09-12T10:00:05+00:00", "completed_at": "2026-09-12T10:00:25+00:00"}],
+        "provider_attempts": [
+            {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 1,
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
+             "provider_run_id_digest": None, "status": "STARTED", "result_digest": None,
+             "outcome_evidence_digest": None, "reason_code": "attempt_started",
+             "budget_evidence_digest": "sha256:" + "9" * 64, "recorded_at": "2026-09-12T10:00:06+00:00"},
+            {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 2,
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
+             "provider_run_id_digest": "sha256:" + "8" * 64, "status": "SUCCEEDED",
+             "result_digest": "sha256:" + "2" * 64, "outcome_evidence_digest": "sha256:" + "7" * 64,
+             "reason_code": "attempt_succeeded", "budget_evidence_digest": "sha256:" + "9" * 64,
+             "recorded_at": "2026-09-12T10:00:25+00:00"}],
+        "effects": [{"reservation_key": "sha256:" + "4" * 64, "claim_key": "sha256:" + "5" * 64,
+                     "effect_key_digest": "sha256:" + "3" * 64, "effect_attempt_digest": "sha256:" + "6" * 64,
+                     "writer_owner_id": "langgraph-primary", "fencing_generation": 1, "reserved_units": 1,
+                     "reserved_at": "2026-09-12T10:00:26+00:00", "execution_started_at": "2026-09-12T10:00:27+00:00",
+                     "remote_system": "slack", "remote_identifier": FINAL_TS, "bound_at": "2026-09-12T10:00:28+00:00",
+                     "terminal_disposition": "COMPLETED", "terminal_evidence_digest": "sha256:" + "c" * 64,
+                     "terminal_recorded_at": "2026-09-12T10:00:29+00:00"}],
+        "reconciliation_events": [],
+        "slack_deliveries": [{"notification_key": "terminal", "projection_digest": "fixture-digest",
+                              "client_msg_id": FINAL_ID, "state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
+                              "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": "2026-09-12T10:00:30+00:00",
+                              "delivered_at": "2026-09-12T10:00:31+00:00", "slack_ts": FINAL_TS, "readback_attempts": 1,
+                              "last_error": None, "owner_decision": None, "owner_decision_at": None,
+                              "owner_command_id": None}],
+        "status_receipts": [{"receipt_id": "receipt-1", "source_event_id": "status-event-1",
+                             "created_at": "2026-09-12T10:00:40+00:00"}],
+        "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
+                            "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
+                            "observed_tokens": 900}],
+    }
 
 
 class ParseTrialsTests(unittest.TestCase):
@@ -262,64 +316,110 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(report["global_task_deduplication_verified"])
         self.assertEqual(report["verdict"], "EVIDENCE_ONLY_NOT_QUALIFIED")
 
-    def test_qualification_evidence_links_exposed_identities_and_leaves_provider_edges_unknown(self):
+    def test_absent_readback_leaves_derived_facts_unknown_with_the_reason(self):
         evidence = self.summarize()["qualification_evidence"]
         chain, stamps = evidence["chain"], evidence["timestamps"]
+        self.assertEqual(evidence["readback"]["state"], "absent")
+        self.assertIsNone(evidence["readback"]["source"])
         self.assertEqual(chain["task_id"], TASK_ID)
         self.assertEqual(chain["source_event_id_sha256"], collector_module.digest(collector_module.encode(SOURCE_EVENT)))
-        self.assertEqual(chain["effect_ids"], [FINAL_ID])
+        # Without the readback, delivery identities come from the deliveries API only.
+        self.assertEqual(chain["delivery_ids"], [FINAL_ID])
+        self.assertEqual((chain["assignment_ids"], chain["attempt_ids"], chain["effect_ids"],
+                          chain["status_receipt_ids"]), ([], [], [], []))
         self.assertEqual(chain["slack_delivery_ts"], FINAL_TS)
-        self.assertEqual(chain["slack_readback_state"], "DELIVERED")
-        self.assertEqual((chain["assignment_ids"], chain["attempt_ids"], chain["provider_result_digests"]), ([], [], []))
         self.assertEqual(stamps["request_ts"], THREAD)
         self.assertEqual(stamps["delivery_at"], "2026-09-12T10:00:30+00:00")
-        self.assertEqual(stamps["readback_at"], "2026-09-12T10:00:31+00:00")
         self.assertIsNone(stamps["first_byte_at"])
-        self.assertIsNone(stamps["completion_at"])
-        self.assertIsNone(stamps["validation_at"])
-        self.assertEqual(evidence["effect_state"], "ZERO_PROVIDER_EFFECT")
-        self.assertEqual(evidence["usage"], {"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"})
+        self.assertIn("first_byte_at", stamps["unknown_reasons"])
+        self.assertIsNone(evidence["effect_state"])
+        self.assertIsNone(evidence["provider_effect_state"])
+        self.assertIsNone(evidence["lineage"]["recorded_attempt_count"])
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
         self.assertEqual(evidence["status_receipts"]["dependency"], collector_module.STATUS_RECEIPT_DEPENDENCY)
-        self.assertTrue(all(evidence["status_receipts"][key] is None for key in
-            ("tasks_created", "assignments_created", "provider_attempts_created", "deduplicated_receipts")))
-        self.assertEqual(evidence["allocation"], {"rolling_twenty": "UNKNOWN", "deviation_from_target_points": None})
-        self.assertIsNone(evidence["lineage"]["transport"])
-        self.assertIsNone(evidence["lineage"]["fallback_observed"])
-        self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 0)
+        self.assertEqual(evidence["usage"], {"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"})
         self.assertIsNone(evidence["revision_binding"])
         self.assertEqual(evidence["terminal_message_ts"], FINAL_TS)
 
-    def test_qualification_evidence_distinguishes_ambiguous_delivery_from_recorded_attempts(self):
-        self.deliveries[0]["state"] = "AMBIGUOUS"
-        self.assertEqual(self.summarize()["qualification_evidence"]["effect_state"], "AMBIGUOUS_DELIVERY_EFFECT")
-        self.deliveries[0]["state"] = "DELIVERED"
-        self.task["provider_runs"] = [{"run_id": "attempt-1", "provider": "openai"}]
-        self.task["provider_run_history"] = [{"run_id": "attempt-0"}]
-        self.task["assignment_outcomes"][0].update(assignment_id="ASSIGN-1", provider="openai",
-                                                   provider_result_digest="a" * 64)
+    def test_collected_readback_binds_real_assignment_attempt_effect_delivery_and_receipt_keys(self):
+        self.task["qualification_evidence"] = readback_fixture()
         evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["readback"]["state"], "collected")
+        self.assertEqual(evidence["readback"]["source"], collector_module.API + "/v1/tasks/" + TASK_ID
+                         + "?include_qualification_evidence=true")
+        chain = evidence["chain"]
+        self.assertEqual(chain["assignment_ids"], [TASK_ID + "-A1"])
+        self.assertEqual(chain["assignment_sequences"], [1])
+        self.assertEqual(chain["attempt_ids"], ["sha256:" + "1" * 64])
+        self.assertEqual(chain["effect_ids"], ["sha256:" + "3" * 64])
+        self.assertEqual(chain["delivery_ids"], [FINAL_ID])
+        self.assertEqual(chain["status_receipt_ids"], ["receipt-1"])
+        self.assertEqual(chain["provider_result_digests"], ["sha256:" + "2" * 64])
         self.assertEqual(evidence["effect_state"], "PROVIDER_EFFECT_RECORDED")
-        self.assertEqual(evidence["chain"]["attempt_ids"], ["attempt-0", "attempt-1"])
-        self.assertEqual(evidence["chain"]["assignment_ids"], ["ASSIGN-1"])
-        self.assertEqual(evidence["chain"]["provider_result_digests"], ["a" * 64])
-        self.assertEqual(evidence["lineage"]["provider_routes"], ["openai"])
+        self.assertEqual(evidence["provider_effect_state"], "PROVIDER_RESULT_RECORDED")
+        self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_TERMINAL:COMPLETED")
+        self.assertEqual(evidence["lineage"]["provider_routes"], ["claude"])
+        self.assertEqual(evidence["lineage"]["transport"], "native-command")
         self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 1)
-        self.assertEqual(evidence["lineage"]["attempt_history_count"], 1)
+        self.assertFalse(evidence["lineage"]["fallback_observed"])
+        self.assertEqual(evidence["timestamps"]["completion_at"], "2026-09-12T10:00:25+00:00")
+        self.assertNotIn("completion_at", evidence["timestamps"]["unknown_reasons"])
+        self.assertEqual(evidence["usage"]["cost_basis"], "authenticated_usage_table")
+        self.assertEqual(evidence["usage"]["actual_cost_usd"], 0.0125)
+        self.assertEqual(evidence["usage"]["actual_usage"]["reserved_budget_microusd"], 50000)
+        self.assertEqual(evidence["status_receipts"]["deduplicated_receipts"], 1)
+        self.assertIsNone(evidence["status_receipts"]["tasks_created"])  # needs a prospective baseline
+        collector_module.validate_observations({**receipt_fixture(), "trials": [
+            {**structural_trial(), "qualification_evidence": evidence}]})
 
-    def test_qualification_evidence_stays_unknown_without_exposed_attempt_lists_or_bound_rows(self):
-        self.task.pop("provider_runs")
-        evidence = self.summarize()["qualification_evidence"]
-        self.assertIsNone(evidence["effect_state"])
-        self.assertIsNone(evidence["lineage"]["recorded_attempt_count"])
-        self.task, self.deliveries, self.messages, self.headers = sample()
-        self.deliveries[0]["task_id"] = "DIR-LG-CD34"
-        evidence = self.summarize()["qualification_evidence"]
-        self.assertEqual(evidence["chain"]["effect_ids"], [])
-        self.assertIsNone(evidence["chain"]["slack_delivery_ts"])
-        self.assertIsNone(evidence["timestamps"]["delivery_at"])
+    def test_readback_is_rejected_for_wrong_task_duplicate_or_unjoined_identities_and_marked_incomplete(self):
+        for change, expected in (({"task_id": "DIR-LG-CD34"}, "rejected"), ({"schema_version": "other"}, "rejected"),
+                                 ({"complete": False, "truncated": ["provider_attempts"]}, "incomplete")):
+            with self.subTest(change=change):
+                self.task["qualification_evidence"] = {**readback_fixture(), **change}
+                evidence = self.summarize()["qualification_evidence"]
+                self.assertEqual(evidence["readback"]["state"], expected)
+                self.assertIsNone(evidence["effect_state"])
+        duplicate = readback_fixture()
+        duplicate["provider_attempts"].append(dict(duplicate["provider_attempts"][0]))
+        unjoined = readback_fixture()
+        unjoined["provider_attempts"][0]["assignment_id"] = "DIR-LG-CD34-A9"
+        for readback in (duplicate, unjoined):
+            self.task["qualification_evidence"] = readback
+            evidence = self.summarize()["qualification_evidence"]
+            self.assertEqual(evidence["readback"]["state"], "rejected")
+            self.assertEqual(evidence["chain"]["attempt_ids"], [])
+            self.assertIsNone(evidence["provider_effect_state"])
 
-    def test_provider_reported_cost_is_recorded_only_when_numeric_and_never_invented(self):
-        for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None)):
+    def test_readback_distinguishes_pre_effect_ambiguous_and_zero_effect_outcomes(self):
+        started_only = readback_fixture()
+        started_only["provider_attempts"] = [started_only["provider_attempts"][0]]
+        started_only["effects"] = [dict(started_only["effects"][0], execution_started_at=None,
+                                        remote_identifier=None, remote_system=None, terminal_disposition=None,
+                                        terminal_evidence_digest=None)]
+        self.task["qualification_evidence"] = started_only
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["provider_effect_state"], "PROVIDER_ATTEMPT_STARTED_UNSETTLED")
+        self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_RESERVED_NO_EFFECT")
+        self.assertIsNone(evidence["effect_state"])  # started but unsettled is neither zero nor recorded
+        ambiguous = readback_fixture()
+        ambiguous["effects"][0].update(remote_identifier=None, remote_system=None, terminal_disposition=None,
+                                       terminal_evidence_digest=None)
+        self.task["qualification_evidence"] = ambiguous
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_AMBIGUOUS")
+        self.assertEqual(evidence["effect_state"], "AMBIGUOUS_DELIVERY_EFFECT")
+        zero = readback_fixture()
+        zero.update(provider_attempts=[], effects=[], provider_usage=[])
+        self.task["qualification_evidence"] = zero
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual(evidence["effect_state"], "ZERO_PROVIDER_EFFECT")
+        self.assertEqual(evidence["provider_effect_state"], "ZERO_PROVIDER_ATTEMPT")
+        self.assertEqual(evidence["usage"]["cost_basis"], "UNKNOWN")
+
+    def test_provider_reported_cost_is_recorded_only_when_finite_numeric_and_never_invented(self):
+        for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None),
+                                (float("inf"), None), (float("nan"), None), (True, None)):
             with self.subTest(value=value):
                 self.task["actual_cost_usd"] = value
                 usage = self.summarize()["qualification_evidence"]["usage"]
@@ -863,3 +963,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]

@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# Additive status-receipt correlation / zero-work test only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | BEGIN]]
 # Fallback-author correction: concurrent-fixture import race only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | BEGIN]]
@@ -223,6 +225,48 @@ class StatusReceiptPostgresTests(unittest.TestCase):
             self.assertEqual(first.json()["created_at"], replay.json()["created_at"])
         self.assert_no_work_side_effects(before)
         self.assertEqual(before["receipts"] + 1, self.counts()["receipts"])
+
+    def test_status_receipt_correlates_through_the_readback_with_a_measured_zero_work_delta(self) -> None:
+        # Prospective zero-work evidence: a before-baseline from the authoritative
+        # tables, one signed status submission plus its replay, then an after-state
+        # read through the opt-in READ ONLY readback. StatusReceiptRecord itself
+        # carries no counters, so the delta is measured here, never inferred.
+        from director_orchestrator.models import QualificationEvidenceReadback
+
+        before = self.counts()
+        with self.open_api() as api:
+            receipt = self.receipt()
+            first = api.post("/v1/status-receipts", headers=self.headers(receipt),
+                             json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, first.status_code, first.text)
+            replay = api.post("/v1/status-receipts", headers=self.headers(receipt),
+                              json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, replay.status_code, replay.text)
+            self.assertTrue(replay.json()["deduplicated"])
+            self.assertEqual(first.json()["receipt_id"], replay.json()["receipt_id"])
+            readback = api.get(f"/v1/tasks/{self.task.task_id}",
+                               headers={"Authorization": f"Bearer {self.settings.shared_secret}"},
+                               params={"include_qualification_evidence": "true"})
+            self.assertEqual(200, readback.status_code, readback.text)
+            evidence = QualificationEvidenceReadback.model_validate(readback.json()["qualification_evidence"])
+            plain = api.get(f"/v1/tasks/{self.task.task_id}",
+                            headers={"Authorization": f"Bearer {self.settings.shared_secret}"})
+        after = self.counts()
+        self.assert_no_work_side_effects(before)
+        # Exactly one durable, deduplicated receipt, bound to this task and source event.
+        self.assertEqual(before["receipts"] + 1, after["receipts"])
+        self.assertEqual([first.json()["receipt_id"]], [row.receipt_id for row in evidence.status_receipts])
+        self.assertEqual([receipt.source_event_id], [row.source_event_id for row in evidence.status_receipts])
+        self.assertEqual(self.task.task_id, evidence.task_id)
+        self.assertEqual(readback.headers["X-Primary-Projection-Digest"], evidence.projection_digest)
+        # Zero new tasks/assignments/attempts, measured from the same authoritative tables.
+        self.assertEqual((before["tasks"], before["assignments"], before["attempts"]),
+                         (after["tasks"], after["assignments"], after["attempts"]))
+        self.assertEqual([], evidence.provider_attempts)
+        self.assertTrue(evidence.complete)
+        # The readback did not touch the ordinary record or its persisted digest.
+        self.assertNotIn("qualification_evidence", plain.json())
+        self.assertEqual(plain.headers["X-Primary-Projection-Digest"], readback.headers["X-Primary-Projection-Digest"])
 
     def test_replay_preserves_original_created_at_with_new_client_timestamp(self) -> None:
         receipt = self.receipt(
@@ -931,3 +975,4 @@ if __name__ == "__main__":
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]

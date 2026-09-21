@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
@@ -1231,6 +1232,17 @@ class QualificationReadbackBounds(BaseModel):
     elapsed_seconds: float = Field(ge=0)
 
 
+class QualificationReadbackSnapshot(BaseModel):
+    """What one readback transaction covered; never a claim about the transport."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    isolation: Literal["REPEATABLE READ"]
+    read_only: Literal[True]
+    single_transaction: Literal[True]
+    covers_task_record: bool
+
+
 class QualificationEvidenceReadback(BaseModel):
     """Bounded READ ONLY projection of one task's persisted qualification evidence."""
 
@@ -1247,6 +1259,7 @@ class QualificationEvidenceReadback(BaseModel):
     terminal_reason_code: str | None = None
     task_created_at: datetime
     task_updated_at: datetime
+    snapshot: QualificationReadbackSnapshot
     bounds: QualificationReadbackBounds
     truncated: list[str] = Field(default_factory=list)
     absent: list[str] = Field(default_factory=list)
@@ -1454,3 +1467,4 @@ class ManualRunCompletion(BaseModel):
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
@@ -97,6 +98,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .langgraph_primary import (
@@ -443,6 +446,122 @@ def _advisory_key(*parts: str) -> int:
         "\x1f".join((CONTROL_PLANE_VERSION, *parts)).encode("utf-8")
     ).digest()[:8]
     return int.from_bytes(raw, "big", signed=True)
+
+
+# ---------------------------------------------------------------------------
+# Absolute-deadline primitives. Exact, unchanged extraction of the
+# Claude-authored definitions in src/director_orchestrator/langgraph_postgres.py
+# at revision f311b1b32ee28eb45f4d71ec9713506d2fb54915 (DEADLINE-REFERENCE);
+# only the definitions the qualification readback needs are carried here, with
+# their standard-library imports, so a later integration can unify them.
+# ---------------------------------------------------------------------------
+
+
+def deadline_remaining_seconds(deadline: float | None) -> float | None:
+    """Seconds left against a `time.monotonic()` bound, or None when unbounded."""
+
+    return None if deadline is None else deadline - monotonic()
+
+
+class DeadlineExpired(RuntimeError):
+    """An absolute bound was already spent before this work could start.
+
+    Raised before acquiring a connection or touching a row, so the caller
+    knows nothing was attempted. Callers that must distinguish a proven
+    pre-I/O refusal from an unknown outcome rely on that.
+    """
+
+
+def require_deadline_remaining(deadline: float | None, what: str) -> float | None:
+    """Refuse an already-expired bound instead of rounding it up to 1ms.
+
+    A bound that has passed is not a small allowance: rounding it up would
+    still let the statement run, take a lock, or renew a lease.
+    """
+
+    remaining = deadline_remaining_seconds(deadline)
+    if remaining is not None and remaining <= 0:
+        raise DeadlineExpired(f"{what} deadline expired before the operation started")
+    return remaining
+
+
+def bounded_connection(pool: Any, deadline: float | None) -> Any:
+    """Acquire from `pool`, bounding the wait itself by the time left.
+
+    An unbounded caller keeps the pool's own configured acquisition behaviour
+    exactly as before; a bounded one can never queue for a connection past its
+    deadline, and an already-expired one never acquires at all.
+    """
+
+    remaining = require_deadline_remaining(deadline, "connection acquisition")
+    if remaining is None:
+        return pool.connection()
+    return pool.connection(timeout=remaining)
+
+
+def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
+    """Bound this transaction's *total* time, its statements and its lock waits.
+
+    PostgreSQL applies `statement_timeout` to each statement separately and
+    again to COMMIT, so per-statement refreshes alone cannot bound work a
+    deferred constraint trigger performs *during* COMMIT: a transaction can
+    complete successfully well past an absolute deadline that every individual
+    statement respected. `transaction_timeout` (PostgreSQL 17) bounds the whole
+    transaction including that commit-time work.
+
+    Binding is idempotent and tightens only: the earliest absolute deadline
+    bound to this transaction wins, and a later caller's larger bound changes
+    nothing. Tightening is enforced against the running server timer, which
+    does not re-arm on assignment alone; see below.
+
+    All three are set `LOCAL`, so they revert with the transaction and never
+    leak onto a pooled connection. When `transaction_timeout` fires PostgreSQL
+    aborts the transaction and terminates the session; the pool discards that
+    connection, and the caller sees a failure it must classify conservatively
+    rather than a late success.
+    """
+
+    remaining = require_deadline_remaining(deadline, "transaction")
+    if remaining is None:
+        return
+    # The earliest bound already placed on *this* transaction, if any. It is
+    # kept in a transaction-local setting, so it reverts with the transaction
+    # and a pooled connection reused for a later transaction starts clean.
+    row = connection.execute(
+        "SELECT current_setting('director.transaction_deadline',true) AS bound"
+    ).fetchone()
+    existing = None
+    if row is not None:
+        recorded = row.get("bound") if hasattr(row, "get") else row[0]
+        if recorded:
+            existing = float(recorded)
+    # Tighten only. A later caller's larger bound is observed and discarded,
+    # never applied, so no call can extend the earliest deadline in force.
+    effective = deadline if existing is None else min(existing, deadline)
+    remaining = require_deadline_remaining(effective, "transaction")
+    milliseconds = str(max(1, ceil(remaining * 1000)))
+    connection.execute(
+        "SELECT set_config('statement_timeout',%(ms)s,true),"
+        " set_config('lock_timeout',%(ms)s,true),"
+        " set_config('director.transaction_deadline',%(bound)s,true)",
+        {"ms": milliseconds, "bound": repr(float(effective))},
+    )
+    if getattr(connection.info, "server_version", 0) < 170000:
+        return
+    if existing is not None and effective >= existing:
+        return
+    # PostgreSQL 17's `assign_transaction_timeout` hook enables the timer only
+    # while it is *inactive*, so assigning a smaller value to a transaction
+    # already running updates the GUC and leaves the original, longer timer in
+    # force: an independent probe on 17.11 saw `SHOW` report 234ms while the
+    # transaction still committed a durable row at 0.312s against a 0.25s
+    # bound. Assigning zero deactivates the timer; the assignment that follows
+    # re-arms it from now with the tightened window. This runs only when the
+    # effective bound has actually become earlier.
+    connection.execute("SELECT set_config('transaction_timeout','0',true)")
+    connection.execute(
+        "SELECT set_config('transaction_timeout',%s,true)", (milliseconds,)
+    )
 
 
 def _build_strict_serializer(serializer_type: type[Any]) -> Any:
@@ -2519,16 +2638,26 @@ class PostgresConditionalClaimStore:
     ) -> dict[str, Any] | None:
         """Read one task's persisted qualification evidence without any write.
 
-        Runs inside a ``READ ONLY`` transaction with a local statement timeout,
-        so no DDL, writer lease, reservation, receipt, effect or row write can
-        happen here even by mistake.  Every query pins rows to ``task_id`` and
-        follows the persisted joins (assignment -> attempt, reservation ->
+        One absolute monotonic deadline (``wall_seconds`` from entry) covers the
+        pool wait (`bounded_connection`), the transaction's total time,
+        statements and lock waits (`bind_transaction_deadline`, PostgreSQL 17
+        ``transaction_timeout``), every query, and document construction and
+        size validation; no stage receives a fresh full allowance and an
+        expired bound raises :class:`DeadlineExpired` instead of returning a
+        late or partial result.  The transaction is ``REPEATABLE READ`` and
+        ``READ ONLY`` before any SELECT, so every section and the projection
+        itself come from one coherent snapshot and no DDL, writer lease,
+        reservation, receipt, effect or row write can happen here even by
+        mistake.  Every query pins rows to ``task_id`` and follows the
+        persisted joins (assignment -> attempt, reservation ->
         execution/binding/terminal evidence, spend -> usage).  Each section is
         capped at ``row_limit`` rows and the whole document at ``byte_limit``
         bytes; exceeding either yields an explicit ``truncated`` entry instead
         of a silently partial claim, and an absent optional table is reported
         under ``absent``.  Returns ``None`` when the task projection does not
-        exist.
+        exist.  The returned ``projection`` is the snapshot's own
+        :class:`PrimaryTaskProjection`, so a caller can derive the ordinary
+        task record from the same snapshot instead of a second read.
         """
 
         _require_id(task_id, "task_id")
@@ -2540,11 +2669,13 @@ class PostgresConditionalClaimStore:
             raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
         schema = self._schema
         started = time.monotonic()
+        deadline = started + float(wall_seconds)
         sections: dict[str, list[dict[str, Any]]] = {}
         truncated: list[str] = []
         absent: list[str] = []
 
         def rows(cursor, name: str, query: str) -> list[dict[str, Any]]:
+            require_deadline_remaining(deadline, "qualification readback " + name)
             cursor.execute(query, {"task_id": task_id, "limit": row_limit + 1})
             fetched = [dict(row) for row in cursor.fetchall()]
             if len(fetched) > row_limit:
@@ -2553,18 +2684,21 @@ class PostgresConditionalClaimStore:
             sections[name] = fetched
             return fetched
 
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
-                    cursor.execute("SET TRANSACTION READ ONLY")
-                    # SET accepts no bind parameters; the value is a validated int.
+                    # Isolation must precede the binder's own SELECT: it is the
+                    # first statement of this transaction.
                     cursor.execute(
-                        f"SET LOCAL statement_timeout = {int(float(wall_seconds) * 1000)}"
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
                     )
+                    bind_transaction_deadline(connection, deadline)
+                    require_deadline_remaining(deadline, "qualification readback projection")
                     cursor.execute(
                         f"""
-                        SELECT task_id, engine_owner, projection_version, projection_digest,
-                               created_at, updated_at,
+                        SELECT task_id, engine_owner, input_digest,
+                               intake_fencing_generation, projection_version,
+                               projection_digest, projection, created_at, updated_at,
                                projection->'application'->'task_record'->'intake'->>'source_event_id'
                                    AS source_event_id,
                                projection->'application'->>'execution_mode' AS execution_mode,
@@ -2657,7 +2791,10 @@ class PostgresConditionalClaimStore:
                             WHERE s.task_id = %(task_id)s
                             ORDER BY u.attempt_digest LIMIT %(limit)s
                             """)
-        elapsed = time.monotonic() - started
+        # Construction and size validation spend the same deadline; a late
+        # document is refused rather than returned after the bound.
+        require_deadline_remaining(deadline, "qualification readback document")
+        projection = _projection_from_row(head)
         document: dict[str, Any] = {
             "schema_version": "director-qualification-readback/v1",
             "task_id": str(head["task_id"]),
@@ -2670,8 +2807,10 @@ class PostgresConditionalClaimStore:
             "terminal_reason_code": head["reason_code"],
             "task_created_at": head["created_at"],
             "task_updated_at": head["updated_at"],
+            "snapshot": {"isolation": "REPEATABLE READ", "read_only": True,
+                         "single_transaction": True, "covers_task_record": True},
             "bounds": {"row_limit": row_limit, "byte_limit": byte_limit,
-                       "wall_seconds": float(wall_seconds), "elapsed_seconds": round(elapsed, 6)},
+                       "wall_seconds": float(wall_seconds), "elapsed_seconds": 0.0},
             "truncated": sorted(truncated),
             "absent": sorted(absent),
             "complete": not truncated,
@@ -2685,6 +2824,9 @@ class PostgresConditionalClaimStore:
                 truncated=sorted({*truncated, "response_bytes"}),
                 complete=False,
             )
+        require_deadline_remaining(deadline, "qualification readback completion")
+        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        document["projection"] = projection
         return document
 
     def read_primary_command_receipt(
@@ -5684,3 +5826,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]

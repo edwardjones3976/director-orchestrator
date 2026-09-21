@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -3047,6 +3048,124 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
         self.assertEqual([], store.read_primary_qualification_evidence(other.task_id)["slack_deliveries"])
+        # The snapshot's own projection is returned so callers derive the task
+        # record from the same REPEATABLE READ view instead of a second read.
+        self.assertEqual(record.task_id, document["projection"].task_id)
+        self.assertEqual(document["projection_digest"], document["projection"].projection_digest)
+        self.assertEqual({"isolation": "REPEATABLE READ", "read_only": True,
+                          "single_transaction": True, "covers_task_record": True}, document["snapshot"])
+
+    def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
+        import time as clock
+        import psycopg
+        from psycopg import sql
+        from psycopg_pool import PoolTimeout
+        from director_orchestrator.langgraph_postgres import (
+            DeadlineExpired, bounded_connection, require_deadline_remaining)
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        # An already-spent bound is refused before any connection or row is touched.
+        with self.assertRaises(DeadlineExpired):
+            require_deadline_remaining(clock.monotonic() - 1, "probe")
+        with self.assertRaises(DeadlineExpired):
+            bounded_connection(self.handle.pool, clock.monotonic() - 1)
+        # Blocked pool acquisition: every pooled connection is held elsewhere, so
+        # the readback must give up within its bound instead of queueing.
+        held = []
+        try:
+            while True:
+                try:
+                    manager = self.handle.pool.connection(timeout=0.5)
+                    manager.__enter__()
+                    held.append(manager)
+                except PoolTimeout:
+                    break
+            started = clock.monotonic()
+            with self.assertRaises(PoolTimeout):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.5)
+            self.assertLess(clock.monotonic() - started, 2.0)
+        finally:
+            for manager in held:
+                manager.__exit__(None, None, None)
+        # Blocked SQL after earlier queries succeeded: a later table is locked by
+        # another session, so the remaining time (not a fresh allowance) bounds
+        # the wait and the whole read fails instead of finishing late.
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        with psycopg.connect(dsn, connect_timeout=5) as blocker:
+            blocker.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                            .format(sql.Identifier(self.schema)))
+            started = clock.monotonic()
+            with self.assertRaises(psycopg.Error):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.6)
+            self.assertLess(clock.monotonic() - started, 2.0)
+            blocker.rollback()
+        # The lane is intact afterwards and a normal read still completes.
+        after = store.read_primary_qualification_evidence(record.task_id)
+        self.assertTrue(after["complete"])
+        self.assertLess(after["bounds"]["elapsed_seconds"], after["bounds"]["wall_seconds"])
+
+    def test_qualification_readback_joins_populated_attempts_receipts_and_deliveries_by_real_keys(self):
+        from psycopg import sql
+        from director_orchestrator.models import QualificationEvidenceReadback
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        base = store.read_primary_qualification_evidence(record.task_id)
+        self.assertGreaterEqual(len(base["assignments"]), 1)
+        assignment = base["assignments"][0]
+        digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+        with self.handle.pool.connection() as connection:
+            for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
+                connection.execute(sql.SQL("""
+                    INSERT INTO {}.director_primary_provider_attempt
+                        (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id,
+                         transport_id, idempotency_key_digest, attempt_digest, provider_run_id_digest,
+                         status, result_digest, outcome_evidence_digest, reason_code, budget_evidence_digest)
+                    VALUES (%s, %s, 1, %s, %s, 'v1', 'synthetic-transport', %s, %s, %s, %s, %s, %s, %s, %s)
+                    """).format(sql.Identifier(self.schema)),
+                    (record.task_id, assignment["assignment_id"], event, assignment["provider_id"],
+                     digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
+                     digest("run:" + record.task_id) if event == 2 else None, status,
+                     digest("result:" + record.task_id) if event == 2 else None,
+                     digest("outcome:" + record.task_id) if event == 2 else None,
+                     "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
+            connection.execute(sql.SQL("""
+                INSERT INTO {}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')
+                """).format(sql.Identifier(self.schema)),
+                (record.task_id, base["projection_digest"], "synthetic-delivery-" + record.task_id))
+        receipt_id, created, _ = store.record_primary_slack_status_receipt(
+            source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
+            task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
+            user_id=record.intake.user_id, text_digest=digest("status text"))
+        self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
+        document = store.read_primary_qualification_evidence(record.task_id)
+        document.pop("projection")
+        typed = QualificationEvidenceReadback.model_validate(document)  # strict typed serialization
+        attempts = typed.provider_attempts
+        self.assertEqual([1, 2], [row.event_sequence for row in attempts])
+        self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
+                            and row.assignment_sequence == assignment["sequence"]
+                            and row.attempt_digest == digest("attempt:" + record.task_id)
+                            and row.transport_id == "synthetic-transport" for row in attempts))
+        self.assertEqual(["STARTED", "SUCCEEDED"], [row.status for row in attempts])
+        self.assertEqual(digest("run:" + record.task_id), attempts[1].provider_run_id_digest)
+        self.assertEqual(digest("result:" + record.task_id), attempts[1].result_digest)
+        self.assertEqual([receipt_id], [row.receipt_id for row in typed.status_receipts])
+        self.assertEqual("status-event-" + record.task_id, typed.status_receipts[0].source_event_id)
+        self.assertEqual(["synthetic-delivery-" + record.task_id], [row.client_msg_id for row in typed.slack_deliveries])
+        self.assertEqual([], typed.effects)  # no generic external-effect reservation was recorded
+        self.assertTrue(typed.complete)
+        # Rows are pinned to the task: another task sees none of them.
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-populated-other"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        foreign = store.read_primary_qualification_evidence(other.task_id)
+        self.assertEqual(([], [], []), (foreign["provider_attempts"], foreign["status_receipts"], foreign["slack_deliveries"]))
 
     def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
         import psycopg
@@ -3349,3 +3468,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]

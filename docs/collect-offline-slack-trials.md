@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | BEGIN]] -->
@@ -110,26 +111,43 @@ independently attest historical signed approval scope.
 
 ## Qualification evidence chain
 
-Each trial row carries a `qualification_evidence` object derived only from the
-observed sources. `chain` links `source_event_id_sha256 → task_id →
-assignment_ids → attempt_ids → effect_ids → provider_result_digests → Slack
-delivery timestamp → Slack readback state`, using the exposed task record and
-delivery receipts; lists are empty when the projection exposes nothing.
-`timestamps` keeps the request (`request_ts`), delivery (`delivery_at`, the
-Slack acknowledgement) and readback (`readback_at`) edges distinct; provider
-first-byte, completion and validation times are `null` (UNKNOWN) because the
-exposed projections do not carry them. `lineage` reports recorded attempt,
-attempt-history and contact-attempt counts and leaves transport/fallback
-UNKNOWN. `effect_state` is `ZERO_PROVIDER_EFFECT`, `PROVIDER_EFFECT_RECORDED`,
-`AMBIGUOUS_DELIVERY_EFFECT` or `null` when the attempt lists are not exposed.
-`usage.actual_cost_usd` is recorded only when the task record reports a finite
-non-negative number; otherwise `cost_basis` is `UNKNOWN`, which is never zero.
-`status_receipts` counts are `null` under the explicit Issue #230 dependency
-(`issue-230-status-receipt-interface-not-accepted`); `allocation.rolling_twenty`
-is `UNKNOWN`. `revision_binding` records the read-time runtime head, image ID
-and a configuration digest computed over configuration *names* plus public
-booleans, never values. This block adds evidence; it changes no rubric check
-and cannot turn `EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
+The collector requests each task with the read-only opt-in
+`GET /v1/tasks/{id}?include_qualification_evidence=true` (the only permitted
+API query). The typed `qualification_evidence` in that response is one bounded
+`REPEATABLE READ` / `READ ONLY` snapshot of the persisted primary tables; the
+ordinary task record and its digests are unchanged. Each trial row carries a
+derived `qualification_evidence` object: `readback.state` is `collected`,
+`incomplete` (truncated sections are named), `rejected` (task/schema mismatch,
+duplicate attempt/assignment/effect/delivery/receipt identities, or attempts
+that do not join a listed assignment) or `absent` (no opt-in response), with
+the reason. Identity families stay distinct in `chain`: `assignment_ids` and
+`assignment_sequences` (AssignmentOutcome carries a sequence, not an ID),
+`attempt_ids` (primary attempt digests, never external run IDs),
+`effect_ids` (external-effect `effect_key_digest`), `delivery_ids` (Slack
+`client_msg_id`), `status_receipt_ids` and settled `provider_result_digests`.
+`timestamps` keeps request, completion (latest settled attempt row),
+delivery (Slack acknowledgement) and readback distinct and lists every
+unproduced edge with its reason under `unknown_reasons`; first-byte and
+validation times have no producer. `lineage` reports provider routes,
+transports and the attempt-ordinal count from real attempt rows and derives
+`fallback_observed` from ordinals/providers per assignment.
+`provider_effect_state` (`ZERO_PROVIDER_ATTEMPT`, `…STARTED_UNSETTLED`,
+`…AMBIGUOUS`, `PROVIDER_RESULT_RECORDED`) and `external_effect_state`
+(reservation, bound-unconfirmed, ambiguous or terminal disposition) are kept
+apart from the coarse `effect_state` the scorecard consumes; a nonempty
+run/contact/history list is never effect evidence. `usage.cost_basis` is
+`authenticated_usage_table` (summed `actual_microusd`, with the reserved
+budget reported separately), `provider_reported` (finite non-negative task
+value; `inf`, `nan`, negatives and booleans are rejected) or `UNKNOWN`.
+`status_receipts.deduplicated_receipts` counts durable receipt rows; the
+tasks/assignments/attempts created by status mentions stay `null` because a
+lone after-state cannot measure a delta (`issue-230-receipts-collected;
+zero-work-delta-requires-prospective-baseline`). `revision_binding` is a
+read-time identity whose `configuration_digest` covers configuration *names*
+and public flags only (`configuration_scope`), so identical names with
+different values collide; `execution_time_binding` stays `UNKNOWN`. This
+block adds evidence; it changes no rubric check and cannot turn
+`EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
 
 ## Record one row and stop on failure
 
@@ -221,3 +239,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]] -->
