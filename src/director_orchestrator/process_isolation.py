@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -7,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import signal
 import subprocess
 from ctypes import wintypes
 from pathlib import Path
@@ -248,3 +251,96 @@ def _resume_only_thread(process_id: int) -> None:
         raise ProcessContainmentError("Windows primary thread resume was ambiguous")
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+
+
+def stop_contained_process(
+    process: subprocess.Popen[bytes],
+    guard: ProcessTreeGuard,
+    *,
+    grace_seconds: float = 5.0,
+) -> dict[str, Any]:
+    """End the owned tree, reap the child, release the guard, then close streams.
+
+    Bounded by its own short grace period rather than by whatever cutoff the
+    caller was working under, because cleanup must still run once that
+    cutoff has passed. The order is deliberate: the tree is ended first, the
+    immediate child is killed if still running and reaped within the grace
+    period, the guard - the Job handle that is this side's ownership token
+    on Windows - is released, and only then are the child's remaining
+    streams closed. Every step is attempted even when an earlier one
+    reported a failure, so a termination that fails still reaches the guard
+    release, and nothing waits on a stream before ownership is released.
+    On Windows the Job Object ends every descendant, detached ones included.
+    On POSIX the child was started as the leader of a new session, so its
+    whole process group is signalled; a descendant that called `setsid()`
+    itself has left that group and is *not* reached - that limit is real and
+    no protection against it is claimed here. Nor is any hard real-time
+    bound claimed for the operating system's launch, filesystem or stream
+    close operations themselves; the grace period bounds the wait for the
+    child.
+
+    Returns what was observed. It raises `ProcessContainmentError`, carrying
+    every failure and those observations, when the immediate child is still
+    alive after the grace period or the Job could not be terminated or
+    closed: a caller must never accept a result over an unverified cleanup.
+    """
+
+    observed: dict[str, Any] = {
+        "platform": os.name, "tree_terminated": False, "child_stopped": False,
+        "guard_closed": False, "pipes_closed": False, "returncode": None,
+    }
+    failures: list[str] = []
+    # 1. The owned tree.
+    if guard.active:
+        try:
+            guard.terminate()
+            observed["tree_terminated"] = True
+        except ProcessContainmentError as exc:
+            failures.append(str(exc))
+    elif os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            observed["tree_terminated"] = True
+        except ProcessLookupError:
+            # The group is already empty: leader and members are gone.
+            observed["tree_terminated"] = True
+        except OSError as exc:
+            failures.append("process group signal failed: " + str(exc))
+    # 2. The immediate child, reaped within the grace period.
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError as exc:
+            failures.append("child kill failed: " + str(exc))
+    try:
+        process.wait(timeout=grace_seconds)
+        observed["child_stopped"] = True
+    except subprocess.TimeoutExpired:
+        failures.append(f"child still running after {grace_seconds} seconds")
+    except OSError as exc:
+        failures.append("child wait failed: " + str(exc))
+    observed["returncode"] = process.returncode
+    # 3. Ownership released before any stream is touched.
+    try:
+        guard.close()
+        observed["guard_closed"] = True
+    except ProcessContainmentError as exc:
+        failures.append(str(exc))
+    # 4. Whatever streams this side still holds.
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            try:
+                stream.close()
+            except OSError as exc:
+                failures.append("pipe close failed: " + str(exc))
+    observed["pipes_closed"] = all(
+        stream is None or stream.closed
+        for stream in (process.stdin, process.stdout, process.stderr)
+    )
+    if failures:
+        raise ProcessContainmentError(
+            "process cleanup unverified: " + "; ".join(failures) + f"; observed={observed!r}"
+        )
+    return observed
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]

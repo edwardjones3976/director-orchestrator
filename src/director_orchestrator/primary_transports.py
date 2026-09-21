@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -39,6 +41,7 @@ authentication probes are both true.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -59,6 +62,7 @@ from .host_provider_bridge import (
     HostBridgePacketTransport,
     SUPPORTED_HOST_LANES,
 )
+from .process_isolation import launch_contained_process, stop_contained_process
 
 from .langgraph_runtime import (
     PacketBoundaryAdapter,
@@ -262,6 +266,132 @@ class PrimaryProviderCapability:
                 raise ValueError("Copilot capability lanes cannot receive production authority")
 
 
+def _command_cutoff(
+    context: ProviderAdapterContext, maximum_timeout_seconds: int, what: str
+) -> float:
+    """One finite absolute cutoff for a whole command dispatch, fixed at entry.
+
+    The permitted relative ceiling is the smaller of the context's own timeout
+    and this transport's configured maximum; the carried assignment deadline,
+    when one exists, can only narrow it. Every later step - building the
+    prompt, writing a prompt file, spawning, and the wait itself - is charged
+    against this one instant, so none of them can hand the child a fresh full
+    window after a delayed start. A carried bound that is not a finite number
+    is refused rather than ignored, and one already spent refuses before
+    anything is prepared.
+    """
+
+    try:
+        ceiling = min(float(context.timeout_seconds), float(maximum_timeout_seconds))
+    except (TypeError, ValueError):
+        raise RuntimeError(what + " timeout is invalid") from None
+    if not math.isfinite(ceiling) or ceiling < 1:
+        raise RuntimeError(what + " timeout is exhausted")
+    now = monotonic()
+    cutoff = now + ceiling
+    carried = getattr(context, "deadline", None)
+    if carried is not None:
+        if (isinstance(carried, bool) or not isinstance(carried, (int, float))
+                or not math.isfinite(carried)):
+            raise RuntimeError(what + " carried deadline is invalid")
+        if carried - now <= 0:
+            raise RuntimeError(what + " timeout is exhausted")
+        cutoff = min(cutoff, float(carried))
+    return cutoff
+
+
+def _remaining_before(cutoff: float, what: str) -> float:
+    """What is left of `cutoff` at this instant; a cutoff that is not a finite
+    number, or a remainder that is not, is refused rather than used."""
+
+    if (isinstance(cutoff, bool) or not isinstance(cutoff, (int, float))
+            or not math.isfinite(cutoff)):
+        raise RuntimeError(what + " cutoff is invalid")
+    remaining = cutoff - monotonic()
+    if not math.isfinite(remaining):
+        raise RuntimeError(what + " cutoff remainder is invalid")
+    return remaining
+
+
+def _run_bounded_command(
+    argv: Sequence[str], *, cwd: Path, environment: Mapping[str, str],
+    input_bytes: bytes | None, cutoff: float, what: str,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one exact argv once, inside `cutoff`, owning its whole process tree.
+
+    The shared boundary for every ordinary command transport. The prepared
+    input, when there is one, is written to a binary temporary file and
+    rewound before the launch, so the child reads exactly those bytes from
+    stdin through EOF without this side holding a pipe open to it; empty
+    bytes are still a file (an immediate EOF), while no input at all is
+    `DEVNULL`, and nothing is ever handed to `communicate` a second time. The
+    file is this helper's to close, on return, refusal and launch failure
+    alike.
+
+    One finite absolute cutoff governs everything. What is left of it is
+    checked three times: after preparation, immediately before the launch -
+    preparation that consumed it launches nothing; after the launch, before
+    any wait - a launch that consumed it is ended and reported ambiguous
+    without entering a wait; and after the child returns, before its output
+    is accepted - a return after the cutoff, real or synthetic, is not a
+    successful attempt. The wait itself is given only the remainder at that
+    moment, never the caller's original duration, and no value is clamped
+    into a longer or fresh window. The child is launched through
+    `launch_contained_process`: a kill-on-close Job Object on Windows, a new
+    session on POSIX. On every exit from here `stop_contained_process` ends
+    whatever the tree still holds under its own short bound, and its refusal
+    is propagated, never swallowed into a result. A cutoff reached after the
+    launch is an ambiguous outcome: the command ran, so it is neither retried
+    here nor reported as unsubmitted.
+    """
+
+    stdin_source = None
+    try:
+        if input_bytes is not None:
+            stdin_source = tempfile.TemporaryFile()
+            stdin_source.write(input_bytes)
+            stdin_source.flush()
+            stdin_source.seek(0)
+        if _remaining_before(cutoff, what) <= 0:
+            raise RuntimeError(what + " timeout is exhausted before launch")
+        process, guard = launch_contained_process(
+            tuple(argv), cwd=cwd, env=environment,
+            stdin=stdin_source if stdin_source is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
+        )
+        cleaned = False
+        try:
+            remaining = _remaining_before(cutoff, what)
+            if remaining <= 0:
+                cleaned = True
+                stop_contained_process(process, guard)
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the launch consumed the cutoff")
+            try:
+                stdout, stderr = process.communicate(timeout=remaining)
+            except subprocess.TimeoutExpired as exc:
+                cleaned = True
+                stop_contained_process(process, guard)
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the cutoff passed after launch") from exc
+            cleaned = True
+            # The immediate child exited; anything it left behind in its tree
+            # is ended here, and a cleanup that cannot be verified refuses the
+            # result.
+            stop_contained_process(process, guard)
+            if _remaining_before(cutoff, what) <= 0:
+                raise RuntimeError(
+                    what + " outcome is ambiguous: the command returned after the cutoff")
+            return subprocess.CompletedProcess(
+                tuple(argv), process.returncode, stdout, stderr)
+        finally:
+            if not cleaned:
+                stop_contained_process(process, guard)
+    finally:
+        if stdin_source is not None:
+            stdin_source.close()
+
+
 class BoundedJsonCommandTransport:
     """Run one approved packet-aware command once, without a shell or retry.
 
@@ -300,19 +430,10 @@ class BoundedJsonCommandTransport:
     ) -> Mapping[str, object]:
         if context.fencing_generation < 1:
             raise RuntimeError("command transport lacks primary writer fencing")
-        timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
-        if timeout < 1:
-            raise RuntimeError("command transport timeout is exhausted")
-        completed = subprocess.run(
-            self.command,
-            cwd=self.cwd,
-            env=self.environment,
-            input=work_packet_json,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            check=False,
-            timeout=timeout,
+        cutoff = _command_cutoff(context, self.maximum_timeout_seconds, "command transport")
+        completed = _run_bounded_command(
+            self.command, cwd=self.cwd, environment=self.environment,
+            input_bytes=work_packet_json, cutoff=cutoff, what="command transport",
         )
         if completed.returncode != 0:
             raise RuntimeError("packet adapter command outcome is ambiguous")
@@ -728,11 +849,10 @@ class PublicSearchCommandTransport:
     ) -> Mapping[str, object]:
         if context.fencing_generation < 1:
             raise RuntimeError("public search transport lacks primary writer fencing")
+        cutoff = _command_cutoff(
+            context, self.maximum_timeout_seconds, "public search transport")
         work = json.loads(work_packet_json)
         query = _public_query(work)
-        timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
-        if timeout < 1:
-            raise RuntimeError("public search transport timeout is exhausted")
         if self.provider_id == "perplexity":
             argv = (*self.command_prefix, "search", "web", query, "--limit",
                 str(self.maximum_results), "--intent",
@@ -743,18 +863,11 @@ class PublicSearchCommandTransport:
                 str(self.maximum_results), "--no-highlights", "--json",
             )
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=self.cwd,
-                env=self.environment,
-                input=None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                check=False,
-                timeout=timeout,
+            completed = _run_bounded_command(
+                argv, cwd=self.cwd, environment=self.environment, input_bytes=None,
+                cutoff=cutoff, what="public search transport",
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except OSError as exc:
             raise RuntimeError("public search provider outcome is ambiguous") from exc
         if completed.returncode != 0:
             raise RuntimeError("public search provider outcome is ambiguous")
@@ -1052,7 +1165,9 @@ class NativeCommandPacketTransport:
     ) -> Mapping[str, object]:
         if context.fencing_generation < 1:
             raise RuntimeError("native transport lacks primary writer fencing")
-        timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
+        # Fixed before the prompt exists: the prompt document, a prompt file
+        # and the spawn are all charged to it.
+        cutoff = _command_cutoff(context, self.maximum_timeout_seconds, "native transport")
         if self.payload_mode == "antigravity-closed-directive":
             # The Antigravity lane never receives the work packet. It receives a
             # freshly built closed document holding the bound directive and the
@@ -1095,11 +1210,9 @@ class NativeCommandPacketTransport:
             argv.extend(("--prompt-file", temporary_path))
             input_bytes = None
         try:
-            completed = subprocess.run(
-                tuple(argv), cwd=self.cwd, input=input_bytes,
-                env=self.environment,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False,
-                check=False, timeout=timeout,
+            completed = _run_bounded_command(
+                argv, cwd=self.cwd, environment=self.environment,
+                input_bytes=input_bytes, cutoff=cutoff, what="native transport",
             )
         finally:
             if temporary_path is not None:
@@ -1544,3 +1657,5 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]

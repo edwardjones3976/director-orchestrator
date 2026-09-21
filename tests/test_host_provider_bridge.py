@@ -1,3 +1,4 @@
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -28,6 +29,7 @@ from director_orchestrator.primary_transports import (
     antigravity_closed_payload,
     normalize_native_provider_envelope,
 )
+from director_orchestrator.primary_paid_preflight import PlannedProviderAttempt
 from director_orchestrator.host_provider_bridge import (
     BRIDGE_PROTOCOL,
     BridgeClaimStore,
@@ -514,6 +516,67 @@ class HostProviderBridgeTests(unittest.TestCase):
                         result_normalizer=normalizer,
                     )
 
+    def test_preflight_refuses_a_carried_deadline_without_bridge_io(self) -> None:
+        endpoint = "http://127.0.0.1:18765/v1/provider/dispatch"
+        transport = HostBridgePacketTransport(
+            "claude",
+            endpoint,
+            SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+        )
+        packet = json.dumps(
+            {"task_id": "task-1", "assignment_id": "assignment-1", "idempotency_key": "k"},
+            separators=(",", ":"),
+        ).encode()
+        context = PlannedProviderAttempt(
+            task_id="task-1",
+            assignment_id="assignment-1",
+            idempotency_key="attempt",
+            work_packet_digest="sha256:" + "a" * 64,
+            writer_token_digest="sha256:" + "b" * 64,
+            fencing_generation=7,
+            timeout_seconds=30,
+            budget_usd=1.0,
+            total_token_limit=1000,
+            max_hops=1,
+            max_revisions=1,
+            allowed_tools=(),
+            allowed_external_effects=(),
+            deadline=1.0,
+        )
+        expired = replace(context, deadline=0.0)
+        opener = MagicMock()
+        with patch(
+            "director_orchestrator.host_provider_bridge.urllib.request.build_opener",
+            return_value=opener,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "unsupported-host-bridge-deadline"
+            ):
+                transport.preflight(packet, context=context)
+            with self.assertRaisesRegex(
+                RuntimeError, "unsupported-host-bridge-deadline"
+            ):
+                transport.preflight(packet, context=expired)
+        opener.open.assert_not_called()
+
+    def test_preflight_keeps_legacy_no_deadline_context_compatible(self) -> None:
+        endpoint = "http://127.0.0.1:18765/v1/provider/dispatch"
+        transport = HostBridgePacketTransport(
+            "claude",
+            endpoint,
+            SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+        )
+        packet = json.dumps(
+            {"task_id": "task-1", "assignment_id": "assignment-1", "idempotency_key": "k"},
+            separators=(",", ":"),
+        ).encode()
+        transport.preflight(
+            packet,
+            context=SimpleNamespace(timeout_seconds=30, fencing_generation=7),
+        )
+
     def test_client_requires_encryption_off_loopback_and_disables_redirects(self) -> None:
         valid = "https://host.docker.internal:18765/v1/provider/dispatch"
         transport = HostBridgePacketTransport(
@@ -682,3 +745,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
