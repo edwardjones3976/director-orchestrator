@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]] -->
@@ -814,3 +815,5 @@ by the client runtime and cover `host.docker.internal`.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
