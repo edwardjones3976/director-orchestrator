@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
@@ -2772,6 +2773,41 @@ class PostgresConditionalClaimStore:
                         WHERE task_id = %(task_id)s
                         ORDER BY created_at, receipt_id LIMIT %(limit)s
                         """)
+                    # Task-and-thread-local counters for prospective status-only
+                    # proof, from the same snapshot and deadline. They are not
+                    # a global work count: thread_tasks counts tasks bound to
+                    # this task's Slack thread; the rest are this task's rows.
+                    require_deadline_remaining(deadline, "qualification readback counters")
+                    raw_projection = head["projection"]
+                    projection_value = (json.loads(raw_projection) if isinstance(raw_projection, str)
+                                        else dict(raw_projection))
+                    intake_binding = (projection_value.get("application", {}) or {}).get("task_record", {}) or {}
+                    intake_binding = intake_binding.get("intake", {}) or {}
+                    cursor.execute(
+                        f"""
+                        SELECT transaction_timestamp() AS captured_at,
+                            (SELECT count(*) FROM {schema}.director_primary_task_projection t
+                             WHERE t.projection->'application'->'task_record'->'intake'->>'channel_id'
+                                   = %(channel_id)s
+                               AND t.projection->'application'->'task_record'->'intake'->>'thread_ts'
+                                   = %(thread_ts)s) AS thread_tasks,
+                            (SELECT count(*) FROM {schema}.director_primary_parallel_assignment
+                             WHERE task_id = %(task_id)s) AS assignments,
+                            (SELECT count(*) FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s) AS provider_attempts,
+                            (SELECT count(*) FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s AND status = 'STARTED') AS started_attempts,
+                            (SELECT count(*) FROM {schema}.director_primary_slack_status_receipt
+                             WHERE task_id = %(task_id)s) AS status_receipts,
+                            (SELECT count(*) FROM {schema}.director_primary_effect_reservation
+                             WHERE task_id = %(task_id)s) AS effect_reservations
+                        """,
+                        {"task_id": task_id,
+                         "channel_id": intake_binding.get("channel_id"),
+                         "thread_ts": intake_binding.get("thread_ts")},
+                    )
+                    counters = dict(cursor.fetchone())
+                    captured_at = counters.pop("captured_at")
                     cursor.execute(
                         "SELECT to_regclass(%(spend)s) AS spend, to_regclass(%(usage)s) AS usage",
                         {"spend": f"{schema}.director_primary_provider_spend",
@@ -2807,6 +2843,8 @@ class PostgresConditionalClaimStore:
             "terminal_reason_code": head["reason_code"],
             "task_created_at": head["created_at"],
             "task_updated_at": head["updated_at"],
+            "captured_at": captured_at,
+            "task_scope_counters": {key: int(value) for key, value in counters.items()},
             "snapshot": {"isolation": "REPEATABLE READ", "read_only": True,
                          "single_transaction": True, "covers_task_record": True},
             "bounds": {"row_limit": row_limit, "byte_limit": byte_limit,
@@ -5827,3 +5865,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

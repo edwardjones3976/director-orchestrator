@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# Additive prospective baseline/after collector composition test only.
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # Additive status-receipt correlation / zero-work test only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | BEGIN]]
@@ -267,6 +269,63 @@ class StatusReceiptPostgresTests(unittest.TestCase):
         # The readback did not touch the ordinary record or its persisted digest.
         self.assertNotIn("qualification_evidence", plain.json())
         self.assertEqual(plain.headers["X-Primary-Projection-Digest"], readback.headers["X-Primary-Projection-Digest"])
+
+    def test_prospective_baseline_and_after_readback_prove_zero_work_through_the_collector(self) -> None:
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "offline_slack_trial_collector_status",
+            Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        auth = {"Authorization": f"Bearer {self.settings.shared_secret}"}
+        query = {"include_qualification_evidence": "true"}
+        with self.open_api() as api:
+            before = api.get(f"/v1/tasks/{self.task.task_id}", headers=auth, params=query)
+            self.assertEqual(200, before.status_code, before.text)
+            baseline = before.json()["qualification_evidence"]
+            receipt = self.receipt()
+            first = api.post("/v1/status-receipts", headers=self.headers(receipt), json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, first.status_code, first.text)
+            replay = api.post("/v1/status-receipts", headers=self.headers(receipt), json=receipt.model_dump(mode="json"))
+            self.assertTrue(replay.json()["deduplicated"])
+            after = api.get(f"/v1/tasks/{self.task.task_id}", headers=auth, params=query)
+            self.assertEqual(200, after.status_code, after.text)
+        receipt_id = first.json()["receipt_id"]
+        # Actual after-GET JSON and the actual baseline through the collector.
+        row = collector.summarize(
+            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", baseline=baseline, receipt_id=receipt_id)
+        evidence = row["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"])
+        status = evidence["status_receipts"]
+        self.assertTrue(status["baseline"]["proof"], status["baseline"])
+        self.assertEqual((0, 0, 0, 1), (status["tasks_created"], status["assignments_created"],
+                                        status["provider_attempts_created"], status["deduplicated_receipts"]))
+        self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
+        self.assertLess(status["baseline"]["baseline_captured_at"], status["baseline"]["receipt_created_at"])
+        # The same after-GET without a baseline stays UNKNOWN; a baseline captured
+        # after the receipt (the after-GET itself) is refused.
+        self.assertIsNone(collector.summarize(
+            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT")["qualification_evidence"]["status_receipts"]["tasks_created"])
+        late = collector.summarize(
+            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT",
+            baseline=after.json()["qualification_evidence"], receipt_id=receipt_id)
+        self.assertIsNone(late["qualification_evidence"]["status_receipts"]["baseline"]["proof"])
+        collector.validate_observations({"schema": "director-slack-trial-observations/v1",
+            "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
+            "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
+                "runtime_head": "b" * 40, "started_at": None, "offline_configured": True, "paid_configured": False},
+            "collection_runtime_after": None, "runtime_collection_binding_stable": None,
+            "runtime_health_at_collection": {"paid_runs_enabled": None, "ambiguous_effect_count": None,
+                "reconciliation_hold_reason": None, "primary_runtime_active": None},
+            "collector_sha256": None, "read_only": True, "slack_writes": 0, "provider_dispatches": 0,
+            "scorecard_mutations": 0, "qualified_run_count": None, "ten_consecutive_runs_verified": False,
+            "native_source_reads": [], "trials": [{**row, "input_rubric_sha256": None,
+                "rubric_evaluation": collector.evaluate_rubric(row, {"declared_at": "2020-01-01T00:00:00+00:00"}, "0" * 64),
+                "source_errors": [], "runtime_collection_binding_stable": None}], "limitations": []})
 
     def test_replay_preserves_original_created_at_with_new_client_timestamp(self) -> None:
         receipt = self.receipt(
@@ -976,3 +1035,4 @@ if __name__ == "__main__":
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

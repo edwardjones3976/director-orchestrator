@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
@@ -87,6 +88,9 @@ def readback_fixture():
         "execution_mode": "offline_simulation", "terminal_classification": "SUCCEEDED",
         "terminal_reason_code": "effect_readback_verified", "task_created_at": "2026-09-12T10:00:00+00:00",
         "task_updated_at": "2026-09-12T10:00:31+00:00",
+        "captured_at": "2026-09-12T10:00:45+00:00",
+        "task_scope_counters": {"thread_tasks": 1, "assignments": 1, "provider_attempts": 2, "started_attempts": 1,
+                                "status_receipts": 1, "effect_reservations": 1},
         "snapshot": {"isolation": "REPEATABLE READ", "read_only": True, "single_transaction": True,
                      "covers_task_record": True},
         "bounds": {"row_limit": 200, "byte_limit": 262144, "wall_seconds": 5.0, "elapsed_seconds": 0.01},
@@ -161,9 +165,9 @@ class SummaryTests(unittest.TestCase):
     def setUp(self):
         self.task, self.deliveries, self.messages, self.headers = sample()
 
-    def summarize(self, *, complete=True):
+    def summarize(self, *, complete=True, **options):
         return collector_module.summarize(THREAD, TASK_ID, self.task, self.deliveries,
-            self.messages, complete, OWNER, BOT, self.headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"])
+            self.messages, complete, OWNER, BOT, self.headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"], **options)
 
     def test_binds_actual_owner_source_message_and_observed_final(self):
         report = self.summarize()
@@ -427,20 +431,30 @@ class SummaryTests(unittest.TestCase):
                 self.assertEqual(usage["cost_basis"], "provider_reported" if expected is not None else "UNKNOWN")
         self.assertIsNone(self.summarize()["actual_cost_usd"])  # the older scorecard field stays unmeasured
 
-    def test_revision_binding_digests_environment_names_only(self):
+    def test_revision_binding_digests_safe_effective_values_and_excludes_secrets(self):
         runtime = {"container_id": "c", "image_id": "sha256:" + "d" * 64, "runtime_head": "e" * 40,
                    "started_at": None, "offline_configured": True, "paid_configured": False}
-        binding = collector_module.revision_binding(runtime, ENV)
+        safe = {**ENV, "ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "true"}
+        binding = collector_module.revision_binding(runtime, safe)
         self.assertEqual(binding["runtime_head"], "e" * 40)
-        self.assertEqual(binding["image_id"], "sha256:" + "d" * 64)
         self.assertNotIn("container_id", binding)
+        self.assertEqual(["ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], binding["configuration_keys"])
+        self.assertEqual("read-time-safe-effective-values", binding["configuration_scope"])
+        self.assertEqual("UNKNOWN", binding["execution_time_binding"])
         serialized = json.dumps(binding)
         for value in ENV.values():
             self.assertNotIn(value, serialized)
-        same_names = collector_module.revision_binding(runtime, {key: "other" for key in ENV})
-        self.assertEqual(binding["configuration_digest"], same_names["configuration_digest"])
-        more_names = collector_module.revision_binding(runtime, {**ENV, "NEW_SWITCH": "x"})
-        self.assertNotEqual(binding["configuration_digest"], more_names["configuration_digest"])
+        self.assertNotIn("false", serialized.replace('"paid_configured": false', ""))  # values digested, not emitted
+        # A safe value change changes the binding; secret/unknown value changes do not.
+        drifted = collector_module.revision_binding(runtime, {**safe, "ALLOW_PAID_RUNS": "true"})
+        self.assertNotEqual(binding["configuration_digest"], drifted["configuration_digest"])
+        secret_changed = collector_module.revision_binding(runtime, {**safe, "SLACK_BOT_TOKEN": "rotated-secret"})
+        self.assertEqual(binding["configuration_digest"], secret_changed["configuration_digest"])
+        unknown_added = collector_module.revision_binding(runtime, {**safe, "NEW_UNLISTED_SWITCH": "x"})
+        self.assertEqual(binding["configuration_digest"], unknown_added["configuration_digest"])
+        for bad in ({"ALLOW_PAID_RUNS": "yes please\n"}, {"ALLOW_PAID_RUNS": True}, {"DIRECTOR_ALLOCATION_PROFILE": "x" * 200}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                collector_module.revision_binding(runtime, {**safe, **bad})
         schema = json.loads((COLLECTOR_PATH.parents[1] / "docs/schemas/director-slack-trial-observations-v1.schema.json").read_bytes())
         receipt = receipt_fixture()
         receipt["trials"][0]["qualification_evidence"]["revision_binding"] = binding
@@ -448,6 +462,143 @@ class SummaryTests(unittest.TestCase):
         receipt["trials"][0]["qualification_evidence"]["allocation"]["rolling_twenty"] = "PASS"
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(receipt, schema)
+
+    def test_confirmed_probe_defects_are_refused(self):
+        def rejected(mutate, reason_fragment):
+            readback = readback_fixture()
+            mutate(readback)
+            self.task["qualification_evidence"] = readback
+            evidence = self.summarize()["qualification_evidence"]
+            self.assertEqual("rejected", evidence["readback"]["state"], evidence["readback"]["reason"])
+            self.assertIn(reason_fragment, evidence["readback"]["reason"])
+            self.assertEqual(([], [], "UNKNOWN", None, None), (
+                evidence["chain"]["attempt_ids"], evidence["chain"]["effect_ids"], evidence["usage"]["cost_basis"],
+                evidence["provider_effect_state"], evidence["effect_state"]))
+        # 1. attempt provider differs from its assignment
+        rejected(lambda r: r["provider_attempts"][1].update(provider_id="openai"), "disagrees with its assignment")
+        # 2. digest changes between STARTED and terminal events of one attempt
+        rejected(lambda r: r["provider_attempts"][1].update(attempt_digest="sha256:" + "f" * 64), "identity changed")
+        # 3a. usage naming an unjoined digest / another provider
+        rejected(lambda r: r["provider_usage"][0].update(attempt_digest="sha256:" + "e" * 64), "usage is orphaned")
+        rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "usage is orphaned")
+        # 3b. duplicate usage rows must not double the cost
+        rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "usage is orphaned")
+        # bool-as-number and negative amounts
+        rejected(lambda r: r["provider_usage"][0].update(actual_microusd=True), "non-integer")
+        rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1), "non-integer")
+        # malformed identities, sequences and statuses
+        rejected(lambda r: r["provider_attempts"][1].update(event_sequence=7), "malformed attempt event")
+        rejected(lambda r: r["provider_attempts"][1].update(status="DONE"), "malformed attempt event")
+        rejected(lambda r: r["assignments"][0].update(assignment_id=""), "malformed or duplicate assignment")
+        rejected(lambda r: r["provider_attempts"][1].update(assignment_sequence=2), "disagrees with its assignment")
+        # 4. a digest reused by a second attempt ordinal
+        def reuse(r):
+            r["provider_attempts"].append({**r["provider_attempts"][0], "attempt_ordinal": 2})
+        rejected(reuse, "reused by another attempt")
+
+    def test_every_effect_and_latest_valid_event_drive_the_aggregate(self):
+        # 4. a completed effect cannot hide a different unbound execution
+        readback = readback_fixture()
+        readback["effects"].append({**readback["effects"][0], "reservation_key": "sha256:" + "d" * 64,
+                                    "effect_key_digest": "sha256:" + "b" * 64, "remote_system": None,
+                                    "remote_identifier": None, "bound_at": None, "terminal_disposition": None,
+                                    "terminal_evidence_digest": None, "terminal_recorded_at": None})
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("EXTERNAL_EFFECT_AMBIGUOUS", evidence["external_effect_state"])
+        self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
+        # 5. an AMBIGUOUS event 2 is superseded by an authenticated SUCCEEDED event 3
+        readback = readback_fixture()
+        readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None, outcome_evidence_digest=None,
+                                                provider_run_id_digest=None, reason_code="callback_timeout",
+                                                recorded_at="2026-09-12T10:00:20+00:00")
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("PROVIDER_ATTEMPT_AMBIGUOUS", evidence["provider_effect_state"])
+        self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
+        readback["provider_attempts"].append({**readback_fixture()["provider_attempts"][1], "event_sequence": 3,
+                                              "reason_code": "authenticated_callback_settled",
+                                              "recorded_at": "2026-09-12T10:00:26+00:00"})
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
+        self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
+        self.assertEqual("2026-09-12T10:00:26+00:00", evidence["timestamps"]["completion_at"])
+        self.assertEqual(1, evidence["lineage"]["recorded_attempt_count"])
+        # a mixed reserved + terminal set is reported as mixed, not as plainly terminal
+        readback = readback_fixture()
+        readback["effects"].append({**readback["effects"][0], "reservation_key": "sha256:" + "d" * 64,
+                                    "effect_key_digest": "sha256:" + "b" * 64, "execution_started_at": None,
+                                    "remote_system": None, "remote_identifier": None, "bound_at": None,
+                                    "terminal_disposition": None, "terminal_evidence_digest": None,
+                                    "terminal_recorded_at": None})
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:COMPLETED", evidence["external_effect_state"])
+        # retry (second ordinal, same provider) is not reported as a fallback
+        readback = readback_fixture()
+        second = [{**e, "attempt_ordinal": 2, "attempt_digest": "sha256:" + "a" * 64,
+                   "idempotency_key_digest": "sha256:" + "c" * 64} for e in readback["provider_attempts"]]
+        readback["provider_attempts"].extend(second)
+        readback["provider_usage"] = []
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertTrue(evidence["lineage"]["retry_observed"])
+        self.assertFalse(evidence["lineage"]["fallback_observed"])
+        self.assertEqual(2, evidence["lineage"]["recorded_attempt_count"])
+
+    def test_incomplete_readback_emits_partial_diagnostics_but_no_derived_claims(self):
+        readback = readback_fixture()
+        readback.update(complete=False, truncated=["provider_attempts"])
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("incomplete", evidence["readback"]["state"])
+        self.assertEqual({"row_counts": {"assignments": 1, "provider_attempts": 2, "effects": 1,
+                                         "reconciliation_events": 0, "slack_deliveries": 1, "status_receipts": 1,
+                                         "provider_usage": 1}, "not_proof": True},
+                         evidence["readback"]["partial_diagnostics"])
+        self.assertEqual(([], [], [], []), (evidence["chain"]["attempt_ids"], evidence["chain"]["effect_ids"],
+                                            evidence["chain"]["delivery_ids"], evidence["chain"]["status_receipt_ids"]))
+        self.assertEqual("UNKNOWN", evidence["usage"]["cost_basis"])
+        self.assertIsNone(evidence["usage"]["actual_cost_usd"])
+        self.assertIsNone(evidence["provider_effect_state"])
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
+        collector_module.validate_observations({**receipt_fixture(), "trials": [
+            {**structural_trial(), "qualification_evidence": evidence}]})
+
+    def test_prospective_status_delta_requires_ordered_compatible_complete_readbacks(self):
+        after = readback_fixture()
+        before = {**readback_fixture(), "captured_at": "2026-09-12T10:00:35+00:00", "status_receipts": [],
+                  "task_scope_counters": {**readback_fixture()["task_scope_counters"], "status_receipts": 0}}
+        proof = collector_module.status_receipt_delta(before, after, "receipt-1")
+        self.assertTrue(proof["proof"])
+        self.assertEqual((0, 0, 0, 1), (proof["tasks_created"], proof["assignments_created"],
+                                        proof["provider_attempts_created"], proof["deduplicated_receipts"]))
+        for label, mutate in (("baseline after receipt", lambda b, a: b.update(captured_at="2026-09-12T10:00:50+00:00")),
+                              ("foreign task", lambda b, a: b.update(task_id="DIR-LG-CD34")),
+                              ("truncated after", lambda b, a: a.update(complete=False)),
+                              ("negative delta", lambda b, a: b["task_scope_counters"].update(assignments=5)),
+                              ("receipt missing after", lambda b, a: a.update(status_receipts=[])),
+                              ("receipt already in baseline", lambda b, a: b.update(status_receipts=a["status_receipts"])),
+                              ("two receipts", lambda b, a: a["task_scope_counters"].update(status_receipts=2)),
+                              ("counters not integers", lambda b, a: a["task_scope_counters"].update(assignments=True)),
+                              ("newer baseline", lambda b, a: b.update(task_updated_at="2026-09-12T11:00:00+00:00"))):
+            with self.subTest(label=label):
+                b, a = {**before, "task_scope_counters": dict(before["task_scope_counters"])}, \
+                       {**after, "task_scope_counters": dict(after["task_scope_counters"])}
+                mutate(b, a)
+                self.assertIsNone(collector_module.status_receipt_delta(b, a, "receipt-1")["proof"])
+        # Through the collector: a task-created attempt cannot be hidden by the thread-local scope.
+        self.task["qualification_evidence"] = after
+        evidence = self.summarize(baseline=before, receipt_id="receipt-1")["qualification_evidence"]["status_receipts"]
+        self.assertEqual((0, 0, 0, 1), (evidence["tasks_created"], evidence["assignments_created"],
+                                        evidence["provider_attempts_created"], evidence["deduplicated_receipts"]))
+        self.assertEqual("task-and-thread-local", evidence["baseline"]["counter_scope"])
+        collector_module.validate_observations({**receipt_fixture(), "trials": [
+            {**structural_trial(), "qualification_evidence": self.summarize(baseline=before, receipt_id="receipt-1")["qualification_evidence"]}]})
+        without = self.summarize()["qualification_evidence"]["status_receipts"]
+        self.assertIsNone(without["tasks_created"])
+        self.assertIsNone(without["baseline"])
 
 
 class CollectorTransportTests(unittest.TestCase):
@@ -964,3 +1115,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

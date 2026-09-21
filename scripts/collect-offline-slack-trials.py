@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
@@ -261,57 +262,155 @@ def _typed_list(task, key):
     return task.get(key) if isinstance(task.get(key), list) else None
 
 
+ATTEMPT_STATUSES = ("STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS")
+IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
+
+
+def _is_id(value):
+    return isinstance(value, str) and bool(IDENTITY.fullmatch(value))
+
+
+def _is_count(value):
+    return type(value) is int and value >= 0
+
+
+def _validate_attempts(assignments, attempts):
+    """Bind every attempt event to its assignment/provider and its immutable attempt.
+
+    Returns (latest_valid_event_per_attempt, error). Events of one attempt
+    (assignment, ordinal) must share digest, idempotency/budget identity,
+    provider, format and transport; event sequences are unique and within the
+    producer's 1..3 contract; a digest never names two attempts. The latest
+    valid event settles the attempt, so an authenticated later SUCCEEDED
+    callback (event 3) supersedes an earlier AMBIGUOUS event 2.
+    """
+    by_assignment = {}
+    for row in assignments:
+        if not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1 \
+                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment:
+            return None, "malformed or duplicate assignment row"
+        by_assignment[row["assignment_id"]] = row
+    grouped = {}
+    for row in attempts:
+        key = (row.get("assignment_id"), row.get("attempt_ordinal"))
+        assignment = by_assignment.get(row.get("assignment_id"))
+        if assignment is None:
+            return None, "attempt does not join a listed assignment"
+        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
+                or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
+                or row.get("status") not in ATTEMPT_STATUSES
+                or not DIGEST.fullmatch(str(row.get("attempt_digest", "")))
+                or not DIGEST.fullmatch(str(row.get("idempotency_key_digest", "")))
+                or not DIGEST.fullmatch(str(row.get("budget_evidence_digest", "")))
+                or not _is_id(row.get("provider_id")) or not _is_id(row.get("format_id"))
+                or not _is_id(row.get("transport_id")) or not isinstance(row.get("recorded_at"), str)):
+            return None, "malformed attempt event"
+        if row["provider_id"] != assignment["provider_id"] or row.get("assignment_sequence") != assignment["sequence"]:
+            return None, "attempt provider/sequence disagrees with its assignment"
+        for field in ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"):
+            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
+                return None, "malformed attempt digest"
+        grouped.setdefault(key, []).append(row)
+    digests = {}
+    latest = {}
+    for key, events in grouped.items():
+        identity = {(e["attempt_digest"], e["idempotency_key_digest"], e["budget_evidence_digest"],
+                     e["provider_id"], e["format_id"], e["transport_id"]) for e in events}
+        sequences = [e["event_sequence"] for e in events]
+        if len(identity) != 1 or len(set(sequences)) != len(sequences):
+            return None, "attempt identity changed across its events or duplicate events"
+        digest_value = events[0]["attempt_digest"]
+        if digests.setdefault(digest_value, key) != key:
+            return None, "attempt digest reused by another attempt"
+        ordered = sorted(events, key=lambda e: e["event_sequence"])
+        if ordered[0]["status"] != "STARTED" and len(ordered) > 1:
+            return None, "attempt history does not begin with STARTED"
+        latest[key] = ordered[-1]
+    return latest, None
+
+
+def _validate_usage(usage_rows, latest):
+    """Usage joins exactly one valid attempt of the same provider, never twice."""
+    seen = set()
+    for row in usage_rows:
+        digest_value = row.get("attempt_digest")
+        owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
+        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
+                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
+                                                            "reserved_microusd", "token_limit"))):
+            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
+        seen.add(digest_value)
+    return None
+
+
 def _readback(task_id, task):
-    """Accept the typed opt-in readback only when it is bound to this task."""
+    """Accept the typed opt-in readback only when it is bound and internally consistent."""
     readback = task.get("qualification_evidence")
     if readback is None:
-        return None, "absent", "opt-in readback not present in the task response"
+        return None, None, "absent", "opt-in readback not present in the task response"
     if (not isinstance(readback, dict) or readback.get("schema_version") != READBACK_SCHEMA
             or readback.get("task_id") != task_id or type(readback.get("complete")) is not bool
             or any(not isinstance(readback.get(name), list) for name in SECTIONS)
             or any(not isinstance(row, dict) for name in SECTIONS for row in readback[name])):
-        return None, "rejected", "readback schema/task binding mismatch"
-    attempts = readback["provider_attempts"]
-    keys = [(r.get("assignment_id"), r.get("attempt_ordinal"), r.get("event_sequence")) for r in attempts]
-    assignment_ids = {r.get("assignment_id") for r in readback["assignments"]}
-    if (len(set(keys)) != len(keys)
-            or any(not DIGEST.fullmatch(str(r.get("attempt_digest", ""))) for r in attempts)
-            or any(r.get("assignment_id") not in assignment_ids for r in attempts)
-            or len({r.get("assignment_id") for r in readback["assignments"]}) != len(readback["assignments"])
-            or len({r.get("reservation_key") for r in readback["effects"]}) != len(readback["effects"])
+        return None, None, "rejected", "readback schema/task binding mismatch"
+    latest, error = _validate_attempts(readback["assignments"], readback["provider_attempts"])
+    if error is None:
+        error = _validate_usage(readback["provider_usage"], latest)
+    if error is None and (
+            len({r.get("reservation_key") for r in readback["effects"]}) != len(readback["effects"])
+            or any(not DIGEST.fullmatch(str(r.get("effect_key_digest", ""))) for r in readback["effects"])
             or len({r.get("client_msg_id") for r in readback["slack_deliveries"]}) != len(readback["slack_deliveries"])
-            or len({r.get("receipt_id") for r in readback["status_receipts"]}) != len(readback["status_receipts"])):
-        return None, "rejected", "duplicate or unjoined identities in readback rows"
+            or any(not _is_id(r.get("client_msg_id")) for r in readback["slack_deliveries"])
+            or len({r.get("receipt_id") for r in readback["status_receipts"]}) != len(readback["status_receipts"])
+            or any(not _is_id(r.get("receipt_id")) for r in readback["status_receipts"])):
+        error = "duplicate or malformed effect/delivery/receipt identities"
+    if error is not None:
+        return None, None, "rejected", error
     if not readback["complete"]:
-        return readback, "incomplete", "readback truncated: " + ",".join(map(str, readback.get("truncated", [])))
-    return readback, "collected", None
+        return readback, latest, "incomplete", "readback truncated: " + ",".join(map(str, readback.get("truncated", [])))
+    return readback, latest, "collected", None
 
 
-def _provider_effect_state(attempts):
-    statuses = {str(r.get("status")) for r in attempts}
-    if not attempts:
+def _provider_effect_state(latest):
+    """Aggregate the latest valid event of every attempt; any open uncertainty wins."""
+    if not latest:
         return "ZERO_PROVIDER_ATTEMPT"
+    statuses = {e["status"] for e in latest.values()}
     if "AMBIGUOUS" in statuses:
         return "PROVIDER_ATTEMPT_AMBIGUOUS"
-    if "SUCCEEDED" in statuses or "FAILED" in statuses:
-        return "PROVIDER_RESULT_RECORDED"
-    return "PROVIDER_ATTEMPT_STARTED_UNSETTLED"
+    if "STARTED" in statuses:
+        return "PROVIDER_ATTEMPT_STARTED_UNSETTLED"
+    return "PROVIDER_RESULT_RECORDED"
+
+
+def _effect_row_state(row):
+    if row.get("terminal_disposition"):
+        return "TERMINAL:" + str(row["terminal_disposition"])
+    if row.get("execution_started_at") and not row.get("remote_identifier"):
+        return "AMBIGUOUS"
+    if row.get("remote_identifier"):
+        return "BOUND_UNCONFIRMED"
+    return "RESERVED_NO_EFFECT"
 
 
 def _external_effect_state(effects):
+    """Aggregate every reservation; one terminal sibling never hides another."""
     if not effects:
         return "NO_EXTERNAL_EFFECT_RESERVATION"
-    if any(r.get("terminal_disposition") for r in effects):
-        return "EXTERNAL_EFFECT_TERMINAL:" + ",".join(sorted({str(r.get("terminal_disposition")) for r in effects
-                                                              if r.get("terminal_disposition")}))
-    if any(r.get("execution_started_at") and not r.get("remote_identifier") for r in effects):
+    states = {_effect_row_state(r) for r in effects}
+    if "AMBIGUOUS" in states:
         return "EXTERNAL_EFFECT_AMBIGUOUS"
-    if any(r.get("remote_identifier") for r in effects):
+    if "BOUND_UNCONFIRMED" in states:
         return "EXTERNAL_EFFECT_BOUND_UNCONFIRMED"
+    terminal = sorted(s.removeprefix("TERMINAL:") for s in states if s.startswith("TERMINAL:"))
+    if "RESERVED_NO_EFFECT" in states and terminal:
+        return "EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:" + ",".join(terminal)
+    if terminal:
+        return "EXTERNAL_EFFECT_TERMINAL:" + ",".join(terminal)
     return "EXTERNAL_EFFECT_RESERVED_NO_EFFECT"
 
 
-def qualification_evidence(task_id, task, rows, rows_bound, input_message, final):
+def qualification_evidence(task_id, task, rows, rows_bound, input_message, final, *, baseline=None, receipt_id=None):
     """Section 4 correlation chain derived from the typed opt-in readback.
 
     Identities come from real persisted keys: assignment_id/sequence, attempt
@@ -324,47 +423,67 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
     outcomes = _typed_list(task, "assignment_outcomes") or []
     history = _typed_list(task, "provider_run_history")
     contacts = _typed_list(task, "provider_contact_attempts")
-    readback, state, reason = _readback(task_id, task)
-    attempts = readback["provider_attempts"] if readback else []
-    effects = readback["effects"] if readback else []
-    deliveries = readback["slack_deliveries"] if readback else (rows if rows_bound else [])
-    receipts = readback["status_receipts"] if readback else []
-    usage_rows = readback["provider_usage"] if readback else []
+    readback, latest, state, reason = _readback(task_id, task)
+    collected = state == "collected"
+    # Only a complete, validated readback yields derived identities, states or
+    # amounts. An incomplete readback keeps its raw diagnostics under the
+    # readback block, explicitly marked partial, and derives nothing.
+    latest = latest if collected else {}
+    effects = readback["effects"] if collected else []
+    deliveries = readback["slack_deliveries"] if collected else (rows if rows_bound and readback is None else [])
+    receipts = readback["status_receipts"] if collected else []
+    usage_rows = readback["provider_usage"] if collected else []
     terminal = [r for r in deliveries if r.get("notification_key") == "terminal"]
     delivery = terminal[0] if len(terminal) == 1 else {}
     delivery_states = {str(r.get("state")) for r in deliveries}
-    settled = [r for r in attempts if r.get("status") in ("SUCCEEDED", "FAILED")]
-    if state != "collected":
+    settled = [e for e in latest.values() if e["status"] in ("SUCCEEDED", "FAILED")]
+    provider_state = _provider_effect_state(latest) if collected else None
+    external_state = _external_effect_state(effects) if collected else None
+    if not collected:
         effect_state = None
-    elif "AMBIGUOUS" in delivery_states or _provider_effect_state(attempts) == "PROVIDER_ATTEMPT_AMBIGUOUS" \
-            or _external_effect_state(effects) == "EXTERNAL_EFFECT_AMBIGUOUS":
+    elif ("AMBIGUOUS" in delivery_states or provider_state == "PROVIDER_ATTEMPT_AMBIGUOUS"
+            or external_state in ("EXTERNAL_EFFECT_AMBIGUOUS", "EXTERNAL_EFFECT_BOUND_UNCONFIRMED")):
         effect_state = "AMBIGUOUS_DELIVERY_EFFECT"
-    elif not attempts and not any(r.get("execution_started_at") for r in effects):
+    elif not latest and not any(r.get("execution_started_at") for r in effects):
         effect_state = "ZERO_PROVIDER_EFFECT"
-    elif any(r.get("status") == "SUCCEEDED" for r in attempts):
+    elif provider_state == "PROVIDER_RESULT_RECORDED" and any(e["status"] == "SUCCEEDED" for e in latest.values()):
         effect_state = "PROVIDER_EFFECT_RECORDED"
     else:
         effect_state = None
-    authenticated_microusd = [r.get("actual_microusd") for r in usage_rows]
-    if usage_rows and all(type(v) is int and v >= 0 for v in authenticated_microusd):
-        measured_cost, cost_basis = sum(authenticated_microusd) / 1_000_000, "authenticated_usage_table"
-        usage = {"authenticated_microusd": sum(authenticated_microusd),
-                 "observed_tokens": sum(int(r.get("observed_tokens", 0)) for r in usage_rows),
-                 "reserved_budget_microusd": sum(int(r.get("reserved_microusd", 0)) for r in usage_rows),
-                 "attempt_digests": _identities(usage_rows, "attempt_digest")}
+    if usage_rows:
+        # Validated in _readback: unique, joined to a valid attempt of the same
+        # provider, exact non-negative integers. Amount families stay separate.
+        measured_cost, cost_basis = sum(r["actual_microusd"] for r in usage_rows) / 1_000_000, "authenticated_usage_table"
+        usage = {"authenticated_microusd": sum(r["actual_microusd"] for r in usage_rows),
+                 "observed_tokens": sum(r["observed_tokens"] for r in usage_rows),
+                 "reserved_budget_microusd": sum(r["reserved_microusd"] for r in usage_rows),
+                 "attempt_digests": _identities(usage_rows, "attempt_digest"),
+                 "invoice_charge": UNKNOWN, "local_estimate_usd": None}
     else:
         cost = task.get("actual_cost_usd")
         measured_cost = cost if type(cost) in (int, float) and cost == cost and cost not in (float("inf"),) \
             and cost >= 0 else None
         cost_basis = "provider_reported" if measured_cost is not None else UNKNOWN
         usage = task.get("usage") if isinstance(task.get("usage"), dict) else None
-    ordinals = {(r.get("assignment_id"), r.get("attempt_ordinal")) for r in attempts}
+    ordinals = sorted(latest)
+    per_assignment = {}
+    for assignment_id, ordinal in ordinals:
+        per_assignment.setdefault(assignment_id, []).append(ordinal)
+    retried = any(len(v) > 1 for v in per_assignment.values())
     providers_per_assignment = {}
-    for r in attempts:
-        providers_per_assignment.setdefault(r.get("assignment_id"), set()).add(r.get("provider_id"))
-    fallback = None if not attempts else (any(len(v) > 1 for v in providers_per_assignment.values())
-                                          or len(ordinals) > len(providers_per_assignment))
-    completion = max((str(r.get("recorded_at")) for r in settled), default=None)
+    for (assignment_id, _), event in latest.items():
+        providers_per_assignment.setdefault(assignment_id, set()).add(event["provider_id"])
+    # The producer binds one provider per assignment; a fallback to another
+    # provider is only observable as another assignment/provider recording.
+    fallback = None if not latest else any(len(v) > 1 for v in providers_per_assignment.values())
+    completion = max((str(e["recorded_at"]) for e in settled), default=None)
+    counters = readback.get("task_scope_counters") if collected and isinstance(readback.get("task_scope_counters"), dict) else None
+    if collected and baseline is not None and receipt_id is not None:
+        delta = status_receipt_delta(baseline, readback, receipt_id)
+    elif baseline is not None:
+        delta = {"proof": None, "reason": "after readback not collected or receipt identity missing"}
+    else:
+        delta = None
     return {
         "readback": {"state": state, "reason": reason,
                      "source": (API + "/v1/tasks/" + task_id + "?include_qualification_evidence=true")
@@ -373,21 +492,29 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
                      "truncated": list(readback.get("truncated", [])) if readback else [],
                      "absent": list(readback.get("absent", [])) if readback else [],
                      "snapshot": readback.get("snapshot") if readback else None,
-                     "projection_digest": readback.get("projection_digest") if readback else None},
+                     "projection_digest": readback.get("projection_digest") if readback else None,
+                     "engine_owner": readback.get("engine_owner") if readback else None,
+                     "captured_at": str(readback["captured_at"]) if readback and readback.get("captured_at") else None,
+                     "task_updated_at": str(readback["task_updated_at"]) if readback and readback.get("task_updated_at") else None,
+                     "task_scope_counters": counters,
+                     "status_receipt_rows": [{"receipt_id": r.get("receipt_id"), "created_at": str(r.get("created_at"))}
+                                             for r in receipts],
+                     "partial_diagnostics": ({"row_counts": {name: len(readback[name]) for name in SECTIONS},
+                                              "not_proof": True} if state == "incomplete" else None)},
         "chain": {
             "source_event_id_sha256": digest(encode(intake["source_event_id"]))
                 if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
             "task_id": task_id,
-            "assignment_ids": _identities(readback["assignments"], "assignment_id") if readback else [],
-            "assignment_sequences": sorted({int(r["sequence"]) for r in readback["assignments"]
-                                            if type(r.get("sequence")) is int}) if readback else
+            "assignment_ids": _identities(readback["assignments"], "assignment_id") if collected else [],
+            "assignment_sequences": sorted({int(r["sequence"]) for r in readback["assignments"]}) if collected else
                                      sorted({int(o["assignment_sequence"]) for o in outcomes
                                              if isinstance(o, dict) and type(o.get("assignment_sequence")) is int}),
-            "attempt_ids": _identities(attempts, "attempt_digest"),
+            "attempt_ids": sorted({e["attempt_digest"] for e in latest.values()}),
             "effect_ids": _identities(effects, "effect_key_digest"),
             "delivery_ids": _identities(deliveries, "client_msg_id"),
             "status_receipt_ids": _identities(receipts, "receipt_id"),
-            "provider_result_digests": _identities(settled, "result_digest") or _identities(outcomes, "provider_result_digest"),
+            "provider_result_digests": _identities(settled, "result_digest") if collected else
+                                       _identities(outcomes, "provider_result_digest"),
             "slack_delivery_ts": delivery.get("slack_ts") if TS.fullmatch(str(delivery.get("slack_ts", ""))) else None,
             "slack_readback_state": delivery.get("state") if isinstance(delivery.get("state"), str) else None,
         },
@@ -403,20 +530,29 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
                                 **({"completion_at": "no settled provider attempt row"} if completion is None else {})},
         },
         "lineage": {
-            "provider_routes": _identities(attempts, "provider_id") or _identities(outcomes, "provider"),
-            "transport": ",".join(_identities(attempts, "transport_id")) or None,
-            "recorded_attempt_count": len(ordinals) if readback else None,
+            "provider_routes": sorted({e["provider_id"] for e in latest.values()}) if collected
+                               else _identities(outcomes, "provider"),
+            "transport": ",".join(sorted({e["transport_id"] for e in latest.values()})) or None,
+            "recorded_attempt_count": len(ordinals) if collected else None,
+            "retry_observed": retried if latest else None,
             "attempt_history_count": len(history) if history is not None else None,
             "contact_attempt_count": len(contacts) if contacts is not None else None,
             "fallback_observed": fallback,
         },
         "effect_state": effect_state,
-        "provider_effect_state": _provider_effect_state(attempts) if readback else None,
-        "external_effect_state": _external_effect_state(effects) if readback else None,
+        "provider_effect_state": provider_state,
+        "external_effect_state": external_state,
         "usage": {"actual_usage": usage, "actual_cost_usd": measured_cost, "cost_basis": cost_basis},
-        "status_receipts": {"tasks_created": None, "assignments_created": None,
-                            "provider_attempts_created": None,
-                            "deduplicated_receipts": len(receipts) if readback else None,
+        "status_receipts": {"tasks_created": delta.get("tasks_created") if delta else None,
+                            "assignments_created": delta.get("assignments_created") if delta else None,
+                            "provider_attempts_created": delta.get("provider_attempts_created") if delta else None,
+                            "deduplicated_receipts": delta.get("deduplicated_receipts") if delta and delta.get("proof")
+                            else (len(receipts) if collected else None),
+                            "durable_receipt_rows": len(receipts) if collected else None,
+                            "counter_scope": "task-and-thread-local; not a global zero-work claim",
+                            "task_scope_counters": counters,
+                            "baseline": delta,
+                            "baseline_provenance": None,
                             "dependency": STATUS_RECEIPT_DEPENDENCY},
         "allocation": {"rolling_twenty": UNKNOWN, "deviation_from_target_points": None},
         "revision_binding": None,
@@ -424,20 +560,131 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
     }
 
 
-def revision_binding(runtime, env):
-    """Read-time revision identity; configuration names only, never values.
+# Safe effective-configuration values: an explicit allowlist of switches and
+# route/profile selectors whose values are never secrets. Anything outside it
+# (tokens, secrets, DSNs, allowlists, identities, unknown keys) is excluded by
+# construction, so the digest can bind value drift of these keys without ever
+# hashing or emitting confidential material. It is a read-time binding of this
+# bounded scope, not the native account/credential pin.
+SAFE_CONFIGURATION_KEYS = (
+    "ALLOW_PAID_RUNS",
+    "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED",
+    "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
+    "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+    "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA",
+    "DIRECTOR_ALLOCATION_PROFILE",
+    "DIRECTOR_ENVIRONMENT",
+    "ENVIRONMENT",
+)
+SAFE_VALUE = re.compile(r"[A-Za-z0-9._:/-]{0,128}\Z")
 
-    The names digest is not an effective-configuration digest: two runtimes
-    with identical variable names and different values collide, so no value
-    drift can be detected from it. Execution-time binding stays UNKNOWN.
+
+def safe_configuration_digest(env):
+    """Digest of the allowlisted effective values only; refuses malformed values."""
+    values = {}
+    for key in SAFE_CONFIGURATION_KEYS:
+        if key not in env:
+            continue
+        value = env[key]
+        if not isinstance(value, str) or not SAFE_VALUE.fullmatch(value):
+            raise ValueError("Unsafe or malformed configuration value for " + key)
+        values[key] = value
+    return digest(encode({"scope": "safe-effective-configuration/v1", "values": values})), sorted(values)
+
+
+def revision_binding(runtime, env):
+    """Read-time revision identity plus the bounded safe configuration binding.
+
+    The digest covers the allowlisted effective values, so a changed safe value
+    changes it while identical names with identical values agree. It is not an
+    execution-time binding: no producer records the configuration in force when
+    the task executed, so that binding stays UNKNOWN with its reason.
     """
     public = {key: runtime.get(key) for key in ("runtime_head", "image_id", "offline_configured", "paid_configured")}
-    return {**public, "configuration_digest": digest(encode({**public, "environment_names": sorted(env)})),
-            "configuration_scope": "read-time-environment-names-and-public-flags",
-            "execution_time_binding": UNKNOWN}
+    configuration_digest, keys = safe_configuration_digest(env)
+    return {**public, "configuration_digest": digest(encode({**public, "safe_configuration_digest": configuration_digest})),
+            "configuration_scope": "read-time-safe-effective-values",
+            "configuration_keys": keys,
+            "execution_time_binding": UNKNOWN,
+            "execution_time_reason": "no producer records the configuration in force at execution time"}
 
 
-def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot, headers, channel):
+def baseline_from_receipt(receipt, task_id):
+    """Rebuild a readback-like baseline from a prior collector receipt's trial.
+
+    The prior receipt is caller-supplied: its digest is recorded for
+    provenance but does not authenticate it. Only the raw snapshot facts the
+    collector itself recorded (counters, capture time, receipt rows) are used.
+    """
+    if not isinstance(receipt, dict) or receipt.get("schema") != "director-slack-trial-observations/v1":
+        return None
+    for trial in receipt.get("trials", []):
+        block = (trial.get("qualification_evidence") or {}).get("readback") if isinstance(trial, dict) else None
+        if not isinstance(block, dict) or trial.get("task_id") != task_id or block.get("state") != "collected":
+            continue
+        return {"schema_version": READBACK_SCHEMA, "task_id": task_id, "engine_owner": block.get("engine_owner"),
+                "complete": block.get("complete"), "task_scope_counters": block.get("task_scope_counters"),
+                "task_updated_at": block.get("task_updated_at"), "captured_at": block.get("captured_at"),
+                "status_receipts": block.get("status_receipt_rows") or []}
+    return None
+
+
+def status_receipt_delta(before, after, receipt_id):
+    """Prospective zero-work proof from two readbacks around one status receipt.
+
+    Both documents must be complete, validated readbacks of the same task with
+    the same engine and comparable counter scope, captured in order (before's
+    snapshot precedes the receipt's created_at, after's follows it). The
+    counters are task-and-thread local: tasks bound to the same Slack thread,
+    assignments and provider attempts of this task, and durable receipts.
+    Anything missing, foreign, truncated, negative or inconsistent is refused
+    rather than reported as zero.
+    """
+    def readback(document):
+        if not isinstance(document, dict) or document.get("schema_version") != READBACK_SCHEMA \
+                or document.get("complete") is not True or not isinstance(document.get("task_scope_counters"), dict):
+            return None
+        counters = document["task_scope_counters"]
+        if not all(_is_count(counters.get(k)) for k in ("thread_tasks", "assignments", "provider_attempts",
+                                                        "started_attempts", "status_receipts")):
+            return None
+        return document
+    first, second = readback(before), readback(after)
+    if first is None or second is None:
+        return {"proof": None, "reason": "baseline or after readback missing, truncated or without counters"}
+    if first["task_id"] != second["task_id"] or first.get("engine_owner") != second.get("engine_owner"):
+        return {"proof": None, "reason": "baseline and after readbacks describe different tasks or engines"}
+    def when(value):
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    updated_before, updated_after = when(first.get("task_updated_at")), when(second.get("task_updated_at"))
+    if updated_before is None or updated_after is None or updated_before > updated_after:
+        return {"proof": None, "reason": "baseline is newer than the after readback or timestamps are unusable"}
+    receipt = next((r for r in second.get("status_receipts", []) if r.get("receipt_id") == receipt_id), None)
+    if receipt is None or any(r.get("receipt_id") == receipt_id for r in first.get("status_receipts", [])):
+        return {"proof": None, "reason": "receipt absent from the after readback or already present in the baseline"}
+    captured, created = when(first.get("captured_at")), when(receipt.get("created_at"))
+    if captured is None or created is None or captured >= created:
+        return {"proof": None, "reason": "baseline was not captured before the receipt was created"}
+    captured = str(first.get("captured_at"))
+    a, b = first["task_scope_counters"], second["task_scope_counters"]
+    delta = {k: b[k] - a[k] for k in ("thread_tasks", "assignments", "provider_attempts", "started_attempts", "status_receipts")}
+    if any(v < 0 for v in delta.values()):
+        return {"proof": None, "reason": "negative counter delta"}
+    if delta["status_receipts"] != 1:
+        return {"proof": None, "reason": "durable receipt delta is not exactly one"}
+    return {"proof": True, "reason": None, "tasks_created": delta["thread_tasks"],
+            "assignments_created": delta["assignments"], "provider_attempts_created": delta["provider_attempts"],
+            "started_attempts_created": delta["started_attempts"], "deduplicated_receipts": delta["status_receipts"],
+            "counter_scope": "task-and-thread-local", "baseline_captured_at": captured,
+            "receipt_created_at": receipt["created_at"]}
+
+
+def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot, headers, channel,
+              *, baseline=None, receipt_id=None):
     """Summarize observed source data; this cannot create scorecard observations."""
     task = task if isinstance(task, dict) else {}
     intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
@@ -517,7 +764,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "actual_cost_usd": None, "operational_provider_attempts_verified": None,
         "independent_correctness_verified": None, "global_task_deduplication_verified": None,
         "execution_image_binding_verified": None, "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED",
-        "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final)}
+        "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final,
+                                                         baseline=baseline, receipt_id=receipt_id)}
 
 
 RUBRIC_REQUIREMENTS = {
@@ -575,13 +823,28 @@ def main(argv=None):
     parser.add_argument("--rubric", type=Path, required=True)
     parser.add_argument("--private-dir", type=Path, help="Optional new private directory; sensitive originals are withheld")
     parser.add_argument("--output-dir", type=Path, required=True, help="New directory; existing reports are never overwritten")
+    parser.add_argument("--status-baseline", type=Path, help="Prior collector receipt captured before a status mention")
+    parser.add_argument("--status-receipt-id", help="Durable receipt_id of that status mention")
     args = parser.parse_args(argv)
     trials, records, collector, created = [], [], None, False
+    baseline_receipt, baseline_provenance = None, None
     try:
         if not HEAD.fullmatch(args.expected_head):
             raise ValueError("Expected head must be a full lowercase SHA")
         trials = parse_trials(args.trial)
         rubric, rubric_digest = load_rubric(args.rubric)
+        if (args.status_baseline is None) != (args.status_receipt_id is None):
+            raise ValueError("A status baseline and its receipt identity are supplied together")
+        if args.status_baseline is not None:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", args.status_receipt_id):
+                raise ValueError("Malformed status receipt identity")
+            with args.status_baseline.open("rb") as handle:
+                raw_baseline = handle.read(MAX_BYTES + 1)
+            if len(raw_baseline) > MAX_BYTES:
+                raise ValueError("Status baseline exceeds byte bound")
+            baseline_receipt = json.loads(raw_baseline)
+            baseline_provenance = {"file_sha256": digest(raw_baseline),
+                                   "authentication": "caller-supplied prior collector receipt; digest recorded, not self-authenticating"}
         args.output_dir.mkdir(parents=True, exist_ok=False)
         created = True
         if args.private_dir is not None:
@@ -619,8 +882,13 @@ def main(argv=None):
                     deliveries, _ = collector.get(API + "/v1/primary/tasks/" + task_id + "/deliveries")
                 except (ValueError, httpx.HTTPError):
                     errors.append("delivery_api_unavailable")
+                baseline = baseline_from_receipt(baseline_receipt, task_id) if baseline_receipt is not None else None
                 row = summarize(thread, task_id, task, deliveries, messages, complete,
-                    env["SLACK_OWNER_USER_ID"], bot, headers, env["SLACK_DIRECTOR_CHANNEL_ID"])
+                    env["SLACK_OWNER_USER_ID"], bot, headers, env["SLACK_DIRECTOR_CHANNEL_ID"],
+                    baseline=baseline if baseline is not None else ({} if baseline_receipt is not None else None),
+                    receipt_id=args.status_receipt_id)
+                if baseline_receipt is not None:
+                    row["qualification_evidence"]["status_receipts"]["baseline_provenance"] = baseline_provenance
                 # The owner's matched source event commits the rubric bytes before
                 # dispatch. A backdated or subsequently edited rubric cannot pass.
                 markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", (task or {}).get("intake", {}).get("text", ""))
@@ -698,3 +966,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

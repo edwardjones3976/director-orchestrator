@@ -248,6 +248,44 @@
       ],
       "minimum": 0
     },
+    "taskScopeCounters": {
+      "type": "object",
+      "properties": {
+        "thread_tasks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "assignments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provider_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "started_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status_receipts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "effect_reservations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "thread_tasks",
+        "assignments",
+        "provider_attempts",
+        "started_attempts",
+        "status_receipts",
+        "effect_reservations"
+      ],
+      "additionalProperties": false
+    },
     "qualificationEvidence": {
       "type": "object",
       "properties": {
@@ -306,6 +344,78 @@
                 "string",
                 "null"
               ]
+            },
+            "engine_owner": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "captured_at": {
+              "$ref": "#/$defs/nullableIso"
+            },
+            "task_updated_at": {
+              "$ref": "#/$defs/nullableIso"
+            },
+            "task_scope_counters": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/taskScopeCounters"
+                }
+              ]
+            },
+            "status_receipt_rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "receipt_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "created_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "receipt_id",
+                  "created_at"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 200
+            },
+            "partial_diagnostics": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "row_counts": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "not_proof": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "row_counts",
+                    "not_proof"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
             }
           },
           "required": [
@@ -316,7 +426,13 @@
             "truncated",
             "absent",
             "snapshot",
-            "projection_digest"
+            "projection_digest",
+            "engine_owner",
+            "captured_at",
+            "task_updated_at",
+            "task_scope_counters",
+            "status_receipt_rows",
+            "partial_diagnostics"
           ],
           "additionalProperties": false
         },
@@ -447,6 +563,12 @@
             "recorded_attempt_count": {
               "$ref": "#/$defs/nullableCount"
             },
+            "retry_observed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "attempt_history_count": {
               "$ref": "#/$defs/nullableCount"
             },
@@ -464,6 +586,7 @@
             "provider_routes",
             "transport",
             "recorded_attempt_count",
+            "retry_observed",
             "attempt_history_count",
             "contact_attempt_count",
             "fallback_observed"
@@ -492,7 +615,7 @@
             "string",
             "null"
           ],
-          "pattern": "^(NO_EXTERNAL_EFFECT_RESERVATION|EXTERNAL_EFFECT_RESERVED_NO_EFFECT|EXTERNAL_EFFECT_BOUND_UNCONFIRMED|EXTERNAL_EFFECT_AMBIGUOUS|EXTERNAL_EFFECT_TERMINAL:[A-Z_,]+)$"
+          "pattern": "^(NO_EXTERNAL_EFFECT_RESERVATION|EXTERNAL_EFFECT_RESERVED_NO_EFFECT|EXTERNAL_EFFECT_BOUND_UNCONFIRMED|EXTERNAL_EFFECT_AMBIGUOUS|EXTERNAL_EFFECT_TERMINAL:[A-Z_,]+|EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:[A-Z_,]+)$"
         },
         "usage": {
           "type": "object",
@@ -540,6 +663,99 @@
             "deduplicated_receipts": {
               "$ref": "#/$defs/nullableCount"
             },
+            "durable_receipt_rows": {
+              "$ref": "#/$defs/nullableCount"
+            },
+            "counter_scope": {
+              "const": "task-and-thread-local; not a global zero-work claim"
+            },
+            "task_scope_counters": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/taskScopeCounters"
+                }
+              ]
+            },
+            "baseline": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "proof": {
+                      "enum": [
+                        true,
+                        null
+                      ]
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "tasks_created": {
+                      "$ref": "#/$defs/nullableCount"
+                    },
+                    "assignments_created": {
+                      "$ref": "#/$defs/nullableCount"
+                    },
+                    "provider_attempts_created": {
+                      "$ref": "#/$defs/nullableCount"
+                    },
+                    "started_attempts_created": {
+                      "$ref": "#/$defs/nullableCount"
+                    },
+                    "deduplicated_receipts": {
+                      "$ref": "#/$defs/nullableCount"
+                    },
+                    "counter_scope": {
+                      "const": "task-and-thread-local"
+                    },
+                    "baseline_captured_at": {
+                      "type": "string"
+                    },
+                    "receipt_created_at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "proof",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "baseline_provenance": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "file_sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "authentication": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file_sha256",
+                    "authentication"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             "dependency": {
               "const": "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
             }
@@ -549,6 +765,11 @@
             "assignments_created",
             "provider_attempts_created",
             "deduplicated_receipts",
+            "durable_receipt_rows",
+            "counter_scope",
+            "task_scope_counters",
+            "baseline",
+            "baseline_provenance",
             "dependency"
           ],
           "additionalProperties": false
@@ -599,10 +820,21 @@
                   "pattern": "^[a-f0-9]{64}$"
                 },
                 "configuration_scope": {
-                  "const": "read-time-environment-names-and-public-flags"
+                  "const": "read-time-safe-effective-values"
+                },
+                "configuration_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "maxItems": 20
                 },
                 "execution_time_binding": {
                   "const": "UNKNOWN"
+                },
+                "execution_time_reason": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -612,7 +844,9 @@
                 "paid_configured",
                 "configuration_digest",
                 "configuration_scope",
-                "execution_time_binding"
+                "configuration_keys",
+                "execution_time_binding",
+                "execution_time_reason"
               ],
               "additionalProperties": false
             }

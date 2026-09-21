@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
@@ -3166,6 +3167,61 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
         foreign = store.read_primary_qualification_evidence(other.task_id)
         self.assertEqual(([], [], []), (foreign["provider_attempts"], foreign["status_receipts"], foreign["slack_deliveries"]))
+        self.assertEqual(2, typed.task_scope_counters.provider_attempts)
+        self.assertEqual(1, typed.task_scope_counters.started_attempts)
+        self.assertEqual(1, typed.task_scope_counters.status_receipts)
+        self.assertGreaterEqual(typed.task_scope_counters.thread_tasks, 1)
+        # Composition: the real serialized opt-in API response goes through the
+        # collector and the strict observation schema (no handwritten shape).
+        import importlib.util
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        spec = importlib.util.spec_from_file_location(
+            "offline_slack_trial_collector_composition",
+            Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                response = client.get(f"/v1/tasks/{record.task_id}",
+                                      headers={"Authorization": "Bearer standalone-qa-synthetic-secret"},
+                                      params={"include_qualification_evidence": "true"})
+            finally:
+                client.close()
+        self.assertEqual(200, response.status_code, response.text)
+        row = collector.summarize(record.intake.thread_ts, record.task_id, response.json(), [], [], True,
+                                  record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        evidence = row["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        self.assertEqual([digest("attempt:" + record.task_id)], evidence["chain"]["attempt_ids"])
+        self.assertEqual(sorted(row["assignment_id"] for row in base["assignments"]), evidence["chain"]["assignment_ids"])
+        self.assertIn(assignment["assignment_id"], evidence["chain"]["assignment_ids"])
+        self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
+        self.assertEqual(["synthetic-delivery-" + record.task_id], evidence["chain"]["delivery_ids"])
+        self.assertEqual([digest("result:" + record.task_id)], evidence["chain"]["provider_result_digests"])
+        self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
+        self.assertEqual("NO_EXTERNAL_EFFECT_RESERVATION", evidence["external_effect_state"])
+        self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
+        self.assertEqual("synthetic-transport", evidence["lineage"]["transport"])
+        self.assertEqual("UNKNOWN", evidence["usage"]["cost_basis"])  # no usage table in this schema
+        self.assertEqual(response.headers["X-Primary-Projection-Digest"], evidence["readback"]["projection_digest"])
+        collector.validate_observations({"schema": "director-slack-trial-observations/v1",
+            "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
+            "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
+                "runtime_head": "b" * 40, "started_at": None, "offline_configured": True, "paid_configured": False},
+            "collection_runtime_after": None, "runtime_collection_binding_stable": None,
+            "runtime_health_at_collection": {"paid_runs_enabled": None, "ambiguous_effect_count": None,
+                "reconciliation_hold_reason": None, "primary_runtime_active": None},
+            "collector_sha256": None, "read_only": True, "slack_writes": 0, "provider_dispatches": 0,
+            "scorecard_mutations": 0, "qualified_run_count": None, "ten_consecutive_runs_verified": False,
+            "native_source_reads": [], "trials": [{**row, "input_rubric_sha256": None,
+                "rubric_evaluation": collector.evaluate_rubric(row, {"declared_at": "2020-01-01T00:00:00+00:00"}, "0" * 64),
+                "source_errors": [], "runtime_collection_binding_stable": None}], "limitations": []})
 
     def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
         import psycopg
@@ -3469,3 +3525,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

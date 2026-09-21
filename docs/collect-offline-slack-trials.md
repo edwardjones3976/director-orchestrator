@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | BEGIN]] -->
@@ -139,15 +140,52 @@ run/contact/history list is never effect evidence. `usage.cost_basis` is
 `authenticated_usage_table` (summed `actual_microusd`, with the reserved
 budget reported separately), `provider_reported` (finite non-negative task
 value; `inf`, `nan`, negatives and booleans are rejected) or `UNKNOWN`.
-`status_receipts.deduplicated_receipts` counts durable receipt rows; the
-tasks/assignments/attempts created by status mentions stay `null` because a
-lone after-state cannot measure a delta (`issue-230-receipts-collected;
-zero-work-delta-requires-prospective-baseline`). `revision_binding` is a
-read-time identity whose `configuration_digest` covers configuration *names*
-and public flags only (`configuration_scope`), so identical names with
-different values collide; `execution_time_binding` stays `UNKNOWN`. This
-block adds evidence; it changes no rubric check and cannot turn
-`EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
+Validation before any derivation (`_validate_attempts`, `_validate_usage`):
+every attempt event must join a listed assignment with the same provider and
+sequence; the events of one attempt (assignment, ordinal) must share their
+attempt, idempotency and budget digests, provider, format and transport;
+event sequences are unique within 1..3, statuses are the producer's four, and
+one digest never names two attempts. The latest valid event settles an
+attempt, so an authenticated `SUCCEEDED` event 3 supersedes an earlier
+`AMBIGUOUS` event 2, while any attempt whose latest event is still
+`AMBIGUOUS` or `STARTED` keeps the whole task unsettled. Usage rows must join
+exactly one valid attempt of the same provider, once; duplicated, orphaned,
+provider-mismatched, boolean or negative usage rejects the readback. External
+effects are aggregated across every reservation: one completed sibling never
+hides an executed-but-unbound one (`EXTERNAL_EFFECT_AMBIGUOUS`), and a mix of
+reserved-only and terminal rows is reported as
+`EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:…`. `retry_observed` comes from
+a second ordinal on the same assignment; `fallback_observed` only from a
+different provider recorded for one assignment. A rejected or incomplete
+readback derives nothing: identities, states and amounts stay empty/UNKNOWN,
+and an incomplete one carries only `readback.partial_diagnostics`
+(`not_proof: true`).
+
+Status-only proof is prospective. The readback exposes `captured_at` and
+`task_scope_counters` (tasks bound to the same Slack thread, this task's
+assignments, provider attempts, started attempts, durable status receipts and
+effect reservations) from the same snapshot. Run the collector once *before*
+the status mention, then again afterwards with `--status-baseline
+<prior receipt.json> --status-receipt-id <receipt_id>`;
+`status_receipt_delta` accepts the pair only when both readbacks are complete,
+describe the same task and engine, the baseline snapshot precedes the
+receipt's `created_at`, the receipt is absent from the baseline and present
+afterwards, no counter decreased and exactly one durable receipt was added.
+Then `tasks_created`, `assignments_created` and `provider_attempts_created`
+are measured deltas with `counter_scope: task-and-thread-local` — never a
+global zero-work claim — and the baseline file's digest is recorded as
+provenance without treating it as self-authenticating. After-only collection
+keeps those counts `null` and reports only `durable_receipt_rows`.
+
+`revision_binding` is a read-time identity: `configuration_digest` covers the
+allowlisted safe effective values (`configuration_keys`, e.g.
+`ALLOW_PAID_RUNS`, the LangGraph primary switches, schema and allocation
+profile), so a changed safe value changes it while secret, identity and
+unlisted values are excluded by construction and never emitted; malformed
+safe values are refused. It is not the native account/credential pin and
+not an execution-time binding (`execution_time_binding: UNKNOWN` with its
+reason). This block adds evidence; it changes no rubric check and cannot
+turn `EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
 
 ## Record one row and stop on failure
 
@@ -240,3 +278,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 21:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->

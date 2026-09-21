@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
@@ -1243,6 +1244,19 @@ class QualificationReadbackSnapshot(BaseModel):
     covers_task_record: bool
 
 
+class QualificationTaskScopeCounters(BaseModel):
+    """Task-and-thread-local counts from the same snapshot; not a global work count."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    thread_tasks: int = Field(ge=0)
+    assignments: int = Field(ge=0)
+    provider_attempts: int = Field(ge=0)
+    started_attempts: int = Field(ge=0)
+    status_receipts: int = Field(ge=0)
+    effect_reservations: int = Field(ge=0)
+
+
 class QualificationEvidenceReadback(BaseModel):
     """Bounded READ ONLY projection of one task's persisted qualification evidence."""
 
@@ -1259,6 +1273,8 @@ class QualificationEvidenceReadback(BaseModel):
     terminal_reason_code: str | None = None
     task_created_at: datetime
     task_updated_at: datetime
+    captured_at: datetime
+    task_scope_counters: QualificationTaskScopeCounters
     snapshot: QualificationReadbackSnapshot
     bounds: QualificationReadbackBounds
     truncated: list[str] = Field(default_factory=list)
@@ -1468,3 +1484,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]

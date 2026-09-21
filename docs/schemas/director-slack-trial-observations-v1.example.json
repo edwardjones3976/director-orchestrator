@@ -130,7 +130,20 @@
             "single_transaction": true,
             "covers_task_record": true
           },
-          "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          "projection_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "engine_owner": "langgraph",
+          "captured_at": "2026-09-13T12:00:32Z",
+          "task_updated_at": "2026-09-13T12:00:31Z",
+          "task_scope_counters": {
+            "thread_tasks": 1,
+            "assignments": 1,
+            "provider_attempts": 0,
+            "started_attempts": 0,
+            "status_receipts": 0,
+            "effect_reservations": 0
+          },
+          "status_receipt_rows": [],
+          "partial_diagnostics": null
         },
         "chain": {
           "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -172,6 +185,7 @@
           ],
           "transport": null,
           "recorded_attempt_count": 0,
+          "retry_observed": null,
           "attempt_history_count": 0,
           "contact_attempt_count": 0,
           "fallback_observed": null
@@ -189,6 +203,18 @@
           "assignments_created": null,
           "provider_attempts_created": null,
           "deduplicated_receipts": 0,
+          "durable_receipt_rows": 0,
+          "counter_scope": "task-and-thread-local; not a global zero-work claim",
+          "task_scope_counters": {
+            "thread_tasks": 1,
+            "assignments": 1,
+            "provider_attempts": 0,
+            "started_attempts": 0,
+            "status_receipts": 0,
+            "effect_reservations": 0
+          },
+          "baseline": null,
+          "baseline_provenance": null,
           "dependency": "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
         },
         "allocation": {
@@ -201,8 +227,13 @@
           "offline_configured": true,
           "paid_configured": false,
           "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222",
-          "configuration_scope": "read-time-environment-names-and-public-flags",
-          "execution_time_binding": "UNKNOWN"
+          "configuration_scope": "read-time-safe-effective-values",
+          "configuration_keys": [
+            "ALLOW_PAID_RUNS",
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"
+          ],
+          "execution_time_binding": "UNKNOWN",
+          "execution_time_reason": "no producer records the configuration in force at execution time"
         },
         "terminal_message_ts": "1789300830.100000"
       }
