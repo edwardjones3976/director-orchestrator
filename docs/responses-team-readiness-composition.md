@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]] -->
@@ -131,19 +132,54 @@ execution entitlement takes a pooled connection, a query and row locks, so the
 authority is re-read once that returns, with nothing between it and the worker
 being told to execute. The local-command boundary does the same.
 
-Across hosts the bound travels as a **duration**, never as this host's
-`time.monotonic()` instant, which means nothing on another machine. The
-authenticated SSH frames carry `lifetime_seconds`, recomputed for preparation
-and again for the exchange, and `serve` re-anchors it to the remote host's own
-clock before the Linux worker starts; an absent lifetime is standalone use and
-a malformed or spent one is refused rather than treated as unbounded. Frame
-flight time is lost on the safe side, so the remote lifetime is always shorter
-than this side's. What that does **not** prove: killing the local SSH process
-bounds this side only, and remote cgroup teardown is not demonstrated here.
+Across hosts the bound travels as **one fixed authenticated cutoff**, never as
+this host's `time.monotonic()` instant, which means nothing on another machine
+- and never as a remaining *duration*, which an earlier revision used and
+which this document then wrongly described as losing transit on the safe side.
+It did the opposite: a duration re-anchored on arrival returns the transit time
+to the remote worker. The authenticated `prepare` frame now carries a UTC
+`cutoff_at` plus the director's own `max_lifetime_seconds` at that moment, the
+`exchange` frame repeats that same unchanged pair, and `serve` converts it once
+against the receiver's own clock, taking the smaller of the two and narrowing
+only. An absent cutoff is standalone use; an expired, non-finite, naive or
+malformed one is refused rather than treated as unbounded.
+
+**The clock premise, stated and enforced.** A UTC instant only bounds the
+remote side if the two hosts' clocks agree; the protocol proves no such thing,
+and the existing UTC grant validation establishes no skew bound.
+`ACCEPTED_CLOCK_SKEW_SECONDS` is therefore an explicit assumption, enforced two
+ways: the accepted skew is subtracted from the converted remaining time, so a
+receiver clock running behind cannot turn disagreement into extra time, and a
+conversion implying more time than the director ever had - beyond that
+allowance - is refused outright as a clock the premise does not cover. One
+consequence is deliberate: a remote budget shorter than the skew allowance
+cannot run remotely at all. No hard cross-host real-time guarantee is claimed
+and no clock service is added.
+
+**Support is acknowledged before private source.** A local capability flag says
+nothing about what an older remote server enforces, so the director requires an
+authenticated `primary_cutoff_accepted` frame echoing the exact `cutoff_at`
+*before* the exchange sends any source. A server that does not send it fails
+closed at the frame boundary. When no primary bound is carried, neither side
+expects the frame and standalone behaviour is unchanged.
+
+What this does **not** prove, stated rather than implied: killing the local SSH
+process bounds this side only; `preexec_fn` runs between fork and exec and
+cannot be interrupted once `Popen` is entered; and cleanup spends its own five
+second process wait plus a further five second cgroup drain, which the
+transported cutoff does not cover. Remote cgroup teardown is not demonstrated
+here.
 
 Inside the worker, the remaining budget is spent as it is: a fractional
 remainder stays fractional, and a non-positive one is refused instead of
-being rounded up into a fresh second. Candidate integration receives the same
+being rounded up into a fresh second. Preparation carries the same anchored
+bound through qualification, the native state scan and the durable claim,
+re-checked between them, so preparation that has run out writes no claim and
+acknowledges nothing. `run_unprivileged` takes the absolute bound rather than
+a duration: the prompt is serialized before it, the bound is checked after
+cgroup and file setup and again immediately before `Popen`, and the value
+`communicate` receives is what is left *at that moment* rather than the
+duration the caller computed earlier. Candidate integration receives the same
 fixed completion bound through its Git and database work rather than starting
 a sixty-second timer of its own.
 
@@ -338,17 +374,20 @@ nothing here is claimed from them.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
   check): **2 tests, passing**, this revision.
-- `--group team` (`test_antigravity_team_worker`): **21 tests, all passing**,
-  this revision, including nine real-path team regressions.
+- `--group team` (`test_antigravity_team_worker`): **28 tests, all passing**,
+  this revision, including sixteen real-path team regressions.
 
 What those team regressions actually exercise: the real
 `NativeTeamPacketTransport`, real signed grants and prepared-evidence
 contracts, the real entitlement boundary against the real disposable
-PostgreSQL schema, the real candidate integrator and Git repository, and the
-real frame-lifetime helpers. What they do **not** exercise: a live SSH
-connection, the Linux worker's cgroup/uid containment, any native provider
-execution, and remote cleanup after a lifetime expires. Those remain
-unproven here and are stated as limits rather than coverage.
+PostgreSQL schema, the real candidate integrator and Git repository, the real
+cutoff conversion used by `serve`, the real `prepare_binding` preparation path
+including its durable claim, and the real `run_unprivileged` setup-and-launch
+sequence. What they do **not** exercise: a live SSH connection or full frame
+sequencing (frames are constructed directly), the `preexec_fn` callback, the
+Linux worker's cgroup/uid containment, any native provider execution, and
+remote cleanup after a cutoff expires. Those remain unproven here and are
+stated as limits rather than coverage.
 
 Two independent probes are preserved as *failed pre-repair* evidence, not as
 current verdicts: the supplied restart probe reached the writer sentinel and
@@ -476,7 +515,10 @@ and the real transport:
 | Complete replies survive response/client cleanup failure | Done, exercised |
 | A lost selection is refused before any database call | Done, exercised |
 | Team lane honours the primary recheck and shared budget | Done, exercised |
-| Remote worker lifetime crosses the frame as a duration | Done, exercised |
+| One fixed authenticated cutoff; transit spent, not returned | Done, exercised |
+| Remote support acknowledged before any private source | Done, exercised |
+| Preparation and process setup inside the same bound | Done, exercised |
+| Bounded cross-host skew | Premise, stated and enforced - not proven |
 | A worker that cannot enforce the bound is refused | Done, exercised |
 | Recheck after the blocking authorization, before execution | Done, exercised |
 | Completion bound carried into candidate integration | Done, exercised |
@@ -592,7 +634,7 @@ and the real transport:
   host found - an unrestricted cancellation Mock and a missing skill suite
   entry - were corrected, and the pre-repair probe, host QA and security
   evidence is preserved as historical failure rather than restated as a pass.
-- **2026-09-21 16:29 UTC (this revision)**: independent review found five
+- **2026-09-21 16:29 UTC**: independent review found five
   remaining team control gaps, two of them probed failing. The SSH lane now
   forwards an authenticated remote *lifetime* through its frames and `serve`,
   re-anchored to the receiving host's clock, with the clock-domain assumption
@@ -604,6 +646,21 @@ and the real transport:
   integration receives the fixed completion bound through its Git and database
   work instead of restarting sixty seconds, and the Linux worker no longer
   rounds a spent remainder up into a new second.
+- **2026-09-21 16:56 UTC (this revision)**: an independent probe showed the
+  previous revision's *duration* actually handing transit time back to the
+  remote worker - 10 seconds sent plus 3 in flight became 10 again - so this
+  document's "lost on the safe side" claim was wrong and is corrected here.
+  One fixed authenticated UTC cutoff now travels from preparation through
+  exchange, is converted once on the receiver's clock and only narrows; the
+  accepted clock-skew premise is stated and enforced in both directions
+  rather than assumed; and the remote server must acknowledge that exact
+  cutoff before any private source is sent, because a local capability flag
+  proves nothing about an older server. Preparation enforces the bound across
+  qualification, the state scan and its durable claim, and `run_unprivileged`
+  now takes the absolute bound, checks it after setup and before `Popen`, and
+  recomputes what `communicate` waits for. The uninterruptible `preexec_fn`
+  window and the two separate five-second cleanup waits are disclosed rather
+  than covered.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -616,3 +673,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]] -->

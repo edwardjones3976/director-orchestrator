@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -18,8 +19,9 @@ from __future__ import annotations
 
 import base64
 import ctypes
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
+import math
 import hmac
 import json
 import os
@@ -85,15 +87,27 @@ def _require_shared_deadline(deadline, what):
     return deadline
 
 
-def remote_lifetime_seconds(deadline, what):
-    """The bound to send to another host, as a duration rather than an instant.
+# The premise under which a cross-host cutoff means anything at all: the two
+# hosts' UTC clocks agree to within this much. It is not derived from the
+# protocol and it is not a synchronization service - it is an assumption,
+# enforced below by refusing a cutoff whose implied skew exceeds it, and
+# charged against the remote budget so a receiver clock running behind cannot
+# turn skew into extra time. No hard cross-host real-time guarantee is claimed.
+ACCEPTED_CLOCK_SKEW_SECONDS = 5.0
 
-    `time.monotonic()` is only comparable within one process on one host, so a
-    remote worker can never be handed this side's absolute value. What crosses
-    the authenticated frame is the number of seconds still allowed, which the
-    receiving side immediately re-anchors to its own clock. The conversion
-    costs whatever the frame takes in flight; that loss is on the safe side,
-    because the remote lifetime is then strictly shorter than this side's.
+
+def remote_cutoff_frame(deadline, what):
+    """The one fixed cutoff to carry from preparation through exchange.
+
+    Two authenticated fields, both fixed at the moment the primary bound was
+    established for this attempt:
+
+    * `cutoff_at` - a UTC instant. A *duration* would be re-anchored on
+      arrival and hand transit time back to the remote worker; an instant
+      cannot be, because it does not move while the frame is in flight.
+    * `max_lifetime_seconds` - this side's own remaining budget when the frame
+      was sent, a hard upper bound the receiver also applies. A receiver whose
+      clock is behind therefore still cannot exceed the director's budget.
 
     None means no primary bound was carried - genuine standalone use.
     """
@@ -103,23 +117,50 @@ def remote_lifetime_seconds(deadline, what):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TeamAuthorizationError(what + " deadline expired before it started")
-    return remaining
+    return {"cutoff_at": (datetime.now(timezone.utc)
+                          + timedelta(seconds=remaining)).isoformat(),
+            "max_lifetime_seconds": remaining,
+            "accepted_clock_skew_seconds": ACCEPTED_CLOCK_SKEW_SECONDS}
 
 
-def _remote_deadline(payload, key="lifetime_seconds"):
-    """Re-anchor a received lifetime to this host's own clock.
+def _remote_deadline(payload, key="primary_cutoff", anchored=None):
+    """Anchor one received cutoff to this host's clock, narrowing only.
 
-    A frame that carries no lifetime leaves the worker on its own grant timer,
-    which is the standalone contract. A malformed or non-positive value is
-    refused rather than treated as unbounded.
+    Converted once: the UTC cutoff is compared against *this* host's UTC now,
+    the accepted skew is subtracted, and the director's own declared remaining
+    budget caps the result. Transit is therefore spent rather than returned.
+    If the conversion implies more time than the director had plus the
+    accepted skew, the two clocks disagree by more than the stated premise and
+    the frame is refused rather than trusted.
+
+    `anchored` is the value established by an earlier frame of the same
+    attempt. A later frame may move it earlier and never later, so one fixed
+    cutoff governs preparation and exchange alike.
     """
 
-    lifetime = payload.get(key) if isinstance(payload, dict) else None
-    if lifetime is None:
-        return None
-    if not isinstance(lifetime, (int, float)) or isinstance(lifetime, bool) or lifetime <= 0:
-        raise TeamAuthorizationError("authenticated remote lifetime is invalid")
-    return time.monotonic() + float(lifetime)
+    carried = payload.get(key) if isinstance(payload, dict) else None
+    if carried is None:
+        return anchored
+    if not isinstance(carried, dict):
+        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
+    declared = carried.get("max_lifetime_seconds")
+    if (not isinstance(declared, (int, float)) or isinstance(declared, bool)
+            or not math.isfinite(declared) or declared <= 0):
+        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
+    try:
+        cutoff_at = datetime.fromisoformat(str(carried.get("cutoff_at")))
+    except ValueError:
+        raise TeamAuthorizationError("authenticated remote cutoff is invalid") from None
+    if cutoff_at.tzinfo is None:
+        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
+    by_clock = (cutoff_at - datetime.now(timezone.utc)).total_seconds()
+    if by_clock > declared + ACCEPTED_CLOCK_SKEW_SECONDS:
+        raise TeamAuthorizationError(
+            "remote clock disagrees with the authenticated cutoff beyond the accepted skew")
+    allowed = min(by_clock, float(declared)) - ACCEPTED_CLOCK_SKEW_SECONDS
+    if allowed <= 0:
+        raise TeamAuthorizationError("authenticated remote cutoff is already spent")
+    return _shared_deadline(time.monotonic() + allowed, anchored)
 
 
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
@@ -267,14 +308,33 @@ def require_cgroup_root(path):
     return root
 
 
-def run_unprivileged(argv, *, uid, gid, cwd, home, timeout, cgroup_root, input_bytes=b""):
+def run_unprivileged(argv, *, uid, gid, cwd, home, timeout=None, cgroup_root,
+                     input_bytes=b"", deadline=None):
     """Join a protected cgroup before dropping identity or executing any code.
 
     A setsid/double-fork descendant stays in this non-delegated kernel group.
     Always kill the entire group and verify it is empty, including on success.
+
+    `deadline` is this host's own absolute bound for the whole call. It is
+    checked after the cgroup and file setup, again immediately before the
+    process is launched, and the wait is computed from what is left *then* -
+    setup no longer happens outside the budget and then hands the child the
+    original duration. A caller may still pass a plain `timeout` for
+    standalone use; supplying both is what the primary lane does, and the
+    earlier of the two wins.
+
+    Two limits are deliberately not covered by this bound and are not claimed
+    to be: `preexec_fn` runs between fork and exec and cannot be interrupted
+    once `Popen` has been entered, and the cleanup below spends its own five
+    second process wait plus a further five second cgroup drain.
     """
     if os.name != "posix" or sys.platform != "linux" or os.geteuid() != 0 or uid <= 0 or gid <= 0:
         raise TeamAuthorizationError("qualified Linux broker identity required")
+    if deadline is None and timeout is None:
+        raise TeamAuthorizationError("bounded native execution requires a deadline")
+    if timeout is not None:
+        deadline = _shared_deadline(time.monotonic() + timeout, deadline)
+    _remaining_seconds(deadline, "native process setup")
     root = require_cgroup_root(cgroup_root)
     group = root / ("director-" + os.urandom(16).hex())
     group.mkdir(mode=0o755)
@@ -283,7 +343,7 @@ def run_unprivileged(argv, *, uid, gid, cwd, home, timeout, cgroup_root, input_b
         raise TeamAuthorizationError("kernel cgroup.kill support required")
     def enter():
         (group / "cgroup.procs").write_text(str(os.getpid()))
-        _limits(timeout)
+        _limits(_remaining_seconds(deadline, "native execution"))
         os.setgroups([])
         os.setgid(gid)
         os.setuid(uid)
@@ -291,10 +351,15 @@ def run_unprivileged(argv, *, uid, gid, cwd, home, timeout, cgroup_root, input_b
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         process = None
         try:
+            # After every setup step above, immediately before launching: work
+            # that has already consumed the budget never starts a child.
+            _remaining_seconds(deadline, "native execution")
             process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
                 stdout=stdout, stderr=stderr, umask=0o077,
                 start_new_session=True, preexec_fn=enter)
-            process.communicate(input=input_bytes, timeout=timeout)
+            # Recomputed here, not the duration the caller held earlier.
+            process.communicate(input=input_bytes,
+                                timeout=_remaining_seconds(deadline, "native execution"))
         finally:
             (group / "cgroup.kill").write_text("1")
             if process is not None:
@@ -387,22 +452,35 @@ class LinuxNativeTeamWorker:
             raise TeamAuthorizationError("worker preparation grant mismatch")
         return self.prepare_binding(binding={key:getattr(grant,key) for key in (
             "installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id")},
-            grant_digest=grant_digest,attempt_digest=attempt_digest,challenge=challenge)
+            grant_digest=grant_digest,attempt_digest=attempt_digest,challenge=challenge,
+            deadline=deadline)
 
-    def prepare_binding(self, *, binding, grant_digest, attempt_digest, challenge):
+    def prepare_binding(self, *, binding, grant_digest, attempt_digest, challenge, deadline=None):
+        """Qualify this host for one exact grant, inside the carried bound.
+
+        Qualification, the native state scan and the durable claim below are
+        real work that can outlast the budget, so the bound is re-checked
+        between them: preparation that has already run out writes no claim and
+        acknowledges nothing.
+        """
+
         if (set(binding)!={"installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id"}
             or not re.fullmatch(r"[0-9a-f]{64}",grant_digest)
             or not re.fullmatch(r"sha256:[0-9a-f]{64}",attempt_digest)):
             raise TeamAuthorizationError("public worker binding contract mismatch")
+        _remaining_seconds(deadline, "worker preparation")
         qualification = self.qualify(SimpleNamespace(**binding))
         if qualification.get("grant_digest")!=grant_digest:
             raise TeamAuthorizationError("host qualification is not scoped to this exact task grant")
+        _remaining_seconds(deadline, "worker preparation")
         state=native_state_manifest(self.config["native_home"])
         if state!=qualification.get("native_state_manifest"):
             raise TeamAuthorizationError("native account state changed or contains prior task history")
         # A general host receipt is insufficient: cached native state must be
         # re-qualified for each task. Consume the exact task-scoped receipt
         # before acknowledging readiness to receive private source.
+        # The last check before any durable side effect of preparation.
+        _remaining_seconds(deadline, "worker preparation")
         qualification_claim=Path(self.config["claims_root"])/("qualification-"+document_digest(qualification))
         with qualification_claim.open("xb") as handle:
             handle.write(canonical_json_bytes({"grant_digest":grant_digest,"attempt_digest":attempt_digest,"challenge":challenge}))
@@ -469,14 +547,18 @@ class LinuxNativeTeamWorker:
             prompt = {"instruction": "Return JSON with packet (the required result packet) and returned_files (path, sha256, content_base64). Use no tools. Proposed edits are applied and checked by the independent supervisor. Do not claim checks; leave packet.checks empty.",
                 "work_packet": work_packet, "source": {p: base64.b64encode(b).decode() for p, b in source.items()},
                 "writable_paths": grant.writable_paths}
+            # Serialized before the boundary and before the bound is spent on
+            # it: the helper below takes the absolute deadline, so nothing
+            # between here and the launch is charged to a stale duration.
+            prompt_bytes = canonical_json_bytes(
+                {"event": "user", "message": {"content": canonical_json_bytes(prompt).decode()}}) + b"\n"
             before_execute()
             code, stream, diagnostics = run_unprivileged([self.config["executable"],
                 "--input-format", "stream-json", "--output-format", "stream-json", "--model", grant.model,
                 "--project",grant.native_project_id],
                 uid=self.config["native_uid"], gid=self.config["native_gid"], cwd=native_cwd,
                 home=self.config["native_home"], cgroup_root=self.config["cgroup_root"],
-                timeout=_remaining_seconds(deadline, "native execution"),
-                input_bytes=canonical_json_bytes({"event": "user", "message": {"content": canonical_json_bytes(prompt).decode()}})+b"\n")
+                deadline=deadline, input_bytes=prompt_bytes)
             if code or len(stream) > 8 * 1024 * 1024:
                 raise TeamAuthorizationError("native execution failed or exceeded output limit")
             proposal, session, usage = parse_native_stream(stream, grant=grant, expected_cwd=str(native_cwd))
@@ -502,7 +584,7 @@ class LinuxNativeTeamWorker:
                 before_local_command(argv)
                 code, output, errors = run_unprivileged([executable,*argv[1:]], uid=self.config["check_uid"],
                     gid=self.config["check_gid"], cwd=checks_cwd, home=checks_cwd, cgroup_root=self.config["cgroup_root"],
-                    timeout=_remaining_seconds(deadline, "local command"))
+                    deadline=deadline)
                 commands.append(list(argv))
                 checks.append({"command": json.dumps(list(argv)), "result": "output-sha256:" + hashlib.sha256(output + errors).hexdigest(), "exit_code": code})
             # Checks cannot smuggle modified source back. Capture the proposal's
@@ -579,13 +661,23 @@ class PinnedSshTeamWorker:
             self.process.stdin.write(challenge.encode()+b"\n")
             self.process.stdin.flush()
             binding={key:getattr(self.grant,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id")}
-            # The remote side receives a lifetime, not this host's monotonic
-            # instant, inside the same authenticated frame. Killing the local
-            # SSH process bounds this side only; the remote lifetime is what
-            # bounds the worker's own execution and cleanup there.
+            # One fixed cutoff, established now and reused unchanged by the
+            # exchange frame below. Killing the local SSH process bounds this
+            # side only; this is what bounds the worker's own execution there.
+            self.cutoff=remote_cutoff_frame(self.deadline,"remote preparation")
             self.channel.send("prepare", {"binding":binding,"grant_digest":grant_digest,
-                "attempt_digest":attempt_digest,
-                "lifetime_seconds":remote_lifetime_seconds(self.deadline,"remote preparation")})
+                "attempt_digest":attempt_digest,"primary_cutoff":self.cutoff})
+            if self.cutoff is not None:
+                # Before any private source is sent: the remote server must
+                # acknowledge this exact cutoff on the authenticated channel.
+                # A local capability flag proves nothing about an older server,
+                # and one that does not send this frame fails closed here.
+                acknowledged=self.channel.receive("primary_cutoff_accepted")
+                if (not isinstance(acknowledged,dict)
+                        or acknowledged.get("cutoff_at")!=self.cutoff["cutoff_at"]
+                        or acknowledged.get("accepted") is not True):
+                    raise TeamAuthorizationError(
+                        "remote worker did not acknowledge the primary cutoff")
             return self.channel.receive("prepared")
         except BaseException:
             self.close()
@@ -598,12 +690,14 @@ class PinnedSshTeamWorker:
                 raise TeamAuthorizationError("SSH exchange changed grant")
             # The remote exchange continues under the lifetime preparation
             # already started; it never begins a second full-grant timer.
-            bound = _require_shared_deadline(
+            _require_shared_deadline(
                 _shared_deadline(getattr(self, "deadline", None), deadline), "remote exchange")
             self.channel.send("exchange", {"grant":grant.model_dump(mode="json"),"work_packet": work_packet,
                 "source": {p: base64.b64encode(b).decode() for p,b in source.items()},
-                # Recomputed here: what preparation spent is already gone.
-                "lifetime_seconds":remote_lifetime_seconds(bound,"remote exchange")})
+                # The same fixed cutoff preparation established. It is not
+                # recomputed, so the exchange cannot hand back what
+                # preparation spent, and the receiver only narrows.
+                "primary_cutoff":getattr(self,"cutoff",None)})
             self.channel.receive("before_execute")
             before_execute()
             self.channel.send("authorized", {"stage": "execution"})
@@ -630,14 +724,20 @@ def serve(config_path):
     challenge = sys.stdin.buffer.readline(66).decode().strip()
     channel = FrameChannel(sys.stdin.buffer, sys.stdout.buffer, worker.secret, challenge, sender="worker")
     request = channel.receive("prepare")
-    # Re-anchored to this host's clock: the director's monotonic value would be
-    # meaningless here, and an absent lifetime keeps the grant timer alone.
-    _remote_deadline(request)
+    # Anchored once, on this host's clock, from the authenticated UTC cutoff.
+    # An absent cutoff is standalone use and keeps the grant timer alone.
+    remote_deadline = _remote_deadline(request)
+    if remote_deadline is not None:
+        # Acknowledged before any private source arrives, so a server that
+        # does not enforce this field can never receive it.
+        channel.send("primary_cutoff_accepted",
+                     {"accepted": True, "cutoff_at": request["primary_cutoff"]["cutoff_at"]})
     prepared = worker.prepare_binding(binding=request["binding"],grant_digest=request["grant_digest"],
-        attempt_digest=request["attempt_digest"],challenge=challenge)
+        attempt_digest=request["attempt_digest"],challenge=challenge,deadline=remote_deadline)
     channel.send("prepared", prepared)
     request = channel.receive("exchange")
-    remote_deadline = _remote_deadline(request)
+    # The same fixed cutoff, which may only narrow what preparation anchored.
+    remote_deadline = _remote_deadline(request, anchored=remote_deadline)
     grant = TeamGrant.model_validate_json(json.dumps(request["grant"]))
     def boundary(stage, argv=None):
         channel.send("before_execute" if stage == "execution" else "before_command", {} if argv is None else list(argv))
@@ -666,3 +766,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]

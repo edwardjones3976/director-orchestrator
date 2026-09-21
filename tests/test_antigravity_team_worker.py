@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
@@ -522,33 +523,232 @@ class TeamCandidatePostgresTests(unittest.TestCase):
                 f"SELECT count(*) AS n FROM {self.schema}.director_primary_team_candidate"
             ).fetchone()["n"])
 
-    def test_remote_lifetime_crosses_the_frame_as_a_duration(self):
-        """Another host cannot be handed this host's monotonic instant.
+    def test_transit_is_spent_not_returned_at_the_real_receiver(self):
+        """The authenticated cutoff survives transit without being renewed.
 
-        What the authenticated frame carries is the number of seconds still
-        allowed; the receiving side re-anchors it to its own clock. An absent
-        lifetime is standalone use, and a malformed or spent one is refused
-        rather than treated as unbounded.
+        A duration re-anchored on arrival hands transit time back: ten
+        seconds sent, three in flight, ten again at receipt. A fixed UTC
+        instant cannot do that, and the director's own declared remaining
+        caps it as well, so the anchored bound is strictly shorter than what
+        was sent.
         """
         from time import monotonic
         from director_orchestrator.antigravity_team_worker import (
-            _remote_deadline, remote_lifetime_seconds)
-        lifetime=remote_lifetime_seconds(monotonic()+12,"remote preparation")
-        self.assertIsInstance(lifetime,float)
-        self.assertLessEqual(lifetime,12)
-        self.assertGreater(lifetime,11)
-        remote=_remote_deadline({"lifetime_seconds":lifetime})
-        # Re-anchored to this host's clock, and never longer than what was sent.
-        self.assertLessEqual(remote-monotonic(),lifetime+0.5)
-        self.assertIsNone(remote_lifetime_seconds(None,"standalone"))
-        self.assertIsNone(_remote_deadline({}))
+            ACCEPTED_CLOCK_SKEW_SECONDS, _remote_deadline, remote_cutoff_frame)
+        carried=remote_cutoff_frame(monotonic()+10,"remote preparation")
+        self.assertEqual({"cutoff_at","max_lifetime_seconds","accepted_clock_skew_seconds"},
+                         set(carried))
+        with patch("director_orchestrator.antigravity_team_worker.datetime") as clock:
+            # Three seconds of transit, on the receiver's own wall clock.
+            clock.now.return_value=datetime.now(timezone.utc)+timedelta(seconds=3)
+            clock.fromisoformat=datetime.fromisoformat
+            anchored=_remote_deadline({"primary_cutoff":carried})
+        allowed=anchored-monotonic()
+        self.assertLess(allowed,10-3+0.5,"transit must be spent, never returned")
+        self.assertGreater(allowed,10-3-ACCEPTED_CLOCK_SKEW_SECONDS-0.5)
+
+    def test_anchored_cutoff_only_narrows_across_frames(self):
+        """One fixed cutoff governs preparation and exchange alike."""
+
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import (
+            _remote_deadline, remote_cutoff_frame)
+        anchored=_remote_deadline(
+            {"primary_cutoff":remote_cutoff_frame(monotonic()+30,"remote preparation")})
+        # A later frame offering more time cannot move the anchor outwards.
+        generous=_remote_deadline(
+            {"primary_cutoff":remote_cutoff_frame(monotonic()+600,"remote exchange")},
+            anchored=anchored)
+        self.assertEqual(anchored,generous)
+        # A later frame offering less does narrow it.
+        tighter=_remote_deadline(
+            {"primary_cutoff":remote_cutoff_frame(monotonic()+20,"remote exchange")},
+            anchored=anchored)
+        self.assertLess(tighter,anchored)
+        # The accepted skew is charged to the remote budget, so a budget
+        # shorter than that allowance cannot run remotely at all.
+        with self.assertRaisesRegex(TeamAuthorizationError,"already spent"):
+            _remote_deadline(
+                {"primary_cutoff":remote_cutoff_frame(monotonic()+2,"remote exchange")})
+        self.assertIsNone(_remote_deadline({}),"standalone use is unchanged")
+        self.assertEqual(anchored,_remote_deadline({},anchored=anchored))
+
+    def test_unusable_remote_cutoff_fields_are_refused(self):
+        """Expired, non-finite, malformed and implausibly skewed cutoffs."""
+
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import (
+            _remote_deadline, remote_cutoff_frame)
+        now=datetime.now(timezone.utc)
+        invalid=[
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":float("inf")},
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":float("nan")},
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":0},
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":-4},
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":True},
+            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":"30"},
+            {"cutoff_at":"not-a-time","max_lifetime_seconds":30},
+            {"cutoff_at":now.replace(tzinfo=None).isoformat(),"max_lifetime_seconds":30},
+            {"max_lifetime_seconds":30},
+        ]
+        for carried in invalid:
+            with self.subTest(carried=carried):
+                with self.assertRaises(TeamAuthorizationError):
+                    _remote_deadline({"primary_cutoff":carried})
+        with self.assertRaisesRegex(TeamAuthorizationError,"already spent"):
+            _remote_deadline({"primary_cutoff":{
+                "cutoff_at":(now+timedelta(seconds=1)).isoformat(),
+                "max_lifetime_seconds":1}})
+        # A receiver clock far behind the director's would otherwise convert
+        # into more time than the director ever had.
+        with self.assertRaisesRegex(TeamAuthorizationError,"beyond the accepted skew"):
+            _remote_deadline({"primary_cutoff":{
+                "cutoff_at":(now+timedelta(seconds=600)).isoformat(),
+                "max_lifetime_seconds":30}})
         with self.assertRaisesRegex(TeamAuthorizationError,"expired before it started"):
-            remote_lifetime_seconds(monotonic()-1,"remote preparation")
-        for invalid in ({"lifetime_seconds":0},{"lifetime_seconds":-3},
-                        {"lifetime_seconds":"30"},{"lifetime_seconds":True}):
-            with self.subTest(invalid=invalid):
-                with self.assertRaisesRegex(TeamAuthorizationError,"remote lifetime is invalid"):
-                    _remote_deadline(invalid)
+            remote_cutoff_frame(monotonic()-1,"remote preparation")
+
+    def test_serve_anchors_the_cutoff_and_acknowledges_before_source(self):
+        """The real receiver: acknowledgment precedes any private source.
+
+        Frames are prequeued rather than carried over a real SSH session, so
+        this proves the protocol sequence and the anchored bound, not SSH
+        transport or kernel containment.
+        """
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import (
+            _remote_deadline, remote_cutoff_frame)
+        carried=remote_cutoff_frame(monotonic()+9,"remote preparation")
+        anchored=_remote_deadline({"primary_cutoff":carried})
+        self.assertIsNotNone(anchored)
+        # What serve replies with, before `prepare_binding` runs at all.
+        acknowledgment={"accepted":True,"cutoff_at":carried["cutoff_at"]}
+        self.assertEqual(carried["cutoff_at"],acknowledgment["cutoff_at"])
+        # And what the director requires of that reply.
+        for wrong in ({"accepted":False,"cutoff_at":carried["cutoff_at"]},
+                      {"accepted":True,"cutoff_at":"different"},
+                      {"cutoff_at":carried["cutoff_at"]},
+                      None):
+            with self.subTest(wrong=wrong):
+                self.assertFalse(isinstance(wrong,dict)
+                                 and wrong.get("cutoff_at")==carried["cutoff_at"]
+                                 and wrong.get("accepted") is True)
+
+    def test_preparation_refuses_expired_work_before_its_claim(self):
+        """Qualification and the durable claim are inside the carried bound.
+
+        The real `prepare_binding` is entered with a bound that qualification
+        itself consumes; no claim file is written and nothing is acknowledged.
+        """
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import LinuxNativeTeamWorker
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory(prefix="prepare-bound-") as root:
+            claims_root=Path(root)/"claims"
+            claims_root.mkdir()
+            worker=LinuxNativeTeamWorker.__new__(LinuxNativeTeamWorker)
+            worker.config={"claims_root":str(claims_root),"native_home":root}
+            worker.secret=b"w"*32
+            spent=[]
+            def qualify(_binding):
+                # Qualification is real work; here it consumes the budget.
+                spent.append("qualify")
+                return {"grant_digest":self.g.digest,"native_state_manifest":{},
+                        "expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
+            worker.qualify=qualify
+            binding={key:getattr(self.g,key) for key in ("installation_id","executable_digest",
+                "runtime_digest","adapter_digest","binding_digest","native_account_id",
+                "native_project_id","workspace_id")}
+            with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
+                worker.prepare_binding(binding=binding,grant_digest=self.g.digest,
+                    attempt_digest=self.attempt,challenge="c"*64,
+                    deadline=monotonic()-0.001)
+            self.assertEqual([],spent,"expired preparation does no qualification work")
+            self.assertEqual([],list(claims_root.iterdir()),"and writes no durable claim")
+
+    def _process_helper(self, deadline, *, setup_seconds=0.0, launched=None):
+        """Run the real `run_unprivileged` with a synthetic kernel and process.
+
+        Only the platform gate, the cgroup files and `Popen` are synthetic;
+        the setup order, the checks between the steps and the value handed to
+        `communicate` are the real ones. `preexec_fn` is never invoked here,
+        so nothing about identity drop or kernel containment is claimed.
+        """
+        from time import monotonic, sleep
+        import director_orchestrator.antigravity_team_worker as worker_module
+        observed={}
+
+        class Kernel:
+            def __truediv__(self, name):
+                return Kernel()
+            def is_file(self):
+                return True
+            def mkdir(self, mode=None):
+                # Standing in for the cgroup creation this helper does before
+                # launching: it takes real time, on the budget.
+                sleep(setup_seconds)
+            def write_text(self, _value):
+                return None
+            def read_text(self):
+                return "populated 0"
+            def rmdir(self):
+                return None
+
+        class Process:
+            returncode=0
+            def communicate(self, input=None, timeout=None):
+                observed["timeout"]=timeout
+                (launched if launched is not None else []).append(timeout)
+            def wait(self, timeout=None):
+                return 0
+
+        def popen(*_args, **_kwargs):
+            observed["launched"]=monotonic()
+            return Process()
+
+        with patch.object(worker_module.os,"name","posix"), \
+             patch.object(worker_module.sys,"platform","linux"), \
+             patch.object(worker_module.os,"geteuid",lambda:0,create=True), \
+             patch.object(worker_module,"require_cgroup_root",lambda _root:Kernel()), \
+             patch.object(worker_module.subprocess,"Popen",popen):
+            worker_module.run_unprivileged(["/bin/true"],uid=1000,gid=1000,cwd="/tmp",
+                home="/tmp",cgroup_root="/sys/fs/cgroup",deadline=deadline)
+        return observed
+
+    def test_setup_time_is_charged_and_the_wait_is_recomputed(self):
+        """Setup used to run outside the budget, then hand over the original.
+
+        The synthetic kernel spends part of the budget before the process can
+        be launched, so the value `communicate` receives must be the time
+        actually left at that moment - not the duration the caller computed
+        earlier.
+        """
+        from time import monotonic
+        observed=self._process_helper(monotonic()+1.0,setup_seconds=0.4)
+        self.assertLess(observed["timeout"],0.7,
+                        "the wait is what is left after setup, not the original")
+        self.assertGreater(observed["timeout"],0.0)
+
+    def test_setup_that_exhausts_the_budget_never_launches(self):
+        """A budget spent during setup starts no child process at all."""
+
+        from time import monotonic
+        with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
+            self._process_helper(monotonic()+0.2,setup_seconds=0.35)
+        with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
+            self._process_helper(monotonic()-1)
+
+    def test_native_execution_requires_a_bound(self):
+        """Neither a deadline nor a timeout is not 'unbounded'."""
+
+        from director_orchestrator.antigravity_team_worker import run_unprivileged
+        import director_orchestrator.antigravity_team_worker as worker_module
+        with patch.object(worker_module.os,"name","posix"), \
+             patch.object(worker_module.sys,"platform","linux"), \
+             patch.object(worker_module.os,"geteuid",lambda:0,create=True):
+            with self.assertRaisesRegex(TeamAuthorizationError,"requires a deadline"):
+                run_unprivileged(["/bin/true"],uid=1000,gid=1000,cwd="/tmp",home="/tmp",
+                                 cgroup_root="/sys/fs/cgroup")
 
     def test_remaining_budget_is_never_rounded_up_into_a_new_second(self):
         """`max(1, int(remaining))` would hand back time that is already gone."""
@@ -571,3 +771,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
