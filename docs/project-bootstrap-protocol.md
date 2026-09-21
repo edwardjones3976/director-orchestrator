@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -181,10 +182,10 @@ project-local fit here and link back for authority boundaries.
 
 | Provider or capability | Good project-local use | Never infer from this role |
 | --- | --- | --- |
-| Claude / acting Director | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
-| Codex / ChatGPT / OpenAI | repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
+| Claude | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
+| Codex / ChatGPT / OpenAI | Director (project coordination, routing, review orchestration, completion reporting); repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
 | Cursor | full-spectrum implementation, reliability, QA, architecture, independent review, technical leadership | an overflow-only role, self-review, or a durable execution target other than the named one |
-| Gemini / Antigravity | bounded subordinate scaffolding, mechanical work, sandboxed alternate ideas, explicitly limited experiments | primary authority, unrestricted project context, final review, acceptance, merge, or methodology truth |
+| Gemini / Antigravity | restricted default fixture contact (bounded scaffolding, mechanical work, sandboxed ideas); explicitly granted team-contract engineering/review | primary authority, unrestricted project context, bypass of admission gates, independent acceptance, merge, or methodology truth |
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
@@ -519,3 +520,4 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
