@@ -1,3 +1,4 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | BEGIN]] -->
@@ -196,7 +197,7 @@ not transfer writer ownership to model output.
 | Provider | Role |
 | --- | --- |
 | **OpenAI / Codex** | Default runtime Director; bounded engineering and eligible independent review |
-| **Claude** | Acting project Director; engineering/review peer; alternate runtime Director only when explicitly activated |
+| **Claude** | Engineering/review peer; alternate runtime Director only when explicitly activated |
 | **Cursor** | Full-spectrum implementation and review peer |
 | **Grok** | Independent xAI lane; adversarial and security value; Grok Bot and Cursor-hosted models are separate routes |
 | **Gemini / Antigravity** | Isolated implementation, simulation, behavioral validation, bounded debate |
@@ -442,7 +443,7 @@ be replaced with a synthetic pass.
 
 For every profile, execute the control actions in this order while Slack intake
 is closed: `Preflight`, `Accept`, `Migrate`, `Backup`, `RestoreDrill`, provider
-activation evidence, then `Activate`. `Accept` reads the canonical GitHub pull
+activation evidence, then `Activate`. Under the default `github-v1` acceptance mode, `Accept` reads the canonical GitHub pull
 request, requires its head to equal the frozen candidate, requires every named
 CI check to be completed successfully with no skipped/pending/failed check, and
 requires distinct non-author security and independent-review ACCEPT artifacts
@@ -450,7 +451,9 @@ that both name the exact head. Each must be an `APPROVED` review from the
 corresponding configured, disjoint GitHub actor allowlist with an acceptable
 GitHub author association, and its body must exactly equal the canonical
 `director-activation-review/v1` JSON artifact. Comments, quoted markers, and
-free-form prose never qualify. The CI, security, and independent-review issuers
+free-form prose never qualify. For alternative modes, see the separately signed
+[provider-acceptance-v2](provider-acceptance-v2.md) and
+[two-party-activation-v3](two-party-activation-v3.md) contracts. Under `github-v1`, the CI, security, and independent-review issuers
 must supply a closed canonical artifact with a canonical facts digest and their
 separate domain-separated HMAC attestations. The control process does not mint
 those attestations: it requires `-AcceptanceArtifactPath`, independently reads
@@ -674,3 +677,4 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
