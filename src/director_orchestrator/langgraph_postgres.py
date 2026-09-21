@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
@@ -466,6 +469,7 @@ _APPEND_ONLY_TABLES = (
     "director_primary_cancelled_plan_adjudication",
     "director_primary_workload_assignment",
     "director_primary_intake_auth_claim",
+    "director_primary_slack_status_receipt",
     "director_primary_intake_dedup",
     "director_primary_command_receipt",
     "director_primary_command_authorization",
@@ -760,6 +764,32 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                 authentication_class = 'slack_gateway_attested'
             ),
             created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.director_primary_slack_status_receipt (
+            source_event_id text PRIMARY KEY,
+            receipt_id text NOT NULL UNIQUE,
+            task_id text NOT NULL
+                REFERENCES {schema}.director_primary_task_projection (task_id),
+            channel_id text NOT NULL,
+            thread_ts text NOT NULL,
+            user_id text NOT NULL,
+            text_digest text NOT NULL CHECK (
+                text_digest ~ '^sha256:[0-9a-f]{{64}}$'
+            ),
+            created_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_slack_status_receipt_thread_idx
+        ON {schema}.director_primary_slack_status_receipt (channel_id, thread_ts)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS director_primary_task_projection_slack_thread_idx
+        ON {schema}.director_primary_task_projection (
+            (projection->'application'->'task_record'->'intake'->>'channel_id'),
+            (projection->'application'->'task_record'->'intake'->>'thread_ts')
         )
         """,
         f"""
@@ -2103,6 +2133,153 @@ class PostgresConditionalClaimStore:
                     missing="authenticated intake claim was not recorded",
                 )
                 return str(row["task_id"]), True
+
+    def resolve_primary_slack_thread_binding(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+    ) -> tuple[str, ...]:
+        """Return every task whose persisted intake binding matches one thread."""
+
+        _require_id(channel_id, "channel_id")
+        _require_id(thread_ts, "thread_ts")
+        schema = self._schema
+        with self._pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_projection
+                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                          = %(channel_id)s
+                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                          = %(thread_ts)s
+                    ORDER BY created_at, task_id
+                    """,
+                    {"channel_id": channel_id, "thread_ts": thread_ts},
+                )
+                rows = cursor.fetchall()
+        return tuple(str(row["task_id"]) for row in rows)
+
+    def record_primary_slack_status_receipt(
+        self,
+        *,
+        source_event_id: str,
+        receipt_id: str,
+        task_id: str,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        text_digest: str,
+    ) -> tuple[str, bool, datetime]:
+        """Persist one digest-only status receipt idempotently by source event."""
+
+        _require_id(source_event_id, "source_event_id")
+        _require_id(receipt_id, "receipt_id")
+        _require_id(task_id, "task_id")
+        _require_id(channel_id, "channel_id")
+        _require_id(thread_ts, "thread_ts")
+        _require_id(user_id, "user_id")
+        _require_digest(text_digest, "text_digest")
+        schema = self._schema
+        binding_query = f"""
+                    SELECT task_id
+                    FROM {schema}.director_primary_task_projection
+                    WHERE projection->'application'->'task_record'->'intake'->>'channel_id'
+                          = %(channel_id)s
+                      AND projection->'application'->'task_record'->'intake'->>'thread_ts'
+                          = %(thread_ts)s
+                    ORDER BY created_at, task_id
+                    """
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "status-receipt", schema, source_event_id
+                        )
+                    },
+                )
+                self._optional_row(
+                    connection,
+                    "SELECT pg_advisory_xact_lock(%(key)s)",
+                    {
+                        "key": _advisory_key(
+                            "status-receipt-thread",
+                            schema,
+                            channel_id,
+                            thread_ts,
+                        )
+                    },
+                )
+                existing = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT source_event_id, receipt_id, task_id, channel_id,
+                           thread_ts, user_id, text_digest, created_at
+                    FROM {schema}.director_primary_slack_status_receipt
+                    WHERE source_event_id = %(source_event_id)s
+                    """,
+                    {"source_event_id": source_event_id},
+                )
+                if existing is not None:
+                    if (
+                        str(existing["receipt_id"]) != receipt_id
+                        or str(existing["task_id"]) != task_id
+                        or str(existing["channel_id"]) != channel_id
+                        or str(existing["thread_ts"]) != thread_ts
+                        or str(existing["user_id"]) != user_id
+                        or str(existing["text_digest"]) != text_digest
+                    ):
+                        raise PostgresControlPlaneError(
+                            "status receipt source event was replayed with conflicting payload"
+                        )
+                    return (
+                        str(existing["receipt_id"]),
+                        False,
+                        existing["created_at"],
+                    )
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        binding_query,
+                        {"channel_id": channel_id, "thread_ts": thread_ts},
+                    )
+                    binding_rows = cursor.fetchall()
+                if not binding_rows:
+                    raise PostgresControlPlaneError("unknown slack thread binding")
+                if len(binding_rows) != 1:
+                    raise PostgresControlPlaneError("ambiguous slack thread binding")
+                if str(binding_rows[0]["task_id"]) != task_id:
+                    raise PostgresControlPlaneError(
+                        "slack status receipt task binding mismatch"
+                    )
+                row = self._one_row(
+                    connection,
+                    f"""
+                    INSERT INTO {schema}.director_primary_slack_status_receipt (
+                        source_event_id, receipt_id, task_id, channel_id,
+                        thread_ts, user_id, text_digest
+                    ) VALUES (
+                        %(source_event_id)s, %(receipt_id)s, %(task_id)s,
+                        %(channel_id)s, %(thread_ts)s, %(user_id)s,
+                        %(text_digest)s
+                    ) RETURNING receipt_id, created_at
+                    """,
+                    {
+                        "source_event_id": source_event_id,
+                        "receipt_id": receipt_id,
+                        "task_id": task_id,
+                        "channel_id": channel_id,
+                        "thread_ts": thread_ts,
+                        "user_id": user_id,
+                        "text_digest": text_digest,
+                    },
+                    missing="status receipt was not recorded",
+                )
+                return str(row["receipt_id"]), True, row["created_at"]
 
     def create_primary_task_projection(
         self,
@@ -5318,3 +5495,6 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]

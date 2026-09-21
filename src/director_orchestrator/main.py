@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -58,8 +61,12 @@ from .approvals import (
     SLACK_INTAKE_ISSUED_AT_HEADER,
     SLACK_INTAKE_NONCE_HEADER,
     SLACK_INTAKE_SIGNATURE_HEADER,
+    SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER,
+    SLACK_STATUS_RECEIPT_NONCE_HEADER,
+    SLACK_STATUS_RECEIPT_SIGNATURE_HEADER,
     task_effect_key,
     verify_slack_intake_attestation,
+    verify_slack_status_receipt_attestation,
     verify_slack_gateway_proof,
 )
 from .callbacks import (
@@ -92,6 +99,9 @@ from .models import (
     OwnerApproval,
     OwnerApprovalSource,
     SlackIntake,
+    SlackStatusReceipt,
+    SlackThreadBinding,
+    StatusReceiptRecord,
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
@@ -759,6 +769,92 @@ def intake(
     if created:
         background.add_task(engine.run, stored.task_id)
     return stored
+
+
+@app.get(
+    "/v1/slack-thread-bindings",
+    response_model=SlackThreadBinding,
+    dependencies=[Depends(require_auth)],
+)
+def slack_thread_binding(
+    channel_id: str,
+    thread_ts: str,
+) -> SlackThreadBinding:
+    if primary_default_activation is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipts are unavailable",
+        )
+    assert primary_default_activation.application is not None
+    try:
+        task_id = primary_default_activation.application.resolve_slack_thread_binding(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return SlackThreadBinding(
+        channel_id=channel_id,
+        thread_ts=thread_ts,
+        task_id=task_id,
+    )
+
+
+@app.post(
+    "/v1/status-receipts",
+    response_model=StatusReceiptRecord,
+    dependencies=[Depends(require_auth)],
+)
+def status_receipt(
+    payload: SlackStatusReceipt,
+    receipt_issued_at: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER
+    ),
+    receipt_nonce: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_NONCE_HEADER
+    ),
+    receipt_signature: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_SIGNATURE_HEADER
+    ),
+) -> StatusReceiptRecord:
+    if primary_default_activation is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipts are unavailable",
+        )
+    try:
+        verify_slack_status_receipt_attestation(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            payload,
+            expected_owner_user_id=settings.slack_owner_user_id,
+            expected_channel_id=settings.slack_channel_id,
+            issued_at=receipt_issued_at,
+            nonce=receipt_nonce,
+            signature=receipt_signature,
+        )
+    except StaleApproval as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    assert primary_default_activation.application is not None
+    try:
+        return primary_default_activation.application.create_status_receipt(payload)
+    except StaleApproval as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        from .langgraph_postgres import PostgresControlPlaneError
+
+        if isinstance(exc, PostgresControlPlaneError):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipt is unavailable",
+        ) from exc
 
 
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
@@ -1736,3 +1832,6 @@ def complete_run(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]

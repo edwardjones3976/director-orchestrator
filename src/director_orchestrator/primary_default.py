@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -101,6 +104,7 @@ from .langgraph_primary import (
     ScheduleResult,
     _context as _handler_context_from_state,
 )
+from .approvals import StaleApproval
 from .models import (
     AntigravityDirective,
     AntigravityFixtureLane,
@@ -110,6 +114,8 @@ from .models import (
     IntakeAuthentication,
     ProviderName,
     SlackIntake,
+    SlackStatusReceipt,
+    StatusReceiptRecord,
     TaskRecord,
     TaskStatus,
 )
@@ -2029,6 +2035,56 @@ class DefaultPrimaryApplication:
             else self._record_from_projection(projection)
         )
 
+    def resolve_slack_thread_binding(
+        self, *, channel_id: str, thread_ts: str
+    ) -> str:
+        matches = self.coordinator.resolve_slack_thread_binding(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+        )
+        if not matches:
+            raise KeyError("unknown slack thread binding")
+        if len(matches) != 1:
+            raise ValueError("ambiguous slack thread binding")
+        return matches[0]
+
+    def create_status_receipt(self, receipt: SlackStatusReceipt) -> StatusReceiptRecord:
+        task_id = self.resolve_slack_thread_binding(
+            channel_id=receipt.channel_id,
+            thread_ts=receipt.thread_ts,
+        )
+        if receipt.task_id != task_id:
+            raise StaleApproval("Slack status receipt task binding mismatch")
+        record = self.get_task(task_id)
+        if record is None:
+            raise KeyError(task_id)
+        if (
+            record.intake.channel_id != receipt.channel_id
+            or record.intake.thread_ts != receipt.thread_ts
+        ):
+            raise StaleApproval("Slack status receipt thread binding mismatch")
+        receipt_id = "status-" + _digest(
+            {
+                "source_event_id": receipt.source_event_id,
+                "task_id": task_id,
+            }
+        ).removeprefix("sha256:")[:24]
+        recorded_id, created, created_at = self.coordinator.record_slack_status_receipt(
+            source_event_id=receipt.source_event_id,
+            receipt_id=receipt_id,
+            task_id=task_id,
+            channel_id=receipt.channel_id,
+            thread_ts=receipt.thread_ts,
+            user_id=receipt.user_id,
+            text_digest=receipt.text_digest,
+        )
+        return StatusReceiptRecord(
+            receipt_id=recorded_id,
+            task_id=task_id,
+            deduplicated=not created,
+            created_at=created_at,
+        )
+
     def resume_approval(self, command: ApprovalResume) -> TaskRecord:
         self._check_historical_parallel_hold(command.task_id)
         projection = self.coordinator.get_projection(command.task_id)
@@ -3106,3 +3162,6 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]

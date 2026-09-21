@@ -1,3 +1,8 @@
+# [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | BEGIN]]
+# Fallback-author corrections only; material implementation remains Cursor-authored.
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -1008,11 +1013,13 @@ class ChatGPTSlackRoutingTests(unittest.TestCase):
             }
             with (
                 patch.object(slack_bot, "_forward") as forward,
+                patch.object(slack_bot, "_forward_status_receipt") as status_receipt,
                 patch.object(slack_bot.httpx, "post") as post,
             ):
                 slack_bot.mention_handler(non_owner, client)
                 slack_bot.message_handler(wrong_channel, client)
-            self.assertEqual(forward.call_count, 2)
+            forward.assert_not_called()
+            status_receipt.assert_not_called()
             self.assertFalse(post.called)
         finally:
             sys.modules.pop(module_name, None)
@@ -1375,3 +1382,8 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | END]]
+
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | END]]

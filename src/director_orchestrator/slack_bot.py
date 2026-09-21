@@ -1,3 +1,7 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | BEGIN]]
@@ -31,6 +35,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from .approvals import (
     build_slack_intake_attestation,
+    build_slack_status_receipt_attestation,
     build_slack_gateway_proof,
     failed_retry_decision_digest,
     parse_approval_button_value,
@@ -48,7 +53,14 @@ from .chatgpt_bridge import (
 )
 # [[Codex | GPT-5.6 | 2026-08-23 19:17 UTC | END]]
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
-from .models import OwnerApproval, SlackIntake, TaskRecord, TaskStatus
+from .models import (
+    OwnerApproval,
+    SlackIntake,
+    SlackStatusReceipt,
+    TaskRecord,
+    TaskStatus,
+    slack_status_text_digest,
+)
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | BEGIN]]
 from .state_witness import stamp_unwitnessed
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 03:05 UTC | END]]
@@ -123,6 +135,29 @@ def _claim_event(event_id: str) -> bool:
             return False
         _seen_events[event_id] = now
         return True
+
+
+def _release_event(event_id: str) -> None:
+    with _seen_lock:
+        _seen_events.pop(event_id, None)
+
+
+def _is_work_intake_command(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if re.match(r"(?i)^/director\b", stripped):
+        return True
+    return re.match(r"(?i)^DIRECTOR\b", stripped) is not None
+
+
+def _configured_slack_owner_channel(event: dict) -> bool:
+    """Fail closed before any Director HTTP side effect for Slack events."""
+
+    return (
+        event.get("channel") == settings.slack_channel_id
+        and event.get("user") == settings.slack_owner_user_id
+    )
 
 
 def _clean_text(text: str) -> str:
@@ -611,13 +646,15 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
     if event.get("user") != settings.slack_owner_user_id:
         return
     text = _clean_text(event.get("text", ""))
-    if require_prefix and not text.upper().startswith("DIRECTOR"):
+    if require_prefix and not _is_work_intake_command(text):
         return
     if not text:
         return
 
     thread_ts = event.get("thread_ts") or event.get("ts")
-    source_event_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
+    source_event_id = _canonical_slack_source_event_id(event) or (
+        event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
+    )
     if not source_event_id or not thread_ts or not _claim_event(source_event_id):
         return
     # Routing steering is owner-set deployment configuration, never parsed out of
@@ -668,6 +705,124 @@ def _forward(event: dict, client, *, require_prefix: bool) -> None:
         )
 
 
+def _status_receipt_task_id(body: object) -> str:
+    if not isinstance(body, dict):
+        raise ValueError("Status receipt response must be an object")
+    task_id = body.get("task_id")
+    if not isinstance(task_id, str) or re.fullmatch(r"DIR-LG-[A-F0-9]+", task_id) is None:
+        raise ValueError("Status receipt has no valid task ID")
+    return task_id
+
+
+def _forward_status_receipt(event: dict, client) -> None:
+    if event.get("bot_id") or event.get("subtype") in {
+        "bot_message",
+        "message_changed",
+        "message_deleted",
+    }:
+        return
+    if event.get("channel") != settings.slack_channel_id:
+        return
+    if event.get("user") != settings.slack_owner_user_id:
+        return
+    text = _clean_text(event.get("text", ""))
+    if not text or _is_work_intake_command(text):
+        return
+
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    source_event_id = _canonical_slack_source_event_id(event) or (
+        event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
+    )
+    if not source_event_id or not thread_ts or not _claim_event(source_event_id):
+        return
+
+    binding_url = (
+        f"{settings.orchestrator_base_url}/v1/slack-thread-bindings"
+        f"?channel_id={event['channel']}&thread_ts={thread_ts}"
+    )
+    headers = {"Authorization": f"Bearer {settings.shared_secret}"}
+    try:
+        binding_response = httpx.get(binding_url, headers=headers, timeout=20)
+        if binding_response.status_code == 404:
+            _release_event(source_event_id)
+            client.chat_postMessage(
+                channel=event["channel"],
+                thread_ts=thread_ts,
+                text=_tag(
+                    "*DIRECTOR — STATUS NOT RECORDED*\n"
+                    "This thread is not bound to a known task."
+                ),
+            )
+            return
+        if binding_response.status_code == 409:
+            _release_event(source_event_id)
+            client.chat_postMessage(
+                channel=event["channel"],
+                thread_ts=thread_ts,
+                text=_tag(
+                    "*DIRECTOR — STATUS NOT RECORDED*\n"
+                    "This thread matches more than one task binding."
+                ),
+            )
+            return
+        binding_response.raise_for_status()
+        task_id = binding_response.json()["task_id"]
+        receipt = SlackStatusReceipt(
+            source_event_id=source_event_id,
+            channel_id=event["channel"],
+            thread_ts=thread_ts,
+            user_id=event["user"],
+            task_id=task_id,
+            text_digest=slack_status_text_digest(text),
+            received_at=datetime.now(timezone.utc),
+        )
+        payload = receipt.model_dump(mode="json")
+        post_headers = {
+            **headers,
+            **build_slack_status_receipt_attestation(
+                settings.slack_gateway_secret,
+                settings.shared_secret,
+                receipt,
+            ),
+        }
+        response = httpx.post(
+            f"{settings.orchestrator_base_url}/v1/status-receipts",
+            headers=post_headers,
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        recorded = response.json()
+        task_id = _status_receipt_task_id(recorded)
+        if recorded.get("deduplicated"):
+            notice = (
+                f"*{task_id} — STATUS ALREADY RECORDED*\n"
+                "The Director returned the existing deduplicated receipt."
+            )
+        else:
+            notice = (
+                f"*{task_id} — STATUS RECORDED*\n"
+                "The Director stored a digest-only status receipt with no new work."
+            )
+        client.chat_postMessage(
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=_tag(notice),
+        )
+    except Exception as exc:
+        _release_event(source_event_id)
+        _log_boundary_failure("Director status receipt could not be confirmed", exc)
+        client.chat_postMessage(
+            channel=event["channel"],
+            thread_ts=thread_ts,
+            text=_tag(
+                "*DIRECTOR — BLOCKED*\n"
+                "Status receipt acceptance could not be confirmed. "
+                "The request state must be reconciled before retrying."
+            ),
+        )
+
+
 @app.event("app_mention")
 def mention_handler(event, client):
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
@@ -675,7 +830,13 @@ def mention_handler(event, client):
         _forward_chatgpt_alias(event, client)
         return
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
-    _forward(event, client, require_prefix=False)
+    if not _configured_slack_owner_channel(event):
+        return
+    text = _clean_text(event.get("text", ""))
+    if _is_work_intake_command(text):
+        _forward(event, client, require_prefix=True)
+        return
+    _forward_status_receipt(event, client)
 
 
 @app.event("message")
@@ -685,7 +846,13 @@ def message_handler(event, client):
         _forward_chatgpt_alias(event, client)
         return
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
-    _forward(event, client, require_prefix=True)
+    if not _configured_slack_owner_channel(event):
+        return
+    text = _clean_text(event.get("text", ""))
+    if _is_work_intake_command(text):
+        _forward(event, client, require_prefix=True)
+        return
+    _forward_status_receipt(event, client)
 
 
 @app.command("/director")
@@ -912,3 +1079,7 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:04 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
