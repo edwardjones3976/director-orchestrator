@@ -1,3 +1,4 @@
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
@@ -79,6 +80,7 @@ import httpx
 from director_orchestrator.packet_contracts import canonical_json_bytes
 from director_orchestrator.packet_contracts import document_digest as packet_document_digest
 from director_orchestrator.primary_parallel import provider_attempt_digest, provider_attempt_idempotency
+from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
 from director_orchestrator.primary_transports import (
     NativeCommandPacketTransport,
     OpenAIResponsesPacketTransport,
@@ -94,6 +96,8 @@ from tests.test_primary_default import SHA, digest, packet_router
 from tests.test_primary_transports import LAUNCH_SEAM, NATIVE_ENVELOPE, _FakeLaunch
 
 TEST_DSN = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+_HOST_BRIDGE_TEST_SECRET = "bridge-test-secret-that-is-longer-than-32-characters"
+_HOST_BRIDGE_TEST_ENDPOINT = "http://127.0.0.1:18765/v1/provider/dispatch"
 
 
 def _authority(secret=fixtures.OWNER_SECRET, clock=None, schema="synthetic"):
@@ -739,7 +743,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         finally:
             self.handle.close()
 
-    def _build_activation(self, transport, *, provider_timeout_seconds=None):
+    def _build_activation(self, transport, *, provider_timeout_seconds=None, provider_id="openai"):
         registry = ExactEffectGatewayRegistry(
             (SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE,
                 mutate=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no effect")),
@@ -764,11 +768,12 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             **bound,
         )
         budget_routing = PrimaryProviderBudgetRouting(authority=self.authority, pool=self.handle.pool)
-        adapter = PacketBoundaryAdapter("openai", transport)
-        adapters = {"openai": adapter}
-        adapters.update({provider: PacketBoundaryAdapter(
+        adapters = {
+            provider: PacketBoundaryAdapter(
                 provider, SimpleNamespace(dispatch=lambda *_args, **_kwargs: {}))
-            for provider in ("claude", "cursor")})
+            for provider in ("openai", "claude", "cursor")
+        }
+        adapters[provider_id] = PacketBoundaryAdapter(provider_id, transport)
         dependencies = SimpleNamespace(
             team_routing=None, budget_routing=budget_routing,
             validate=lambda _required: None,
@@ -805,13 +810,13 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             activation = DefaultPrimaryActivation(settings, live_dependencies=dependencies, effect_gateways=registry)
         return activation, settings
 
-    def _register(self, activation, settings, *, task_id):
+    def _register(self, activation, settings, *, task_id, provider="openai", agent=ProviderName.OPENAI):
         record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED,
             intake=SlackIntake(source_event_id=task_id, channel_id="C123", user_id="U123",
                                 text="Ship a bounded change", thread_ts="1.0"))
         plan = preview_plan(record.intake.text, settings)
-        assignment = plan.assignments[0].model_copy(update={"agent": ProviderName.OPENAI,
-            "primary_provider_lane": "openai", "estimated_cost_usd": 1.0})
+        assignment = plan.assignments[0].model_copy(update={"agent": agent,
+            "primary_provider_lane": provider, "estimated_cost_usd": 1.0})
         record.plan = plan.model_copy(update={"assignments": [assignment]})
         activation.services._packet_router = packet_router(settings)
         activation.services.register(record)
@@ -1533,6 +1538,99 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 f"SELECT attempt_digest, status FROM {self.schema}.director_primary_provider_attempt "
                 "WHERE task_id=%s ORDER BY event_sequence", (task_id,)).fetchall()
         return [row["status"] for row in rows], {row["attempt_digest"] for row in rows}
+
+    def test_host_bridge_carried_deadline_holds_the_whole_wave_at_readiness(self):
+        """Real HostBridgePacketTransport under the constructor-created preflight.
+
+        Signed budget and writer prerequisites are otherwise valid; refusal is
+        attributable to the bridge transport's pure deadline hook, not missing
+        enrollment. No ACTIVE reservation, no bridge HTTP, and no attempt or
+        workload rows are written.
+        """
+        transport = HostBridgePacketTransport(
+            "claude",
+            _HOST_BRIDGE_TEST_ENDPOINT,
+            _HOST_BRIDGE_TEST_SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+        )
+        activation, settings = self._build_activation(transport, provider_id="claude")
+        task_id = "DIR-PG-BRIDGE-HOLD-" + uuid.uuid4().hex[:8].upper()
+        assignment_id, sequence, packet = self._register(
+            activation, settings, task_id=task_id, provider="claude", agent=ProviderName.CLAUDE)
+        day = datetime.now(timezone.utc).date().isoformat()
+        attempt_usd = float(packet["limits"]["budget_usd"]) / 3.0
+        signed_budget = budget(
+            grant(task_id=task_id, project_id=packet["project"]),
+            provider_id="claude",
+            project_id=packet["project"],
+            day=day,
+            task_limit_microusd=int(Decimal(str(settings.max_task_budget_usd)) * 1_000_000),
+            daily_limit_microusd=int(Decimal(str(settings.max_daily_provider_budget_usd)) * 1_000_000),
+            attempt_reservation_microusd=int(
+                (Decimal(str(attempt_usd)) * 1_000_000).to_integral_value(rounding=ROUND_CEILING)),
+        )
+        with self.handle.pool.connection() as connection, connection.transaction():
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) "
+                "VALUES(%s,%s::jsonb)",
+                (signed_budget.grant_digest, signed_budget.model_dump_json()),
+            )
+        writer = self.handle.claim_store.acquire_task_writer(
+            task_id,
+            engine_owner="langgraph",
+            owner_token=settings.langgraph_primary_owner_token,
+            expected_generation=0,
+        )
+        self.ledger.register_plan(
+            task_id=task_id,
+            writer=writer,
+            policy=self.policy,
+            plan_digest=digest(task_id),
+            assignments=(
+                ParallelAssignment(assignment_id, sequence, "claude", "test-deployment"),
+            ),
+        )
+        bridge_calls = {"http": 0}
+
+        def forbid_bridge_http(*_args, **_kwargs):
+            bridge_calls["http"] += 1
+            raise AssertionError("host bridge HTTP must not run during readiness preflight")
+
+        with patch(
+            "director_orchestrator.host_provider_bridge.urllib.request.build_opener",
+            side_effect=forbid_bridge_http,
+        ):
+            reservations = self.ledger.reserve_ready(
+                task_id=task_id,
+                writer=writer,
+                policy=self.policy,
+                preflight=activation.application._parallel_dispatcher.preflight,
+            )
+        self.assertEqual((), reservations)
+        state = self.ledger.aggregate(task_id)
+        self.assertEqual({"PENDING"}, set(state.statuses.values()))
+        self.assertEqual(("paid_setup_required",), state.setup_hold_reasons)
+        with self.handle.pool.connection() as connection:
+            assignment_row = connection.execute(
+                f"SELECT status, reservation_digest FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s AND assignment_id=%s",
+                (task_id, assignment_id),
+            ).fetchone()
+            self.assertEqual("PENDING", assignment_row["status"])
+            self.assertIsNone(assignment_row["reservation_digest"])
+            for table in (
+                "director_primary_provider_attempt",
+                "director_primary_provider_spend",
+                "director_primary_provider_usage",
+                "director_primary_workload_assignment",
+            ):
+                self.assertEqual(
+                    0,
+                    connection.execute(
+                        f"SELECT count(*) AS n FROM {self.schema}.{table}"
+                    ).fetchone()["n"],
+                )
+        self.assertEqual(0, bridge_calls["http"])
 
     def test_command_child_receives_only_the_remaining_carried_bound_through_the_constructor(self):
         """The real `NativeCommandPacketTransport` at the end of the real dispatch path.
@@ -2555,3 +2653,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]

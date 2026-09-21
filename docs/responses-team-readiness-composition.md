@@ -1,3 +1,4 @@
+<!-- [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
@@ -289,10 +290,12 @@ What this does **not** prove, stated rather than implied: on POSIX the
 process group is signalled, so a descendant that called `setsid()` itself has
 left that group and is not reached - no protection against that escape is
 claimed, and the root-only Linux lifetime test still needs its authorized
-lane. The signed Windows host bridge carries no shared-deadline contract at
-all: its client uses `context.timeout_seconds` and its executor its own
-relative timeout, so that route remains UNKNOWN for shared-deadline
-qualification and was not extended into a cross-host protocol here. The
+lane. The signed Windows host bridge still carries no shared-deadline contract:
+readiness now refuses a carried `PlannedProviderAttempt.deadline` through
+`HostBridgePacketTransport.preflight` with
+`unsupported-host-bridge-deadline` before any host I/O, leaving the wave
+`PENDING` with `paid_setup_required`. `send` and legacy no-deadline callers
+are unchanged; cross-host cutoff enforcement was not added. The
 native Codex host still refuses unenforceable token caps, and no live
 provider was launched: the discovered routes are exercised with a synthetic
 launch, and the one real process is a local Python child.
@@ -742,7 +745,7 @@ and the real transport:
 | Candidate integration re-reads authority inside its writer-locked transaction | Done, exercised |
 | Ordinary command routes spend the carried deadline, not the relative timeout | Done, exercised - synthetic launch, one real local child |
 | Command child trees ended and verified after exit or expiry | Done on Windows (Job); POSIX group signal, `setsid` escape not covered |
-| Host bridge shares the carried deadline | Not done - UNKNOWN, no cross-host contract |
+| Host bridge shares the carried deadline | Refused at readiness when a deadline is carried; no cross-host contract |
 | One anchored bound; transit and pauses spent, never returned or renewed | Done, exercised |
 | Remote support acknowledged before any private source | Done, exercised |
 | Legacy bound-bearing frames refused; explicit standalone kept deliberate | Done, exercised |
@@ -939,7 +942,13 @@ and the real transport:
   document's claim that a hold is never raised after a generation request
   was wrong for the team lane and is corrected above, with the
   classification itself unchanged.
-- **2026-09-21 21:25 UTC (this revision)**: an independent synthetic probe
+- **2026-09-21 22:36 UTC (this revision)**: `HostBridgePacketTransport.preflight`
+  refuses any carried execution deadline with `unsupported-host-bridge-deadline`
+  before host I/O. The constructor-created readiness callback maps that refusal
+  to `paid_setup_required` with no ACTIVE reservation, matching the existing
+  whole-wave hold semantics. Custom mixed transport rosters that place the
+  bridge after the first entry are out of scope for this first-entry hook.
+- **2026-09-21 21:25 UTC**: an independent synthetic probe
   at the accepted C15 head showed the three ordinary command transports
   reaching `subprocess.run` with the full relative timeout while the carried
   deadline was already spent or had 0.2 seconds left. They now share one
@@ -971,3 +980,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]] -->
+<!-- [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]] -->

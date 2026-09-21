@@ -1,3 +1,4 @@
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -567,6 +568,18 @@ class HostBridgePacketTransport:
         self.outbound_payload_builder = outbound_payload_builder
         self.result_normalizer = result_normalizer
 
+    def preflight(self, work_packet_json: bytes, *, context) -> None:
+        """Refuse a carried execution deadline before any host bridge I/O.
+
+        The bridge has no shared cross-host cutoff contract; readiness may
+        carry ``PlannedProviderAttempt.deadline``, which this hook rejects
+        without contacting the host or mutating state.
+        """
+        if getattr(context, "deadline", None) is not None:
+            raise RuntimeError(
+                "host bridge route unavailable: unsupported-host-bridge-deadline"
+            )
+
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
             raise RuntimeError("host bridge work packet is not bounded")
@@ -689,3 +702,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
