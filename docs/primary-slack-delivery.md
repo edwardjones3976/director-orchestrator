@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
@@ -66,9 +67,11 @@ Delivery states distinguish an API acknowledgement from remote verification:
 | `SUPERSEDED` | An unsent decision is no longer the current projection |
 
 Slack rate limiting ([HTTP 429 with `Retry-After` seconds](https://docs.slack.dev/apis/web-api/rate-limits/#responding-to-rate-limiting-conditions))
-is handled narrowly. HTTP 429 is recognized from the status alone, before the
-bounded body is parsed, so an envelope-less, non-JSON or malformed 429 body is
-still Slack's definite non-acceptance rather than an ambiguous outcome. A 429
+is handled narrowly. HTTP 429 is classified from the status line and headers
+before the body is drained at all, so a slow, truncated, oversize,
+envelope-less, non-JSON or malformed 429 body can neither stall the worker
+past `Retry-After` nor turn Slack's definite non-acceptance into an ambiguous
+outcome. A 429
 on `chat.postMessage` settles the claimed row as `REFUSED` with `last_error`
 `slack_rate_limited:retry_after=N`: Slack did not post, so the row is never
 reposted. The worker then records a process-local not-before horizon for the
@@ -128,3 +131,4 @@ deployment are part of those tests.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -2922,6 +2923,131 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "provider_dispatch_status": projected.get("provider_dispatch_status"),
         }
 
+    # Tables a read-only qualification readback must never touch.
+    READBACK_MUTATION_WITNESS_TABLES = (
+        "director_primary_task_projection", "director_primary_task_writer", "director_primary_claim",
+        "director_primary_budget", "director_primary_effect_reservation", "director_primary_effect_execution",
+        "director_primary_remote_binding", "director_primary_terminal_evidence",
+        "director_primary_reconciliation_event", "director_primary_slack_delivery",
+        "director_primary_slack_status_receipt", "director_primary_parallel_assignment",
+        "director_primary_provider_attempt", "director_primary_command_receipt", "director_primary_audit_event",
+    )
+
+    def mutation_witness(self) -> dict:
+        import psycopg
+        from psycopg import sql
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        counts = {}
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as connection:
+            for table in self.READBACK_MUTATION_WITNESS_TABLES:
+                counts[table] = connection.execute(sql.SQL("SELECT count(*) FROM {}.{}").format(
+                    sql.Identifier(self.schema), sql.Identifier(table))).fetchone()[0]
+            counts["writer_leases"] = connection.execute(sql.SQL(
+                "SELECT coalesce(string_agg(task_id || ':' || fencing_generation::text, ',' ORDER BY task_id), '') "
+                "FROM {}.director_primary_task_writer").format(sql.Identifier(self.schema))).fetchone()[0]
+        return counts
+
+    def test_opt_in_qualification_readback_is_typed_bounded_read_only_and_keeps_default_get_unchanged(self):
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        from director_orchestrator.models import QualificationEvidenceReadback, TaskRecord
+
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        headers = {"Authorization": "Bearer standalone-qa-synthetic-secret"}
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                default = client.get(f"/v1/tasks/{record.task_id}", headers=headers)
+                self.assertEqual(200, default.status_code, default.text)
+                self.assertNotIn("qualification_evidence", default.json())
+                self.assertNotIn("X-Primary-Qualification-Readback", default.headers)
+                # The strict persisted contract still parses the default response exactly.
+                self.assertEqual(record.task_id, TaskRecord.model_validate(default.json()).task_id)
+                before = self.mutation_witness()
+                opted = client.get(f"/v1/tasks/{record.task_id}", headers=headers,
+                                   params={"include_qualification_evidence": "true"})
+                self.assertEqual(200, opted.status_code, opted.text)
+                self.assertEqual(before, self.mutation_witness())
+                body = opted.json()
+                evidence = body.pop("qualification_evidence")
+                self.assertEqual(set(default.json()), set(body))
+                for key in ("task_id", "status", "intake", "intake_authentication", "plan_generation", "provider_runs"):
+                    self.assertEqual(default.json()[key], body[key])
+                # The ordinary TaskRecord contract forbids the readback field: it is response-only.
+                with self.assertRaises(Exception):
+                    TaskRecord.model_validate({**body, "qualification_evidence": evidence})
+                typed = QualificationEvidenceReadback.model_validate(evidence)
+                self.assertEqual(record.task_id, typed.task_id)
+                self.assertEqual("langgraph", typed.engine_owner)
+                self.assertEqual(default.headers["X-Primary-Projection-Digest"], typed.projection_digest)
+                self.assertEqual(int(default.headers["X-Primary-Projection-Version"]), typed.projection_version)
+                self.assertEqual(record.intake.source_event_id, typed.source_event_id)
+                self.assertEqual("complete", opted.headers["X-Primary-Qualification-Readback"])
+                self.assertTrue(typed.complete)
+                self.assertEqual([], typed.truncated)
+                self.assertIn(typed.absent, ([], ["provider_usage"]))  # usage tables are optional here
+                self.assertEqual(200, typed.bounds.row_limit)
+                self.assertEqual(262144, typed.bounds.byte_limit)
+                self.assertLess(typed.bounds.elapsed_seconds, typed.bounds.wall_seconds)
+                # A fresh intake has no attempts, effects, deliveries or status receipts yet.
+                self.assertEqual(([], [], [], [], []), (typed.provider_attempts, typed.effects,
+                    typed.reconciliation_events, typed.status_receipts, typed.provider_usage))
+                self.assertEqual("langgraph", opted.headers["X-Task-Engine-Owner"])
+                missing = client.get("/v1/tasks/DIR-LG-0000000000", headers=headers,
+                                     params={"include_qualification_evidence": "true"})
+                self.assertEqual(404, missing.status_code)
+                self.assertEqual(401, client.get(f"/v1/tasks/{record.task_id}",
+                                                 params={"include_qualification_evidence": "true"}).status_code)
+            finally:
+                client.close()
+
+    def test_qualification_readback_store_query_is_read_only_bounded_and_pinned(self):
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        for kwargs in ({"row_limit": 0}, {"row_limit": 1001}, {"byte_limit": 10}, {"wall_seconds": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                store.read_primary_qualification_evidence(record.task_id, **kwargs)
+        self.assertIsNone(store.read_primary_qualification_evidence("DIR-LG-0000000000"))
+        before = self.mutation_witness()
+        document = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual(before, self.mutation_witness())
+        self.assertEqual(record.task_id, document["task_id"])
+        self.assertTrue(document["complete"])
+        # Deliveries for this task are pinned; enqueueing one makes it visible and
+        # a one-row limit reports truncation instead of a silently partial list.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""INSERT INTO {self.schema}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                    VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED'),
+                           (%s, 'hold:synthetic', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')""",
+                (record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-a",
+                 record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-b"))
+        full = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual({"terminal", "hold:synthetic"}, {row["notification_key"] for row in full["slack_deliveries"]})
+        self.assertTrue(all(row["state"] == "SUPPRESSED" for row in full["slack_deliveries"]))
+        bounded = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        self.assertFalse(bounded["complete"])
+        # The planned assignments of a fresh intake may also exceed one row.
+        self.assertIn("slack_deliveries", bounded["truncated"])
+        self.assertTrue(set(bounded["truncated"]) <= {"assignments", "slack_deliveries"}, bounded["truncated"])
+        self.assertEqual(1, len(bounded["slack_deliveries"]))
+        self.assertLessEqual(len(bounded["assignments"]), 1)
+        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=1024)
+        self.assertFalse(tiny["complete"])
+        self.assertIn("response_bytes", tiny["truncated"])
+        self.assertEqual([], tiny["slack_deliveries"])
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        self.assertEqual([], store.read_primary_qualification_evidence(other.task_id)["slack_deliveries"])
+
     def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
         import psycopg
         import httpx
@@ -3222,3 +3348,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]

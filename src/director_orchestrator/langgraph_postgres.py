@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
@@ -92,6 +93,7 @@ import hashlib
 import hmac
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -2501,6 +2503,189 @@ class PostgresConditionalClaimStore:
                 {"task_id": task_id},
             )
         return None if row is None else _projection_from_row(row)
+
+    # Bounded, read-only qualification readback (opt-in GET projection).
+    QUALIFICATION_READBACK_ROW_LIMIT = 200
+    QUALIFICATION_READBACK_BYTE_LIMIT = 262144
+    QUALIFICATION_READBACK_WALL_SECONDS = 5.0
+
+    def read_primary_qualification_evidence(
+        self,
+        task_id: str,
+        *,
+        row_limit: int = QUALIFICATION_READBACK_ROW_LIMIT,
+        byte_limit: int = QUALIFICATION_READBACK_BYTE_LIMIT,
+        wall_seconds: float = QUALIFICATION_READBACK_WALL_SECONDS,
+    ) -> dict[str, Any] | None:
+        """Read one task's persisted qualification evidence without any write.
+
+        Runs inside a ``READ ONLY`` transaction with a local statement timeout,
+        so no DDL, writer lease, reservation, receipt, effect or row write can
+        happen here even by mistake.  Every query pins rows to ``task_id`` and
+        follows the persisted joins (assignment -> attempt, reservation ->
+        execution/binding/terminal evidence, spend -> usage).  Each section is
+        capped at ``row_limit`` rows and the whole document at ``byte_limit``
+        bytes; exceeding either yields an explicit ``truncated`` entry instead
+        of a silently partial claim, and an absent optional table is reported
+        under ``absent``.  Returns ``None`` when the task projection does not
+        exist.
+        """
+
+        _require_id(task_id, "task_id")
+        if type(row_limit) is not int or not 1 <= row_limit <= 1000:
+            raise ValueError("row_limit must be between 1 and 1000")
+        if type(byte_limit) is not int or not 1024 <= byte_limit <= 4 * 1024 * 1024:
+            raise ValueError("byte_limit must be between 1 KiB and 4 MiB")
+        if type(wall_seconds) not in {int, float} or not 0.1 <= float(wall_seconds) <= 30:
+            raise ValueError("wall_seconds must be between 0.1 and 30 seconds")
+        schema = self._schema
+        started = time.monotonic()
+        sections: dict[str, list[dict[str, Any]]] = {}
+        truncated: list[str] = []
+        absent: list[str] = []
+
+        def rows(cursor, name: str, query: str) -> list[dict[str, Any]]:
+            cursor.execute(query, {"task_id": task_id, "limit": row_limit + 1})
+            fetched = [dict(row) for row in cursor.fetchall()]
+            if len(fetched) > row_limit:
+                truncated.append(name)
+                fetched = fetched[:row_limit]
+            sections[name] = fetched
+            return fetched
+
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION READ ONLY")
+                    # SET accepts no bind parameters; the value is a validated int.
+                    cursor.execute(
+                        f"SET LOCAL statement_timeout = {int(float(wall_seconds) * 1000)}"
+                    )
+                    cursor.execute(
+                        f"""
+                        SELECT task_id, engine_owner, projection_version, projection_digest,
+                               created_at, updated_at,
+                               projection->'application'->'task_record'->'intake'->>'source_event_id'
+                                   AS source_event_id,
+                               projection->'application'->>'execution_mode' AS execution_mode,
+                               projection->>'terminal_classification' AS terminal_classification,
+                               projection->>'reason_code' AS reason_code
+                        FROM {schema}.director_primary_task_projection
+                        WHERE task_id = %(task_id)s
+                        """,
+                        {"task_id": task_id},
+                    )
+                    head = cursor.fetchone()
+                    if head is None:
+                        return None
+                    rows(cursor, "assignments", f"""
+                        SELECT assignment_id, sequence, provider_id, deployment_id, status,
+                               reservation_digest, result_digest, reason_code, reserved_at, completed_at
+                        FROM {schema}.director_primary_parallel_assignment
+                        WHERE task_id = %(task_id)s
+                        ORDER BY sequence, assignment_id LIMIT %(limit)s
+                        """)
+                    rows(cursor, "provider_attempts", f"""
+                        SELECT a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
+                               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
+                               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
+                               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
+                               a.budget_evidence_digest, a.recorded_at
+                        FROM {schema}.director_primary_provider_attempt a
+                        JOIN {schema}.director_primary_parallel_assignment p
+                          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
+                        WHERE a.task_id = %(task_id)s
+                        ORDER BY p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence
+                        LIMIT %(limit)s
+                        """)
+                    rows(cursor, "effects", f"""
+                        SELECT r.reservation_key, r.claim_key, r.effect_key_digest,
+                               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
+                               r.reserved_units, r.reserved_at,
+                               e.started_at AS execution_started_at,
+                               b.remote_system, b.remote_identifier, b.bound_at,
+                               t.disposition AS terminal_disposition,
+                               t.evidence_digest AS terminal_evidence_digest,
+                               t.recorded_at AS terminal_recorded_at
+                        FROM {schema}.director_primary_effect_reservation r
+                        LEFT JOIN {schema}.director_primary_effect_execution e
+                          ON e.reservation_key = r.reservation_key AND e.task_id = r.task_id
+                        LEFT JOIN {schema}.director_primary_remote_binding b
+                          ON b.reservation_key = r.reservation_key AND b.task_id = r.task_id
+                        LEFT JOIN {schema}.director_primary_terminal_evidence t
+                          ON t.claim_key = r.claim_key AND t.task_id = r.task_id
+                        WHERE r.task_id = %(task_id)s
+                        ORDER BY r.reserved_at, r.reservation_key LIMIT %(limit)s
+                        """)
+                    rows(cursor, "reconciliation_events", f"""
+                        SELECT event_id, claim_key, state, evidence_digest, recorded_at
+                        FROM {schema}.director_primary_reconciliation_event
+                        WHERE task_id = %(task_id)s
+                        ORDER BY event_id LIMIT %(limit)s
+                        """)
+                    rows(cursor, "slack_deliveries", f"""
+                        SELECT notification_key, projection_digest, client_msg_id, state,
+                               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
+                               readback_attempts, last_error, owner_decision, owner_decision_at,
+                               owner_command_id
+                        FROM {schema}.director_primary_slack_delivery
+                        WHERE task_id = %(task_id)s
+                        ORDER BY created_at, notification_key LIMIT %(limit)s
+                        """)
+                    rows(cursor, "status_receipts", f"""
+                        SELECT receipt_id, source_event_id, created_at
+                        FROM {schema}.director_primary_slack_status_receipt
+                        WHERE task_id = %(task_id)s
+                        ORDER BY created_at, receipt_id LIMIT %(limit)s
+                        """)
+                    cursor.execute(
+                        "SELECT to_regclass(%(spend)s) AS spend, to_regclass(%(usage)s) AS usage",
+                        {"spend": f"{schema}.director_primary_provider_spend",
+                         "usage": f"{schema}.director_primary_provider_usage"},
+                    )
+                    usage_tables = cursor.fetchone()
+                    if usage_tables["spend"] is None or usage_tables["usage"] is None:
+                        absent.append("provider_usage")
+                        sections["provider_usage"] = []
+                    else:
+                        rows(cursor, "provider_usage", f"""
+                            SELECT u.attempt_digest, s.provider_id, s.reserved_microusd,
+                                   s.token_limit, u.actual_microusd, u.observed_tokens
+                            FROM {schema}.director_primary_provider_usage u
+                            JOIN {schema}.director_primary_provider_spend s
+                              ON s.attempt_digest = u.attempt_digest
+                            WHERE s.task_id = %(task_id)s
+                            ORDER BY u.attempt_digest LIMIT %(limit)s
+                            """)
+        elapsed = time.monotonic() - started
+        document: dict[str, Any] = {
+            "schema_version": "director-qualification-readback/v1",
+            "task_id": str(head["task_id"]),
+            "engine_owner": str(head["engine_owner"]),
+            "projection_version": int(head["projection_version"]),
+            "projection_digest": str(head["projection_digest"]),
+            "source_event_id": head["source_event_id"],
+            "execution_mode": head["execution_mode"],
+            "terminal_classification": head["terminal_classification"],
+            "terminal_reason_code": head["reason_code"],
+            "task_created_at": head["created_at"],
+            "task_updated_at": head["updated_at"],
+            "bounds": {"row_limit": row_limit, "byte_limit": byte_limit,
+                       "wall_seconds": float(wall_seconds), "elapsed_seconds": round(elapsed, 6)},
+            "truncated": sorted(truncated),
+            "absent": sorted(absent),
+            "complete": not truncated,
+            **sections,
+        }
+        encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > byte_limit:
+            document = {key: value for key, value in document.items() if key not in sections}
+            document.update(
+                {name: [] for name in sections},
+                truncated=sorted({*truncated, "response_bytes"}),
+                complete=False,
+            )
+        return document
 
     def read_primary_command_receipt(
         self, *, task_id: str, operation: str, command_id: str
@@ -5498,3 +5683,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]

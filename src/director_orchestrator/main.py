@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
@@ -102,6 +103,7 @@ from .models import (
     SlackStatusReceipt,
     SlackThreadBinding,
     StatusReceiptRecord,
+    TaskReadbackRecord,
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
@@ -858,7 +860,12 @@ def status_receipt(
 
 
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
-def get_task(task_id: str, response: Response) -> TaskRecord:
+def get_task(
+    task_id: str, response: Response, include_qualification_evidence: bool = False
+) -> TaskRecord | JSONResponse:
+    # The default response is the ordinary TaskRecord contract, byte-for-byte
+    # unchanged. Only an explicit opt-in returns the typed readback subclass,
+    # serialized directly so the default response model is never widened.
     if primary_default_activation is not None:
         assert primary_default_activation.application is not None
         primary_record = primary_default_activation.application.get_task(task_id)
@@ -887,6 +894,26 @@ def get_task(task_id: str, response: Response) -> TaskRecord:
                 response.headers["X-Primary-Approval-Digest"] = str(
                     pending["request_digest"]
                 )
+            if include_qualification_evidence:
+                # Read-only, bounded, response-only: nothing is persisted or
+                # digested, and the coordinator query cannot write.
+                evidence = primary_default_activation.coordinator.read_qualification_evidence(
+                    task_id
+                )
+                if evidence is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="LangGraph primary qualification readback is unavailable",
+                    )
+                readback = TaskReadbackRecord.model_validate(
+                    {**primary_record.model_dump(mode="python"),
+                     "qualification_evidence": evidence}
+                )
+                headers = dict(response.headers)
+                headers["X-Primary-Qualification-Readback"] = (
+                    "complete" if evidence["complete"] else "incomplete"
+                )
+                return JSONResponse(content=readback.model_dump(mode="json"), headers=headers)
             return primary_record
     versioned = store.get_versioned(task_id)
     if versioned is None:
@@ -1835,3 +1862,4 @@ def complete_run(
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]

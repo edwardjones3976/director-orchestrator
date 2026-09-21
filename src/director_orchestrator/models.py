@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]]
@@ -1111,6 +1112,160 @@ class TaskRecord(BaseModel):
             setattr(self, field_name, list(reversed(kept_reversed)))
 
 
+# Response-only qualification readback. Nothing below is persisted or part of
+# the ordinary TaskRecord contract; it is attached only when the authenticated
+# GET opts in and is rebuilt from bounded READ ONLY queries of existing tables.
+_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+
+
+class QualificationAssignmentRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assignment_id: str
+    sequence: int = Field(ge=1)
+    provider_id: str
+    deployment_id: str
+    status: str
+    reservation_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    reason_code: str | None = None
+    reserved_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class QualificationAttemptRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assignment_id: str
+    assignment_sequence: int = Field(ge=1)
+    attempt_ordinal: int = Field(ge=1, le=3)
+    event_sequence: int = Field(ge=1, le=3)
+    provider_id: str
+    format_id: str
+    transport_id: str
+    idempotency_key_digest: str = Field(pattern=_DIGEST_PATTERN)
+    attempt_digest: str = Field(pattern=_DIGEST_PATTERN)
+    provider_run_id_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    status: str
+    result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    outcome_evidence_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
+    reason_code: str
+    budget_evidence_digest: str = Field(pattern=_DIGEST_PATTERN)
+    recorded_at: datetime
+
+
+class QualificationEffectRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reservation_key: str
+    claim_key: str
+    effect_key_digest: str
+    effect_attempt_digest: str
+    writer_owner_id: str
+    fencing_generation: int
+    reserved_units: int = Field(ge=0)
+    reserved_at: datetime
+    execution_started_at: datetime | None = None
+    remote_system: str | None = None
+    remote_identifier: str | None = None
+    bound_at: datetime | None = None
+    terminal_disposition: str | None = None
+    terminal_evidence_digest: str | None = None
+    terminal_recorded_at: datetime | None = None
+
+
+class QualificationReconciliationRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int
+    claim_key: str
+    state: str
+    evidence_digest: str
+    recorded_at: datetime
+
+
+class QualificationDeliveryRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notification_key: str
+    projection_digest: str
+    client_msg_id: str
+    state: str
+    created_at: datetime
+    claimed_at: datetime | None = None
+    acknowledged_at: datetime | None = None
+    delivered_at: datetime | None = None
+    slack_ts: str | None = None
+    readback_attempts: int = Field(ge=0, le=2)
+    last_error: str | None = None
+    owner_decision: str | None = None
+    owner_decision_at: datetime | None = None
+    owner_command_id: str | None = None
+
+
+class QualificationStatusReceiptRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: str
+    source_event_id: str
+    created_at: datetime
+
+
+class QualificationUsageRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_digest: str
+    provider_id: str
+    reserved_microusd: int = Field(ge=0)
+    token_limit: int = Field(ge=0)
+    actual_microusd: int = Field(ge=0)
+    observed_tokens: int = Field(ge=0)
+
+
+class QualificationReadbackBounds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_limit: int = Field(ge=1)
+    byte_limit: int = Field(ge=1024)
+    wall_seconds: float = Field(gt=0)
+    elapsed_seconds: float = Field(ge=0)
+
+
+class QualificationEvidenceReadback(BaseModel):
+    """Bounded READ ONLY projection of one task's persisted qualification evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["director-qualification-readback/v1"]
+    task_id: str
+    engine_owner: str
+    projection_version: int = Field(ge=0)
+    projection_digest: str
+    source_event_id: str | None = None
+    execution_mode: str | None = None
+    terminal_classification: str | None = None
+    terminal_reason_code: str | None = None
+    task_created_at: datetime
+    task_updated_at: datetime
+    bounds: QualificationReadbackBounds
+    truncated: list[str] = Field(default_factory=list)
+    absent: list[str] = Field(default_factory=list)
+    complete: bool
+    assignments: list[QualificationAssignmentRow] = Field(default_factory=list)
+    provider_attempts: list[QualificationAttemptRow] = Field(default_factory=list)
+    effects: list[QualificationEffectRow] = Field(default_factory=list)
+    reconciliation_events: list[QualificationReconciliationRow] = Field(default_factory=list)
+    slack_deliveries: list[QualificationDeliveryRow] = Field(default_factory=list)
+    status_receipts: list[QualificationStatusReceiptRow] = Field(default_factory=list)
+    provider_usage: list[QualificationUsageRow] = Field(default_factory=list)
+
+
+class TaskReadbackRecord(TaskRecord):
+    """TaskRecord plus the opt-in readback; never persisted, never digested."""
+
+    qualification_evidence: QualificationEvidenceReadback | None = None
+
+
 class SlackGatewayProof(BaseModel):
     """Short-lived proof emitted only by the local Slack gateway."""
 
@@ -1298,3 +1453,4 @@ class ManualRunCompletion(BaseModel):
 # [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]

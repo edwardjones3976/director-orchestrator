@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]] -->
@@ -38,11 +39,15 @@ contacts (Grok Bot, Z.ai, VS Code Coding Bot) whose enrollment stays `UNKNOWN`;
 direct Grok evidence never qualifies the Grok Bot contact, Z.ai keeps its
 tools-off trial contract, and VS Code must preserve its underlying provider
 identity. Perplexity and Firecrawl are research-only with an engineering
-target of zero. Every lane's verdict is `UNKNOWN` unless a separately
-collected evidence row is supplied, and even then the preflight records it
-without converting it into a pass; a live canary needs separate owner
-authorization and is not launched here.
+target of zero; every allocation weight is read from `allocation_profiles.py`.
+Every lane's verdict and `enrollment_and_live_eligibility` stay `UNKNOWN`: a
+caller-supplied row is recorded verbatim as untrusted `asserted_evidence`
+(reason `asserted_evidence_recorded_not_verified`) and never changes
+enrollment, eligibility or the verdict, because no authenticated collector
+exists yet; a live canary needs separate owner authorization and is not
+launched here.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]] -->

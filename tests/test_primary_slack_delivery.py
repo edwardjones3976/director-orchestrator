@@ -34,6 +34,20 @@ from tests import test_primary_default as primary_fixtures
 from tests import test_slack_intake_receipts as slack_fixtures
 
 
+class _AsyncByteStream(httpx.AsyncByteStream):
+    """Synthetic response body driven by an async generator (slow/oversize/truncated)."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        async for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self):
+        await self._chunks.aclose()
+
+
 class PrimarySlackDeliveryTests(unittest.TestCase):
     def setUp(self):
         self.fixture = primary_fixtures.DefaultPrimaryApplicationIntegrationTests()
@@ -110,6 +124,23 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                 return self.rate_limited(retry_after="45", raw=b'{"ok": false, "error": "ratelimited"')
             if self.mode == "post_429_long_delay":
                 return self.rate_limited(retry_after="86400")
+            if self.mode == "post_429_slow_body":
+                # A body that never finishes: only pre-drain classification survives it.
+                async def stalled():
+                    yield b'{"ok": false'
+                    await asyncio.sleep(3600)
+                    yield b"}"
+                return httpx.Response(429, headers={"Retry-After": "9"}, stream=_AsyncByteStream(stalled()))
+            if self.mode == "post_429_oversize_body":
+                async def oversize():
+                    for _ in range(300):
+                        yield b"x" * 1024
+                return httpx.Response(429, headers={"Retry-After": "11"}, stream=_AsyncByteStream(oversize()))
+            if self.mode == "post_429_truncated_body":
+                async def truncated():
+                    yield b'{"ok": fal'
+                    raise httpx.ReadError("synthetic truncated 429 body")
+                return httpx.Response(429, headers={"Retry-After": "13"}, stream=_AsyncByteStream(truncated()))
             return httpx.Response(200, json={"ok": True, "ts": ts, "channel": payload["channel"]})
         if request.url.path.endswith("conversations.replies"):
             self.readbacks.append(request)
@@ -526,6 +557,29 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                 self.assertEqual(0, self.drain())  # inside the horizon: no call, no repost
                 self.assertEqual(1, len(self.posts))
                 self.assertEqual("REFUSED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_429_is_classified_before_the_body_so_slow_oversize_or_truncated_bodies_cannot_stall_or_blur_it(self):
+        for mode, expected in (("post_429_slow_body", "slack_rate_limited:retry_after=9"),
+                               ("post_429_oversize_body", "slack_rate_limited:retry_after=11"),
+                               ("post_429_truncated_body", "slack_rate_limited:retry_after=13")):
+            with self.subTest(mode=mode):
+                self.posts.clear()
+                record = self.fixture.application.create_intake(
+                    self.fixture.intake().model_copy(update={"source_event_id": "fixture-" + mode}),
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+                self.delivery.rate_limited_until = None
+                self.mode = mode
+                started = time.monotonic()
+                self.assertEqual(0, self.drain())
+                self.assertLess(time.monotonic() - started, 5)  # the ten-second body deadline never ran
+                self.assertEqual(1, len(self.posts))
+                receipt = self.delivery.receipts(record.task_id)[0]
+                self.assertEqual("REFUSED", receipt["state"])
+                self.assertEqual(expected, receipt["last_error"])
+                self.assertTrue(self.delivery.health()["rate_limited"])
+                self.mode = "success"
+                self.assertEqual(0, self.drain())
+                self.assertEqual(1, len(self.posts))
 
     def test_retry_after_longer_than_the_worker_horizon_defers_without_truncation(self):
         record = self.intake()

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
@@ -236,18 +237,20 @@ class PrimarySlackDelivery:
         # per-read timeout alone does not bound the complete operation.
         async with asyncio.timeout(10):
             async with client.stream(method, url, **kwargs) as response:
+                # HTTP 429 is Slack's documented rate-limit refusal: the request
+                # was not processed, whatever the body says. It is classified
+                # from the status line and headers before the body is drained,
+                # so a slow, truncated or oversize 429 body can neither stall
+                # the worker past Retry-After nor turn the definite refusal
+                # into ambiguity. The body is not read at all.
+                if response.status_code == 429:
+                    raise SlackRateLimited(parse_retry_after(response.headers.get("retry-after")))
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > 262144:
                         raise ValueError("Slack response exceeds the bounded readback limit")
-                # HTTP 429 is Slack's documented rate-limit refusal: the request
-                # was not processed, whatever the (bounded, discarded) body says.
-                # It is recognized before body parsing so a malformed or
-                # non-JSON body cannot turn a definite refusal into ambiguity.
                 # Every other non-success status keeps its ambiguous path.
-                if response.status_code == 429:
-                    raise SlackRateLimited(parse_retry_after(response.headers.get("retry-after")))
                 data = json.loads(body)
                 if not isinstance(data, dict):
                     raise ValueError("Slack returned no response envelope")
@@ -480,3 +483,4 @@ class PrimarySlackDelivery:
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
