@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | BEGIN]]
@@ -202,6 +203,8 @@ def _execute_three_attempt_roster(
 ) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
     """Run up to three bounded slots; stop after authenticated success."""
 
+    from .primary_workload import WorkloadAdmissionHold
+
     if not 1 <= len(format_roster) <= 3:
         raise RuntimeError("provider format roster must contain one to three entries")
     last_digest: str | None = None
@@ -212,6 +215,14 @@ def _execute_three_attempt_roster(
             raise RuntimeError("reserved provider format order changed")
         try:
             result = dispatch_attempt(attempt)
+        except WorkloadAdmissionHold:
+            # A proven pre-I/O policy hold - cancellation, a changed selection
+            # or a replaced enrollment - is never raised after `adapter.dispatch`
+            # is entered, so no provider request exists to be ambiguous about.
+            # Propagate it as the owner decision it is, leaving this admitted
+            # attempt's rows, slot and evidence exactly as they are, rather than
+            # recording an AMBIGUOUS paid outcome for a call never made.
+            raise
         except BaseException as exc:
             failure_kind = classify_provider_dispatch_exception(exc)
             if failure_kind is FailureKind.TRANSIENT:
@@ -2598,6 +2609,24 @@ class DefaultPrimaryActivation:
                 # only and never a durable authority; see docs.
                 _readiness_selections: dict[tuple[str, str], ReadinessSelection] = {}
 
+                def _wave_cancelled(task_id: str, *, deadline: float | None = None) -> bool:
+                    """Whether this wave's existing kill switch is engaged now.
+
+                    Reads the same `director_primary_parallel_batch.kill_switch`
+                    binding `reserve_ready` already honours, rather than adding
+                    a second cancellation authority. Read outside the admission
+                    transaction it guards, so the locked admission repeats it
+                    under its own lock before committing anything.
+                    """
+
+                    from .langgraph_postgres import bind_transaction_deadline, bounded_connection
+                    with bounded_connection(handle.pool, deadline) as connection:
+                        bind_transaction_deadline(connection, deadline)
+                        row = connection.execute(
+                            f"SELECT kill_switch FROM {handle.schema}.director_primary_parallel_batch "
+                            "WHERE task_id=%s", (task_id,)).fetchone()
+                    return bool(row["kill_switch"]) if row is not None else False
+
                 def _wave_readiness_deadline() -> float:
                     """The bound `reserve_ready` works under, before it acquires.
 
@@ -2663,7 +2692,15 @@ class DefaultPrimaryActivation:
                             None,
                             "live_lane_budget_unauthorized",
                         )
-                    writer = handle.claim_store.current_task_writer(record.task_id)
+                    # Everything this dispatch does, starting with reading the
+                    # writer and persisting the packet artifact, spends the
+                    # bound readiness already established for this exact
+                    # selection. A dispatch with no live selection has no
+                    # bound to spend and fails closed below.
+                    selected_now = _readiness_selections.get((record.task_id, assignment_id))
+                    dispatch_deadline = None if selected_now is None else selected_now.deadline
+                    writer = handle.claim_store.current_task_writer(
+                        record.task_id, deadline=dispatch_deadline)
                     if (
                         writer is None
                         or writer.engine_owner != "langgraph"
@@ -2677,6 +2714,7 @@ class DefaultPrimaryActivation:
                         packet=packet,
                         owner_token=writer.owner_token,
                         fencing_generation=writer.fencing_generation,
+                        deadline=dispatch_deadline,
                     )
                     if artifact.document_digest != packet_digest:
                         raise RuntimeError("parallel work-packet persistence changed")
@@ -2756,6 +2794,44 @@ class DefaultPrimaryActivation:
                                 admitted, "authority_digest", None)
                             if resolved is None or not selected.matches_admission(authority_digest=resolved):
                                 raise WorkloadAdmissionHold("readiness_authority_changed_before_admission")
+                        # The exact identity this ordinal will be admitted
+                        # under, derived the same way the ledger derives it, so
+                        # the enrollment can be re-resolved for it under the
+                        # admission locks.
+                        from .primary_parallel import format_for_attempt, provider_attempt_digest
+                        format_transport = format_for_attempt(format_roster, attempt_ordinal)
+                        admitted_digest = provider_attempt_digest(
+                            task_id=reservation.task_id,
+                            assignment_id=reservation.assignment_id,
+                            attempt_ordinal=attempt_ordinal,
+                            provider_id=provider,
+                            format_id=format_transport[0],
+                            transport_id=format_transport[1],
+                            idempotency_key_digest=idempotency_key_digest,
+                            budget_evidence_digest=selected.budget_evidence_digest)
+
+                        def revalidate_selection():
+                            """Re-checked after admission's locks, before COMMIT.
+
+                            The comparisons above happen before this
+                            transaction waits on anything. Authority can be
+                            revoked, an enrollment replaced or the writer taken
+                            over during those waits, so the same selection is
+                            proved again here, where raising still rolls the
+                            monetary, workload and STARTED writes back as one.
+                            """
+
+                            live = current_selection()
+                            if live.enrollment_digest is None:
+                                return
+                            registry_adapter = live_dependencies.adapter_for_format(
+                                provider, format_transport)
+                            if _enrollment_digest_for(
+                                getattr(registry_adapter, "_transport", None), admitted_digest,
+                            ) != live.enrollment_digest:
+                                raise WorkloadAdmissionHold(
+                                    "readiness_enrollment_changed_during_admission")
+
                         return self.coordinator.reserve_provider_attempt(
                             reservation=reservation,
                             attempt_ordinal=attempt_ordinal,
@@ -2764,6 +2840,7 @@ class DefaultPrimaryActivation:
                             budget_evidence_digest=budget_evidence_digest,
                             deadline=selected.deadline,
                             expected_authority_digest=selected.authority_digest,
+                            revalidate_selection=revalidate_selection,
                             **admissions,
                         )
                     def record_attempt(
@@ -2782,18 +2859,22 @@ class DefaultPrimaryActivation:
                     def dispatch_attempt(
                         attempt: ProviderAttemptReservation,
                     ) -> Mapping[str, Any]:
-                        adapter = (team_routing.adapter(packet,attempt)
+                        selected = current_selection()
+                        adapter = (team_routing.adapter(packet,attempt,deadline=selected.deadline)
                             if team_routing is not None and provider=="antigravity"
                             else live_dependencies.adapter_for_format(provider,(attempt.format_id,attempt.transport_id)))
                         # Immediately before I/O: the same selection is checked
                         # once more (packet, roster, writer generation, shared
-                        # deadline) and, for an enrolled meter, the registry
+                        # deadline); cancellation authority must still allow
+                        # this wave; and, for an enrolled meter, the registry
                         # must still resolve the exact enrollment document
-                        # readiness selected - a replaced registry or file is a
-                        # different selection, not a substitutable one.
-                        selected = current_selection()
+                        # readiness selected. A request that was already
+                        # admitted keeps its rows, slot and evidence - only the
+                        # provider call is prevented.
+                        from .primary_workload import WorkloadAdmissionHold
+                        if _wave_cancelled(record.task_id, deadline=selected.deadline):
+                            raise WorkloadAdmissionHold("wave_cancelled_before_dispatch")
                         if selected.enrollment_digest is not None:
-                            from .primary_workload import WorkloadAdmissionHold
                             live_enrollment = _enrollment_digest_for(
                                 getattr(adapter, "_transport", None), attempt.attempt_digest)
                             if live_enrollment != selected.enrollment_digest:
@@ -2821,6 +2902,11 @@ class DefaultPrimaryActivation:
                                 ),
                                 fencing_generation=writer.fencing_generation,
                                 deadline=selected.deadline,
+                                # Carried so the transport can bind the meter
+                                # it actually resolves to the enrollment this
+                                # selection checked, rather than trusting a
+                                # comparison made before it resolved one.
+                                enrollment_digest=selected.enrollment_digest,
                             ),
                         )
 
@@ -2879,7 +2965,8 @@ class DefaultPrimaryActivation:
                         "provider_result_authenticated",
                     )
 
-                def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage):
+                def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage,
+                                                  deadline=None):
                     from .primary_paid_preflight import (
                         check_budget_setup, check_team_setup, PlannedProviderAttempt, ReadinessSelection,
                     )
@@ -2918,15 +3005,20 @@ class DefaultPrimaryActivation:
                             from .antigravity_team_routing import TEAM_FORMAT
                             roster = (TEAM_FORMAT,)
                         # One deadline for the whole assignment - every attempt
-                        # of its roster, including retries - established once
-                        # here and clamped by both the packet's own timeout
-                        # budget and the configured transport ceiling, never
-                        # per-attempt: a retry must drain the same absolute
-                        # bound, not restart it.
-                        deadline = monotonic() + min(
+                        # of its roster, including retries - clamped by the
+                        # packet's own timeout, the configured transport
+                        # ceiling, and the upstream cutoff this wave is
+                        # already spending. Never per-attempt, and never later
+                        # than the bound the caller started with: `min` can
+                        # only narrow it.
+                        assignment_deadline = monotonic() + min(
                             int(limits['timeout_seconds']),
                             max(1, int(settings.provider_timeout_seconds)),
                         )
+                        deadline = (assignment_deadline if deadline is None
+                                    else min(deadline, assignment_deadline))
+                        if deadline - monotonic() <= 0:
+                            raise PaidSetupHold()
                         selection_key = (reservation.task_id, reservation.assignment_id)
                         if live_dependencies.team_routing is not None and provider == 'antigravity':
                             # Pure signed-grant interface: never probe with the
@@ -3306,3 +3398,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

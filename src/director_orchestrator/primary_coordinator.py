@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
@@ -556,6 +557,7 @@ class PrimaryTaskCoordinator:
         budget_limits=None,
         deadline: float | None = None,
         expected_authority_digest: str | None = None,
+        revalidate_selection=None,
     ) -> ProviderAttemptReservation:
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
@@ -572,6 +574,7 @@ class PrimaryTaskCoordinator:
             budget_limits=budget_limits,
             deadline=deadline,
             expected_authority_digest=expected_authority_digest,
+            revalidate_selection=revalidate_selection,
         )
 
     def record_provider_attempt(
@@ -673,14 +676,24 @@ class PrimaryTaskCoordinator:
         policy: ParallelDispatchPolicy,
         dispatcher: Callable[[ParallelReservation], ParallelDispatchOutcome],
     ) -> ParallelAggregate:
-        """Run one dependency-ready wave concurrently, then checkpoint once."""
+        """Run one dependency-ready wave concurrently, then checkpoint once.
 
-        writer = self._task_writer(task_id)
+        The dispatcher's published bound is read once, here, before this
+        wave's *first* writer acquisition, and the same absolute value is then
+        used by that acquisition, by readiness and by everything downstream.
+        Nothing later derives a second one from a clock that has already moved
+        through those waits.
+        """
+
+        published = getattr(dispatcher, "readiness_deadline", None)
+        deadline = published() if callable(published) else None
+        writer = self._task_writer(task_id, deadline=deadline)
         self.parallel.execute_ready(
             task_id=task_id,
             writer=writer,
             policy=policy,
             dispatcher=dispatcher,
+            deadline=deadline,
         )
         aggregate = self.parallel.aggregate(task_id)
         self._persist_outcome(
@@ -992,3 +1005,4 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

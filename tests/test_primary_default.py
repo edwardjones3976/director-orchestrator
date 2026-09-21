@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -474,9 +475,35 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                                           "openai", "test-deployment", digest("reservation"))
         writer = SimpleNamespace(engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
                                  lease_live=True, fencing_generation=4)
-        handle.claim_store.current_task_writer = lambda _task: writer
-        handle.claim_store.record_work_packet_artifact = lambda **kwargs: SimpleNamespace(
-            document_digest=document_digest(kwargs["packet"]))
+        # Dispatch reads the writer, persists the artifact and re-reads the
+        # wave's cancellation row inside the bound its own readiness
+        # established, so each double records the bound it was handed.
+        bounds = []
+
+        class BatchRow:
+            """The existing `director_primary_parallel_batch` kill switch."""
+
+            info = SimpleNamespace(server_version=170000)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exception):
+                return False
+
+            def execute(self, *_args, **_kwargs):
+                return SimpleNamespace(fetchone=lambda: {"kill_switch": False})
+
+        def batch_connection(*_args, **kwargs):
+            bounds.append(("cancellation", kwargs.get("timeout")))
+            return BatchRow()
+
+        handle.pool.connection = batch_connection
+        handle.claim_store.current_task_writer = lambda _task, *, deadline=None: (
+            bounds.append(("writer", deadline)) or writer)
+        handle.claim_store.record_work_packet_artifact = lambda **kwargs: (
+            bounds.append(("artifact", kwargs.get("deadline"))) or SimpleNamespace(
+                document_digest=document_digest(kwargs["packet"])))
         attempt = ProviderAttemptReservation(record.task_id, assignment_id, 1, "openai", "api", "api",
                                              digest("key"), digest("attempt"), digest("budget"),
                                              total_token_limit=731)
@@ -530,6 +557,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         self.assertEqual(731, contexts[0].total_token_limit)
         self.assertEqual(attempt.attempt_digest, contexts[0].idempotency_key)
         self.assertEqual(4, contexts[0].fencing_generation)
+        # The same readiness bound reaches the writer read, the artifact write,
+        # the pre-I/O cancellation read and the provider call itself.
+        self.assertEqual({"writer", "artifact", "cancellation"},
+                          {stage for stage, _bound in bounds})
+        self.assertTrue(all(bound is not None and bound > 0 for _stage, bound in bounds), bounds)
+        self.assertIsNotNone(contexts[0].deadline)
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -3222,3 +3255,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

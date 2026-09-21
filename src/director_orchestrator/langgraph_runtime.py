@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -127,6 +128,12 @@ class ProviderAdapterContext:
     # never a wider one. Readiness, admission COMMIT, token counting and meter
     # settlement all draw against this same value; none of them reset it.
     deadline: float | None = None
+    # The digest of the enrollment document the caller's selection checked.
+    # A transport that resolves its own meter binds the one it actually got
+    # to this value, so a registry substitution between that check and the
+    # send cannot slip a different signed tariff into the same attempt.
+    # None means no meter was enrolled for this selection.
+    enrollment_digest: str | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1248,3 +1255,4 @@ class LangGraphPacketRuntime:
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

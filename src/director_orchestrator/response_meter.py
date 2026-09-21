@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | BEGIN]]
@@ -109,19 +110,37 @@ class EnrolledResponseMeter:
         self._verify_signature()
         self._verify_applicable(self.clock())
 
+    def verify_current(self):
+        """Public re-check for a caller about to send this exact request.
+
+        The same gate `prepare` applied, repeated at the real send instant so
+        work between them - input-token counting, queueing - cannot carry a
+        lapsed signature or an expired tariff into the priced request.
+        """
+
+        self._verify()
+
     @contextmanager
-    def _connection(self, remaining_seconds, *, accounting_allowance_seconds=None):
+    def _connection(self, remaining_seconds, *, accounting_deadline=None):
         from psycopg import Error
-        if remaining_seconds is None:
-            deadline = monotonic() + min(180, (self.enrollment.expires_at-self.clock()).total_seconds())
-            remaining_seconds = lambda: deadline - monotonic()
-        if accounting_allowance_seconds is not None:
+        if accounting_deadline is not None:
             # Recording an authenticated fact that already happened is not more
-            # execution: when the execution budget is spent, this one bounded
-            # allowance lets the receipt be written and never anything else. It
-            # is anchored here, once, and cannot be renewed by a retry.
-            supplied, floor = remaining_seconds, monotonic() + accounting_allowance_seconds
-            remaining_seconds = lambda: max(supplied(), floor - monotonic())
+            # execution. This absolute cutoff comes from the original
+            # operation and replaces the execution callback entirely here:
+            # that callback raises the moment execution expires, which would
+            # destroy the receipt before the pool is even reached. It is the
+            # same value on every call, so settlement replay cannot extend it,
+            # and it authorises no provider work.
+            remaining_seconds = lambda: accounting_deadline - monotonic()
+        elif remaining_seconds is None:
+            # No caller bound: derive one from the enrollment's own remaining
+            # validity, unchanged while that validity lasts. A window that has
+            # already closed is a reason to record the authenticated fact
+            # promptly - within the same fixed allowance - not to lose it.
+            validity = (self.enrollment.expires_at - self.clock()).total_seconds()
+            window = min(180, validity) if validity > 0 else ACCOUNTING_ALLOWANCE_SECONDS
+            deadline = monotonic() + window
+            remaining_seconds = lambda: deadline - monotonic()
         def remaining():
             seconds = remaining_seconds()
             if seconds <= 0:
@@ -198,16 +217,22 @@ class EnrolledResponseMeter:
         e = self.enrollment
         return {"OpenAI-Organization": e.organization_id, "OpenAI-Project": e.api_project_id}
 
-    def settle(self, native, response_headers, *, remaining_seconds=None, sent_at=None):
+    def settle(self, native, response_headers, *, remaining_seconds=None, sent_at=None,
+               accounting_deadline=None):
         """Record the authenticated usage of one already-admitted request.
 
-        `sent_at` is the instant this exact request was actually sent, after
-        `prepare` had already required a current enrollment. When supplied,
-        the tariff must have covered *that* instant: the accounting fact for a
-        request that was legitimately admitted and sent does not stop being
-        true because the signed window closed while the provider was
-        answering. Settlement then gets one bounded allowance to write the
-        receipt - never more provider work, never a reset execution clock.
+        `sent_at` is the instant this exact request was actually sent, checked
+        against a current enrollment at that moment. The tariff must have
+        covered *that* instant: the accounting fact for a request that was
+        legitimately admitted and sent does not stop being true because the
+        signed window closed, or this attempt's execution budget ran out,
+        while the provider was answering.
+
+        `accounting_deadline` is one absolute cutoff from the original
+        operation bounding only this receipt write. It replaces the execution
+        callback here rather than widening it: that callback raises as soon as
+        execution expires, which is exactly the case the fact most needs
+        recording. It buys no provider work and makes no output eligible.
 
         Everything else is unchanged and unrelaxed: the owner signature, the
         provider-confirmed account association, model/tier/creation freshness,
@@ -218,9 +243,6 @@ class EnrolledResponseMeter:
 
         self._verify_signature()
         self._verify_applicable(sent_at if sent_at is not None else self.clock())
-        late = sent_at is not None and not (
-            self.enrollment.valid_from <= self.clock() < self.enrollment.expires_at
-        )
         e = self.enrollment
         headers = {str(k).lower(): v for k, v in response_headers.items()}
         if (headers.get("openai-organization") != e.organization_id
@@ -269,10 +291,7 @@ class EnrolledResponseMeter:
         signature = hmac.new(self.authority.entitlements._route_verifier_secret,
             canonical_json_bytes(receipt.signing_document()), hashlib.sha256).hexdigest()
         receipt = receipt.model_copy(update={"meter_signature": signature})
-        with self._connection(
-            remaining_seconds,
-            accounting_allowance_seconds=(ACCOUNTING_ALLOWANCE_SECONDS if late else None),
-        ) as connection:
+        with self._connection(remaining_seconds, accounting_deadline=accounting_deadline) as connection:
             connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                 ("primary-provider-budget:" + e.project_id,))
             # Re-checked after the lock wait, against the same instant this
@@ -348,3 +367,4 @@ def load_response_meter_registry(path, *, authority, pool):
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

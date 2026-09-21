@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
@@ -1102,8 +1103,12 @@ class PostgresParallelDispatch:
                 if preflight is not None:
                     for candidate in reserved:
                         try:
+                            # The same bound this reservation is already
+                            # spending, so readiness clamps to it instead of
+                            # starting a fresh one after the waits above.
                             preflight(candidate, writer=writer, connection=connection,
-                                      wave_budget_usage=wave_budget_usage)
+                                      wave_budget_usage=wave_budget_usage,
+                                      deadline=deadline)
                         except PaidSetupHold:
                             held.append(candidate)
                 if held:
@@ -1141,6 +1146,7 @@ class PostgresParallelDispatch:
         budget_limits=None,
         deadline: float | None = None,
         expected_authority_digest: str | None = None,
+        revalidate_selection=None,
     ) -> ProviderAttemptReservation:
         """Append one STARTED child event before I/O; never reuse an open attempt.
 
@@ -1276,6 +1282,18 @@ class PostgresParallelDispatch:
                         or binding["provider_id"] != reservation.provider_id
                         or binding["reservation_digest"] != reservation.reservation_digest):
                     raise ParallelDispatchError("workload parallel reservation binding changed")
+                # The same kill switch `reserve_ready` honours, read here under
+                # this transaction's own lock. A cancellation ordered while
+                # this admission was waiting must stop it: an ACTIVE slot with
+                # no STARTED attempt gets no attempt, spend or workload row.
+                switched = self._row(
+                    connection,
+                    f"""SELECT kill_switch FROM {schema}.director_primary_parallel_batch
+                    WHERE task_id = %(task_id)s FOR UPDATE""",
+                    {"task_id": reservation.task_id},
+                )
+                if switched is None or bool(switched["kill_switch"]):
+                    raise WorkloadAdmissionHold("parallel_wave_cancelled_before_admission")
                 monetary_clock = None
                 admitted_grant = None
                 admitted_budget = None
@@ -1318,6 +1336,15 @@ class PostgresParallelDispatch:
                         raise TeamAuthorizationError("provider budget expired during atomic admission")
                     if admitted_grant is not None:
                         admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
+                if revalidate_selection is not None:
+                    # After every lock this transaction waited on, and before
+                    # the STARTED row it is about to write: the caller
+                    # re-checks the complete selection it chose this attempt
+                    # under - signed authority, enrollment document, packet,
+                    # writer generation. Anything raised here rolls the
+                    # monetary, workload and attempt writes back together,
+                    # because they are all still uncommitted.
+                    revalidate_selection()
                 if deadline is not None and deadline - monotonic() <= 0:
                     # Already past it before the final write: refuse here
                     # rather than rely on the server timer alone. Anything the
@@ -1805,22 +1832,27 @@ class PostgresParallelDispatch:
         writer: TaskWriterLease,
         policy: ParallelDispatchPolicy,
         dispatcher: Any,
+        deadline: float | None = None,
     ) -> tuple[ParallelReservation, ...]:
         """Execute the reserved ready set concurrently and durably settle each.
 
         Reservations are committed before threads start. An exception after that
         boundary is classified as ambiguous and permanently retains its slot.
+
+        `deadline` is the caller's absolute bound, already covering whatever
+        writer acquisition it did first. Only a caller that supplies none falls
+        back to the dispatcher's published bound, so this method never widens
+        a bound its caller has already begun spending.
         """
 
         if not callable(dispatcher):
             raise ParallelDispatchError("dispatcher must be callable")
-        # The dispatcher may publish the bound its own readiness will work
-        # under, derived from configured limits before anything is acquired.
-        # A dispatcher that publishes none stays unbounded, as before.
-        readiness_deadline = getattr(dispatcher, "readiness_deadline", None)
+        if deadline is None:
+            published = getattr(dispatcher, "readiness_deadline", None)
+            deadline = published() if callable(published) else None
         reservations = self.reserve_ready(task_id=task_id, writer=writer, policy=policy,
                                           preflight=getattr(dispatcher, "preflight", None),
-                                          deadline=readiness_deadline() if callable(readiness_deadline) else None)
+                                          deadline=deadline)
         if not reservations:
             return ()
 
@@ -1970,3 +2002,4 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

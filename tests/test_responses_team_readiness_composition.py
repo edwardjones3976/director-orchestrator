@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | BEGIN]]
@@ -11,6 +12,7 @@ admissions, or the admitted-only response-meter `prepare()` reservation.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 import uuid
@@ -66,6 +68,7 @@ from director_orchestrator.primary_parallel import (
 import hashlib
 import httpx
 
+from director_orchestrator.packet_contracts import canonical_json_bytes
 from director_orchestrator.packet_contracts import document_digest as packet_document_digest
 from director_orchestrator.primary_parallel import provider_attempt_digest, provider_attempt_idempotency
 from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
@@ -968,6 +971,193 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 self.assertEqual(0, connection.execute(
                     f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"])
 
+    def _enrolled_wave(self, *, daily_limit_ratio=None):
+        """`_ready_wave` plus the real signed enrollment for its first attempt.
+
+        The registry is attached before readiness runs, so the selection
+        records the exact enrollment document, and the same one must still
+        resolve at admission and immediately before the provider call.
+        """
+        api_key, model = "test-secret-key", "configured-model"
+        transport = OpenAIResponsesPacketTransport(api_key=api_key, model=model, response_meter=None)
+        activation, settings = self._build_activation(transport)
+        task_id = "DIR-PG-ENROL-" + uuid.uuid4().hex[:8].upper()
+        assignment_id, sequence, packet = self._register(activation, settings, task_id=task_id)
+        attempt_usd = float(packet["limits"]["budget_usd"]) / 3.0
+        reservation_microusd = int(
+            (Decimal(str(attempt_usd)) * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
+        daily_limit_microusd = (
+            int(reservation_microusd * daily_limit_ratio) if daily_limit_ratio is not None
+            else int(Decimal(str(settings.max_daily_provider_budget_usd)) * 1_000_000))
+        signed_budget = budget(grant(task_id=task_id, project_id=packet["project"]),
+            provider_id="openai", project_id=packet["project"], token_limit=1000,
+            day=datetime.now(timezone.utc).date().isoformat(),
+            task_limit_microusd=int(Decimal(str(settings.max_task_budget_usd)) * 1_000_000),
+            daily_limit_microusd=daily_limit_microusd,
+            attempt_reservation_microusd=reservation_microusd)
+        with self.handle.pool.connection() as connection, connection.transaction():
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) "
+                "VALUES(%s,%s::jsonb)", (signed_budget.grant_digest, signed_budget.model_dump_json()))
+        roster = (("model-work-packet-v1", "responses-api"),)
+        idem = provider_attempt_idempotency(packet["idempotency_key"], 1, roster)
+        attempt_digest = provider_attempt_digest(task_id=task_id, assignment_id=assignment_id,
+            attempt_ordinal=1, provider_id="openai", format_id=roster[0][0], transport_id=roster[0][1],
+            idempotency_key_digest=idem, budget_evidence_digest="sha256:" + signed_budget.grant_digest)
+        sent_at = datetime.now(timezone.utc)
+        enrollment = self._enrollment(attempt_digest=attempt_digest,
+            authority_digest=signed_budget.grant_digest, packet=packet, task_id=task_id,
+            assignment_id=assignment_id, sent_at=sent_at, api_key=api_key, model=model)
+        transport.response_meter = ResponseMeterRegistry(
+            enrollments=(enrollment,), authority=self.authority, pool=self.handle.pool)
+        writer = self.handle.claim_store.acquire_task_writer(
+            task_id, engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
+            expected_generation=0)
+        self.ledger.register_plan(task_id=task_id, writer=writer, policy=self.policy,
+            plan_digest=digest(task_id),
+            assignments=(ParallelAssignment(assignment_id, sequence, "openai", "test-deployment"),))
+        reservations = self.ledger.reserve_ready(task_id=task_id, writer=writer, policy=self.policy,
+            preflight=activation.application._parallel_dispatcher.preflight)
+        self.assertEqual(1, len(reservations))
+        return SimpleNamespace(activation=activation, settings=settings, task_id=task_id,
+                                assignment_id=assignment_id, packet=packet, writer=writer,
+                                reservation=reservations[0], budget=signed_budget,
+                                transport=transport, enrollment=enrollment, sent_at=sent_at,
+                                attempt_digest=attempt_digest, attempt_usd=attempt_usd,
+                                api_key=api_key, model=model,
+                                reservation_microusd=reservation_microusd,
+                                daily_limit_microusd=daily_limit_microusd)
+
+    def _replaced_enrollment(self, wave, **changes):
+        """A second, individually valid enrollment for the same attempt."""
+
+        replacement = self._enrollment(attempt_digest=wave.attempt_digest,
+            authority_digest=wave.budget.grant_digest, packet=wave.packet,
+            task_id=wave.task_id, assignment_id=wave.assignment_id, sent_at=wave.sent_at,
+            api_key=wave.api_key, model=wave.model, **changes)
+        self.assertNotEqual(document_digest(wave.enrollment.model_dump(mode="json")),
+                            document_digest(replacement.model_dump(mode="json")))
+        return ResponseMeterRegistry(enrollments=(replacement,), authority=self.authority,
+                                     pool=self.handle.pool)
+
+    def _no_provider_call(self):
+        """Any HTTP at all from the real transport fails the test outright."""
+
+        return patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                     side_effect=AssertionError("no provider call may be made"))
+
+    # --- cancellation authority at admission and immediately before I/O ---
+
+    def test_cancelled_wave_admits_nothing_and_calls_no_provider(self):
+        """An engaged kill switch stops admission itself, not just dispatch.
+
+        The switch is read inside the admission transaction, under the same
+        row lock, so a cancellation racing an in-flight admission cannot leave
+        an ACTIVE slot with a real STARTED attempt behind.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._ready_wave()
+        self.ledger.engage_kill_switch(task_id=wave.task_id, writer=wave.writer)
+        with self._no_provider_call(), self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("parallel_wave_cancelled_before_admission", raised.exception.reason_code)
+        self._assert_no_admission_rows()
+
+    def test_cancellation_after_admission_stops_the_send_and_keeps_the_evidence(self):
+        """Cancelled between admission and I/O: no call, but nothing is erased.
+
+        The switch is engaged by the real `engage_kill_switch` immediately
+        after the real admission commits - "block new reservations without
+        cancelling or freeing in-flight slots". The provider is never called,
+        and the admitted monetary, workload and STARTED rows all remain for
+        reconciliation rather than being silently rolled back.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._ready_wave()
+        coordinator = wave.activation.coordinator
+        admit = coordinator.reserve_provider_attempt
+
+        def admit_then_cancel(**kwargs):
+            attempt = admit(**kwargs)
+            self.ledger.engage_kill_switch(task_id=wave.task_id, writer=wave.writer)
+            return attempt
+
+        with patch.object(coordinator, "reserve_provider_attempt", side_effect=admit_then_cancel), \
+             self._no_provider_call(), \
+             self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("wave_cancelled_before_dispatch", raised.exception.reason_code)
+        with self.handle.pool.connection() as connection:
+            counts = {name: connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.{name}").fetchone()["n"]
+                for name in ("director_primary_provider_attempt",
+                             "director_primary_provider_spend",
+                             "director_primary_workload_assignment")}
+            usage = connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_usage"
+            ).fetchone()["n"]
+        self.assertEqual({name: 1 for name in counts}, counts,
+                          "an admitted attempt keeps its rows, slot and evidence")
+        self.assertEqual(0, usage, "nothing was sent, so nothing was metered")
+
+    # --- the enrollment the selection checked is the only one that is used ---
+
+    def test_enrollment_replaced_during_the_admission_wait_rolls_back(self):
+        """Proved again after the locks, where rolling back is still possible.
+
+        A second connection holds the exact batch row admission must lock, so
+        the registry is replaced while admission is genuinely waiting - after
+        every check `reserve_attempt` made before the transaction opened. The
+        post-lock re-check refuses, and the monetary, workload and STARTED
+        writes roll back together.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from time import sleep
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+        dispatcher = wave.activation.application._parallel_dispatcher
+        with ThreadPoolExecutor(max_workers=1) as pool, self._no_provider_call():
+            with self.handle.pool.connection() as blocker, blocker.transaction():
+                blocker.execute(
+                    f"SELECT * FROM {self.schema}.director_primary_parallel_batch "
+                    "WHERE task_id=%s FOR UPDATE", (wave.task_id,))
+                admitting = pool.submit(dispatcher, wave.reservation)
+                sleep(0.75)
+                self.assertFalse(admitting.done(),
+                                  "admission must still be waiting on the locked batch row")
+                wave.transport.response_meter = self._replaced_enrollment(
+                    wave, tariff_id="tariff-replaced")
+            with self.assertRaises(WorkloadAdmissionHold) as raised:
+                admitting.result(timeout=30)
+        self.assertEqual("readiness_enrollment_changed_during_admission",
+                          raised.exception.reason_code)
+        self._assert_no_admission_rows()
+
+    def test_enrollment_replaced_after_admission_stops_the_send(self):
+        """Between a committed admission and the provider call, it still holds."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._enrolled_wave()
+        coordinator = wave.activation.coordinator
+        admit = coordinator.reserve_provider_attempt
+
+        def admit_then_replace(**kwargs):
+            attempt = admit(**kwargs)
+            wave.transport.response_meter = self._replaced_enrollment(
+                wave, tariff_id="tariff-replaced")
+            return attempt
+
+        with patch.object(coordinator, "reserve_provider_attempt", side_effect=admit_then_replace), \
+             self._no_provider_call(), \
+             self.assertRaises(WorkloadAdmissionHold) as raised:
+            wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("readiness_enrollment_changed_before_dispatch",
+                          raised.exception.reason_code)
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(0, connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_usage"
+            ).fetchone()["n"])
+
     def test_dependency_enriched_packet_after_readiness_fails_closed(self):
         """The packet readiness checked is the only packet it authorised."""
 
@@ -1138,7 +1328,30 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 
     # --- late accounting: authenticated usage of an admitted, sent request ---
 
-    def _admitted_meter(self, *, expires_in_seconds=3600.0, clock=None):
+    def _enrollment(self, *, attempt_digest, authority_digest, packet, task_id, assignment_id,
+                    sent_at, api_key="test-secret-key", model="configured-model",
+                    organization_id="org-synthetic", api_project_id="proj-synthetic",
+                    expires_in_seconds=3600.0, tariff_id="tariff-synthetic"):
+        """One owner-signed enrollment for exactly one admitted attempt."""
+
+        return signed(ResponseMeterEnrollment(
+            schema_version="responses-meter-enrollment/v1",
+            authority_digest=authority_digest, attempt_digest=attempt_digest,
+            project_id=packet["project"], task_id=task_id, assignment_id=assignment_id,
+            work_packet_digest=packet_document_digest(packet),
+            credential_digest=hashlib.sha256(api_key.encode()).hexdigest(),
+            organization_id=organization_id, api_project_id=api_project_id,
+            model=model, service_tier="default", origin="https://api.openai.com",
+            tariff_id=tariff_id, input_microusd_per_million=1000,
+            cached_input_microusd_per_million=500, output_microusd_per_million=2000,
+            valid_from=sent_at - timedelta(minutes=5),
+            expires_at=sent_at + timedelta(seconds=expires_in_seconds),
+            owner_signature="0" * 64,
+        ), fixtures.OWNER_SECRET)
+
+    def _admitted_meter(self, *, expires_in_seconds=3600.0, clock=None,
+                        api_key="test-secret-key", organization_id="org-synthetic",
+                        api_project_id="proj-synthetic"):
         """Admit one real attempt and return its meter, response and facts.
 
         Everything is real except the provider reply: a real signed budget,
@@ -1146,7 +1359,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         row exists), a real signed enrollment and the real meter.
         """
         task_id = "DIR-PG-LATE-" + uuid.uuid4().hex[:8].upper()
-        api_key, model = "test-secret-key", "configured-model"
+        model = "configured-model"
         transport = OpenAIResponsesPacketTransport(api_key=api_key, model=model, response_meter=None)
         activation, settings = self._build_activation(transport)
         assignment_id, sequence, packet = self._register(activation, settings, task_id=task_id)
@@ -1167,22 +1380,12 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         attempt_digest = provider_attempt_digest(task_id=task_id, assignment_id=assignment_id,
             attempt_ordinal=1, provider_id="openai", format_id=roster[0][0], transport_id=roster[0][1],
             idempotency_key_digest=idem, budget_evidence_digest="sha256:" + signed_budget.grant_digest)
-        organization_id, api_project_id = "org-synthetic", "proj-synthetic"
         sent_at = datetime.now(timezone.utc)
-        enrollment = signed(ResponseMeterEnrollment(
-            schema_version="responses-meter-enrollment/v1",
-            authority_digest=signed_budget.grant_digest, attempt_digest=attempt_digest,
-            project_id=packet["project"], task_id=task_id, assignment_id=assignment_id,
-            work_packet_digest=packet_document_digest(packet),
-            credential_digest=hashlib.sha256(api_key.encode()).hexdigest(),
-            organization_id=organization_id, api_project_id=api_project_id,
-            model=model, service_tier="default", origin="https://api.openai.com",
-            tariff_id="tariff-synthetic", input_microusd_per_million=1000,
-            cached_input_microusd_per_million=500, output_microusd_per_million=2000,
-            valid_from=sent_at - timedelta(minutes=5),
-            expires_at=sent_at + timedelta(seconds=expires_in_seconds),
-            owner_signature="0" * 64,
-        ), fixtures.OWNER_SECRET)
+        enrollment = self._enrollment(
+            attempt_digest=attempt_digest, authority_digest=signed_budget.grant_digest,
+            packet=packet, task_id=task_id, assignment_id=assignment_id, sent_at=sent_at,
+            api_key=api_key, model=model, organization_id=organization_id,
+            api_project_id=api_project_id, expires_in_seconds=expires_in_seconds)
         writer = self.handle.claim_store.acquire_task_writer(
             task_id, engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
             expected_generation=0)
@@ -1213,7 +1416,11 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                    "x-request-id": "req-synthetic-late"}
         return SimpleNamespace(meter=meter, native=native, headers=headers, sent_at=sent_at,
                                 attempt_digest=attempt_digest, enrollment=enrollment,
-                                project_id=packet["project"])
+                                project_id=packet["project"], transport=transport,
+                                packet=packet, task_id=task_id, assignment_id=assignment_id,
+                                api_key=api_key, model=model,
+                                organization_id=organization_id, api_project_id=api_project_id,
+                                attempt_usd=attempt_usd)
 
     def _usage_rows(self):
         with self.handle.pool.connection() as connection:
@@ -1230,10 +1437,19 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         is refused exactly as before, and `prepare` - the gate that authorises
         *new* execution - still refuses outright.
         """
+        from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
         case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
         self.assertEqual([], self._usage_rows())
-        receipt = case.meter.settle(case.native, case.headers, sent_at=case.sent_at)
+        # The production shape: the execution callback raises, exactly as the
+        # transport's does once its budget is spent, and only the absolute
+        # accounting cutoff keeps the receipt reachable.
+        def spent_execution_budget():
+            raise RuntimeError("OpenAI transport timeout is exhausted")
+        receipt = case.meter.settle(
+            case.native, case.headers, sent_at=case.sent_at,
+            remaining_seconds=spent_execution_budget,
+            accounting_deadline=_monotonic() + 5.0)
         rows = self._usage_rows()
         self.assertEqual(1, len(rows))
         self.assertEqual(case.attempt_digest, rows[0]["attempt_digest"])
@@ -1252,13 +1468,25 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 model=case.enrollment.model, api_key="test-secret-key")
 
     def test_late_settlement_keeps_replay_account_and_signature_checks(self):
-        """A late receipt is not a relaxed one."""
+        """A late receipt is not a relaxed one.
+
+        Every call uses the production shape - a raising execution callback
+        plus one absolute accounting cutoff - and that cutoff is the same
+        value on every call, so replay cannot extend it.
+        """
+        from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
         case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
-        case.meter.settle(case.native, case.headers, sent_at=case.sent_at)
+
+        def spent():
+            raise RuntimeError("OpenAI transport timeout is exhausted")
+
+        cutoff = _monotonic() + 5.0
+        late = dict(remaining_seconds=spent, accounting_deadline=cutoff)
+        case.meter.settle(case.native, case.headers, sent_at=case.sent_at, **late)
         self.assertEqual(1, len(self._usage_rows()))
         # Exact replay is idempotent: still one row, same amounts.
-        case.meter.settle(case.native, case.headers, sent_at=case.sent_at)
+        case.meter.settle(case.native, case.headers, sent_at=case.sent_at, **late)
         rows = self._usage_rows()
         self.assertEqual(1, len(rows))
         # A conflicting replay of the same attempt is refused, and the
@@ -1267,28 +1495,50 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         conflicting["usage"] = dict(case.native["usage"],
                                     output_tokens=51, total_tokens=151)
         with self.assertRaisesRegex(TeamAuthorizationError, "conflicting usage receipt replay"):
-            case.meter.settle(conflicting, case.headers, sent_at=case.sent_at)
+            case.meter.settle(conflicting, case.headers, sent_at=case.sent_at, **late)
         self.assertEqual(rows, self._usage_rows())
         # An unconfirmed account association is refused before any write.
         other = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
         with self.assertRaisesRegex(TeamAuthorizationError, "account association"):
             other.meter.settle(other.native,
                                 dict(other.headers, **{"openai-organization": "org-other"}),
-                                sent_at=other.sent_at)
+                                sent_at=other.sent_at, **late)
+        # A tampered signature is refused even with a valid anchor and cutoff.
+        forged = EnrolledResponseMeter(
+            enrollment=other.enrollment.model_copy(update={"owner_signature": "f" * 64}),
+            authority=self.authority, pool=self.handle.pool, clock=lambda: expired)
+        with self.assertRaisesRegex(TeamAuthorizationError, "signature invalid"):
+            forged.settle(other.native, other.headers, sent_at=other.sent_at, **late)
+        # An accounting cutoff already spent records nothing and keeps the
+        # reservation: the allowance is a bound, not an unconditional write.
+        with self.assertRaisesRegex(RuntimeError, "deadline exhausted"):
+            other.meter.settle(other.native, other.headers, sent_at=other.sent_at,
+                                remaining_seconds=spent,
+                                accounting_deadline=_monotonic() - 1.0)
         self.assertEqual(1, len(self._usage_rows()))
 
     def test_late_settlement_under_project_lock_contention_retains_reservation(self):
-        """Its bounded allowance is a bound, not a licence to wait forever."""
+        """Its bounded allowance is a bound, not a licence to wait forever.
+
+        The production shape again: the execution callback is already spent,
+        so only the absolute cutoff governs, and it ends the accounting lock
+        wait rather than holding a pooled connection open indefinitely.
+        """
         from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
         case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
+
+        def spent():
+            raise RuntimeError("OpenAI transport timeout is exhausted")
+
         with self.handle.pool.connection() as blocker, blocker.transaction():
             blocker.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                             ("primary-provider-budget:" + case.project_id,))
             started = _monotonic()
             with self.assertRaises(RuntimeError):
                 case.meter.settle(case.native, case.headers, sent_at=case.sent_at,
-                                  remaining_seconds=lambda: 0.3)
+                                  remaining_seconds=spent,
+                                  accounting_deadline=_monotonic() + 0.4)
             elapsed = _monotonic() - started
         self.assertLess(elapsed, 8.0)
         self.assertEqual([], self._usage_rows())
@@ -1297,8 +1547,294 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 f"SELECT reserved_microusd FROM {self.schema}.director_primary_provider_spend "
                 "WHERE attempt_digest=%s", (case.attempt_digest,)).fetchone()
         self.assertIsNotNone(held, "a failed settlement never releases the reservation")
+
+    # --- the real transport reaching the real meter ---
+
+    def _adapter_context(self, case, **changes):
+        """The context real dispatch builds for this exact admitted attempt."""
+
+        from director_orchestrator.langgraph_runtime import ProviderAdapterContext
+        fields = dict(
+            task_id=case.task_id, assignment_id=case.assignment_id,
+            idempotency_key=case.attempt_digest,
+            work_packet_digest=packet_document_digest(case.packet),
+            writer_token_digest=digest("writer"), timeout_seconds=2,
+            budget_usd=case.attempt_usd, max_hops=1, max_revisions=1,
+            allowed_tools=(), allowed_external_effects=(), fencing_generation=1,
+            total_token_limit=1000,
+            enrollment_digest=document_digest(case.enrollment.model_dump(mode="json")))
+        fields.update(changes)
+        return ProviderAdapterContext(**fields)
+
+    def _reenrolled(self, case, *, expires_in_seconds):
+        """Re-sign this admitted attempt's enrollment from *now*.
+
+        The same owner signature, attempt, packet, credential and account; only
+        the signed validity window moves, so the window's edge is a known
+        distance from the call under test instead of from admission.
+        """
+        replacement = self._enrollment(
+            attempt_digest=case.attempt_digest,
+            authority_digest=case.enrollment.authority_digest, packet=case.packet,
+            task_id=case.task_id, assignment_id=case.assignment_id,
+            sent_at=datetime.now(timezone.utc), api_key=case.api_key, model=case.model,
+            organization_id=case.organization_id, api_project_id=case.api_project_id,
+            expires_in_seconds=expires_in_seconds)
+        case.transport.response_meter = ResponseMeterRegistry(
+            enrollments=(replacement,), authority=self.authority, pool=self.handle.pool)
+        return document_digest(replacement.model_dump(mode="json"))
+
+    def _synthetic_openai(self, case, *, count_delay=0.0):
+        """A synthetic Responses endpoint. No network and no credentials."""
+
+        from time import sleep
+        seen = []
+        created_at = int(datetime.now(timezone.utc).timestamp())
+
+        def handle_request(request):
+            seen.append(str(request.url))
+            if str(request.url).endswith("/input_tokens"):
+                if count_delay:
+                    sleep(count_delay)
+                return httpx.Response(200, json={"object": "response.input_tokens",
+                                                  "input_tokens": 100})
+            return httpx.Response(200, json={
+                "object": "response", "id": "resp-transport-late", "status": "completed",
+                "model": case.model, "service_tier": "default", "created_at": created_at,
+                "output": [{"type": "message", "role": "assistant", "status": "completed",
+                            "content": [{"type": "output_text", "text": "synthetic evidence"}]}],
+                "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+                          "input_tokens_details": {"cached_tokens": 0},
+                          "output_tokens_details": {"reasoning_tokens": 0}}},
+                headers={"openai-organization": case.organization_id,
+                         "openai-project": case.api_project_id,
+                         "x-request-id": "req-synthetic-transport"})
+
+        return seen, httpx.MockTransport(handle_request)
+
+    def test_transport_records_a_completed_reply_whose_unwinding_timed_out(self):
+        """The real transport, the real meter, one complete reply, no time left.
+
+        The provider answered inside the bound; only the async unwinding ran
+        past it, and the signed window closed meanwhile. The authenticated
+        usage - anchored at the instant the generation request was actually
+        sent, not at token counting - is still recorded through the existing
+        receipt path, and the attempt is still refused.
+        """
+        import asyncio
+        from time import monotonic as _monotonic
+
+        class _TimeoutOnExit:
+            """A real client whose async-context exit outlives the bound."""
+
+            def __init__(self, client):
+                self._client = client
+
+            async def __aenter__(self):
+                return self._client
+
+            async def __aexit__(self, *_exception):
+                await asyncio.sleep(30)
+
+        case = self._admitted_meter()
+        # Re-signed here so the window closes a known two seconds from this
+        # instant, rather than from whenever admission happened.
+        closing = self._reenrolled(case, expires_in_seconds=2.0)
+        seen, mock = self._synthetic_openai(case)
+        client = httpx.AsyncClient(transport=mock)
+        packet_bytes = canonical_json_bytes(case.packet)
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=_TimeoutOnExit(client)):
+                with self.assertRaisesRegex(
+                        RuntimeError, "exhausted after a complete provider response"):
+                    case.transport.send(packet_bytes, context=self._adapter_context(
+                        case, deadline=_monotonic() + 2, enrollment_digest=closing))
+        finally:
+            asyncio.run(client.aclose())
+        self.assertEqual(2, len(seen))
+        rows = self._usage_rows()
+        self.assertEqual(1, len(rows), "a complete reply that cost real tokens is still recorded")
+        self.assertEqual(case.attempt_digest, rows[0]["attempt_digest"])
+        self.assertEqual(150, rows[0]["observed_tokens"])
+
+    def test_enrollment_expiring_between_counting_and_sending_stops_the_send(self):
+        """`sent_at` is sampled at the generation request, not before counting.
+
+        Input-token counting outlives the signed window here. Because the
+        tariff is re-checked at the actual send instant, the generation
+        request is never made and nothing is metered - the opposite outcome
+        from a `sent_at` sampled before the counting call. The attempt ends
+        refused and unretried, with its reservation still held.
+        """
+        from time import monotonic as _monotonic
+        case = self._admitted_meter()
+        closing = self._reenrolled(case, expires_in_seconds=1.0)
+        seen, mock = self._synthetic_openai(case, count_delay=1.5)
+        client = httpx.AsyncClient(transport=mock)
+        packet_bytes = canonical_json_bytes(case.packet)
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=client):
+                with self.assertRaises(RuntimeError) as raised:
+                    case.transport.send(packet_bytes, context=self._adapter_context(
+                        case, timeout_seconds=20, deadline=_monotonic() + 20,
+                        enrollment_digest=closing))
+        finally:
+            asyncio.run(client.aclose())
+        # The refusal is the meter's own current-validity gate at the send
+        # instant; the transport reports the attempt conservatively rather
+        # than deciding an authorization failure was a provider outcome.
+        self.assertIsInstance(raised.exception.__cause__, TeamAuthorizationError)
+        self.assertIn("not current", str(raised.exception.__cause__))
+        self.assertEqual(1, len(seen), "the generation request must never be made")
+        self.assertEqual([], self._usage_rows())
+        with self.handle.pool.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                f"SELECT 1 FROM {self.schema}.director_primary_provider_spend "
+                "WHERE attempt_digest=%s", (case.attempt_digest,)).fetchone())
+
+    def test_transport_refuses_a_meter_other_than_the_one_selected(self):
+        """The transport binds the meter it actually resolves, before any I/O.
+
+        A registry replaced after the caller's own comparison, and a transport
+        that has lost its registry entirely, are both refused at the transport
+        boundary itself - so the check does not depend on the caller having
+        looked at the right object.
+        """
+        from time import monotonic as _monotonic
+        case = self._admitted_meter()
+        packet_bytes = canonical_json_bytes(case.packet)
+        replaced = self._enrollment(
+            attempt_digest=case.attempt_digest,
+            authority_digest=case.enrollment.authority_digest, packet=case.packet,
+            task_id=case.task_id, assignment_id=case.assignment_id, sent_at=case.sent_at,
+            api_key=case.api_key, model=case.model, tariff_id="tariff-replaced")
+        case.transport.response_meter = ResponseMeterRegistry(
+            enrollments=(replaced,), authority=self.authority, pool=self.handle.pool)
+        with self._no_provider_call():
+            with self.assertRaisesRegex(RuntimeError, "different response meter enrollment"):
+                case.transport.send(packet_bytes, context=self._adapter_context(
+                    case, deadline=_monotonic() + 20, timeout_seconds=20))
+            case.transport.response_meter = None
+            with self.assertRaisesRegex(RuntimeError, "lost the response meter"):
+                case.transport.send(packet_bytes, context=self._adapter_context(
+                    case, deadline=_monotonic() + 20, timeout_seconds=20))
+        self.assertEqual([], self._usage_rows())
+
+    # --- concurrency: two requests share nothing they were not granted ---
+
+    def test_parallel_requests_cannot_exchange_enrollment_credentials_or_account(self):
+        """Two admitted attempts, one registry, no crossing.
+
+        Each request resolves strictly by its own admitted attempt digest, and
+        neither the other request's credential nor its account association can
+        be used to settle this one.
+        """
+        first = self._admitted_meter()
+        second = self._admitted_meter(api_key="other-secret-key",
+                                      organization_id="org-other", api_project_id="proj-other")
+        self.assertNotEqual(first.attempt_digest, second.attempt_digest)
+        shared = ResponseMeterRegistry(enrollments=(first.enrollment, second.enrollment),
+                                       authority=self.authority, pool=self.handle.pool)
+        for case in (first, second):
+            resolved = shared.for_context(SimpleNamespace(idempotency_key=case.attempt_digest))
+            self.assertEqual(case.attempt_digest, resolved.enrollment.attempt_digest)
+            self.assertEqual(case.organization_id, resolved.enrollment.organization_id)
+            self.assertEqual(hashlib.sha256(case.api_key.encode()).hexdigest(),
+                              resolved.enrollment.credential_digest)
+        # The other request's credential cannot authorise this one.
+        binding = dict(api_url="https://api.openai.com/v1/responses", model=first.model,
+                       packet=canonical_json_bytes(first.packet))
+        context = SimpleNamespace(task_id=first.task_id, assignment_id=first.assignment_id,
+            idempotency_key=first.attempt_digest,
+            work_packet_digest=packet_document_digest(first.packet))
+        with self.assertRaisesRegex(TeamAuthorizationError, "request binding mismatch"):
+            first.meter.prepare(context=context, api_key=second.api_key, **binding)
+        # Nor can the other request's context reach this enrollment.
+        with self.assertRaisesRegex(TeamAuthorizationError, "request binding mismatch"):
+            second.meter.prepare(context=context, api_key=second.api_key,
+                                  **dict(binding, model=second.model))
+        # Nor can the other request's account association settle it.
+        with self.assertRaisesRegex(TeamAuthorizationError, "account association"):
+            first.meter.settle(first.native,
+                                dict(first.headers,
+                                     **{"openai-organization": second.organization_id}),
+                                sent_at=first.sent_at)
+        # Nor can one provider response be claimed by two attempts.
+        first.meter.settle(first.native, first.headers, sent_at=first.sent_at)
+        with self.assertRaisesRegex(TeamAuthorizationError,
+                                     "already metered for another attempt"):
+            second.meter.settle(second.native, second.headers, sent_at=second.sent_at)
+        # Each settles only its own facts, under its own attempt digest.
+        second.native["id"] = "resp-late-openai-second"
+        second.meter.settle(second.native, second.headers, sent_at=second.sent_at)
+        self.assertEqual({first.attempt_digest, second.attempt_digest},
+                          {row["attempt_digest"] for row in self._usage_rows()})
+
+    def test_competing_waves_cannot_overspend_one_signed_daily_budget(self):
+        """Two waves admit at once; the ledger, not readiness, decides.
+
+        Both pass their own conservative readiness reads - neither promises
+        capacity against the other - and both then admit simultaneously
+        against the same project and day. Exactly one reservation exists
+        afterwards, and the total never exceeds the signed daily limit.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        # Each wave's own signed budget allows half an attempt more than one
+        # reservation: enough for either alone, never for both, and never
+        # discoverable by readiness's own conservative read.
+        first = self._enrolled_wave(daily_limit_ratio=1.5)
+        second = self._enrolled_wave(daily_limit_ratio=1.5)
+        self.assertEqual(first.packet["project"], second.packet["project"],
+                          "the shared project day is what the ceiling covers")
+        ceiling = first.daily_limit_microusd
+        self.assertEqual(ceiling, second.daily_limit_microusd)
+        self.assertLess(ceiling, 2 * first.reservation_microusd)
+        barrier = Barrier(2)
+
+        def admit(wave):
+            barrier.wait(timeout=30)
+            try:
+                return wave.activation.coordinator.reserve_provider_attempt(
+                    reservation=wave.reservation, attempt_ordinal=1,
+                    format_roster=(("model-work-packet-v1", "responses-api"),),
+                    idempotency_key_digest=digest("idem-" + wave.task_id),
+                    budget_evidence_digest="sha256:" + wave.budget.grant_digest,
+                    budget_admission=ProviderBudgetAdmission(self.authority,
+                                                              wave.budget.grant_digest),
+                    budget_limits=ProviderAttemptBudget.from_usd(
+                        project_id=wave.packet["project"], attempt_usd=wave.attempt_usd,
+                        task_usd=wave.settings.max_task_budget_usd,
+                        daily_usd=wave.settings.max_daily_provider_budget_usd),
+                    expected_authority_digest=wave.budget.grant_digest)
+            except Exception as exc:  # returned, never swallowed
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = [future.result(timeout=60) for future in
+                        [pool.submit(admit, first), pool.submit(admit, second)]]
+        admitted = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
+        refused = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+        self.assertEqual(1, len(admitted), f"exactly one admission: {outcomes}")
+        self.assertEqual(1, len(refused))
+        self.assertRegex(str(refused[0]), "budget exhausted")
+        with self.handle.pool.connection() as connection:
+            totals = connection.execute(
+                f"SELECT count(*) AS n, COALESCE(sum(reserved_microusd),0) AS spent "
+                f"FROM {self.schema}.director_primary_provider_spend").fetchone()
+            attempts = connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_provider_attempt"
+            ).fetchone()["n"]
+        self.assertEqual(1, totals["n"])
+        self.assertEqual(1, attempts,
+                          "the refused wave leaves no STARTED attempt without monetary accounting")
+        self.assertLessEqual(totals["spent"], ceiling,
+                              "concurrent waves must not overspend the signed daily limit")
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -146,10 +147,12 @@ class PrimaryTeamRouting:
                 self.query_factory(grant,"dispatch",None)))
         return dict(budget_admission=self.budget_routing.admission(provider, packet, deadline=deadline))
 
-    def adapter(self, packet, attempt):
+    def adapter(self, packet, attempt, *, deadline=None):
         if (attempt.format_id,attempt.transport_id)!=TEAM_FORMAT:
             raise TeamAuthorizationError("team assignment selected an unqualified format")
-        grant=self.grant_for(packet)
+        # Building the adapter re-reads the signed grant; that read spends the
+        # caller's bound like every other database operation on this path.
+        grant=self.grant_for(packet, deadline=deadline)
         return team_packet_adapter(self.settings,**self.transport_arguments,grant_digest=grant.digest,
             attempt_digest=attempt.attempt_digest,query_factory=lambda stage,command:self.query_factory(grant,stage,command),
             worker=self.worker_factory(grant))
@@ -167,3 +170,4 @@ class PrimaryTeamRouting:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

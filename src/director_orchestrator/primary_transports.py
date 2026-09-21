@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
@@ -423,20 +424,32 @@ class OpenAIResponsesPacketTransport:
             return remaining
 
         meter = self.response_meter
-        sent_at = None
+        expected_enrollment = getattr(context, "enrollment_digest", None)
         if meter is not None:
-            from .response_meter import ResponseMeterRegistry
+            from .response_meter import ACCOUNTING_ALLOWANCE_SECONDS, ResponseMeterRegistry
             if isinstance(meter, ResponseMeterRegistry):
                 meter = meter.for_context(context)
+            # This exact meter object is resolved once and used for `prepare`,
+            # the send and settlement. When the caller carried the enrollment
+            # its selection checked, the one actually resolved here must be
+            # that same document - a registry substituted after that check
+            # cannot reach this request.
+            if expected_enrollment is not None:
+                from .entitlement_contracts import document_digest as _enrollment_digest
+                if _enrollment_digest(meter.enrollment.model_dump(mode="json")) != expected_enrollment:
+                    raise RuntimeError("OpenAI transport resolved a different response meter enrollment")
             headers.update(meter.prepare(context=context, packet=work_packet_json,
                 api_url=self.api_url, model=self.model, api_key=self._api_key,
                 remaining_seconds=remaining_seconds))
             body["service_tier"] = meter.enrollment.service_tier
-            # Taken from the meter's own clock immediately after `prepare`
-            # required a current enrollment, so it is the instant this exact
-            # admitted request was authorised and sent - not a later reading
-            # settlement could drift forward.
-            sent_at = meter.clock()
+        elif expected_enrollment is not None:
+            raise RuntimeError("OpenAI transport lost the response meter its selection checked")
+
+        # Anything the provider actually completed is recorded here as soon as
+        # it is parsed, so a timeout while unwinding the async contexts after
+        # parsing cannot discard an authenticated fact that already cost real
+        # tokens. Presence here is never success: eligibility is decided below.
+        completed: dict[str, Any] = {}
 
         async def invoke():
             # HTTPX timeouts bound individual I/O operations, not total elapsed
@@ -467,17 +480,46 @@ class OpenAIResponsesPacketTransport:
                 # Responses includes reasoning tokens in max_output_tokens.
                 # This is a token bound, never a converted or vendor USD cap.
                 body["max_output_tokens"] = output_allowance
+                # Immediately before the generation request itself: the carried
+                # execution bound must still hold, and the enrollment whose
+                # tariff will price this request must still be current and
+                # correctly signed. Token counting above may have outlived
+                # either, and it is this request - not that one - being sent.
+                remaining_seconds()
+                if meter is not None:
+                    meter.verify_current()
+                    sent_at = meter.clock()
+                else:
+                    sent_at = None
                 native, response_headers = await post_json(self.api_url, body, _MAX_RESPONSES_NATIVE_BYTES)
-                # No deadline check between receiving a complete provider
-                # response and returning it: discarding it here would throw
-                # away an authenticated fact that already cost real tokens.
-                # Expiry is decided after it has been captured and accounted.
+                # Recorded the instant it is parsed. No deadline check between
+                # receiving a complete provider response and retaining it:
+                # discarding it would throw away an authenticated fact that
+                # already cost real tokens. Expiry is decided after capture
+                # and accounting, never instead of them.
+                completed.update(native=native, input_tokens=input_tokens,
+                                 output_allowance=output_allowance,
+                                 response_headers=response_headers, sent_at=sent_at)
                 return native, input_tokens, output_allowance, response_headers
 
+        expiry: BaseException | None = None
         try:
             native, input_tokens, output_allowance, response_headers = asyncio.run(invoke())
+            sent_at = completed.get("sent_at")
         except TimeoutError as exc:
-            raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
+            if not completed:
+                raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
+            # The provider did complete; only the unwinding ran out of time.
+            # Keep the authenticated facts, account for them below, and still
+            # refuse the result: an expired execution is never eligible.
+            native = completed["native"]
+            input_tokens = completed["input_tokens"]
+            output_allowance = completed["output_allowance"]
+            response_headers = completed["response_headers"]
+            sent_at = completed["sent_at"]
+            expiry = RuntimeError(
+                "OpenAI transport timeout is exhausted after a complete provider response"
+            )
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError("OpenAI provider outcome is ambiguous") from exc
         # Build the retained capture bundle BEFORE the meter settles, so a
@@ -489,13 +531,18 @@ class OpenAIResponsesPacketTransport:
             # Complete measured usage remains chargeable even if a subsequent
             # result-contract or token-limit check rejects the generated
             # output, and even if this attempt's execution budget ran out
-            # while the provider was answering: `sent_at` anchors the tariff
-            # to the moment this admitted request was actually sent, so the
-            # accounting fact survives while eligibility below does not.
-            meter.settle(native, response_headers, remaining_seconds=remaining_seconds,
-                         sent_at=sent_at)
+            # while the provider was answering. Settlement is bounded by one
+            # absolute accounting cutoff derived from this operation's own
+            # deadline - not by the execution callback, which raises as soon
+            # as execution expires and would take the receipt with it. The
+            # cutoff is the same value on every call, so a replay cannot
+            # extend it, and it buys no provider work.
+            meter.settle(native, response_headers, sent_at=sent_at,
+                         accounting_deadline=deadline + ACCOUNTING_ALLOWANCE_SECONDS)
         # Only now may expiry end this attempt: the response is captured and
         # its usage recorded, so refusing here loses no authenticated fact.
+        if expiry is not None:
+            raise expiry
         remaining_seconds()
         if (not isinstance(native, dict) or native.get("status") != "completed"
                 or native.get("error") is not None
@@ -1413,3 +1460,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
@@ -449,18 +450,40 @@ def deadline_remaining_seconds(deadline: float | None) -> float | None:
     return None if deadline is None else deadline - monotonic()
 
 
+class DeadlineExpired(RuntimeError):
+    """An absolute bound was already spent before this work could start.
+
+    Raised before acquiring a connection or touching a row, so the caller
+    knows nothing was attempted. Callers that must distinguish a proven
+    pre-I/O refusal from an unknown outcome rely on that.
+    """
+
+
+def require_deadline_remaining(deadline: float | None, what: str) -> float | None:
+    """Refuse an already-expired bound instead of rounding it up to 1ms.
+
+    A bound that has passed is not a small allowance: rounding it up would
+    still let the statement run, take a lock, or renew a lease.
+    """
+
+    remaining = deadline_remaining_seconds(deadline)
+    if remaining is not None and remaining <= 0:
+        raise DeadlineExpired(f"{what} deadline expired before the operation started")
+    return remaining
+
+
 def bounded_connection(pool: Any, deadline: float | None) -> Any:
     """Acquire from `pool`, bounding the wait itself by the time left.
 
     An unbounded caller keeps the pool's own configured acquisition behaviour
     exactly as before; a bounded one can never queue for a connection past its
-    deadline.
+    deadline, and an already-expired one never acquires at all.
     """
 
-    remaining = deadline_remaining_seconds(deadline)
+    remaining = require_deadline_remaining(deadline, "connection acquisition")
     if remaining is None:
         return pool.connection()
-    return pool.connection(timeout=max(0.001, remaining))
+    return pool.connection(timeout=remaining)
 
 
 def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
@@ -482,7 +505,7 @@ def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
     rather than a late success.
     """
 
-    remaining = deadline_remaining_seconds(deadline)
+    remaining = require_deadline_remaining(deadline, "transaction")
     if remaining is None:
         return
     milliseconds = str(max(1, ceil(remaining * 1000)))
@@ -3399,6 +3422,7 @@ class PostgresConditionalClaimStore:
         packet: Mapping[str, Any],
         owner_token: str,
         fencing_generation: int,
+        deadline: float | None = None,
     ) -> PrimaryWorkPacketArtifact:
         """Append or verify one immutable validated work-packet artifact.
 
@@ -3428,8 +3452,9 @@ class PostgresConditionalClaimStore:
             "owner_token": owner_token,
             "generation": generation,
         }
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._optional_row(
                     connection,
                     "SELECT pg_advisory_xact_lock(%(key)s)",
@@ -5382,3 +5407,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
