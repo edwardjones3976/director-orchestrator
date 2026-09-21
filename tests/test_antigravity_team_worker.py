@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
@@ -20,13 +21,17 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
 from director_orchestrator.antigravity_team import TeamAuthority, TeamAuthorizationError, SourceBlob, team_ddl, verify_team_schema
 from director_orchestrator.antigravity_team_artifacts import TeamArtifactStore, GitTeamCandidateIntegrator, decode_returned_files
-from director_orchestrator.antigravity_team_worker import FrameChannel, LinuxNativeTeamWorker, sign
+import director_orchestrator.antigravity_team_worker as worker_module
+from director_orchestrator.antigravity_team_worker import (FrameChannel, LinuxNativeTeamWorker, PinnedSshTeamWorker,
+    PRIMARY_BOUND_MODE, authenticate, run_unprivileged, serve, sign)
 from director_orchestrator.antigravity_team_transport import NativeTeamPacketTransport
 from director_orchestrator.entitlement_contracts import RepositoryScope, EntitlementActionType, document_digest
 from tests.test_antigravity_team import grant, budget
@@ -155,6 +160,558 @@ class WorkerProtocolTests(unittest.TestCase):
         with patch.object(worker,"qualify",return_value={"grant_digest":"f"*64}):
             with self.assertRaisesRegex(TeamAuthorizationError,"exact task grant"):
                 worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"1"*64,challenge="a"*64)
+
+
+SECRET=b"w"*32
+CHALLENGE="a"*64
+ATTEMPT="sha256:"+"1"*64
+# What the synthetic `os.urandom` makes the real `serve` issue as its anchor
+# token in the prerecorded-frame tests, so a director frame can name it - or
+# deliberately fail to.
+ISSUED=bytes(range(16)).hex()
+
+
+class _Transit:
+    """A pipe end whose reads charge the receiving side's clock the transit.
+
+    Each read spends the next stated delay and the last one repeats. This is
+    the only way time passes between the two synthetic clocks - while a frame
+    is in flight - and never by comparing one clock with the other.
+    """
+
+    def __init__(self, raw, clock, delays):
+        self.raw, self.clock, self.delays = raw, clock, list(delays)
+
+    def readline(self, limit=-1):
+        line=self.raw.readline(limit)
+        if line:
+            self.clock[0]+=self.delays.pop(0) if len(self.delays)>1 else self.delays[0]
+        return line
+
+    def close(self):
+        self.raw.close()
+
+
+class _RemoteSession:
+    """What `PinnedSshTeamWorker` is handed instead of an SSH process.
+
+    Two OS pipes carry the real frames and a thread on the far end runs the
+    server - the real `serve` unless a test supplies an older one. `kill`
+    closes the far end's input, which is what killing SSH does to it.
+    """
+
+    def __init__(self, server, *, clocks, to_server, to_client):
+        client_to_server,server_to_client=os.pipe(),os.pipe()
+        self.stdin=os.fdopen(client_to_server[1],"wb")
+        self.stdout=_Transit(os.fdopen(server_to_client[0],"rb"),clocks["client"],to_client)
+        self.remote_stdin=_Transit(os.fdopen(client_to_server[0],"rb"),clocks["server"],to_server)
+        self.remote_stdout=os.fdopen(server_to_client[1],"wb")
+        self.error=self.returncode=None
+        self.thread=threading.Thread(target=self._run,args=(server,),daemon=True)
+        self.thread.side="server"
+
+    def _run(self, server):
+        try:
+            server(self.remote_stdin,self.remote_stdout)
+            self.returncode=0
+        except BaseException as exc:
+            self.error,self.returncode=exc,1
+        finally:
+            for end in (self.remote_stdout,self.remote_stdin):
+                try:end.close()
+                except OSError:pass
+
+    def poll(self):
+        return None if self.thread.is_alive() else self.returncode
+
+    def kill(self):
+        try:self.stdin.close()
+        except OSError:pass
+
+    def wait(self, timeout=None):
+        self.thread.join(timeout)
+        return self.poll()
+
+
+class WorkerBoundTests(unittest.TestCase):
+    """The real frames, `serve`, `PinnedSshTeamWorker`, preparation and process helper.
+
+    Two OS pipes and a thread stand in for the SSH session. Each side has its
+    own monotonic clock with a distinct epoch, advanced only by the stated
+    transit of every frame it reads. Inside the real `serve` a synthetic
+    worker records the bound it is handed and drives both boundaries. What
+    is synthetic, and therefore not proven here: the SSH process itself,
+    host qualification, the native provider, the kernel cgroup and identity
+    drop (`preexec_fn` is never invoked) and remote cleanup after a spent
+    bound. No database is used.
+    """
+
+    def _enter(self, manager):
+        value=manager.__enter__()
+        self.addCleanup(manager.__exit__,None,None,None)
+        return value
+
+    def _synthetic_worker(self, seen):
+        class Worker:
+            def __init__(self, config, **secrets):
+                self.secret=SECRET
+            def prepare_binding(self, **kwargs):
+                seen["prepare"]=kwargs
+                return {"prepared":kwargs["attempt_digest"]}
+            def exchange(self, **kwargs):
+                seen["exchange"]=kwargs
+                kwargs["before_execute"]()
+                for argv in kwargs["grant"].commands:
+                    kwargs["before_local_command"](argv)
+                return {"capture":"synthetic"}
+        return Worker
+
+    def _serve_patches(self, worker):
+        """The real `serve` with only its host-bound pieces replaced."""
+        self._enter(patch.object(worker_module,"LinuxNativeTeamWorker",worker))
+        self._enter(patch.object(worker_module,"protected_bytes",return_value=json.dumps({"secret_files":{}}).encode()))
+
+    def _clocks(self, clocks):
+        def monotonic():
+            return clocks[getattr(threading.current_thread(),"side","client")][0]
+        self._enter(patch.object(worker_module,"time",SimpleNamespace(monotonic=monotonic,sleep=time.sleep)))
+
+    def _ssh(self, g, *, to_server=(5.0,), to_client=(5.0,), server=None):
+        """A real `PinnedSshTeamWorker` whose SSH process is a thread running `server`."""
+        clocks={"client":[100.0],"server":[5000.0]}
+        seen={}
+        self._clocks(clocks)
+        self._serve_patches(self._synthetic_worker(seen))
+        remote=_RemoteSession(server or (lambda stdin,stdout:serve("synthetic-config")),
+                              clocks=clocks,to_server=to_server,to_client=to_client)
+        self._enter(patch.object(worker_module,"sys",SimpleNamespace(
+            stdin=SimpleNamespace(buffer=remote.remote_stdin),stdout=SimpleNamespace(buffer=remote.remote_stdout))))
+        def launch(*_argv, **_options):
+            remote.thread.start()
+            return remote
+        self._enter(patch.object(worker_module.subprocess,"Popen",launch))
+        def settle():
+            # Joined before the patches above are undone, every pipe end closed.
+            remote.kill()
+            if remote.thread.is_alive():
+                remote.thread.join(5)
+            for end in (remote.stdout,remote.remote_stdin,remote.remote_stdout):
+                try:end.close()
+                except OSError:pass
+        self.addCleanup(settle)
+        root=Path(self._enter(tempfile.TemporaryDirectory(prefix="pinned-ssh-")))
+        ssh=root/"ssh"
+        ssh.write_bytes(b"synthetic ssh client; never executed")
+        (root/"identity").write_bytes(b"synthetic identity")
+        (root/"known_hosts").write_bytes(b"synthetic pin")
+        client=PinnedSshTeamWorker(ssh=ssh,ssh_sha256=hashlib.sha256(ssh.read_bytes()).hexdigest(),
+            host="worker.invalid",user="director",identity_file=root/"identity",known_hosts=root/"known_hosts",
+            worker_command="/opt/director/team-worker",worker_secret=SECRET,grant=g)
+        self.addCleanup(client.close)
+        return client,seen,remote
+
+    def test_pinned_ssh_and_serve_bound_the_remote_by_its_anchor_not_by_receipt(self):
+        """Acknowledged success over two clocks with five seconds of transit each way.
+
+        The director's bound is fixed at 140 on its clock (epoch 100). The
+        server's clock (epoch 5000) reads 5005 when it anchors, after the
+        challenge line arrived; the anchor reaches the director at 105, so it
+        sends 35 remaining, and the server bounds preparation and the
+        exchange alike at 5005 + 35 = 5040 - not the 5010 + 35 that anchoring
+        at receipt would give. Both transits are spent. The exchange frame
+        names the same anchor and the bound is unchanged.
+        """
+        g=grant()
+        client,seen,remote=self._ssh(g)
+        prepared=client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=140.0)
+        self.assertEqual({"prepared":ATTEMPT},prepared)
+        self.assertEqual(140.0,client.deadline)
+        self.assertEqual(5040.0,seen["prepare"]["deadline"])
+        executed,commands=[],[]
+        result=client.exchange(grant=g,work_packet={"packet":"synthetic"},source={"src/allowed.py":b"private"},
+            challenge=CHALLENGE,before_execute=lambda:executed.append(True),before_local_command=commands.append,
+            deadline=140.0)
+        self.assertEqual({"capture":"synthetic"},result)
+        self.assertEqual(5040.0,seen["exchange"]["deadline"],"the exchange names the anchor; it is not re-anchored")
+        self.assertEqual([True],executed)
+        self.assertEqual([("python","-m","unittest")],commands)
+        self.assertEqual({"src/allowed.py":b"private"},seen["exchange"]["source"],
+                         "source is disclosed only after the acknowledged preparation")
+        self.assertEqual((0,None),(remote.returncode,remote.error))
+
+    def test_receiver_pause_before_the_prepare_frame_does_not_extend_the_bound(self):
+        """Twenty-five seconds pass on the server between its anchor and the prepare frame.
+
+        Anchoring at receipt would give 5030 + 35; the retained anchor gives
+        5005 + 35, leaving exactly the ten seconds the director actually has.
+        """
+        g=grant()
+        client,seen,remote=self._ssh(g,to_server=(5.0,25.0,5.0))
+        client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=140.0)
+        self.assertEqual(5040.0,seen["prepare"]["deadline"])
+
+    def test_director_pause_before_its_sample_shrinks_what_it_sends(self):
+        """The director samples once, after the anchor: a pause before that sample is spent.
+
+        The anchor takes twenty-five seconds to be acted on, so fifteen
+        remain of the forty, and the server bounds at 5005 + 15 - the pause
+        cannot be handed back by sampling earlier or sending later.
+        """
+        g=grant()
+        client,seen,remote=self._ssh(g,to_client=(25.0,5.0))
+        client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=140.0)
+        self.assertEqual(5020.0,seen["prepare"]["deadline"])
+
+    def test_a_bound_spent_in_transit_never_prepares(self):
+        """The prepare frame arrives after the remaining budget it carries has elapsed."""
+
+        g=grant()
+        client,seen,remote=self._ssh(g,to_server=(5.0,40.0))
+        with self.assertRaisesRegex(TeamAuthorizationError,"truncated"):
+            client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=140.0)
+        self.assertNotIn("prepare",seen,"preparation never starts")
+        self.assertIsInstance(remote.error,TeamAuthorizationError)
+        self.assertRegex(str(remote.error),"primary bound deadline expired before it started")
+
+    def test_a_server_that_waits_to_be_spoken_to_first_receives_nothing_and_is_ended(self):
+        """Every earlier server read the challenge and then waited for `prepare`.
+
+        The director now waits for the anchor instead, so nothing but the
+        challenge ever reaches such a server; the local timer ends the
+        session at the bound and the director fails closed at the frame.
+        """
+        received=[]
+        def old_server(stdin, stdout):
+            challenge=stdin.readline(66).decode().strip()
+            received.append(FrameChannel(stdin,stdout,SECRET,challenge,sender="worker").receive("prepare"))
+        g=grant()
+        client,seen,remote=self._ssh(g,server=old_server)
+        # A quarter of a second of real time: the local timer is the only
+        # thing that ends this session, so it is the one real wait here.
+        with self.assertRaisesRegex(TeamAuthorizationError,"truncated"):
+            client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=100.25)
+        self.assertEqual([],received,"no preparation, and no source, was ever sent")
+        self.assertIsInstance(remote.error,TeamAuthorizationError)
+        self.assertNotIn("prepare",seen)
+
+    def test_a_server_answering_with_anything_but_an_anchor_is_refused_before_preparation(self):
+        """A first frame of the wrong kind or shape is unsupported, not standalone."""
+
+        for kind,payload in (("prepared",{}),("anchor",{"mode":"director-team-cutoff/v0","anchor":"0"*32}),
+                             ("anchor",{"mode":PRIMARY_BOUND_MODE,"anchor":"short"}),
+                             ("anchor",{"mode":PRIMARY_BOUND_MODE,"anchor":"0"*32,"remaining_seconds":30})):
+            with self.subTest(kind=kind,payload=payload):
+                received=[]
+                def foreign_server(stdin, stdout, kind=kind, payload=payload):
+                    challenge=stdin.readline(66).decode().strip()
+                    channel=FrameChannel(stdin,stdout,SECRET,challenge,sender="worker")
+                    channel.send(kind,payload)
+                    received.append(channel.receive("prepare"))
+                g=grant()
+                client,seen,remote=self._ssh(g,server=foreign_server)
+                with self.assertRaisesRegex(TeamAuthorizationError,"does not support|mismatch"):
+                    client.prepare(grant_digest=g.digest,attempt_digest=ATTEMPT,challenge=CHALLENGE,deadline=140.0)
+                self.assertEqual([],received)
+                self.doCleanups()
+
+    def _serve(self, frames, *, worker):
+        """The real `serve` on prerecorded director frames, with a fixed clock.
+
+        Returns what it raised and every authenticated frame it emitted, in
+        order. The anchor token it issues is `ISSUED`, so a frame can name it.
+        """
+        sent=io.BytesIO()
+        director=FrameChannel(io.BytesIO(),sent,SECRET,CHALLENGE,sender="director")
+        for kind,payload in frames:
+            director.send(kind,payload)
+        outgoing=io.BytesIO()
+        stdio=SimpleNamespace(stdin=SimpleNamespace(buffer=io.BytesIO(CHALLENGE.encode()+b"\n"+sent.getvalue())),
+                              stdout=SimpleNamespace(buffer=outgoing))
+        error=None
+        with patch.object(worker_module,"LinuxNativeTeamWorker",worker), \
+             patch.object(worker_module,"protected_bytes",return_value=json.dumps({"secret_files":{}}).encode()), \
+             patch.object(worker_module,"sys",stdio), \
+             patch.object(worker_module,"os",SimpleNamespace(urandom=lambda n:bytes(range(n)))), \
+             patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:5000.0,sleep=time.sleep)):
+            try:
+                serve("synthetic-config")
+            except TeamAuthorizationError as exc:
+                error=exc
+        emitted=[]
+        for raw in outgoing.getvalue().splitlines():
+            frame=authenticate(SECRET,json.loads(raw))
+            emitted.append((frame["kind"],frame["payload"]))
+        return error,emitted
+
+    def _prepare(self, bound):
+        return ("prepare",{"binding":{},"grant_digest":grant().digest,"attempt_digest":ATTEMPT,"primary_bound":bound})
+
+    def _exchange(self, bound):
+        return ("exchange",{"grant":grant().model_dump(mode="json"),"work_packet":{},"source":{},"primary_bound":bound})
+
+    def test_serve_treats_an_explicit_none_as_deliberate_standalone_use(self):
+        """Genuine standalone use, stated rather than inferred from an absent key."""
+
+        seen={}
+        error,emitted=self._serve([self._prepare(None),self._exchange(None),
+            ("authorized",{"stage":"execution"}),("authorized",{"stage":"command"})],worker=self._synthetic_worker(seen))
+        self.assertIsNone(error)
+        self.assertEqual(["anchor","prepared","before_execute","before_command","capture"],[kind for kind,_ in emitted])
+        self.assertEqual({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED},emitted[0][1])
+        self.assertIsNone(seen["prepare"]["deadline"])
+        self.assertIsNone(seen["exchange"]["deadline"])
+
+    def test_serve_refuses_legacy_and_unanchored_preparation_instead_of_downgrading(self):
+        """An older client's bound is never dropped into standalone use.
+
+        The revision that sent `lifetime_seconds`, the one that sent
+        `primary_cutoff`, a frame with no bound key at all, and a bound the
+        server did not anchor - a value a client could only have produced
+        without waiting for the anchor - are each refused before preparation,
+        with nothing but the anchor frame ever emitted.
+        """
+        cases={"lifetime_seconds":({"binding":{},"grant_digest":grant().digest,"attempt_digest":ATTEMPT,"lifetime_seconds":30.0},"unsupported worker preparation protocol"),
+               "primary_cutoff":({"binding":{},"grant_digest":grant().digest,"attempt_digest":ATTEMPT,"primary_cutoff":{"cutoff_at":datetime.now(timezone.utc).isoformat(),"max_lifetime_seconds":30.0,"accepted_clock_skew_seconds":5.0}},"unsupported worker preparation protocol"),
+               "no bound key":({"binding":{},"grant_digest":grant().digest,"attempt_digest":ATTEMPT},"unsupported worker preparation protocol"),
+               "foreign anchor":(self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":"0"*32,"remaining_seconds":30.0})[1],"not anchored"),
+               "foreign mode":(self._prepare({"mode":"director-team-cutoff/v0","anchor":ISSUED,"remaining_seconds":30.0})[1],"not anchored"),
+               "bare value":(self._prepare(30.0)[1],"not anchored")}
+        for name,remaining in (("infinite",float("inf")),("nan",float("nan")),("zero",0),("negative",-4),
+                               ("boolean",True),("text","30")):
+            cases[name]=(self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,"remaining_seconds":remaining})[1],"remaining budget is invalid")
+        for name,(payload,message) in cases.items():
+            with self.subTest(case=name):
+                seen={}
+                error,emitted=self._serve([("prepare",payload)],worker=self._synthetic_worker(seen))
+                self.assertRegex(str(error),message)
+                self.assertEqual(["anchor"],[kind for kind,_ in emitted],"nothing is acknowledged")
+                self.assertNotIn("prepare",seen,"preparation never starts")
+
+    def test_serve_keeps_the_prepared_bound_and_refuses_an_exchange_that_does_not_name_it(self):
+        """The exchange frame can only name the anchor; it carries no time value.
+
+        A frame that claims standalone use after a bound was prepared, names
+        another anchor or mode, smuggles a remaining value, or has an older
+        shape is refused after `prepared` and before execution; and a bound
+        cannot appear at exchange after standalone preparation either.
+        """
+        prepared=self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,"remaining_seconds":35.0})
+        cases={"standalone after a bound":(prepared,self._exchange(None),"did not have|does not name"),
+               "foreign anchor":(prepared,self._exchange({"mode":PRIMARY_BOUND_MODE,"anchor":"0"*32}),"does not name"),
+               "foreign mode":(prepared,self._exchange({"mode":"director-team-cutoff/v0","anchor":ISSUED}),"does not name"),
+               "renewal":(prepared,self._exchange({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,"remaining_seconds":600.0}),"does not name"),
+               "legacy shape":(prepared,("exchange",{"grant":grant().model_dump(mode="json"),"work_packet":{},"source":{},"primary_cutoff":None}),"unsupported worker exchange protocol"),
+               "bound after standalone":(self._prepare(None),self._exchange({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED}),"did not have")}
+        for name,(first,second,message) in cases.items():
+            with self.subTest(case=name):
+                seen={}
+                error,emitted=self._serve([first,second],worker=self._synthetic_worker(seen))
+                self.assertRegex(str(error),message)
+                self.assertEqual(["anchor","prepared"],[kind for kind,_ in emitted],"refused before execution")
+                self.assertEqual(5035.0 if first is prepared else None,seen["prepare"]["deadline"])
+                self.assertNotIn("exchange",seen)
+
+    def _native_worker(self, root, **config):
+        (root/"claims").mkdir()
+        (root/"native").mkdir()
+        return LinuxNativeTeamWorker({"claims_root":str(root/"claims"),"native_home":str(root/"native"),**config},
+            owner_secret=fixtures.OWNER_SECRET,issuer_secret=b"i"*32,worker_secret=SECRET)
+
+    def _qualification(self, g, **extra):
+        return {"grant_digest":g.digest,"native_state_manifest":{},
+                "expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat(),**extra}
+
+    def test_preparation_that_runs_out_during_qualification_writes_no_claim(self):
+        """The real `prepare_binding`, with qualification itself consuming the budget."""
+
+        clock=[100.0]
+        root=Path(self._enter(tempfile.TemporaryDirectory(prefix="prepare-qualify-")))
+        g=grant()
+        worker=self._native_worker(root)
+        qualified=[]
+        def qualify(_binding):
+            qualified.append(True)
+            clock[0]=103.0
+            return self._qualification(g)
+        self._enter(patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:clock[0],sleep=time.sleep)))
+        with patch.object(worker,"qualify",side_effect=qualify):
+            with self.assertRaisesRegex(TeamAuthorizationError,"worker preparation deadline exhausted"):
+                worker.prepare(grant=g,grant_digest=g.digest,attempt_digest=ATTEMPT,challenge="b"*64,deadline=102.0)
+        self.assertEqual([True],qualified,"the refusal comes after qualification, not before it")
+        self.assertEqual([],list((root/"claims").iterdir()),"no durable claim is written")
+        self.assertIsNone(worker.prepared)
+
+    def test_preparation_that_runs_out_while_persisting_retains_the_claim_and_refuses(self):
+        """The budget ends during `fsync`: the claim is durable, readiness is not.
+
+        The consumed receipt stays on disk and is never treated as
+        acknowledged: the exchange finds no preparation, and preparing the
+        same qualification again fails on the retained claim rather than
+        spending the receipt twice.
+        """
+        clock=[100.0]
+        root=Path(self._enter(tempfile.TemporaryDirectory(prefix="prepare-persist-")))
+        g=grant()
+        worker=self._native_worker(root)
+        fsync=os.fsync
+        def persist(descriptor):
+            fsync(descriptor)
+            clock[0]=103.0
+        self._enter(patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:clock[0],sleep=time.sleep)))
+        with patch.object(worker,"qualify",return_value=self._qualification(g)), \
+             patch.object(worker,"account_lock",return_value=nullcontext()), \
+             patch.object(worker_module.os,"fsync",side_effect=persist):
+            with self.assertRaisesRegex(TeamAuthorizationError,"worker preparation deadline exhausted"):
+                worker.prepare(grant=g,grant_digest=g.digest,attempt_digest=ATTEMPT,challenge="b"*64,deadline=102.0)
+            claims=list((root/"claims").iterdir())
+            self.assertEqual(1,len(claims),"the consumed claim is retained, not rolled back")
+            self.assertEqual(ATTEMPT,json.loads(claims[0].read_bytes())["attempt_digest"])
+            self.assertIsNone(worker.prepared)
+            with self.assertRaisesRegex(TeamAuthorizationError,"has no preparation"):
+                worker.exchange(grant=g,work_packet={},source={},challenge="b"*64,before_execute=lambda:None,
+                                before_local_command=lambda argv:None,deadline=102.0)
+            with self.assertRaises(FileExistsError):
+                worker.prepare(grant=g,grant_digest=g.digest,attempt_digest="sha256:"+"2"*64,challenge="c"*64,deadline=200.0)
+        self.assertEqual(claims,list((root/"claims").iterdir()))
+        self.assertIsNone(worker.prepared)
+
+    def test_preparation_inside_the_bound_acknowledges_and_the_exchange_cannot_renew_it(self):
+        """The bound preparation was acknowledged under reaches native execution unchanged.
+
+        A caller carrying a later bound at exchange - or none - gets the
+        prepared one: `run_unprivileged` is handed 102 on a clock at 100,
+        never the 200 offered or the grant's own 160.
+        """
+        clock=[100.0]
+        root=Path(self._enter(tempfile.TemporaryDirectory(prefix="prepare-exchange-")))
+        (root/"work").mkdir()
+        work={"task_id":"task-one"}
+        g=grant(commands=(),packet_digest=document_digest(work),
+                source=(SourceBlob(path="src/allowed.py",sha256=hashlib.sha256(b"old").hexdigest()),))
+        worker=self._native_worker(root,workspace_root=str(root/"work"),native_uid=1001,native_gid=1001,
+            check_uid=1002,check_gid=1002,cgroup_root="/sys/fs/cgroup/director-fixture",executable="/native/agy",
+            command_binaries={})
+        bounds=[]
+        def native(argv, **kwargs):
+            bounds.append(kwargs["deadline"])
+            proposal={"packet":{"checks":[]},"returned_files":[]}
+            events=[{"event":"init","conversation_id":"session-one","init":{"cwd":str(kwargs["cwd"]),"model":g.model}},
+                    {"event":"result","result":{"conversation_id":"session-one","status":"SUCCESS","structured_output":proposal,"usage":{"total_tokens":1}}}]
+            return 0,b"\n".join(json.dumps(e).encode() for e in events),b""
+        self._enter(patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:clock[0],sleep=time.sleep)))
+        with patch.object(worker,"qualify",return_value=self._qualification(g,protected_files={})), \
+             patch.object(worker,"account_lock",return_value=nullcontext()), \
+             patch("director_orchestrator.antigravity_team_worker.os.chown",create=True), \
+             patch.object(worker_module,"run_unprivileged",side_effect=native):
+            prepared=authenticate(SECRET,worker.prepare(grant=g,grant_digest=g.digest,attempt_digest=ATTEMPT,
+                                                        challenge="b"*64,deadline=102.0))
+            self.assertEqual((ATTEMPT,"b"*64),(prepared["attempt_digest"],prepared["challenge"]))
+            self.assertEqual((g.digest,ATTEMPT,"b"*64),worker.prepared)
+            self.assertEqual(102.0,worker.prepared_deadline)
+            capture=worker.exchange(grant=g,work_packet=work,source={"src/allowed.py":b"old"},challenge="b"*64,
+                before_execute=lambda:None,before_local_command=lambda argv:None,deadline=200.0)
+        self.assertEqual([102.0],bounds)
+        self.assertEqual(ATTEMPT,authenticate(SECRET,capture)["attempt_digest"])
+        self.assertIsNone(worker.prepared)
+        self.assertIsNone(worker.prepared_deadline)
+
+    def _process(self, seen, *, setup=0.0, launch=0.0, **bound):
+        """The real `run_unprivileged` over a synthetic kernel, clock and process.
+
+        The cgroup is a real directory whose control files the synthetic
+        kernel writes; creating it spends `setup` seconds of the clock and
+        `Popen` spends `launch`. What happened is recorded in `seen`, which
+        the caller keeps when the helper refuses. `preexec_fn` is never
+        invoked, so nothing about the identity drop or the kernel group
+        itself is claimed.
+        """
+        clock=[100.0]
+        root=Path(self._enter(tempfile.TemporaryDirectory(prefix="native-process-")))
+
+        class Group:
+            def __init__(self, path):
+                self.path=path
+            def __truediv__(self, name):
+                return self.path/name
+            def mkdir(self, **options):
+                self.path.mkdir()
+                for name,value in (("cgroup.kill",""),("cgroup.events","populated 0")):
+                    (self.path/name).write_text(value)
+                clock[0]+=setup
+            def rmdir(self):
+                seen["killed"]=(self.path/"cgroup.kill").read_text()
+                for file in self.path.iterdir():
+                    file.unlink()
+                self.path.rmdir()
+                seen["removed"]=not self.path.exists()
+
+        class Root:
+            def __truediv__(self, name):
+                return Group(root/name)
+
+        class Process:
+            returncode=0
+            def communicate(self, *, input, timeout):
+                seen["communicate"]=timeout
+            def wait(self, *, timeout):
+                seen["wait"]=timeout
+                return 0
+
+        def launch_process(*_argv, **_options):
+            seen["launched"]=True
+            clock[0]+=launch
+            return Process()
+
+        with patch.object(worker_module,"os",SimpleNamespace(name="posix",geteuid=lambda:0,urandom=os.urandom)), \
+             patch.object(worker_module,"sys",SimpleNamespace(platform="linux")), \
+             patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:clock[0],sleep=time.sleep)), \
+             patch.object(worker_module,"require_cgroup_root",lambda _path:Root()), \
+             patch.object(worker_module.subprocess,"Popen",launch_process):
+            return run_unprivileged(["synthetic-no-exec"],uid=1001,gid=1001,cwd=root,home=root,
+                                    cgroup_root="synthetic",**bound)
+
+    def test_process_setup_and_launch_are_charged_to_the_wait_exactly(self):
+        """What `communicate` waits for is what is left when it is called, fractions included."""
+
+        for setup,launch,expected in ((0.0,0.0,10.0),(3.0,0.0,7.0),(2.5,0.0,7.5),(1.0,1.5,7.5)):
+            with self.subTest(setup=setup,launch=launch):
+                seen={}
+                self.assertEqual((0,b"",b""),self._process(seen,setup=setup,launch=launch,timeout=10.0))
+                self.assertEqual(expected,seen["communicate"])
+                self.assertEqual(("1",True),(seen["killed"],seen["removed"]),
+                                 "the group is killed and emptied on success too")
+                self.doCleanups()
+        # An absolute bound and a plain timeout narrow each other.
+        seen={}
+        self._process(seen,timeout=10.0,deadline=104.0)
+        self.assertEqual(4.0,seen["communicate"])
+
+    def test_a_budget_consumed_before_the_wait_launches_nothing_more_and_still_cleans_up(self):
+        """Setup, or `Popen` itself, ending after the bound: nothing waits.
+
+        A `Popen` that returns after the budget has elapsed gets no
+        `communicate` at all; the group is still killed and drained and the
+        refusal propagates. A budget spent during setup launches nothing, and
+        one spent before setup, or absent altogether, creates no group.
+        """
+        cases=(({"launch":10.0,"timeout":10.0},"native execution deadline exhausted",True),
+               ({"setup":10.0,"timeout":10.0},"native execution deadline exhausted",False),
+               ({"deadline":99.0},"native process setup deadline exhausted",None),
+               ({},"requires a deadline",None))
+        for options,message,launched in cases:
+            with self.subTest(options=options):
+                seen={}
+                with self.assertRaisesRegex(TeamAuthorizationError,message):
+                    self._process(seen,**options)
+                self.assertNotIn("communicate",seen,"nothing waits on a spent budget")
+                if launched is None:
+                    self.assertEqual({},seen,"refused before any group exists")
+                else:
+                    self.assertEqual(launched,"launched" in seen)
+                    self.assertEqual(launched,"wait" in seen)
+                    self.assertEqual(("1",True),(seen["killed"],seen["removed"]),
+                                     "the group is killed and emptied on refusal")
+                self.doCleanups()
 
 
 class TeamCandidatePostgresTests(unittest.TestCase):
@@ -522,247 +1079,6 @@ class TeamCandidatePostgresTests(unittest.TestCase):
             self.assertEqual(0,c.execute(
                 f"SELECT count(*) AS n FROM {self.schema}.director_primary_team_candidate"
             ).fetchone()["n"])
-
-    def test_transit_is_spent_not_returned_at_the_real_receiver(self):
-        """The authenticated cutoff survives transit without being renewed.
-
-        A duration re-anchored on arrival hands transit time back: ten
-        seconds sent, three in flight, ten again at receipt. A fixed UTC
-        instant cannot do that, and the director's own declared remaining
-        caps it as well, so the anchored bound is strictly shorter than what
-        was sent.
-        """
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import (
-            ACCEPTED_CLOCK_SKEW_SECONDS, _remote_deadline, remote_cutoff_frame)
-        carried=remote_cutoff_frame(monotonic()+10,"remote preparation")
-        self.assertEqual({"cutoff_at","max_lifetime_seconds","accepted_clock_skew_seconds"},
-                         set(carried))
-        with patch("director_orchestrator.antigravity_team_worker.datetime") as clock:
-            # Three seconds of transit, on the receiver's own wall clock.
-            clock.now.return_value=datetime.now(timezone.utc)+timedelta(seconds=3)
-            clock.fromisoformat=datetime.fromisoformat
-            anchored=_remote_deadline({"primary_cutoff":carried})
-        allowed=anchored-monotonic()
-        self.assertLess(allowed,10-3+0.5,"transit must be spent, never returned")
-        self.assertGreater(allowed,10-3-ACCEPTED_CLOCK_SKEW_SECONDS-0.5)
-
-    def test_anchored_cutoff_only_narrows_across_frames(self):
-        """One fixed cutoff governs preparation and exchange alike."""
-
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import (
-            _remote_deadline, remote_cutoff_frame)
-        anchored=_remote_deadline(
-            {"primary_cutoff":remote_cutoff_frame(monotonic()+30,"remote preparation")})
-        # A later frame offering more time cannot move the anchor outwards.
-        generous=_remote_deadline(
-            {"primary_cutoff":remote_cutoff_frame(monotonic()+600,"remote exchange")},
-            anchored=anchored)
-        self.assertEqual(anchored,generous)
-        # A later frame offering less does narrow it.
-        tighter=_remote_deadline(
-            {"primary_cutoff":remote_cutoff_frame(monotonic()+20,"remote exchange")},
-            anchored=anchored)
-        self.assertLess(tighter,anchored)
-        # The accepted skew is charged to the remote budget, so a budget
-        # shorter than that allowance cannot run remotely at all.
-        with self.assertRaisesRegex(TeamAuthorizationError,"already spent"):
-            _remote_deadline(
-                {"primary_cutoff":remote_cutoff_frame(monotonic()+2,"remote exchange")})
-        self.assertIsNone(_remote_deadline({}),"standalone use is unchanged")
-        self.assertEqual(anchored,_remote_deadline({},anchored=anchored))
-
-    def test_unusable_remote_cutoff_fields_are_refused(self):
-        """Expired, non-finite, malformed and implausibly skewed cutoffs."""
-
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import (
-            _remote_deadline, remote_cutoff_frame)
-        now=datetime.now(timezone.utc)
-        invalid=[
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":float("inf")},
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":float("nan")},
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":0},
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":-4},
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":True},
-            {"cutoff_at":now.isoformat(),"max_lifetime_seconds":"30"},
-            {"cutoff_at":"not-a-time","max_lifetime_seconds":30},
-            {"cutoff_at":now.replace(tzinfo=None).isoformat(),"max_lifetime_seconds":30},
-            {"max_lifetime_seconds":30},
-        ]
-        for carried in invalid:
-            with self.subTest(carried=carried):
-                with self.assertRaises(TeamAuthorizationError):
-                    _remote_deadline({"primary_cutoff":carried})
-        with self.assertRaisesRegex(TeamAuthorizationError,"already spent"):
-            _remote_deadline({"primary_cutoff":{
-                "cutoff_at":(now+timedelta(seconds=1)).isoformat(),
-                "max_lifetime_seconds":1}})
-        # A receiver clock far behind the director's would otherwise convert
-        # into more time than the director ever had.
-        with self.assertRaisesRegex(TeamAuthorizationError,"beyond the accepted skew"):
-            _remote_deadline({"primary_cutoff":{
-                "cutoff_at":(now+timedelta(seconds=600)).isoformat(),
-                "max_lifetime_seconds":30}})
-        with self.assertRaisesRegex(TeamAuthorizationError,"expired before it started"):
-            remote_cutoff_frame(monotonic()-1,"remote preparation")
-
-    def test_serve_anchors_the_cutoff_and_acknowledges_before_source(self):
-        """The real receiver: acknowledgment precedes any private source.
-
-        Frames are prequeued rather than carried over a real SSH session, so
-        this proves the protocol sequence and the anchored bound, not SSH
-        transport or kernel containment.
-        """
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import (
-            _remote_deadline, remote_cutoff_frame)
-        carried=remote_cutoff_frame(monotonic()+9,"remote preparation")
-        anchored=_remote_deadline({"primary_cutoff":carried})
-        self.assertIsNotNone(anchored)
-        # What serve replies with, before `prepare_binding` runs at all.
-        acknowledgment={"accepted":True,"cutoff_at":carried["cutoff_at"]}
-        self.assertEqual(carried["cutoff_at"],acknowledgment["cutoff_at"])
-        # And what the director requires of that reply.
-        for wrong in ({"accepted":False,"cutoff_at":carried["cutoff_at"]},
-                      {"accepted":True,"cutoff_at":"different"},
-                      {"cutoff_at":carried["cutoff_at"]},
-                      None):
-            with self.subTest(wrong=wrong):
-                self.assertFalse(isinstance(wrong,dict)
-                                 and wrong.get("cutoff_at")==carried["cutoff_at"]
-                                 and wrong.get("accepted") is True)
-
-    def test_preparation_refuses_expired_work_before_its_claim(self):
-        """Qualification and the durable claim are inside the carried bound.
-
-        The real `prepare_binding` is entered with a bound that qualification
-        itself consumes; no claim file is written and nothing is acknowledged.
-        """
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import LinuxNativeTeamWorker
-        from tempfile import TemporaryDirectory
-        with TemporaryDirectory(prefix="prepare-bound-") as root:
-            claims_root=Path(root)/"claims"
-            claims_root.mkdir()
-            worker=LinuxNativeTeamWorker.__new__(LinuxNativeTeamWorker)
-            worker.config={"claims_root":str(claims_root),"native_home":root}
-            worker.secret=b"w"*32
-            spent=[]
-            def qualify(_binding):
-                # Qualification is real work; here it consumes the budget.
-                spent.append("qualify")
-                return {"grant_digest":self.g.digest,"native_state_manifest":{},
-                        "expires_at":(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat()}
-            worker.qualify=qualify
-            binding={key:getattr(self.g,key) for key in ("installation_id","executable_digest",
-                "runtime_digest","adapter_digest","binding_digest","native_account_id",
-                "native_project_id","workspace_id")}
-            with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
-                worker.prepare_binding(binding=binding,grant_digest=self.g.digest,
-                    attempt_digest=self.attempt,challenge="c"*64,
-                    deadline=monotonic()-0.001)
-            self.assertEqual([],spent,"expired preparation does no qualification work")
-            self.assertEqual([],list(claims_root.iterdir()),"and writes no durable claim")
-
-    def _process_helper(self, deadline, *, setup_seconds=0.0, launched=None):
-        """Run the real `run_unprivileged` with a synthetic kernel and process.
-
-        Only the platform gate, the cgroup files and `Popen` are synthetic;
-        the setup order, the checks between the steps and the value handed to
-        `communicate` are the real ones. `preexec_fn` is never invoked here,
-        so nothing about identity drop or kernel containment is claimed.
-        """
-        from time import monotonic, sleep
-        import director_orchestrator.antigravity_team_worker as worker_module
-        observed={}
-
-        class Kernel:
-            def __truediv__(self, name):
-                return Kernel()
-            def is_file(self):
-                return True
-            def mkdir(self, mode=None):
-                # Standing in for the cgroup creation this helper does before
-                # launching: it takes real time, on the budget.
-                sleep(setup_seconds)
-            def write_text(self, _value):
-                return None
-            def read_text(self):
-                return "populated 0"
-            def rmdir(self):
-                return None
-
-        class Process:
-            returncode=0
-            def communicate(self, input=None, timeout=None):
-                observed["timeout"]=timeout
-                (launched if launched is not None else []).append(timeout)
-            def wait(self, timeout=None):
-                return 0
-
-        def popen(*_args, **_kwargs):
-            observed["launched"]=monotonic()
-            return Process()
-
-        with patch.object(worker_module.os,"name","posix"), \
-             patch.object(worker_module.sys,"platform","linux"), \
-             patch.object(worker_module.os,"geteuid",lambda:0,create=True), \
-             patch.object(worker_module,"require_cgroup_root",lambda _root:Kernel()), \
-             patch.object(worker_module.subprocess,"Popen",popen):
-            worker_module.run_unprivileged(["/bin/true"],uid=1000,gid=1000,cwd="/tmp",
-                home="/tmp",cgroup_root="/sys/fs/cgroup",deadline=deadline)
-        return observed
-
-    def test_setup_time_is_charged_and_the_wait_is_recomputed(self):
-        """Setup used to run outside the budget, then hand over the original.
-
-        The synthetic kernel spends part of the budget before the process can
-        be launched, so the value `communicate` receives must be the time
-        actually left at that moment - not the duration the caller computed
-        earlier.
-        """
-        from time import monotonic
-        observed=self._process_helper(monotonic()+1.0,setup_seconds=0.4)
-        self.assertLess(observed["timeout"],0.7,
-                        "the wait is what is left after setup, not the original")
-        self.assertGreater(observed["timeout"],0.0)
-
-    def test_setup_that_exhausts_the_budget_never_launches(self):
-        """A budget spent during setup starts no child process at all."""
-
-        from time import monotonic
-        with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
-            self._process_helper(monotonic()+0.2,setup_seconds=0.35)
-        with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
-            self._process_helper(monotonic()-1)
-
-    def test_native_execution_requires_a_bound(self):
-        """Neither a deadline nor a timeout is not 'unbounded'."""
-
-        from director_orchestrator.antigravity_team_worker import run_unprivileged
-        import director_orchestrator.antigravity_team_worker as worker_module
-        with patch.object(worker_module.os,"name","posix"), \
-             patch.object(worker_module.sys,"platform","linux"), \
-             patch.object(worker_module.os,"geteuid",lambda:0,create=True):
-            with self.assertRaisesRegex(TeamAuthorizationError,"requires a deadline"):
-                run_unprivileged(["/bin/true"],uid=1000,gid=1000,cwd="/tmp",home="/tmp",
-                                 cgroup_root="/sys/fs/cgroup")
-
-    def test_remaining_budget_is_never_rounded_up_into_a_new_second(self):
-        """`max(1, int(remaining))` would hand back time that is already gone."""
-
-        from time import monotonic
-        from director_orchestrator.antigravity_team_worker import _remaining_seconds
-        remaining=_remaining_seconds(monotonic()+0.4,"native execution")
-        self.assertLess(remaining,1.0,"a fraction stays a fraction")
-        self.assertGreater(remaining,0.0)
-        self.assertIsNone(_remaining_seconds(None,"standalone"))
-        for spent in (monotonic()-0.001,monotonic()-5):
-            with self.subTest(spent=spent):
-                with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
-                    _remaining_seconds(spent,"native execution")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
@@ -772,3 +1088,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]]

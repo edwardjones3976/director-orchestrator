@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import math
 import hmac
@@ -87,80 +88,91 @@ def _require_shared_deadline(deadline, what):
     return deadline
 
 
-# The premise under which a cross-host cutoff means anything at all: the two
-# hosts' UTC clocks agree to within this much. It is not derived from the
-# protocol and it is not a synchronization service - it is an assumption,
-# enforced below by refusing a cutoff whose implied skew exceeds it, and
-# charged against the remote budget so a receiver clock running behind cannot
-# turn skew into extra time. No hard cross-host real-time guarantee is claimed.
-ACCEPTED_CLOCK_SKEW_SECONDS = 5.0
+# How a primary bound crosses hosts. Not as a wall-clock instant, which only
+# means something if the two hosts' clocks agree and needs a stated premise
+# saying by how much; and not as a duration re-anchored on arrival, which
+# hands the transit back. Instead the remote server takes an instant on its
+# own monotonic clock and then sends an authenticated anchor frame; the
+# director samples what is left of its fixed bound only after that frame has
+# arrived, and sends that. The server's instant therefore precedes the
+# director's sample in real time, so instant plus remaining can only be
+# early - by at least the transit in each direction and any pause on either
+# side - never late. No clock is compared with another, no skew is assumed,
+# and nothing is renewed on receipt: the exchange frame names the same anchor
+# and carries no time value at all.
+PRIMARY_BOUND_MODE = "director-team-remote-anchor/v1"
 
 
-def remote_cutoff_frame(deadline, what):
-    """The one fixed cutoff to carry from preparation through exchange.
+def anchor_token(frame):
+    """The token an authenticated anchor frame issued; nothing else is one.
 
-    Two authenticated fields, both fixed at the moment the primary bound was
-    established for this attempt:
-
-    * `cutoff_at` - a UTC instant. A *duration* would be re-anchored on
-      arrival and hand transit time back to the remote worker; an instant
-      cannot be, because it does not move while the frame is in flight.
-    * `max_lifetime_seconds` - this side's own remaining budget when the frame
-      was sent, a hard upper bound the receiver also applies. A receiver whose
-      clock is behind therefore still cannot exceed the director's budget.
-
-    None means no primary bound was carried - genuine standalone use.
+    This is where the director refuses a remote server that does not speak
+    the bound protocol - before preparation, and long before any source.
     """
 
-    if deadline is None:
-        return None
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise TeamAuthorizationError(what + " deadline expired before it started")
-    return {"cutoff_at": (datetime.now(timezone.utc)
-                          + timedelta(seconds=remaining)).isoformat(),
-            "max_lifetime_seconds": remaining,
-            "accepted_clock_skew_seconds": ACCEPTED_CLOCK_SKEW_SECONDS}
+    if (not isinstance(frame, dict) or set(frame) != {"mode", "anchor"}
+            or frame["mode"] != PRIMARY_BOUND_MODE
+            or not isinstance(frame["anchor"], str)
+            or not re.fullmatch(r"[0-9a-f]{32}", frame["anchor"])):
+        raise TeamAuthorizationError("remote worker does not support the primary bound protocol")
+    return frame["anchor"]
 
 
-def _remote_deadline(payload, key="primary_cutoff", anchored=None):
-    """Anchor one received cutoff to this host's clock, narrowing only.
+def anchored_primary_bound(request, *, anchored, issued):
+    """The bound this attempt runs under, from the authenticated prepare frame.
 
-    Converted once: the UTC cutoff is compared against *this* host's UTC now,
-    the accepted skew is subtracted, and the director's own declared remaining
-    budget caps the result. Transit is therefore spent rather than returned.
-    If the conversion implies more time than the director had plus the
-    accepted skew, the two clocks disagree by more than the stated premise and
-    the frame is refused rather than trusted.
+    `anchored` is the instant this server took before sending its anchor and
+    `issued` the token it sent with it. A frame that names that token was
+    sent after the token arrived, so the remaining budget it carries was
+    sampled after `anchored`: the deadline is `anchored + remaining`, never
+    the receipt time plus remaining, and transit or a pause on either side is
+    spent rather than returned.
 
-    `anchored` is the value established by an earlier frame of the same
-    attempt. A later frame may move it earlier and never later, so one fixed
-    cutoff governs preparation and exchange alike.
+    An explicit `None` is deliberate standalone use and keeps the grant timer
+    alone. Anything else - the key absent, an older frame carrying
+    `lifetime_seconds` or `primary_cutoff`, a bound naming some other anchor,
+    a non-finite, non-positive or already spent value - is refused rather
+    than treated as unbounded.
     """
 
-    carried = payload.get(key) if isinstance(payload, dict) else None
+    if (not isinstance(request, dict)
+            or set(request) != {"binding", "grant_digest", "attempt_digest", "primary_bound"}):
+        raise TeamAuthorizationError("unsupported worker preparation protocol")
+    carried = request["primary_bound"]
     if carried is None:
-        return anchored
-    if not isinstance(carried, dict):
-        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
-    declared = carried.get("max_lifetime_seconds")
-    if (not isinstance(declared, (int, float)) or isinstance(declared, bool)
-            or not math.isfinite(declared) or declared <= 0):
-        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
-    try:
-        cutoff_at = datetime.fromisoformat(str(carried.get("cutoff_at")))
-    except ValueError:
-        raise TeamAuthorizationError("authenticated remote cutoff is invalid") from None
-    if cutoff_at.tzinfo is None:
-        raise TeamAuthorizationError("authenticated remote cutoff is invalid")
-    by_clock = (cutoff_at - datetime.now(timezone.utc)).total_seconds()
-    if by_clock > declared + ACCEPTED_CLOCK_SKEW_SECONDS:
-        raise TeamAuthorizationError(
-            "remote clock disagrees with the authenticated cutoff beyond the accepted skew")
-    allowed = min(by_clock, float(declared)) - ACCEPTED_CLOCK_SKEW_SECONDS
-    if allowed <= 0:
-        raise TeamAuthorizationError("authenticated remote cutoff is already spent")
-    return _shared_deadline(time.monotonic() + allowed, anchored)
+        return None
+    if (not isinstance(carried, dict) or set(carried) != {"mode", "anchor", "remaining_seconds"}
+            or carried["mode"] != PRIMARY_BOUND_MODE or carried["anchor"] != issued):
+        raise TeamAuthorizationError("primary bound is not anchored to this worker session")
+    remaining = carried["remaining_seconds"]
+    if (not isinstance(remaining, (int, float)) or isinstance(remaining, bool)
+            or not math.isfinite(remaining) or remaining <= 0):
+        raise TeamAuthorizationError("primary bound remaining budget is invalid")
+    return _require_shared_deadline(anchored + float(remaining), "primary bound")
+
+
+def retained_primary_bound(request, bound, *, issued):
+    """The exchange frame must name the bound preparation established.
+
+    It carries no time value, so there is nothing here to renew: the bound is
+    the one retained since preparation. A frame naming a different mode or
+    anchor, claiming standalone use after a bound was prepared, or carrying a
+    bound after standalone preparation, is refused before any of the exchange
+    is used.
+    """
+
+    if (not isinstance(request, dict)
+            or set(request) != {"grant", "work_packet", "source", "primary_bound"}):
+        raise TeamAuthorizationError("unsupported worker exchange protocol")
+    carried = request["primary_bound"]
+    if bound is None:
+        if carried is not None:
+            raise TeamAuthorizationError("exchange carries a primary bound preparation did not have")
+        return None
+    if (not isinstance(carried, dict) or set(carried) != {"mode", "anchor"}
+            or carried["mode"] != PRIMARY_BOUND_MODE or carried["anchor"] != issued):
+        raise TeamAuthorizationError("exchange does not name the prepared primary bound")
+    return _require_shared_deadline(bound, "remote exchange")
 
 
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
@@ -381,7 +393,7 @@ class LinuxNativeTeamWorker:
         self.owner_secret, self.issuer_secret, self.secret = owner_secret, issuer_secret, worker_secret
         if min(map(len, (owner_secret, issuer_secret, worker_secret))) < 32 or len({owner_secret, issuer_secret, worker_secret}) != 3:
             raise TeamAuthorizationError("distinct protected authorities required")
-        self.prepared = None
+        self.prepared = self.prepared_deadline = None
 
     def qualify(self, grant):
         if sys.platform != "linux" or os.geteuid() != 0:
@@ -460,8 +472,9 @@ class LinuxNativeTeamWorker:
 
         Qualification, the native state scan and the durable claim below are
         real work that can outlast the budget, so the bound is re-checked
-        between them: preparation that has already run out writes no claim and
-        acknowledges nothing.
+        between them and once more after the claim is durable: preparation
+        that has already run out writes no claim, and one that runs out while
+        writing it acknowledges nothing.
         """
 
         if (set(binding)!={"installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id"}
@@ -486,7 +499,18 @@ class LinuxNativeTeamWorker:
             handle.write(canonical_json_bytes({"grant_digest":grant_digest,"attempt_digest":attempt_digest,"challenge":challenge}))
             handle.flush()
             os.fsync(handle.fileno())
+        # The claim is durable now whether or not the budget survived writing
+        # it, and it is deliberately not removed: a claim that exists is a
+        # receipt that was consumed, and removing it would make the same
+        # receipt spendable again. Readiness, though, is only acknowledged
+        # inside the bound - a preparation that ran out while persisting stays
+        # unprepared, so a later exchange finds no preparation and the
+        # consumed receipt can never be claimed a second time.
+        _remaining_seconds(deadline, "worker preparation")
         self.prepared = (grant_digest, attempt_digest, challenge)
+        # The bound this preparation was acknowledged under, bound to the
+        # same attempt and challenge: the exchange can narrow it, never renew it.
+        self.prepared_deadline = deadline
         self.qualification = qualification
         return sign(self.secret, dict(grant_digest=grant_digest, attempt_digest=attempt_digest,
             challenge=challenge, binding_digest=binding["binding_digest"], workspace_id=binding["workspace_id"],
@@ -516,7 +540,10 @@ class LinuxNativeTeamWorker:
         if self.prepared is None or self.prepared != (grant.digest, self.prepared[1], challenge):
             raise TeamAuthorizationError("worker exchange has no preparation")
         attempt = self.prepared[1]
-        self.prepared = None
+        # Never more than preparation was acknowledged under, whatever the
+        # caller carries now.
+        deadline = _shared_deadline(self.prepared_deadline, deadline)
+        self.prepared = self.prepared_deadline = None
         self.qualify(grant)
         grant.verify(self.owner_secret, datetime.now(timezone.utc))
         if document_digest(work_packet) != grant.packet_digest or set(source) != {b.path for b in grant.source}:
@@ -628,7 +655,7 @@ class PinnedSshTeamWorker:
             "-o", "UserKnownHostsFile="+str(known_hosts.resolve(strict=True)),
             "-i", str(identity_file.resolve(strict=True)), user+"@"+host, worker_command]
         self.secret, self.grant = worker_secret, grant
-        self.process = self.timer = None
+        self.process = self.timer = self.anchor = None
 
     def close(self):
         if self.timer:
@@ -660,24 +687,26 @@ class PinnedSshTeamWorker:
         try:
             self.process.stdin.write(challenge.encode()+b"\n")
             self.process.stdin.flush()
+            # The remote server speaks first. Its authenticated anchor frame,
+            # bound to this challenge, proves it enforces the bound protocol
+            # before preparation - let alone source - is sent, and marks an
+            # instant on its own clock that precedes the sample below. A
+            # server that sends anything else is refused at the frame; one
+            # that sends nothing is ended by the local timer, having received
+            # nothing but the challenge.
+            self.anchor=anchor_token(self.channel.receive("anchor"))
+            # Sampled only now, after the anchor arrived, and sent as it is:
+            # what is left of this side's one fixed bound. A pause before this
+            # line shrinks it and nothing on the remote side can grow it.
+            # Killing the local SSH process bounds this side only; this is
+            # what bounds the worker's own execution there.
+            remaining=self.deadline-time.monotonic()
+            if remaining<=0:
+                raise TeamAuthorizationError("remote preparation deadline expired before it started")
             binding={key:getattr(self.grant,key) for key in ("installation_id","executable_digest","runtime_digest","adapter_digest","binding_digest","native_account_id","native_project_id","workspace_id")}
-            # One fixed cutoff, established now and reused unchanged by the
-            # exchange frame below. Killing the local SSH process bounds this
-            # side only; this is what bounds the worker's own execution there.
-            self.cutoff=remote_cutoff_frame(self.deadline,"remote preparation")
             self.channel.send("prepare", {"binding":binding,"grant_digest":grant_digest,
-                "attempt_digest":attempt_digest,"primary_cutoff":self.cutoff})
-            if self.cutoff is not None:
-                # Before any private source is sent: the remote server must
-                # acknowledge this exact cutoff on the authenticated channel.
-                # A local capability flag proves nothing about an older server,
-                # and one that does not send this frame fails closed here.
-                acknowledged=self.channel.receive("primary_cutoff_accepted")
-                if (not isinstance(acknowledged,dict)
-                        or acknowledged.get("cutoff_at")!=self.cutoff["cutoff_at"]
-                        or acknowledged.get("accepted") is not True):
-                    raise TeamAuthorizationError(
-                        "remote worker did not acknowledge the primary cutoff")
+                "attempt_digest":attempt_digest,"primary_bound":{"mode":PRIMARY_BOUND_MODE,
+                "anchor":self.anchor,"remaining_seconds":remaining}})
             return self.channel.receive("prepared")
         except BaseException:
             self.close()
@@ -686,7 +715,7 @@ class PinnedSshTeamWorker:
     def exchange(self, *, grant, work_packet, source, challenge, before_execute,
                  before_local_command, deadline=None):
         try:
-            if grant != self.grant or challenge != self.channel.challenge:
+            if grant != self.grant or self.anchor is None or challenge != self.channel.challenge:
                 raise TeamAuthorizationError("SSH exchange changed grant")
             # The remote exchange continues under the lifetime preparation
             # already started; it never begins a second full-grant timer.
@@ -694,10 +723,10 @@ class PinnedSshTeamWorker:
                 _shared_deadline(getattr(self, "deadline", None), deadline), "remote exchange")
             self.channel.send("exchange", {"grant":grant.model_dump(mode="json"),"work_packet": work_packet,
                 "source": {p: base64.b64encode(b).decode() for p,b in source.items()},
-                # The same fixed cutoff preparation established. It is not
-                # recomputed, so the exchange cannot hand back what
-                # preparation spent, and the receiver only narrows.
-                "primary_cutoff":getattr(self,"cutoff",None)})
+                # The same anchor preparation was bound to, and no time value:
+                # the receiver keeps what it retained, so nothing here can
+                # hand back what preparation spent.
+                "primary_bound":{"mode":PRIMARY_BOUND_MODE,"anchor":self.anchor}})
             self.channel.receive("before_execute")
             before_execute()
             self.channel.send("authorized", {"stage": "execution"})
@@ -723,21 +752,23 @@ def serve(config_path):
     worker = LinuxNativeTeamWorker(config, **secrets)
     challenge = sys.stdin.buffer.readline(66).decode().strip()
     channel = FrameChannel(sys.stdin.buffer, sys.stdout.buffer, worker.secret, challenge, sender="worker")
+    # This host's own instant, taken before the first frame leaves. The
+    # director samples its remaining budget only after this frame arrives, so
+    # the bound derived below can only be early, never late.
+    anchored = time.monotonic()
+    issued = os.urandom(16).hex()
+    channel.send("anchor", {"mode": PRIMARY_BOUND_MODE, "anchor": issued})
     request = channel.receive("prepare")
-    # Anchored once, on this host's clock, from the authenticated UTC cutoff.
-    # An absent cutoff is standalone use and keeps the grant timer alone.
-    remote_deadline = _remote_deadline(request)
-    if remote_deadline is not None:
-        # Acknowledged before any private source arrives, so a server that
-        # does not enforce this field can never receive it.
-        channel.send("primary_cutoff_accepted",
-                     {"accepted": True, "cutoff_at": request["primary_cutoff"]["cutoff_at"]})
+    remote_deadline = anchored_primary_bound(request, anchored=anchored, issued=issued)
     prepared = worker.prepare_binding(binding=request["binding"],grant_digest=request["grant_digest"],
         attempt_digest=request["attempt_digest"],challenge=challenge,deadline=remote_deadline)
+    # Readiness is acknowledged inside the bound or not at all. The claim
+    # preparation consumed stays consumed either way, and no source follows.
+    _remaining_seconds(remote_deadline, "worker readiness")
     channel.send("prepared", prepared)
     request = channel.receive("exchange")
-    # The same fixed cutoff, which may only narrow what preparation anchored.
-    remote_deadline = _remote_deadline(request, anchored=remote_deadline)
+    # The bound retained since preparation; the frame may only name it.
+    remote_deadline = retained_primary_bound(request, remote_deadline, issued=issued)
     grant = TeamGrant.model_validate_json(json.dumps(request["grant"]))
     def boundary(stage, argv=None):
         channel.send("before_execute" if stage == "execution" else "before_command", {} if argv is None else list(argv))
@@ -767,3 +798,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]]

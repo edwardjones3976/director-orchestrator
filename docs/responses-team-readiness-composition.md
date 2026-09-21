@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
@@ -132,56 +133,82 @@ execution entitlement takes a pooled connection, a query and row locks, so the
 authority is re-read once that returns, with nothing between it and the worker
 being told to execute. The local-command boundary does the same.
 
-Across hosts the bound travels as **one fixed authenticated cutoff**, never as
-this host's `time.monotonic()` instant, which means nothing on another machine
-- and never as a remaining *duration*, which an earlier revision used and
-which this document then wrongly described as losing transit on the safe side.
-It did the opposite: a duration re-anchored on arrival returns the transit time
-to the remote worker. The authenticated `prepare` frame now carries a UTC
-`cutoff_at` plus the director's own `max_lifetime_seconds` at that moment, the
-`exchange` frame repeats that same unchanged pair, and `serve` converts it once
-against the receiver's own clock, taking the smaller of the two and narrowing
-only. An absent cutoff is standalone use; an expired, non-finite, naive or
-malformed one is refused rather than treated as unbounded.
+Across hosts the bound travels through a **causal anchor handshake**, never as
+this host's `time.monotonic()` instant, which means nothing on another
+machine; never as a remaining *duration* re-anchored on arrival, which an
+earlier revision used and which hands the transit back; and no longer as a UTC
+instant, which the previous revision used and which only bounds the remote side
+under a clock-agreement premise this protocol cannot establish - an independent
+probe showed a receiver clock fifteen seconds behind, masked by ten seconds of
+transit, passing the plausibility check and running five seconds past the
+director's bound. The remote server now speaks first: it takes an instant on
+its own monotonic clock, then sends an authenticated `anchor` frame carrying a
+token it generated, bound to the challenge. The director samples what is left
+of its fixed bound **only after that frame has arrived** and sends it in
+`prepare` together with the token. The server's instant precedes the
+director's sample in real time, so `anchor + remaining` can only be early -
+by at least the transit in each direction and any pause on either side - and
+never late; it is never `receipt + remaining`. No clock is compared with
+another, no skew constant exists, and no synchronization service or
+configuration was added. The `exchange` frame names the same anchor and
+carries **no time value**, so there is nothing to renew: the server keeps the
+bound it retained since preparation and refuses a frame naming a different
+mode or anchor, claiming standalone use after a bound was prepared, or
+carrying a bound after standalone preparation.
 
-**The clock premise, stated and enforced.** A UTC instant only bounds the
-remote side if the two hosts' clocks agree; the protocol proves no such thing,
-and the existing UTC grant validation establishes no skew bound.
-`ACCEPTED_CLOCK_SKEW_SECONDS` is therefore an explicit assumption, enforced two
-ways: the accepted skew is subtracted from the converted remaining time, so a
-receiver clock running behind cannot turn disagreement into extra time, and a
-conversion implying more time than the director ever had - beyond that
-allowance - is refused outright as a clock the premise does not cover. One
-consequence is deliberate: a remote budget shorter than the skew allowance
-cannot run remotely at all. No hard cross-host real-time guarantee is claimed
-and no clock service is added.
+**Legacy frames are refused, not downgraded.** The `prepare` frame must carry
+exactly `binding`, `grant_digest`, `attempt_digest` and `primary_bound`; the
+`exchange` frame exactly `grant`, `work_packet`, `source` and `primary_bound`.
+An explicit `primary_bound: null` is deliberate standalone use and keeps the
+grant timer alone. An older client's frame - the revision that sent
+`lifetime_seconds`, the one that sent `primary_cutoff`, or one with no bound
+key at all - is refused before preparation instead of being treated as
+standalone, as is a bound naming an anchor this server did not issue (which
+is what a client that did not wait for the anchor would send), or a
+non-finite, non-positive or already spent value.
 
-**Support is acknowledged before private source.** A local capability flag says
-nothing about what an older remote server enforces, so the director requires an
-authenticated `primary_cutoff_accepted` frame echoing the exact `cutoff_at`
-*before* the exchange sends any source. A server that does not send it fails
-closed at the frame boundary. When no primary bound is carried, neither side
-expects the frame and standalone behaviour is unchanged.
+**Support is acknowledged before private source.** The `anchor` frame *is* the
+acknowledgment: a server that does not speak this protocol never sends it, so
+the director - which waits for it before sending even the public preparation -
+either refuses at the first frame of the wrong kind or shape, or is ended by
+its own local timer at the bound having sent nothing but the challenge. In
+either case no preparation and no source reaches such a server. The shipped
+SSH client always carries a bound: the primary lane's remaining budget when one
+exists, otherwise its own grant timer, so the remote worker is never bounded
+later than the local SSH kill.
 
 What this does **not** prove, stated rather than implied: killing the local SSH
-process bounds this side only; `preexec_fn` runs between fork and exec and
-cannot be interrupted once `Popen` is entered; and cleanup spends its own five
-second process wait plus a further five second cgroup drain, which the
-transported cutoff does not cover. Remote cgroup teardown is not demonstrated
-here.
+process bounds this side only; a server that never anchors is ended by that
+local timer only when the bound elapses, not sooner; `preexec_fn` runs between
+fork and exec and cannot be interrupted once `Popen` is entered; and cleanup
+spends its own five second process wait plus a further five second cgroup
+drain, which the transported bound does not cover. Remote cgroup teardown is
+not demonstrated here.
 
 Inside the worker, the remaining budget is spent as it is: a fractional
 remainder stays fractional, and a non-positive one is refused instead of
 being rounded up into a fresh second. Preparation carries the same anchored
 bound through qualification, the native state scan and the durable claim,
-re-checked between them, so preparation that has run out writes no claim and
-acknowledges nothing. `run_unprivileged` takes the absolute bound rather than
-a duration: the prompt is serialized before it, the bound is checked after
-cgroup and file setup and again immediately before `Popen`, and the value
-`communicate` receives is what is left *at that moment* rather than the
-duration the caller computed earlier. Candidate integration receives the same
-fixed completion bound through its Git and database work rather than starting
-a sixty-second timer of its own.
+re-checked between them and **once more after the claim is durable**:
+preparation that has run out writes no claim, and one that runs out while
+writing it - during `fsync` - acknowledges nothing. That consumed claim is
+deliberately retained rather than deleted as a rollback: removing it would
+make the same qualification receipt spendable again, whereas an unacknowledged
+preparation leaves the exchange with no preparation and a repeat on the same
+receipt refused by the existing claim. `serve` re-checks the bound again
+before sending `prepared`. The worker also retains the bound it was
+acknowledged under, bound to the same attempt and challenge, and the exchange
+can only narrow it - a caller carrying a later bound, or none, at exchange
+still runs under the prepared one. `run_unprivileged` is unchanged from the
+previous revision, which an independent probe confirmed: it takes the absolute
+bound rather than a duration, the prompt is serialized before it, the bound is
+checked after cgroup and file setup and again immediately before `Popen`, and
+the value `communicate` receives is what is left *at that moment* rather than
+the duration the caller computed earlier; a `Popen` that returns after the
+budget has elapsed gets no wait at all, and the group is still killed and
+drained. Candidate integration receives the same fixed completion bound
+through its Git and database work rather than starting a sixty-second timer of
+its own.
 
 ## Cancellation
 
@@ -346,21 +373,28 @@ discovery. Paid execution stays false and every provider reply is synthetic
 (`httpx.MockTransport`, no network). The Director runs independent QA and
 arranges exact-head review; none of this is acceptance.
 
-Every figure below is a run that completed. The previous revision's final
+Every figure below is a run that completed. An earlier revision's final
 `--group full --warnings` and `--group full` attempts were cut off by the
 author window and produced no result; those receipts stand as they are and
-nothing here is claimed from them.
+nothing here is claimed from them. This revision changed one production
+module, `antigravity_team_worker.py`, its test module and this document; of
+the selected groups only `--group team` imports that module, so it is the
+only group rerun here, and every other figure is the earlier revision's result
+on bytes this revision did not touch.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  **47 tests, all passing**, this revision.
+  **47 tests, all passing**, at the 16:56 UTC revision on unchanged bytes.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
   `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
-  passing**, this revision, including every PostgreSQL deadline case below.
+  passing**, at the 16:56 UTC revision on unchanged bytes, including every
+  PostgreSQL deadline case below.
 - `--group full` (all ten selected modules, including
-  `tests/test_langgraph_primary.py`): **417 tests, all passing**, this
-  revision, in 273s with zero resource warnings and a verified lane teardown.
-  The team lane is not in this selection; `--group team` covers it.
-- `--group startup`: 1 test, passing at the previous revision.
+  `tests/test_langgraph_primary.py`): **417 tests, all passing**, at the 16:56
+  UTC revision on unchanged bytes, in 273s with zero resource warnings and a
+  verified lane teardown. The team lane is not in this selection; `--group
+  team` covers it.
+- `--group startup`: 1 test, passing at an earlier revision on unchanged
+  bytes.
 - `--group transports` (not rerun this revision; its 54-test result stands on
   unchanged bytes) (`test_primary_transports`,
   `test_openai_responses_validation` - two existing modules outside the ten
@@ -373,21 +407,53 @@ nothing here is claimed from them.
   weakened.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
-  check): **2 tests, passing**, this revision.
-- `--group team` (`test_antigravity_team_worker`): **28 tests, all passing**,
-  this revision, including sixteen real-path team regressions.
+  check): **2 tests, passing**, at the 16:56 UTC revision on unchanged bytes.
+- `--group team` (`test_antigravity_team_worker`): **33 tests, all passing**,
+  this revision. The previous revision's 28 included nine tests that were
+  removed here rather than kept: five exercised only the cutoff helpers or
+  compared dictionaries the implementation also built (the one named for
+  `serve` never called `FrameChannel`, `serve` or `PinnedSshTeamWorker`), one
+  entered preparation already expired and never reached qualification, and
+  three process tests lived inside the PostgreSQL fixture, two of them
+  sleeping on the real clock. Fourteen replacements in a class that acquires
+  no database take their place.
 
-What those team regressions actually exercise: the real
-`NativeTeamPacketTransport`, real signed grants and prepared-evidence
-contracts, the real entitlement boundary against the real disposable
-PostgreSQL schema, the real candidate integrator and Git repository, the real
-cutoff conversion used by `serve`, the real `prepare_binding` preparation path
-including its durable claim, and the real `run_unprivileged` setup-and-launch
-sequence. What they do **not** exercise: a live SSH connection or full frame
-sequencing (frames are constructed directly), the `preexec_fn` callback, the
-Linux worker's cgroup/uid containment, any native provider execution, and
-remote cleanup after a cutoff expires. Those remain unproven here and are
-stated as limits rather than coverage.
+What those fourteen actually exercise: the real `PinnedSshTeamWorker` and the
+real `serve` talking over two OS pipes - real `FrameChannel` frames, real
+authentication, sequence, challenge and kind checks - with a thread in place
+of the SSH process, each side on its own monotonic clock with a distinct
+epoch, advanced only by the stated transit of every frame it reads. On that
+seam: an acknowledged success including both boundaries and the capture, with
+the server bounding preparation and exchange alike at `anchor + remaining`
+(5005 + 35 = 5040 on its clock, not 5010 + 35); a twenty-five second server
+pause between anchor and `prepare` that does not extend the bound; a director
+pause before its sample that shrinks what it sends; a bound spent in transit
+that never prepares; a server of any earlier revision, which waits to be
+spoken to first, receiving nothing but the challenge before the local timer
+ends it; and a server answering with the wrong kind or shape refused before
+preparation. On the real `serve` with prerecorded director frames: explicit
+`null` as deliberate standalone use through to the capture; twelve legacy,
+unanchored and invalid `prepare` shapes refused with only the anchor frame
+ever emitted; and six `exchange` shapes refused after `prepared` and before
+execution with the prepared bound unchanged. On the real `prepare_binding`
+with the real constructor: the budget consumed by qualification writes no
+claim; the budget consumed during `fsync` retains the claim, refuses
+readiness, refuses the exchange and refuses a second preparation on the same
+receipt; and a preparation inside the bound whose exchange is offered a later
+bound still hands `run_unprivileged` the prepared one. On the real
+`run_unprivileged` with a synthetic kernel, clock and `Popen`: exact and
+fractional waits after setup and launch, an absolute bound and a timeout
+narrowing each other, a `Popen` that consumes the budget getting no wait while
+the group is still killed and drained, and setup or an absent bound launching
+nothing. The eleven PostgreSQL-backed tests - the real transport, entitlement
+boundary, integrator and Git repository, cancellation, shared-budget,
+unsupported-worker and completion-bound cases - are unchanged.
+
+What they do **not** exercise: a real SSH process (a thread and two pipes
+stand in), host qualification (`qualify` is replaced), any native provider
+execution, the `preexec_fn` callback, the Linux worker's cgroup/uid
+containment, and remote cleanup after a bound expires. Those remain unproven
+here and are stated as limits rather than coverage.
 
 Two independent probes are preserved as *failed pre-repair* evidence, not as
 current verdicts: the supplied restart probe reached the writer sentinel and
@@ -515,10 +581,11 @@ and the real transport:
 | Complete replies survive response/client cleanup failure | Done, exercised |
 | A lost selection is refused before any database call | Done, exercised |
 | Team lane honours the primary recheck and shared budget | Done, exercised |
-| One fixed authenticated cutoff; transit spent, not returned | Done, exercised |
+| One anchored bound; transit and pauses spent, never returned or renewed | Done, exercised |
 | Remote support acknowledged before any private source | Done, exercised |
-| Preparation and process setup inside the same bound | Done, exercised |
-| Bounded cross-host skew | Premise, stated and enforced - not proven |
+| Legacy bound-bearing frames refused; explicit standalone kept deliberate | Done, exercised |
+| Preparation, its durable claim and process setup inside the same bound | Done, exercised |
+| Cross-host bound without a clock premise | Done, exercised - causal anchor, no skew constant |
 | A worker that cannot enforce the bound is refused | Done, exercised |
 | Recheck after the blocking authorization, before execution | Done, exercised |
 | Completion bound carried into candidate integration | Done, exercised |
@@ -583,7 +650,7 @@ and the real transport:
   locks and at the transport. A pre-I/O hold is no longer recorded as an
   ambiguous paid dispatch. Concurrency and overspend cases are now exercised,
   so the earlier "not exercised" limitation is removed.
-- **2026-09-21 12:57 UTC (this revision)**: an independent PostgreSQL 17.11
+- **2026-09-21 12:57 UTC**: an independent PostgreSQL 17.11
   probe showed that assigning a smaller `transaction_timeout` does not tighten
   a running timer, so the binder now deactivates and re-arms it and records the
   earliest absolute deadline per transaction. Admission re-selects the full
@@ -646,7 +713,7 @@ and the real transport:
   integration receives the fixed completion bound through its Git and database
   work instead of restarting sixty seconds, and the Linux worker no longer
   rounds a spent remainder up into a new second.
-- **2026-09-21 16:56 UTC (this revision)**: an independent probe showed the
+- **2026-09-21 16:56 UTC**: an independent probe showed the
   previous revision's *duration* actually handing transit time back to the
   remote worker - 10 seconds sent plus 3 in flight became 10 again - so this
   document's "lost on the safe side" claim was wrong and is corrected here.
@@ -661,6 +728,28 @@ and the real transport:
   recomputes what `communicate` waits for. The uninterruptible `preexec_fn`
   window and the two separate five-second cleanup waits are disclosed rather
   than covered.
+- **2026-09-21 17:31 UTC (this revision)**: an independent seven-case probe
+  against the real authenticated `serve` failed four of the previous
+  revision's claims: a five-second skew constant presented as a measured
+  premise could be masked by transit (a receiver fifteen seconds behind ran
+  five seconds past the bound); both sides sampled their two clocks in an
+  order a pause could exploit; `prepare_binding` could acknowledge a budget
+  that ran out during `fsync`; and a `prepare` frame from the revision that
+  sent `lifetime_seconds` was silently treated as standalone. The UTC cutoff
+  and its skew constant are gone. The server now anchors on its own monotonic
+  clock and speaks first, the director samples only after that anchor
+  arrives, the bound is `anchor + remaining` and never receipt-time, and the
+  exchange names the anchor without carrying any time value. Prepare and
+  exchange frames have exact shapes; legacy and unanchored bounds are refused
+  while an explicit `null` stays deliberate standalone use. Preparation
+  re-checks the bound after the claim is durable and before `serve`
+  acknowledges, retaining the consumed claim rather than deleting it, and the
+  worker keeps the prepared bound so the exchange can only narrow it. The
+  independently confirmed `run_unprivileged` accounting is unchanged. The
+  tests that only mirrored the implementation or never reached the seam they
+  were named for were removed; their replacements drive the real
+  `PinnedSshTeamWorker` and `serve` over OS pipes with distinct clocks and
+  need no database.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -674,3 +763,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]] -->
