@@ -5,6 +5,8 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | BEGIN]] -->
+<!-- Fallback-author correction: add tests/test_status_receipts.py to the inventory only. -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 12:18 UTC | BEGIN]] -->
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 17:11 UTC | BEGIN]] -->
@@ -44,6 +46,7 @@ These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than ski
 - `tests/test_primary_staging_controls.py`
 - `tests/test_provider_validation.py`
 - `tests/test_primary_workload.py`
+- `tests/test_status_receipts.py`
 
 `tests/test_primary_backup_restore.py` also runs `pg_dump` and `pg_restore` inside the container named by `LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER`, so no host PostgreSQL install is needed.
 
@@ -88,3 +91,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 17:11 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 12:18 UTC | END]] -->
+<!-- [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | END]] -->
