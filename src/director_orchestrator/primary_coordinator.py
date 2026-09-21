@@ -1,8 +1,12 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
@@ -27,6 +31,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import datetime
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Mapping
 
@@ -421,6 +426,39 @@ class PrimaryTaskCoordinator:
             idempotency_key_digest=idempotency_key_digest,
             payload_digest=payload_digest,
             task_id=task_id,
+        )
+
+    def resolve_slack_thread_binding(
+        self, *, channel_id: str, thread_ts: str
+    ) -> tuple[str, ...]:
+        """Resolve task identity from the persisted intake binding only."""
+
+        return self._store.resolve_primary_slack_thread_binding(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+        )
+
+    def record_slack_status_receipt(
+        self,
+        *,
+        source_event_id: str,
+        receipt_id: str,
+        task_id: str,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        text_digest: str,
+    ) -> tuple[str, bool, datetime]:
+        """Record one digest-only status receipt without graph side effects."""
+
+        return self._store.record_primary_slack_status_receipt(
+            source_event_id=source_event_id,
+            receipt_id=receipt_id,
+            task_id=task_id,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            user_id=user_id,
+            text_digest=text_digest,
         )
 
     def resume_approval(self, command: ApprovalResume) -> PrimaryTaskProjection:
@@ -1041,8 +1079,13 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]

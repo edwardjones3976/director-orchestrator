@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | BEGIN]]
@@ -52,6 +55,10 @@ class SlackIntakeReceiptTests(unittest.TestCase):
             n8n_webhook_url="",
             intake_allocation_profile="engineering",
             intake_primary_required_capabilities=(),
+            chatgpt_bridge_enabled=False,
+            chatgpt_bridge_channel_ids=(),
+            chatgpt_bridge_slack_user_id="UBOT",
+            chatgpt_bridge_max_prompt_chars=4000,
         )
         # Load a separate module object: no live Bolt initialization, environment
         # settings, or shared slack_bot event ledger is used by these tests.
@@ -282,7 +289,10 @@ class SlackIntakeReceiptTests(unittest.TestCase):
             forwarded["headers"],
             {"Authorization": f"Bearer {SHARED_SECRET}", **attestation},
         )
-        self.assertEqual(forwarded["json"]["source_event_id"], self.event["client_msg_id"])
+        self.assertEqual(
+            forwarded["json"]["source_event_id"],
+            "CFIXTURE:1788810000.123456",
+        )
         self.assertEqual(forwarded["json"]["text"], self.event["text"])
         self.assertEqual(forwarded["timeout"], 20)
 
@@ -357,3 +367,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 00:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 11:40 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 11:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
