@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]] -->
@@ -218,6 +219,26 @@ request legitimately admitted and sent does not stop having consumed real
 tokens because the window closed, or this attempt's execution budget ran out,
 while the provider was answering.
 
+A reply is "complete" the moment the provider has delivered it, which is
+earlier than the moment this transport can return it. HTTPX ends
+`aiter_bytes` by closing the response, and closing marks the response closed
+before its stream cleanup is awaited, so a cleanup that hangs or raises can
+strand a body that already arrived in full - and was already charged for. An
+independent real-`AsyncByteStream` probe proved exactly that: both a hanging
+`aclose` and one raising `ReadError` refused the attempt and left no usage
+row. The generation response's bytes and headers are therefore recorded as
+they are *received*, and if the failure happens before parsing, those bytes
+are parsed on the way out.
+
+Completeness is proved there, never assumed: an over-bound body is refused
+outright, a truncated or malformed one cannot parse as a single JSON object,
+and every existing check - terminal status, model, tier, account binding,
+token accounting, capture bounds - still applies afterwards. The same recovery
+covers the outer client's cleanup, which previously raised ambiguity even with
+a complete reply in hand. The operation is still refused (`... exhausted after
+a complete provider response` or `... cleanup failed after a complete provider
+response`), never retried, and never turned into output or funding.
+
 Settlement is therefore bounded by one absolute `accounting_deadline`, derived
 once from the operation's own deadline plus `ACCOUNTING_ALLOWANCE_SECONDS`, and
 it replaces the execution callback inside `_connection` rather than widening
@@ -246,14 +267,14 @@ author window and produced no result; those receipts stand as they are and
 nothing here is claimed from them.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  42 tests, all passing, this revision.
+  **46 tests, all passing**, this revision.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
-  `test_primary_coordinator`, `test_langgraph_postgres`): 182 tests, all
-  passing, this revision, including every PostgreSQL deadline case below.
+  `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
+  passing**, this revision, including every PostgreSQL deadline case below.
 - `--group full` (all ten selected modules, including
-  `tests/test_langgraph_primary.py`): **412 tests, all passing**, this
-  revision, in 262s with zero resource warnings and a verified lane teardown.
-- `--group startup`: 1 test, passing, this revision.
+  `tests/test_langgraph_primary.py`): **416 tests, all passing**, this
+  revision, in 212s with zero resource warnings and a verified lane teardown.
+- `--group startup`: 1 test, passing at the previous revision.
 
 Only this document changed after that full run; no source or test byte did.
 
@@ -266,14 +287,20 @@ bound tightened to 0.3s, again 25P04; an already-expired bound is refused
 before and after an earlier one; the same connection runs a later transaction
 0.6s past the previous transaction's deadline and commits; and the real
 projection and writer readers, under an `ACCESS EXCLUSIVE` table lock, end at
-their own bound instead of silently losing it.
+their own bound instead of silently losing it. Each witness names the cause it
+accepts - the transaction timer (25P04), `statement_timeout` (57014),
+`lock_timeout` (55P03), or the session termination `transaction_timeout`
+performs - rather than accepting any exception.
 
 `CheckpointOperationDeadlineTests` exercises the installed saver itself: a
 second thread holds the saver's mutex while the cutoff expires, the caller is
 refused in time with nothing written and the holder releases and joins
 cleanly; and with `BEFORE INSERT` triggers delaying the blob and checkpoint
 writes - each well inside any per-statement allowance, their sum outside the
-cutoff - the operation aborts and no checkpoint row survives.
+cutoff - the operation aborts with the whole-transaction cutoff (25P04, or the
+session termination it performs during pipeline synchronisation; a
+per-statement 57014 is deliberately *not* accepted there) and neither
+checkpoint nor blob rows survive.
 
 `tests/test_primary_default.py::DefaultPrimaryApplicationIntegrationTests`
 covers the foreground completion path through the real coordinator and the real
@@ -318,6 +345,13 @@ and the real transport:
   answered, the attempt's outcome write ends inside the completion allowance;
   the attempt stays STARTED and the authenticated usage already recorded for it
   is retained.
+- **Cleanup after a complete reply** - a real `httpx.AsyncByteStream` whose
+  `aclose` hangs past the deadline, one whose `aclose` raises `ReadError`, and
+  an outer client whose context exit raises after a normally closed response:
+  each records exactly one usage row of 150 tokens against the admitted
+  attempt, keeps its spend row, makes two provider requests, closes response
+  and client, and still refuses. A body truncated before the same failure is
+  metered not at all and stays ambiguous.
 - **Late accounting** - the real transport reaching the real meter for a
   complete reply whose unwinding timed out (usage recorded, attempt still
   refused); an enrollment expiring between counting and sending (generation
@@ -351,6 +385,7 @@ and the real transport:
 | Writer/plan binding re-read at the real generation boundary | Done, exercised |
 | Enrollment pinned across every wait and at the transport | Done, exercised |
 | Late authenticated usage recorded, eligibility unchanged | Done, exercised |
+| Complete replies survive response/client cleanup failure | Done, exercised |
 | Foreground completion, outcome and checkpoint writes bounded | Done, exercised |
 | Concurrency: no cross-request facts, no overspend | Done, exercised |
 | Host full-repository QA and exact-head source/security review | Not done - Director |
@@ -375,8 +410,8 @@ and the real transport:
 - A checkpoint aborted by its own deadline is reported as a failure and
   reconciled by the owner, not retried here. When the transaction timer fires
   during pipeline synchronisation, PostgreSQL terminates the session, so the
-  client sees a closed connection rather than SQLSTATE 25P04; the tests accept
-  exactly those two shapes and nothing else.
+  client sees a closed connection rather than SQLSTATE 25P04; that witness
+  accepts exactly those two shapes and nothing else.
 - Provider-outcome-unknown classification is still asserted through existing
   tests rather than a dedicated case in this module.
 - Full CI, an independent non-author security and source review, and an
@@ -422,7 +457,7 @@ and the real transport:
   One nonrenewable completion allowance now reaches the attempt outcome, result
   artifact, slot settlement, aggregate, outcome projection and checkpoint
   writes; the checkpointer's own pool applies it for the duration of that call.
-- **2026-09-21 14:07 UTC (this revision)**: an independent probe reproduced the
+- **2026-09-21 14:07 UTC**: an independent probe reproduced the
   helper's lifetime defect - `SET LOCAL` outside a transaction on an autocommit
   connection is gone before the next statement - so every bounded read path now
   binds inside one explicit transaction. The saver's own mutex wait and its
@@ -432,6 +467,19 @@ and the real transport:
   transaction-start time and a lock wait can outlast a lease. Timeout
   witnesses now identify the SQLSTATE or the session termination, and this
   document's outer contribution records and evidence claims are corrected.
+- **2026-09-21 14:50 UTC (this revision)**: an independent real-HTTPX probe
+  proved that a complete, already delivered generation reply was lost whenever
+  the response's own cleanup hung or raised - the body was received, but
+  parsing happened only after the stream context returned, so nothing was
+  metered. The generation bytes and headers are now recorded as they arrive
+  and parsed on the way out of a failed cleanup, with completeness proved by
+  parsing and the byte bound rather than assumed; the same recovery covers an
+  outer client cleanup error, which previously raised ambiguity with a valid
+  reply in hand. Refusal, admission and account binding, byte bounds,
+  deadlines and the no-retry rule are unchanged. The cumulative-checkpoint
+  witness now demands the whole-transaction cutoff and asserts blob rollback,
+  and `bounded_transaction`'s docstring no longer implies a cross-statement
+  snapshot.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -440,3 +488,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]] -->

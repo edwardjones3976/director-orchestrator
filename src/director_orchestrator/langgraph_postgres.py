@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -564,8 +565,10 @@ def bounded_transaction(pool: Any, deadline: float | None) -> Any:
     and a 0.35s sleep then completed against a 0.20s bound. A pool-acquisition
     timeout does not bound the SQL that follows either. Read paths that spend
     a deadline therefore use this, so the bound covers the statements it was
-    taken for. Callers with no deadline still get one explicit transaction,
-    which for a read is a consistent snapshot rather than a behaviour change.
+    taken for. Callers with no deadline still get one explicit transaction and
+    otherwise behave as before: at the default READ COMMITTED isolation each
+    statement takes its own snapshot, so this groups the statements, it does
+    not give them one cross-statement view.
     """
 
     with bounded_connection(pool, deadline) as connection:
@@ -5587,3 +5590,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]

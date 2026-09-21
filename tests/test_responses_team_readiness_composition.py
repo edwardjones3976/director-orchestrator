@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -1925,6 +1926,186 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         self.assertEqual(case.attempt_digest, rows[0]["attempt_digest"])
         self.assertEqual(150, rows[0]["observed_tokens"])
 
+    def _closing_stream_case(self, failure):
+        """One complete generation reply whose cleanup then fails.
+
+        A real `httpx.AsyncByteStream` through `MockTransport`, so the body is
+        genuinely exhausted and closed rather than handed over as a cached
+        `Response`. `failure` runs inside `aclose`, which HTTPX awaits while
+        ending `aiter_bytes` - after the whole body has been delivered.
+        """
+        case = self._admitted_meter()
+        seen, mock = self._synthetic_openai(case)
+        evidence = {"body_exhausted": False, "close_entered": False,
+                    "stream_cleanup_finished": False}
+        responses = []
+
+        class ClosingBody(httpx.AsyncByteStream):
+            def __init__(self, body):
+                self.body = body
+
+            async def __aiter__(self):
+                yield self.body
+                evidence["body_exhausted"] = True
+
+            async def aclose(self):
+                evidence["close_entered"] = True
+                try:
+                    await failure()
+                finally:
+                    # This fixture owns no socket; the flag witnesses that its
+                    # own cleanup path completed, even under cancellation.
+                    evidence["stream_cleanup_finished"] = True
+
+        async def respond(request):
+            original = await mock.handle_async_request(request)
+            if str(request.url).endswith("/input_tokens"):
+                return original
+            response = httpx.Response(original.status_code, headers=original.headers,
+                                      stream=ClosingBody(original.content), request=request)
+            responses.append(response)
+            return response
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        return SimpleNamespace(case=case, seen=seen, evidence=evidence,
+                                responses=responses, client=client)
+
+    def _assert_complete_usage_survived(self, fixture, started, *, requests=2):
+        from time import monotonic as _monotonic
+
+        self.assertLess(_monotonic() - started, 9.0)
+        self.assertEqual(requests, len(fixture.seen))
+        self.assertTrue(all(fixture.evidence.values()), fixture.evidence)
+        self.assertEqual(1, len(fixture.responses))
+        self.assertTrue(fixture.responses[0].is_closed)
+        self.assertTrue(fixture.client.is_closed)
+        rows = self._usage_rows()
+        self.assertEqual(1, len(rows),
+                          "a complete reply that was already delivered is still charged")
+        self.assertEqual(fixture.case.attempt_digest, rows[0]["attempt_digest"])
+        self.assertEqual(150, rows[0]["observed_tokens"])
+        with self.handle.pool.connection() as connection:
+            self.assertIsNotNone(connection.execute(
+                f"SELECT 1 FROM {self.schema}.director_primary_provider_spend "
+                "WHERE attempt_digest=%s", (fixture.case.attempt_digest,)).fetchone())
+
+    def test_inner_response_close_timeout_keeps_the_usage_it_delivered(self):
+        """The body arrived in full; only the response's own close hung."""
+
+        from time import monotonic as _monotonic
+
+        async def hang():
+            await asyncio.sleep(30)
+
+        fixture = self._closing_stream_case(hang)
+        started = _monotonic()
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=fixture.client):
+                with self.assertRaisesRegex(
+                        RuntimeError, "exhausted after a complete provider response"):
+                    fixture.case.transport.send(
+                        canonical_json_bytes(fixture.case.packet),
+                        context=self._adapter_context(fixture.case, deadline=started + 1.0))
+        finally:
+            asyncio.run(fixture.client.aclose())
+        self._assert_complete_usage_survived(fixture, started)
+
+    def test_inner_response_close_error_keeps_the_usage_it_delivered(self):
+        """The same boundary when cleanup raises instead of hanging."""
+
+        from time import monotonic as _monotonic
+
+        async def fail():
+            raise httpx.ReadError("synthetic response-stream close failure")
+
+        fixture = self._closing_stream_case(fail)
+        started = _monotonic()
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=fixture.client):
+                with self.assertRaisesRegex(
+                        RuntimeError, "cleanup failed after a complete provider response"):
+                    fixture.case.transport.send(
+                        canonical_json_bytes(fixture.case.packet),
+                        context=self._adapter_context(fixture.case, deadline=started + 20.0,
+                                                       timeout_seconds=20))
+        finally:
+            asyncio.run(fixture.client.aclose())
+        self._assert_complete_usage_survived(fixture, started)
+
+    def test_outer_client_close_error_keeps_the_usage_it_delivered(self):
+        """The client's own cleanup fails after a normally closed response."""
+
+        from time import monotonic as _monotonic
+        case = self._admitted_meter()
+        seen, mock = self._synthetic_openai(case)
+        real = httpx.AsyncClient(transport=mock)
+
+        class FailingExit:
+            """The real client, whose context exit raises after the reply."""
+
+            async def __aenter__(self):
+                return real
+
+            async def __aexit__(self, *_exception):
+                await real.aclose()
+                raise httpx.CloseError("synthetic client close failure")
+
+        started = _monotonic()
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                   return_value=FailingExit()):
+            with self.assertRaisesRegex(
+                    RuntimeError, "cleanup failed after a complete provider response"):
+                case.transport.send(canonical_json_bytes(case.packet),
+                                    context=self._adapter_context(
+                                        case, deadline=started + 20.0, timeout_seconds=20))
+        self.assertEqual(2, len(seen))
+        self.assertTrue(real.is_closed)
+        rows = self._usage_rows()
+        self.assertEqual(1, len(rows))
+        self.assertEqual(case.attempt_digest, rows[0]["attempt_digest"])
+        self.assertEqual(150, rows[0]["observed_tokens"])
+
+    def test_truncated_body_before_a_cleanup_failure_stays_ambiguous(self):
+        """Recovery proves completeness; it never assumes it."""
+
+        from time import monotonic as _monotonic
+
+        async def fail():
+            raise httpx.ReadError("synthetic response-stream close failure")
+
+        fixture = self._closing_stream_case(fail)
+        # The same delivered-then-failed shape, with a body that cannot be a
+        # complete reply: nothing is metered and the outcome stays unknown.
+        truncated = fixture.responses
+        original_respond = fixture.client._transport.handler
+
+        async def respond(request):
+            response = await original_respond(request)
+            if str(request.url).endswith("/input_tokens"):
+                return response
+            body = response.stream.body[:-5]
+            return httpx.Response(response.status_code, headers=response.headers,
+                                  stream=type(response.stream)(body), request=request)
+
+        fixture.client._transport.handler = respond
+        started = _monotonic()
+        try:
+            with patch("director_orchestrator.primary_transports.httpx.AsyncClient",
+                       return_value=fixture.client):
+                with self.assertRaisesRegex(RuntimeError, "outcome is ambiguous"):
+                    fixture.case.transport.send(
+                        canonical_json_bytes(fixture.case.packet),
+                        context=self._adapter_context(fixture.case, deadline=started + 20.0,
+                                                       timeout_seconds=20))
+        finally:
+            asyncio.run(fixture.client.aclose())
+        self.assertEqual(2, len(fixture.seen))
+        self.assertEqual(1, len(truncated))
+        self.assertEqual([], self._usage_rows(),
+                          "an incomplete body is never metered")
+
     def test_enrollment_expiring_between_counting_and_sending_stops_the_send(self):
         """`sent_at` is sampled at the generation request, not before counting.
 
@@ -2107,3 +2288,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]

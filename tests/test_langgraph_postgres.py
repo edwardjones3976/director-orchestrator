@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
@@ -3624,11 +3625,12 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
     def timeout_cause(self, raised):
         """What PostgreSQL actually reported, not merely 'an error'.
 
-        `transaction_timeout` aborts the transaction *and terminates the
-        session*, so a client either reads the SQLSTATE first (25P04, or
-        57014 for a statement/lock limit) or, when the statement was still in
-        flight, sees that termination as a closed connection. Both are the
-        same server event; anything else is not a deadline witness.
+        Exactly one of the bounds this helper sets may fire first: the
+        whole-transaction timer (25P04), `statement_timeout` (57014) or
+        `lock_timeout` (55P03). `transaction_timeout` also terminates the
+        session, so when it fires mid-statement the client sees that
+        termination as a closed connection instead. Those four shapes are the
+        deadline; anything else is not.
         """
 
         cause = raised
@@ -3639,7 +3641,7 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
             self.assertIsInstance(cause, psycopg.OperationalError, repr(cause))
             self.assertIn("server closed the connection", str(cause), repr(cause))
             return "terminated"
-        self.assertIn(cause.sqlstate, {"25P04", "57014"}, repr(cause))
+        self.assertIn(cause.sqlstate, {"25P04", "57014", "55P03"}, repr(cause))
         return cause.sqlstate
 
     def test_a_bounded_read_ends_under_a_real_table_lock(self):
@@ -3891,6 +3893,7 @@ class CheckpointOperationDeadlineTests(unittest.TestCase):
                     FOR EACH ROW EXECUTE FUNCTION {self.schema}.checkpoint_delay()""")
         self.addCleanup(self.drop_delays)
         before = self.rows("checkpoints")
+        blobs_before = self.rows("checkpoint_blobs")
         started = monotonic()
         with self.assertRaises(Exception) as raised:
             with checkpoint_deadline(monotonic() + 0.4):
@@ -3900,17 +3903,22 @@ class CheckpointOperationDeadlineTests(unittest.TestCase):
         while cause is not None and not isinstance(cause, psycopg.Error):
             cause = cause.__cause__
         self.assertIsNotNone(cause, f"expected a PostgreSQL timeout, got {raised.exception!r}")
-        # In pipeline mode the transaction timer's session termination is what
-        # reaches the client first; outside it the SQLSTATE arrives directly.
+        # The *cumulative* cutoff is the whole-transaction timer: 25P04, or -
+        # when it fires while the pipeline is synchronising - the session
+        # termination it performs. A per-statement cancellation (57014) would
+        # mean each write was bounded separately, which is exactly the claim
+        # this case exists to refute, so it is not accepted here.
         if cause.sqlstate is None:
             self.assertIsInstance(cause, psycopg.OperationalError, repr(cause))
             self.assertIn("server closed the connection", str(cause), repr(cause))
         else:
-            self.assertIn(cause.sqlstate, {"25P04", "57014"}, repr(cause))
+            self.assertEqual("25P04", cause.sqlstate, repr(cause))
         self.assertGreater(elapsed, 0.2, "the writes really did run")
         self.assertLess(elapsed, 3.0, "and the sum was cut off at the cutoff")
         self.assertEqual(before, self.rows("checkpoints"),
                           "an aborted checkpoint leaves nothing durable")
+        self.assertEqual(blobs_before, self.rows("checkpoint_blobs"),
+                          "including the blob rows written earlier in it")
 
     def drop_delays(self):
         with self.handle.pool.connection() as connection, connection.transaction():
@@ -3951,3 +3959,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]

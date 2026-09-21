@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -455,18 +456,38 @@ class OpenAIResponsesPacketTransport:
         # parsing cannot discard an authenticated fact that already cost real
         # tokens. Presence here is never success: eligibility is decided below.
         completed: dict[str, Any] = {}
+        # The generation response's bytes and headers as they are *received*,
+        # which is strictly earlier than the point where `post_json` can
+        # return them. HTTPX ends `aiter_bytes` by closing the response, and
+        # closing marks it closed before its stream cleanup is awaited, so a
+        # cleanup that hangs or raises would otherwise discard a body the
+        # provider had already delivered in full - and charged for. Presence
+        # here is not completeness: the bytes still have to parse and pass
+        # every existing check below.
+        delivered: dict[str, Any] = {}
 
         async def invoke():
             # HTTPX timeouts bound individual I/O operations, not total elapsed
             # time. Cancellation also bounds a response that keeps trickling.
             async with asyncio.timeout(remaining_seconds()), httpx.AsyncClient(timeout=timeout) as client:
-                async def post_json(url, payload, maximum_bytes):
+                async def post_json(url, payload, maximum_bytes, into=None):
                     async with client.stream("POST", url, headers=headers, json=payload,
                                              timeout=remaining_seconds()) as response:
                         response.raise_for_status()
                         raw = bytearray()
+                        if into is not None:
+                            # Recorded before the first chunk and updated in
+                            # place: a status this transport rejected, or a
+                            # request that never reached a body, leaves nothing
+                            # here to recover.
+                            into.update(raw=raw, headers={
+                                key: response.headers[key] for key in (
+                                    "openai-organization", "openai-project", "x-request-id")
+                                if key in response.headers})
                         async for chunk in response.aiter_bytes():
                             if len(raw) + len(chunk) > maximum_bytes:
+                                if into is not None:
+                                    into["over_bound"] = True
                                 raise RuntimeError("OpenAI response exceeds its byte bound")
                             raw.extend(chunk)
                     return json.loads(raw), {key: response.headers[key] for key in (
@@ -500,7 +521,12 @@ class OpenAIResponsesPacketTransport:
                     sent_at = meter.clock()
                 else:
                     sent_at = None
-                native, response_headers = await post_json(self.api_url, body, _MAX_RESPONSES_NATIVE_BYTES)
+                # Everything the accounting of a delivered reply needs, other
+                # than the reply itself, is known now.
+                delivered.update(input_tokens=input_tokens,
+                                 output_allowance=output_allowance, sent_at=sent_at)
+                native, response_headers = await post_json(
+                    self.api_url, body, _MAX_RESPONSES_NATIVE_BYTES, into=delivered)
                 # Recorded the instant it is parsed. No deadline check between
                 # receiving a complete provider response and retaining it:
                 # discarding it would throw away an authenticated fact that
@@ -515,12 +541,23 @@ class OpenAIResponsesPacketTransport:
         try:
             native, input_tokens, output_allowance, response_headers = asyncio.run(invoke())
             sent_at = completed.get("sent_at")
-        except TimeoutError as exc:
+        except (TimeoutError, httpx.HTTPError, ValueError) as exc:
+            _recover_delivered_generation(completed, delivered)
             if not completed:
-                raise RuntimeError("OpenAI transport timeout is exhausted; outcome is ambiguous") from exc
-            # The provider did complete; only the unwinding ran out of time.
-            # Keep the authenticated facts, account for them below, and still
-            # refuse the result: an expired execution is never eligible.
+                # Nothing complete was ever delivered - a failed or rejected
+                # request, a truncated or over-bound body, or bytes that do
+                # not parse. Unchanged: the outcome is unknown and nothing is
+                # metered, captured or retried.
+                raise RuntimeError(
+                    "OpenAI transport timeout is exhausted; outcome is ambiguous"
+                    if isinstance(exc, TimeoutError)
+                    else "OpenAI provider outcome is ambiguous"
+                ) from exc
+            # The provider did complete; only the unwinding failed - a timeout
+            # while the contexts unwound, a stream or client cleanup error
+            # after the body arrived. Keep the authenticated facts, account
+            # for them below, and still refuse the result: a failed or expired
+            # execution is never eligible, and this is not a retry.
             native = completed["native"]
             input_tokens = completed["input_tokens"]
             output_allowance = completed["output_allowance"]
@@ -528,9 +565,10 @@ class OpenAIResponsesPacketTransport:
             sent_at = completed["sent_at"]
             expiry = RuntimeError(
                 "OpenAI transport timeout is exhausted after a complete provider response"
+                if isinstance(exc, TimeoutError)
+                else "OpenAI transport cleanup failed after a complete provider response"
             )
-        except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError("OpenAI provider outcome is ambiguous") from exc
+            expiry.__cause__ = exc
         # Build the retained capture bundle BEFORE the meter settles, so a
         # response that cannot be captured within the validation bound is
         # refused exactly like an over-bound response body: never metered
@@ -601,6 +639,40 @@ class OpenAIResponsesPacketTransport:
             # Authenticated native Responses bytes and filtered non-secret response headers for validation capture.
             observer("openai", capture_bytes, result)
         return result
+
+
+def _recover_delivered_generation(
+    completed: dict[str, Any], delivered: Mapping[str, Any]
+) -> None:
+    """Adopt a generation body that arrived in full before cleanup failed.
+
+    `completed` is filled by the normal path as soon as a reply is parsed.
+    When the failure happened *before* that - HTTPX ends the byte iterator by
+    closing the response, so a hanging or failing cleanup can strand a body
+    that was already delivered - the received bytes are parsed here instead.
+
+    Completeness is proved, never assumed: an over-bound body is refused
+    outright, and a truncated or malformed one cannot parse as one JSON
+    object. Everything else this transport checks - terminal status, model,
+    tier, account binding, token accounting, capture bounds - still applies
+    downstream, and the operation itself is still refused.
+    """
+
+    if completed or delivered.get("over_bound") or not delivered.get("raw"):
+        return
+    try:
+        native = json.loads(bytes(delivered["raw"]))
+    except ValueError:
+        return
+    if not isinstance(native, dict):
+        return
+    completed.update(
+        native=native,
+        input_tokens=delivered["input_tokens"],
+        output_allowance=delivered["output_allowance"],
+        response_headers=delivered["headers"],
+        sent_at=delivered["sent_at"],
+    )
 
 
 def _responses_capture_bundle(native: Mapping[str, Any], response_headers: Mapping[str, str]) -> bytes:
@@ -1471,3 +1543,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
