@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]] -->
@@ -275,8 +276,18 @@ nothing here is claimed from them.
   `tests/test_langgraph_primary.py`): **416 tests, all passing**, this
   revision, in 212s with zero resource warnings and a verified lane teardown.
 - `--group startup`: 1 test, passing at the previous revision.
+- `--group transports` (`test_primary_transports`,
+  `test_openai_responses_validation` - two existing modules outside the ten
+  selected): **54 tests, all passing**. Two fixtures there had gone stale
+  against the current transport: a finite `monotonic` `side_effect` list that
+  additional legitimate cutoff checks exhausted, and a meter fake predating
+  `verify_current`/`clock`/`sent_at`. Both were corrected in the fixture - a
+  clock driven by request stages, and the explicit current protocol with
+  named parameters - with no production byte changed and no assertion
+  weakened.
 
-Only this document changed after that full run; no source or test byte did.
+Only this document and those two fixtures changed after the 416-test run; no
+production byte did, so that selection was not repeated.
 
 `tests/test_langgraph_postgres.py::TransactionDeadlineBindingTests` proves the
 timer by wall clock, durable rows and the reported SQLSTATE, never by `SHOW`
@@ -345,13 +356,14 @@ and the real transport:
   answered, the attempt's outcome write ends inside the completion allowance;
   the attempt stays STARTED and the authenticated usage already recorded for it
   is retained.
-- **Cleanup after a complete reply** - a real `httpx.AsyncByteStream` whose
-  `aclose` hangs past the deadline, one whose `aclose` raises `ReadError`, and
-  an outer client whose context exit raises after a normally closed response:
-  each records exactly one usage row of 150 tokens against the admitted
-  attempt, keeps its spend row, makes two provider requests, closes response
-  and client, and still refuses. A body truncated before the same failure is
-  metered not at all and stays ambiguous.
+- **Cleanup after a complete reply** - all three cases record exactly one
+  usage row of 150 tokens against the admitted attempt digest, make two
+  provider requests, and still refuse. The two inner-stream cases (an `aclose`
+  that hangs past the deadline and one that raises `ReadError`) additionally
+  assert the spend row, the body-exhaustion and cleanup witnesses, and that
+  both response and client are closed; the outer-client case asserts the
+  closed client only. A body truncated before the same failure is metered not
+  at all and stays ambiguous.
 - **Late accounting** - the real transport reaching the real meter for a
   complete reply whose unwinding timed out (usage recorded, attempt still
   refused); an enrollment expiring between counting and sending (generation
@@ -467,7 +479,7 @@ and the real transport:
   transaction-start time and a lock wait can outlast a lease. Timeout
   witnesses now identify the SQLSTATE or the session termination, and this
   document's outer contribution records and evidence claims are corrected.
-- **2026-09-21 14:50 UTC (this revision)**: an independent real-HTTPX probe
+- **2026-09-21 14:50 UTC**: an independent real-HTTPX probe
   proved that a complete, already delivered generation reply was lost whenever
   the response's own cleanup hung or raised - the body was received, but
   parsing happened only after the stream context returned, so nothing was
@@ -480,6 +492,12 @@ and the real transport:
   witness now demands the whole-transaction cutoff and asserts blob rollback,
   and `bounded_transaction`'s docstring no longer implies a cross-statement
   snapshot.
+- **2026-09-21 15:13 UTC (this revision)**: the host ran
+  `tests/test_primary_transports.py`, which sits outside the ten selected
+  modules, and found two stale fixtures - not production defects. Both were
+  corrected in place without weakening a single assertion, and this document's
+  cleanup-case bullet was qualified to match what each of those three tests
+  directly asserts.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -489,3 +507,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -25,6 +26,7 @@ import asyncio
 import time
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -454,17 +456,37 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                     self._openai_send([count], requests=requests)
                 self.assertEqual(1, len(requests))
 
+    def _staged_clock(self, seen, elapsed):
+        """A clock driven by request stages, not by implementation calls.
+
+        The shared deadline depends on how much time the provider has taken,
+        not on how many times the transport happens to read the clock, so the
+        value is a function of the requests made so far. `elapsed[n]` is the
+        time consumed once `n` requests have been issued; a finite
+        `side_effect` list instead breaks - silently changing what is being
+        tested - as soon as a legitimate extra cutoff check is added.
+        """
+
+        def clock():
+            return 100.0 + elapsed[min(len(seen), len(elapsed) - 1)]
+
+        return clock
+
     def test_openai_count_and_generation_share_the_remaining_deadline(self):
         requests = []
+        # 12 seconds consumed by counting, then a generation that fits.
         self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()], requests=requests,
-                          clock=[100.0, 100.0, 100.0, 112.0, 113.0])
+                          clock=self._staged_clock(requests, [0.0, 12.0, 13.0]))
         self.assertEqual(30, requests[0].extensions["timeout"]["read"])
         self.assertEqual(18, requests[1].extensions["timeout"]["read"])
-        for ticks, call_count in (([100.0, 100.0, 100.0, 130.0], 1),
-                                  ([100.0, 100.0, 100.0, 110.0, 130.0], 2)):
+        # The whole window spent by the count: the generation is never sent.
+        # Then a window spent by the generation itself: it was sent once, and
+        # the exhausted deadline still refuses the attempt afterwards.
+        for elapsed, call_count in (([0.0, 30.0], 1), ([0.0, 10.0, 30.0], 2)):
             requests = []
-            with self.subTest(ticks=ticks), self.assertRaisesRegex(RuntimeError, "timeout is exhausted"):
-                self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()], requests=requests, clock=ticks)
+            with self.subTest(elapsed=elapsed), self.assertRaisesRegex(RuntimeError, "timeout is exhausted"):
+                self._openai_send([{"object": "response.input_tokens", "input_tokens": 250}, self._openai_response()],
+                                  requests=requests, clock=self._staged_clock(requests, elapsed))
             self.assertEqual(call_count, len(requests))
 
     def test_openai_never_retries_count_or_generation_failure(self):
@@ -536,16 +558,37 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             return response
 
         settled = []
+        sent_instant = datetime(2026, 9, 21, 15, 13, tzinfo=timezone.utc)
 
         class Meter:
+            """Exactly the meter protocol this transport calls, no wider.
+
+            Every parameter is named, so a transport that stopped anchoring
+            the send instant, stopped bounding the receipt, or stopped
+            re-checking the tariff at the real send fails here instead of
+            being absorbed by a catch-all signature.
+            """
+
             enrollments = {}
             enrollment = SimpleNamespace(service_tier="default")
 
-            def prepare(self, *args, **kwargs):
+            def __init__(self):
+                self.verified = 0
+
+            def prepare(self, *, context, packet, api_url, model, api_key,
+                        remaining_seconds=None):
                 return {}
 
-            def settle(self, native, response_headers, remaining_seconds=None):
-                settled.append(len(canonical_json_bytes(native)))
+            def verify_current(self):
+                self.verified += 1
+
+            def clock(self):
+                return sent_instant
+
+            def settle(self, native, response_headers, *, sent_at, accounting_deadline):
+                settled.append(SimpleNamespace(
+                    size=len(canonical_json_bytes(native)), headers=response_headers,
+                    sent_at=sent_at, accounting_deadline=accounting_deadline))
 
         captured = []
         context = replace(self._context(), execution_observer=lambda provider, raw, result: captured.append(raw))
@@ -555,10 +598,18 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         encoded = json.dumps(at_bound, separators=(",", ":")).encode()
         self.assertLessEqual(len(encoded), pt._MAX_RESPONSES_NATIVE_BYTES)
         self.assertGreater(len(encoded), pt._MAX_RESPONSES_NATIVE_BYTES - 64)
-        self._openai_send([count, httpx.Response(200, content=encoded, headers=headers)], context=context, meter=Meter())
+        meter = Meter()
+        self._openai_send([count, httpx.Response(200, content=encoded, headers=headers)], context=context, meter=meter)
         self.assertEqual(1, len(captured))
         self.assertLessEqual(len(captured[0]), MAX_CAPTURE_BYTES)
         self.assertEqual(1, len(settled))
+        # The tariff was re-checked at the real send, the receipt is anchored
+        # to that instant, and it carries its own absolute accounting cutoff.
+        self.assertEqual(1, meter.verified)
+        self.assertEqual(sent_instant, settled[0].sent_at)
+        self.assertIsInstance(settled[0].accounting_deadline, float)
+        self.assertEqual({"openai-organization", "openai-project", "x-request-id"},
+                          set(settled[0].headers))
         # One byte over the native bound: refused mid-stream, nothing settled.
         over = json.dumps(sized(pt._MAX_RESPONSES_NATIVE_BYTES + 1), separators=(",", ":")).encode()
         self.assertGreater(len(over), pt._MAX_RESPONSES_NATIVE_BYTES)
@@ -920,3 +971,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]]
