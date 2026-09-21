@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]]
@@ -260,6 +263,42 @@ class SlackIntake(BaseModel):
     primary_public_research_query: str | None = Field(default=None, min_length=1, max_length=500)
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+def slack_status_text_digest(text: str) -> str:
+    """Digest-only storage for status prose; raw text is not persisted."""
+
+    normalized = text.strip()
+    return "sha256:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+class SlackStatusReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_event_id: str = Field(min_length=1, max_length=255)
+    channel_id: str = Field(min_length=1, max_length=64)
+    thread_ts: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    text_digest: str = Field(min_length=8, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$")
+    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class StatusReceiptRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: str = Field(min_length=1, max_length=128)
+    task_id: str = Field(min_length=1, max_length=64)
+    deduplicated: bool
+    created_at: datetime
+
+
+class SlackThreadBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: str = Field(min_length=1, max_length=64)
+    thread_ts: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
 
 
 class Assignment(BaseModel):
@@ -1255,3 +1294,7 @@ class ManualRunCompletion(BaseModel):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 19:45 UTC | END]]
+
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
