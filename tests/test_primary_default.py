@@ -479,6 +479,7 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         # Dispatch reads the writer, persists the artifact and re-reads the
         # wave's cancellation row inside the bound its own readiness
         # established, so each double records the bound it was handed.
+        from contextlib import contextmanager
         bounds = []
 
         class BatchRow:
@@ -496,6 +497,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
 
             def __exit__(self, *_exception):
                 return False
+
+            @contextmanager
+            def transaction(self):
+                # The bounded read path opens one explicit transaction, so the
+                # LOCAL timeouts it sets still apply to the statement after.
+                yield self
 
             def execute(self, statement, *_args, **_kwargs):
                 row = ({"bound": None} if "director.transaction_deadline" in statement

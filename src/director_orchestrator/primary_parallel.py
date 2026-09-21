@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -55,6 +56,7 @@ from .langgraph_postgres import (
     TaskWriterLease,
     bind_transaction_deadline,
     bounded_connection,
+    bounded_transaction,
 )
 
 
@@ -516,7 +518,18 @@ class PostgresParallelDispatch:
         task_id: str,
         owner_token: str,
         fencing_generation: int,
+        live_at_clock: bool = False,
     ) -> Mapping[str, Any]:
+        """Hold this task's writer row and prove the lease is still current.
+
+        `now()` is transaction-start time, which is what the first check in a
+        transaction wants. A second check *after* that transaction has waited
+        on locks needs the real clock: holding the row blocks a takeover but
+        cannot stop the lease from running out, so `live_at_clock` compares
+        against `clock_timestamp()` the way the writer-artifact path does.
+        """
+
+        liveness = "clock_timestamp()" if live_at_clock else "now()"
         row = self._row(
             connection,
             f"""
@@ -526,7 +539,7 @@ class PostgresParallelDispatch:
               AND engine_owner = 'langgraph'
               AND owner_token = %(owner_token)s
               AND fencing_generation = %(generation)s
-              AND lease_expires_at > now()
+              AND lease_expires_at > {liveness}
             FOR UPDATE
             """,
             {
@@ -1353,23 +1366,28 @@ class PostgresParallelDispatch:
                         raise TeamAuthorizationError("provider budget expired during atomic admission")
                     if admitted_grant is not None:
                         admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
+                # The final fence, after every lock this transaction waited on
+                # and before the STARTED row it is about to write. The writer
+                # lease is proved against the real clock rather than this
+                # transaction's start time: holding the row blocks a takeover
+                # but cannot stop the lease from expiring during those waits.
+                self._writer(
+                    connection,
+                    task_id=reservation.task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                    live_at_clock=True,
+                )
                 if revalidate_selection is not None:
-                    # After every lock this transaction waited on, and before
-                    # the STARTED row it is about to write: the caller
-                    # re-checks the complete selection it chose this attempt
-                    # under - signed authority, enrollment document, packet,
-                    # writer generation. It is handed this transaction's own
-                    # connection so it can re-select the current authority
-                    # without acquiring a second pooled connection while these
-                    # locks are held. Anything raised here rolls the monetary,
-                    # workload and attempt writes back together, because they
-                    # are all still uncommitted.
-                    self._writer(
-                        connection,
-                        task_id=reservation.task_id,
-                        owner_token=writer.owner_token,
-                        fencing_generation=writer.fencing_generation,
-                    )
+                    # At that same fence the caller re-checks the complete
+                    # selection it chose this attempt under - signed authority,
+                    # enrollment document, packet, writer generation. It is
+                    # handed this transaction's own connection so it can
+                    # re-select the current authority without acquiring a
+                    # second pooled connection while these locks are held.
+                    # Anything raised here rolls the monetary, workload and
+                    # attempt writes back together, because they are all still
+                    # uncommitted.
                     revalidate_selection(connection)
                 if deadline is not None and deadline - monotonic() <= 0:
                     # Already past it before the final write: refuse here
@@ -1935,8 +1953,7 @@ class PostgresParallelDispatch:
     def aggregate(self, task_id: str, *, deadline: float | None = None) -> ParallelAggregate:
         """Return a stable aggregation independent of completion arrival order."""
 
-        with bounded_connection(self._pool, deadline) as connection:
-            bind_transaction_deadline(connection, deadline)
+        with bounded_transaction(self._pool, deadline) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
@@ -2049,3 +2066,4 @@ class PostgresParallelDispatch:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]

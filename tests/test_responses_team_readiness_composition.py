@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -1346,6 +1347,59 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                           raised.exception.reason_code)
         self._assert_no_admission_rows()
 
+    def test_writer_lease_expiring_during_the_admission_wait_rolls_back(self):
+        """The lease is proved against the real clock at the final fence.
+
+        The lease is set to run out one second from now, and the real
+        admission is then blocked on the batch row for longer than that. Its
+        first writer check passed while the lease was live, and holding that
+        row stops a takeover but not the clock; `now()` is this transaction's
+        start time, so a transaction-start comparison would still call the
+        lease current. The execution deadline is far later, so nothing else
+        would stop it. Admission is entered directly here because the live
+        coordinator renews its own lease immediately beforehand, which is
+        exactly the behaviour that would mask the defect.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from time import sleep
+        from director_orchestrator.primary_parallel import ParallelDispatchError
+        wave = self._ready_wave()
+        limits = ProviderAttemptBudget.from_usd(
+            project_id=wave.packet["project"],
+            attempt_usd=float(wave.packet["limits"]["budget_usd"]) / 3.0,
+            task_usd=wave.settings.max_task_budget_usd,
+            daily_usd=wave.settings.max_daily_provider_budget_usd)
+
+        def admit():
+            return self.ledger.reserve_provider_attempt(
+                reservation=wave.reservation, writer=wave.writer, attempt_ordinal=1,
+                format_roster=(("model-work-packet-v1", "responses-api"),),
+                idempotency_key_digest=digest("idem-lease"),
+                budget_evidence_digest="sha256:" + wave.budget.grant_digest,
+                budget_admission=ProviderBudgetAdmission(self.authority,
+                                                          wave.budget.grant_digest),
+                budget_limits=limits,
+                expected_authority_digest=wave.budget.grant_digest)
+
+        with ThreadPoolExecutor(max_workers=1) as pool, self._no_provider_call():
+            with self.handle.pool.connection() as blocker, blocker.transaction():
+                blocker.execute(
+                    f"SELECT * FROM {self.schema}.director_primary_parallel_batch "
+                    "WHERE task_id=%s FOR UPDATE", (wave.task_id,))
+                with self.handle.pool.connection() as expiring, expiring.transaction():
+                    expiring.execute(
+                        f"UPDATE {self.schema}.director_primary_task_writer "
+                        "SET lease_expires_at = clock_timestamp() + interval '1 second' "
+                        "WHERE task_id=%s", (wave.task_id,))
+                admitting = pool.submit(admit)
+                sleep(1.6)
+                self.assertFalse(admitting.done(),
+                                  "admission must still be waiting on the locked batch row")
+            with self.assertRaises(ParallelDispatchError) as raised:
+                admitting.result(timeout=30)
+        self.assertIn("writer authority", str(raised.exception))
+        self._assert_no_admission_rows()
+
     def test_enrollment_replaced_after_admission_stops_the_send(self):
         """Between a committed admission and the provider call, it still holds."""
 
@@ -2052,3 +2106,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]

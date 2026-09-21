@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | BEGIN]]
@@ -49,6 +50,7 @@ from time import monotonic
 from unittest.mock import patch
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from director_orchestrator.langgraph_postgres import (
@@ -3579,11 +3581,13 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
                 f"{TEST_DSN_VARIABLE} is required for the real-Postgres suite"
             )
         cls.schema = f"director_timer_it_{uuid.uuid4().hex[:8]}_v1"
-        # One connection only, so "the same pooled connection" is not a guess.
+        # One idle connection, so sequential acquisitions reuse it and "the
+        # same pooled connection" is not a guess; a second is available only
+        # for the cases that genuinely need a concurrent blocker.
         cls.handle = open_postgres_control_plane(
             _TEST_DSN,
             schema=cls.schema,
-            bounds=PostgresPoolBounds(min_size=1, max_size=1),
+            bounds=PostgresPoolBounds(min_size=1, max_size=2),
             allow_insecure_local_transport=True,
             completion_authority_verifier=COMPLETION_VERIFIER,
         )
@@ -3617,6 +3621,60 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
             return connection.execute(
                 f"SELECT count(*) AS n FROM {self.schema}.timer_probe").fetchone()["n"]
 
+    def timeout_cause(self, raised):
+        """What PostgreSQL actually reported, not merely 'an error'.
+
+        `transaction_timeout` aborts the transaction *and terminates the
+        session*, so a client either reads the SQLSTATE first (25P04, or
+        57014 for a statement/lock limit) or, when the statement was still in
+        flight, sees that termination as a closed connection. Both are the
+        same server event; anything else is not a deadline witness.
+        """
+
+        cause = raised
+        while cause is not None and not isinstance(cause, psycopg.Error):
+            cause = cause.__cause__
+        self.assertIsNotNone(cause, f"expected a PostgreSQL timeout, got {raised!r}")
+        if cause.sqlstate is None:
+            self.assertIsInstance(cause, psycopg.OperationalError, repr(cause))
+            self.assertIn("server closed the connection", str(cause), repr(cause))
+            return "terminated"
+        self.assertIn(cause.sqlstate, {"25P04", "57014"}, repr(cause))
+        return cause.sqlstate
+
+    def test_a_bounded_read_ends_under_a_real_table_lock(self):
+        """The bound must survive into the statement it was taken for.
+
+        These readers are autocommit: `SET LOCAL` issued outside an explicit
+        transaction ends with the statement that set it, leaving the read that
+        follows unbounded - the reproduced defect. Both now read inside one
+        transaction, so a table lock they cannot get ends them on time.
+        """
+        store = self.handle.claim_store
+        writer = store.acquire_task_writer(
+            f"task-{uuid.uuid4().hex[:10]}", engine_owner="langgraph",
+            owner_token="owner-deadline", expected_generation=INITIAL_FENCING_GENERATION)
+        readers = (
+            ("director_primary_task_projection",
+             lambda: store.read_primary_task_projection(
+                 writer.task_id, deadline=monotonic() + 0.4)),
+            ("director_primary_task_writer",
+             lambda: store.current_task_writer(
+                 writer.task_id, deadline=monotonic() + 0.4)),
+        )
+        for table, read in readers:
+            with self.subTest(table=table):
+                started = monotonic()
+                with self.handle.pool.connection() as blocker, blocker.transaction():
+                    blocker.execute(
+                        f"LOCK TABLE {self.schema}.{table} IN ACCESS EXCLUSIVE MODE")
+                    with self.assertRaises(Exception) as raised:
+                        read()
+                    elapsed = monotonic() - started
+                self.timeout_cause(raised.exception)
+                self.assertGreater(elapsed, 0.2, "it must have waited on the lock")
+                self.assertLess(elapsed, 4.0, "and stopped at its own bound")
+
     def test_a_tightened_bound_ends_the_transaction_at_the_earlier_instant(self):
         """Cumulative statements, each individually short, must still stop.
 
@@ -3627,7 +3685,7 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
         """
         started = monotonic()
         reported = None
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as raised:
             with self.handle.pool.connection() as connection, connection.transaction():
                 bind_transaction_deadline(connection, started + 1.0)
                 bind_transaction_deadline(connection, started + 0.25)
@@ -3638,6 +3696,8 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
                 connection.execute(
                     f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
         elapsed = monotonic() - started
+        self.assertEqual("25P04", self.timeout_cause(raised.exception),
+                          "the whole-transaction timer, not a per-statement one")
         self.assertIsNotNone(reported)
         self.assertGreater(elapsed, 0.2, "it must not end before its own bound")
         self.assertLess(elapsed, 0.9, "the tightened bound, not the first one, must end it")
@@ -3667,13 +3727,14 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
         row may survive.
         """
         started = monotonic()
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as raised:
             with self.handle.pool.connection() as connection, connection.transaction():
                 bind_transaction_deadline(connection, started + 2.0)
                 bind_transaction_deadline(connection, started + 0.3)
                 connection.execute(
                     f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
         elapsed = monotonic() - started
+        self.assertEqual("25P04", self.timeout_cause(raised.exception))
         self.assertLess(elapsed, 0.9, "the deferred COMMIT must not outlive the bound")
         self.assertEqual(0, self.rows())
 
@@ -3694,13 +3755,12 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
 
         started = monotonic()
         with self.handle.pool.connection() as connection:
-            reused = connection.info.backend_pid
             with connection.transaction():
                 bind_transaction_deadline(connection, started + 0.3)
                 connection.execute("SELECT 1")
-        with self.handle.pool.connection() as connection:
-            self.assertEqual(reused, connection.info.backend_pid,
-                             "this case is only meaningful on the same connection")
+            # The same physical connection, a new transaction: the recorded
+            # bound reverted with the transaction that set it, so nothing of
+            # the spent 0.3s deadline can leak into this one.
             with connection.transaction():
                 bind_transaction_deadline(connection, monotonic() + 8.0)
                 # Well past the previous transaction's absolute deadline.
@@ -3709,6 +3769,156 @@ class TransactionDeadlineBindingTests(unittest.TestCase):
                     f"INSERT INTO {self.schema}.timer_probe DEFAULT VALUES")
         self.assertGreater(monotonic() - started, 0.6)
         self.assertEqual(1, self.rows())
+
+
+class CheckpointOperationDeadlineTests(unittest.TestCase):
+    """The installed `PostgresSaver`, bounded where it actually waits.
+
+    `_cursor` takes the saver's own mutex *before* it asks the pool for a
+    connection, and then performs cumulative blob and checkpoint work that a
+    per-statement limit cannot bound as one operation. Both are exercised
+    here against the real saver and a real schema.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not _TEST_DSN:
+            raise RuntimeError(
+                f"{TEST_DSN_VARIABLE} is required for the real-Postgres suite"
+            )
+        cls.schema = f"director_saver_it_{uuid.uuid4().hex[:8]}_v1"
+        cls.handle = open_postgres_control_plane(
+            _TEST_DSN,
+            schema=cls.schema,
+            bounds=PostgresPoolBounds(min_size=1, max_size=4),
+            allow_insecure_local_transport=True,
+            completion_authority_verifier=COMPLETION_VERIFIER,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if getattr(cls, "handle", None) is None:
+            return
+        try:
+            with cls.handle.pool.connection() as connection:
+                connection.execute(f"DROP SCHEMA IF EXISTS {cls.schema} CASCADE")
+        finally:
+            cls.handle.close()
+
+    def checkpoint(self):
+        """One minimal checkpoint whose channel value is stored as a blob."""
+
+        return {
+            "v": 1,
+            "id": str(uuid.uuid4()),
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "channel_values": {"state": {"bounded": True}},
+            "channel_versions": {"state": "1"},
+            "versions_seen": {},
+            "pending_sends": [],
+        }
+
+    def put(self, thread_id: str):
+        return self.handle.saver.put(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+            self.checkpoint(),
+            {"source": "update", "step": 1, "parents": {}},
+            {"state": "1"},
+        )
+
+    def rows(self, table: str) -> int:
+        with self.handle.pool.connection() as connection:
+            return connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.{table}").fetchone()["n"]
+
+    def test_saver_mutex_wait_is_bounded_and_releases_cleanly(self):
+        """The wait for the saver's own lock is inside the cutoff.
+
+        The pool cannot bound this: `_cursor` holds the mutex before it asks
+        for a connection. The caller that cannot take it in time has done
+        nothing at all - no connection, no statement, no write - and the
+        holder releases and joins normally afterwards.
+        """
+        from director_orchestrator.langgraph_postgres import checkpoint_deadline
+
+        released = threading.Event()
+        holding = threading.Event()
+
+        def hold():
+            with self.handle.saver.lock:
+                holding.set()
+                released.wait(timeout=10)
+
+        holder = threading.Thread(target=hold, name="saver-mutex-holder")
+        holder.start()
+        try:
+            self.assertTrue(holding.wait(timeout=5))
+            started = monotonic()
+            with self.assertRaises(DeadlineExpired):
+                with checkpoint_deadline(monotonic() + 0.4):
+                    self.put(f"thread-{uuid.uuid4().hex[:8]}")
+            elapsed = monotonic() - started
+        finally:
+            released.set()
+            holder.join(timeout=10)
+        self.assertFalse(holder.is_alive())
+        self.assertGreater(elapsed, 0.2, "it must have waited for the mutex")
+        self.assertLess(elapsed, 3.0, "and stopped at the published cutoff")
+        self.assertEqual(0, self.rows("checkpoints"))
+        self.assertEqual(0, self.rows("checkpoint_blobs"))
+        # The mutex is usable again: the bound refused a wait, not the lock.
+        self.put(f"thread-{uuid.uuid4().hex[:8]}")
+        self.assertEqual(1, self.rows("checkpoints"))
+
+    def test_cumulative_checkpoint_writes_abort_as_one_transaction(self):
+        """Separate statement limits are not one operation deadline.
+
+        Each write below is comfortably inside any per-statement allowance;
+        together they are not. The connection is handed to the saver with one
+        transaction already bound, so the sum, the pipeline synchronisation
+        and the commit share a single deadline - and nothing of that
+        checkpoint becomes durable afterwards.
+        """
+        from director_orchestrator.langgraph_postgres import checkpoint_deadline
+
+        with self.handle.pool.connection() as connection, connection.transaction():
+            connection.execute(
+                f"""CREATE FUNCTION {self.schema}.checkpoint_delay() RETURNS trigger
+                LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.25); RETURN NEW; END $$""")
+            for table in ("checkpoint_blobs", "checkpoints"):
+                connection.execute(
+                    f"""CREATE TRIGGER {table}_delay BEFORE INSERT ON {self.schema}.{table}
+                    FOR EACH ROW EXECUTE FUNCTION {self.schema}.checkpoint_delay()""")
+        self.addCleanup(self.drop_delays)
+        before = self.rows("checkpoints")
+        started = monotonic()
+        with self.assertRaises(Exception) as raised:
+            with checkpoint_deadline(monotonic() + 0.4):
+                self.put(f"thread-{uuid.uuid4().hex[:8]}")
+        elapsed = monotonic() - started
+        cause = raised.exception
+        while cause is not None and not isinstance(cause, psycopg.Error):
+            cause = cause.__cause__
+        self.assertIsNotNone(cause, f"expected a PostgreSQL timeout, got {raised.exception!r}")
+        # In pipeline mode the transaction timer's session termination is what
+        # reaches the client first; outside it the SQLSTATE arrives directly.
+        if cause.sqlstate is None:
+            self.assertIsInstance(cause, psycopg.OperationalError, repr(cause))
+            self.assertIn("server closed the connection", str(cause), repr(cause))
+        else:
+            self.assertIn(cause.sqlstate, {"25P04", "57014"}, repr(cause))
+        self.assertGreater(elapsed, 0.2, "the writes really did run")
+        self.assertLess(elapsed, 3.0, "and the sum was cut off at the cutoff")
+        self.assertEqual(before, self.rows("checkpoints"),
+                          "an aborted checkpoint leaves nothing durable")
+
+    def drop_delays(self):
+        with self.handle.pool.connection() as connection, connection.transaction():
+            for table in ("checkpoint_blobs", "checkpoints"):
+                connection.execute(
+                    f"DROP TRIGGER IF EXISTS {table}_delay ON {self.schema}.{table}")
+            connection.execute(
+                f"DROP FUNCTION IF EXISTS {self.schema}.checkpoint_delay()")
 
 
 if __name__ == "__main__":
@@ -3740,3 +3950,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]

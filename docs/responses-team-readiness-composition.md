@@ -1,5 +1,6 @@
-<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | BEGIN]] -->
@@ -70,9 +71,11 @@ provider.
 
 ## Authority at the real generation boundary
 
-The Responses transport counts input tokens before it generates anything, and
-that count is a provider request the caller can wait on for an unbounded time.
-Every check above ran before that wait. `ProviderAdapterContext.authority_recheck`
+The Responses transport counts input tokens before it generates anything. That
+count is itself a provider request: it is bounded by the same carried deadline
+as the rest of the attempt (`remaining_seconds()` is re-evaluated for it and
+the whole call runs under `asyncio.timeout`), but within that bound the
+provider can make the caller wait, and every check above ran before that wait. `ProviderAdapterContext.authority_recheck`
 - created by the live coordinator, never by a transport - is therefore called
 immediately before the generation request and re-reads the durable rows: the
 wave's `kill_switch` (what `coordinator.cancel` engages), this task's
@@ -86,10 +89,13 @@ automatic repeat follows, and the admitted rows, slot and any recorded usage
 are preserved. A transport with no such callback holds no authority of its own
 and invents none.
 
-A `WorkloadAdmissionHold` raised at the pre-I/O checks propagates out of
-`_execute_three_attempt_roster` instead of being classified: it is raised
-strictly before `adapter.dispatch` is entered, so there is no provider request
-to be ambiguous about. The admitted attempt keeps its rows, slot and evidence.
+A `WorkloadAdmissionHold` propagates out of `_execute_three_attempt_roster`
+instead of being classified. It arises at two places: before `adapter.dispatch`
+is entered at all, and - since this revision - from `authority_recheck` inside
+the Responses path, after the input-token count and strictly before the
+generation request. In both cases no generated result exists to be ambiguous
+about, so the hold is an owner decision and the admitted attempt keeps its
+rows, slot and evidence. It is never raised after a generation request is sent.
 
 ## Cancellation
 
@@ -133,6 +139,16 @@ session, and the pool discards that connection - the test log shows exactly
 that discard. Every unbounded caller is unchanged: the parameter is optional
 throughout.
 
+Binding happens **inside an explicit transaction**, never beside one. These
+pools are autocommit, so `SET LOCAL` issued outside a transaction block lasts
+only for the statement that sets it: an independent probe on 17.11 read both
+timeouts back as `0` immediately after binding, and a 0.35s sleep then
+completed against a 0.20s bound. A pool-acquisition timeout does not bound the
+SQL that follows either. `bounded_transaction` therefore acquires, opens one
+transaction and binds within it; the read paths that spend a deadline -
+`read_primary_task_projection`, `current_task_writer`, `aggregate`, the wave
+cancellation read and the generation-boundary authority read - all use it.
+
 Binding **tightens only, and tightening is enforced**. PostgreSQL 17's
 `assign_transaction_timeout` hook enables the timer only while it is inactive,
 so assigning a smaller value to a running transaction updates the setting and
@@ -161,18 +177,26 @@ single absolute cutoff from the operation's own deadline. Every call in one
 operation computes the identical instant, so no call can renew it, and it
 authorises no execution, retry or eligibility.
 
+Two things the checkpointer does are not the pool's to bound. `_cursor` takes
+the saver's own mutex *before* it asks for a connection, so that wait is
+bounded at the same object: the saver's `lock` is wrapped to refuse waiting
+past the published cutoff, and a caller refused there has taken no connection
+and written nothing. Once the connection is handed over it already carries one
+open transaction with `transaction_timeout` armed, so the cumulative blob and
+checkpoint statements, the pipeline synchronisation and the COMMIT share one
+absolute deadline instead of a series of independent per-statement allowances -
+and an aborted checkpoint leaves nothing durable to contradict the refusal.
+
 That cutoff reaches the foreground writes the wave actually performs:
 `record_attempt` through `PrimaryTaskCoordinator.record_provider_attempt` and
 its writer resolution, the successful roster's `record_result_packet_artifact`
 including its advisory-lock wait, `execute_ready`'s own `record_result` while
 `executor.map` is still waiting, and the coordinator's `aggregate`,
 `record_parallel_aggregate` and outcome projection write. The checkpointer
-acquires its own connections, so `record_parallel_aggregate` publishes the
-cutoff for its context and the shared pool applies it - as session
-`statement_timeout`/`lock_timeout`, cleared when the connection is returned -
-to the snapshot read, the state update and the outcome read alike. No thread,
-queue or background writer is introduced: when the call returns, the bound is
-gone.
+acquires its own connections and mutex, so `record_parallel_aggregate`
+publishes the cutoff for its context and the saver and pool apply it to the
+snapshot read, the state update and the outcome read alike. No thread, queue
+or background writer is introduced: when the call returns, the bound is gone.
 
 On failure the reservation and any recorded usage are retained, the attempt
 stays STARTED for reconciliation, and unconfirmed persistence is reported as a
@@ -216,22 +240,40 @@ discovery. Paid execution stays false and every provider reply is synthetic
 (`httpx.MockTransport`, no network). The Director runs independent QA and
 arranges exact-head review; none of this is acceptance.
 
-- `--group full` (all ten selected modules, now including
-  `tests/test_langgraph_primary.py`): **407 tests, all passing**, this revision.
+Every figure below is a run that completed. The previous revision's final
+`--group full --warnings` and `--group full` attempts were cut off by the
+author window and produced no result; those receipts stand as they are and
+nothing here is claimed from them.
+
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  41 tests, all passing.
-- `--group admission`: 179 tests, all passing, including the five real
-  PostgreSQL 17 transaction-timer cases below.
-- `--group startup`: 1 test, passing.
+  42 tests, all passing, this revision.
+- `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
+  `test_primary_coordinator`, `test_langgraph_postgres`): 182 tests, all
+  passing, this revision, including every PostgreSQL deadline case below.
+- `--group full` (all ten selected modules, including
+  `tests/test_langgraph_primary.py`): **412 tests, all passing**, this
+  revision, in 262s with zero resource warnings and a verified lane teardown.
+- `--group startup`: 1 test, passing, this revision.
+
+Only this document changed after that full run; no source or test byte did.
 
 `tests/test_langgraph_postgres.py::TransactionDeadlineBindingTests` proves the
-timer by wall clock and durable rows, never by `SHOW` alone: a bound tightened
-from 1.0s to 0.25s ends two cumulative sleeps and commits nothing; a later 5.0s
-bound does not extend an earlier 0.25s one; a deferred constraint trigger
-sleeping 0.5s during COMMIT is cut off by a bound tightened to 0.3s; an
-already-expired bound is refused before and after an earlier one; and the same
-pooled connection runs a later transaction 0.6s past the previous transaction's
-deadline and commits.
+timer by wall clock, durable rows and the reported SQLSTATE, never by `SHOW`
+alone: a bound tightened from 1.0s to 0.25s ends two cumulative sleeps with
+25P04 and commits nothing; a later 5.0s bound does not extend an earlier 0.25s
+one; a deferred constraint trigger sleeping 0.5s during COMMIT is cut off by a
+bound tightened to 0.3s, again 25P04; an already-expired bound is refused
+before and after an earlier one; the same connection runs a later transaction
+0.6s past the previous transaction's deadline and commits; and the real
+projection and writer readers, under an `ACCESS EXCLUSIVE` table lock, end at
+their own bound instead of silently losing it.
+
+`CheckpointOperationDeadlineTests` exercises the installed saver itself: a
+second thread holds the saver's mutex while the cutoff expires, the caller is
+refused in time with nothing written and the holder releases and joins
+cleanly; and with `BEFORE INSERT` triggers delaying the blob and checkpoint
+writes - each well inside any per-statement allowance, their sum outside the
+cutoff - the operation aborts and no checkpoint row survives.
 
 `tests/test_primary_default.py::DefaultPrimaryApplicationIntegrationTests`
 covers the foreground completion path through the real coordinator and the real
@@ -268,6 +310,10 @@ and the real transport:
 - **Competing authority** - a second valid signed budget registered while
   admission is blocked on the batch row rolls every write of that admission
   back.
+- **Expiring writer lease** - a lease set to run out during a genuine
+  admission lock wait is refused at the final fence, against the real clock
+  rather than this transaction's start time, with nothing admitted and no
+  provider call.
 - **Bounded completion** - with the writer row held after the provider has
   answered, the attempt's outcome write ends inside the completion allowance;
   the attempt stays STARTED and the authenticated usage already recorded for it
@@ -297,6 +343,9 @@ and the real transport:
 | Checked selection carried into atomic admission | Done, exercised |
 | One deadline spanning readiness, admission and I/O | Done, exercised |
 | A tightened PostgreSQL timer actually tightens; none extends it | Done, exercised |
+| Bounds survive into the statements they were taken for | Done, exercised |
+| The saver's mutex and cumulative checkpoint work are bounded | Done, exercised |
+| Writer lease proved against the real clock at the final fence | Done, exercised |
 | Full authority re-selected after the admission waits | Done, exercised |
 | Cancellation honoured at admission, pre-I/O and at generation | Done, exercised |
 | Writer/plan binding re-read at the real generation boundary | Done, exercised |
@@ -323,12 +372,11 @@ and the real transport:
 - `transaction_timeout` requires PostgreSQL 17; on an older server the helper
   applies statement and lock timeouts only, which do not bound commit-time
   work. The sanctioned lane, Compose and CI all pin 17.
-- The checkpointer's bound is session `statement_timeout`/`lock_timeout` set at
-  each connection it takes inside the published scope, so one statement that
-  starts just before the cutoff may run for its own remaining window; the bound
-  is not a single server-side transaction timer, because those connections are
-  autocommit and each operation is its own transaction. A checkpoint write that
-  is cut off mid-flight is reported as a failure, not reconciled automatically.
+- A checkpoint aborted by its own deadline is reported as a failure and
+  reconciled by the owner, not retried here. When the transaction timer fires
+  during pipeline synchronisation, PostgreSQL terminates the session, so the
+  client sees a closed connection rather than SQLSTATE 25P04; the tests accept
+  exactly those two shapes and nothing else.
 - Provider-outcome-unknown classification is still asserted through existing
   tests rather than a dedicated case in this module.
 - Full CI, an independent non-author security and source review, and an
@@ -374,6 +422,16 @@ and the real transport:
   One nonrenewable completion allowance now reaches the attempt outcome, result
   artifact, slot settlement, aggregate, outcome projection and checkpoint
   writes; the checkpointer's own pool applies it for the duration of that call.
+- **2026-09-21 14:07 UTC (this revision)**: an independent probe reproduced the
+  helper's lifetime defect - `SET LOCAL` outside a transaction on an autocommit
+  connection is gone before the next statement - so every bounded read path now
+  binds inside one explicit transaction. The saver's own mutex wait and its
+  cumulative blob/checkpoint/synchronisation/commit work are bounded at the
+  seams that actually wait. The writer lease is proved against
+  `clock_timestamp()` at the final admission fence, because `now()` is
+  transaction-start time and a lock wait can outlast a lease. Timeout
+  witnesses now identify the SQLSTATE or the session termination, and this
+  document's outer contribution records and evidence claims are corrected.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -381,3 +439,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]] -->

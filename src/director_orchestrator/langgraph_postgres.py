@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -553,6 +554,26 @@ def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
     )
 
 
+@contextmanager
+def bounded_transaction(pool: Any, deadline: float | None) -> Any:
+    """Acquire, open one transaction, and bind the deadline *inside* it.
+
+    The pool's connections are autocommit, so `SET LOCAL` outside an explicit
+    transaction lasts only for the statement that sets it: an independent
+    probe on 17.11 read both timeouts back as `0` immediately after binding,
+    and a 0.35s sleep then completed against a 0.20s bound. A pool-acquisition
+    timeout does not bound the SQL that follows either. Read paths that spend
+    a deadline therefore use this, so the bound covers the statements it was
+    taken for. Callers with no deadline still get one explicit transaction,
+    which for a read is a consistent snapshot rather than a behaviour change.
+    """
+
+    with bounded_connection(pool, deadline) as connection:
+        with connection.transaction():
+            bind_transaction_deadline(connection, deadline)
+            yield connection
+
+
 # The checkpointer acquires its own connections from this same pool, so a
 # caller cannot hand a cutoff to `get_state`/`update_state` directly. One
 # absolute cutoff is published for the current context instead, and the pool
@@ -579,11 +600,14 @@ def _bind_checkpoint_deadline_to_pool(pool: Any) -> Any:
 
     The pool keeps its own type and identity - the checkpointer's own
     `isinstance` dispatch still recognises it - and only its `connection`
-    accessor is wrapped. Checkpoint connections are autocommit, so each
-    operation is its own transaction and `statement_timeout`/`lock_timeout`
-    bound it completely; they are set for the session and cleared when the
-    connection is returned, because there is no surrounding transaction to
-    revert them. An already expired cutoff refuses the acquisition outright.
+    accessor is wrapped. Inside the published scope the connection is handed
+    over with one explicit transaction already open and `transaction_timeout`
+    armed on it, so the saver's cumulative blob and checkpoint statements, its
+    pipeline synchronisation and the COMMIT are all inside one absolute
+    deadline rather than a series of independent per-statement allowances. If
+    that deadline passes, PostgreSQL aborts the transaction and nothing of
+    that checkpoint is durable - a late write cannot appear after the caller
+    has already been refused. An already expired cutoff refuses outright.
     """
 
     acquire = pool.connection
@@ -599,27 +623,63 @@ def _bind_checkpoint_deadline_to_pool(pool: Any) -> Any:
         supplied = kwargs.get("timeout")
         kwargs["timeout"] = remaining if supplied is None else min(remaining, supplied)
         with acquire(*args, **kwargs) as bound:
-            milliseconds = str(
-                max(1, ceil(require_deadline_remaining(deadline, "checkpoint") * 1000))
-            )
-            bound.execute(
-                "SELECT set_config('statement_timeout',%(ms)s,false),"
-                " set_config('lock_timeout',%(ms)s,false)",
-                {"ms": milliseconds},
-            )
-            try:
+            with bound.transaction():
+                bind_transaction_deadline(bound, deadline)
                 yield bound
-            finally:
-                try:
-                    bound.execute("RESET statement_timeout")
-                    bound.execute("RESET lock_timeout")
-                except Exception:
-                    # A connection the server already terminated cannot be
-                    # reset; the pool discards it rather than reusing it.
-                    pass
 
     pool.connection = connection
     return pool
+
+
+class _BoundedCheckpointLock:
+    """The saver's own mutex, with its wait bounded by the published cutoff.
+
+    `PostgresSaver._cursor` takes this lock *before* it asks the pool for a
+    connection, so a pool-side bound cannot cover the wait for it. This is the
+    same lock object the saver already uses and the same mutual exclusion; it
+    simply refuses to wait past the cutoff the current context published. No
+    worker, queue or deferred write is introduced: a caller that cannot take
+    the lock in time has done nothing at all.
+    """
+
+    __slots__ = ("_lock",)
+
+    def __init__(self, lock: Any) -> None:
+        self._lock = lock
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        deadline = _CHECKPOINT_DEADLINE.get()
+        if deadline is None or not blocking:
+            return self._lock.acquire(blocking, timeout)
+        remaining = require_deadline_remaining(deadline, "checkpoint mutex")
+        if timeout is not None and timeout >= 0:
+            remaining = min(remaining, timeout)
+        if not self._lock.acquire(True, remaining):
+            raise DeadlineExpired(
+                "checkpoint mutex deadline expired before the operation started"
+            )
+        return True
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *_exception: object) -> None:
+        self.release()
+
+
+def _bind_checkpoint_deadline_to_saver(saver: Any) -> Any:
+    """Bound the saver's own serialisation mutex with the published cutoff."""
+
+    lock = getattr(saver, "lock", None)
+    if lock is not None and not isinstance(lock, _BoundedCheckpointLock):
+        saver.lock = _BoundedCheckpointLock(lock)
+    return saver
 
 
 def _build_strict_serializer(serializer_type: type[Any]) -> Any:
@@ -2499,8 +2559,7 @@ class PostgresConditionalClaimStore:
         self, task_id: str, *, deadline: float | None = None
     ) -> PrimaryTaskProjection | None:
         _require_id(task_id, "task_id")
-        with bounded_connection(self._pool, deadline) as connection:
-            bind_transaction_deadline(connection, deadline)
+        with bounded_transaction(self._pool, deadline) as connection:
             row = self._optional_row(
                 connection,
                 f"""
@@ -3510,13 +3569,13 @@ class PostgresConditionalClaimStore:
         """Return the recorded writer row, expired or not, for reconciliation."""
 
         _require_id(task_id, "task_id")
-        with bounded_connection(self._pool, deadline) as connection:
-            bind_transaction_deadline(connection, deadline)
+        with bounded_transaction(self._pool, deadline) as connection:
             row = self._optional_row(
                 connection,
                 f"""
                 SELECT task_id, engine_owner, owner_token, fencing_generation,
-                       lease_expires_at, lease_expires_at > now() AS lease_live
+                       lease_expires_at,
+                       lease_expires_at > clock_timestamp() AS lease_live
                 FROM {self._schema}.director_primary_task_writer
                 WHERE task_id = %(task_id)s
                 """,
@@ -5447,6 +5506,7 @@ def open_postgres_control_plane(
         )
         saver = dependencies.saver_type(pool, serde=serializer)
         saver.setup()
+        _bind_checkpoint_deadline_to_saver(saver)
         claim_store = PostgresConditionalClaimStore(
             _pool=pool,
             _schema=schema,
@@ -5526,3 +5586,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]

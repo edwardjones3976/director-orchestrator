@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
@@ -343,15 +344,14 @@ def _require_current_dispatch_authority(
     admitted rows, slot and any recorded usage exactly as they are.
     """
 
-    from .langgraph_postgres import bind_transaction_deadline, bounded_connection
+    from .langgraph_postgres import bounded_transaction
     from .primary_workload import WorkloadAdmissionHold
 
     schema = handle.schema
-    with bounded_connection(handle.pool, deadline) as connection:
-        bind_transaction_deadline(connection, deadline)
+    with bounded_transaction(handle.pool, deadline) as connection:
         row = connection.execute(
             f"""SELECT b.kill_switch, w.owner_token, w.fencing_generation,
-                   (w.lease_expires_at > now()) AS lease_live,
+                   (w.lease_expires_at > clock_timestamp()) AS lease_live,
                    a.status AS assignment_status, a.provider_id, a.reservation_digest
             FROM {schema}.director_primary_parallel_batch b
             LEFT JOIN {schema}.director_primary_task_writer w
@@ -2703,9 +2703,8 @@ class DefaultPrimaryActivation:
                     under its own lock before committing anything.
                     """
 
-                    from .langgraph_postgres import bind_transaction_deadline, bounded_connection
-                    with bounded_connection(handle.pool, deadline) as connection:
-                        bind_transaction_deadline(connection, deadline)
+                    from .langgraph_postgres import bounded_transaction
+                    with bounded_transaction(handle.pool, deadline) as connection:
                         row = connection.execute(
                             f"SELECT kill_switch FROM {handle.schema}.director_primary_parallel_batch "
                             "WHERE task_id=%s", (task_id,)).fetchone()
@@ -3550,3 +3549,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
