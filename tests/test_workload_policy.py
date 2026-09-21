@@ -493,10 +493,10 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
         self.assertEqual(result.violations, ())
 
-    def test_shadow_mode_keeps_share_pressure_advisory(self):
+    def test_share_pressure_is_fully_advisory(self):
         direct_history = tuple(
             DirectProductionRecord(
-                f"CLAUDE-SHADOW-{index}", DirectProductionProvider.CLAUDE
+                f"CLAUDE-{index}", DirectProductionProvider.CLAUDE
             )
             for index in range(19)
         )
@@ -511,9 +511,9 @@ class AssignmentRoutingTests(unittest.TestCase):
         )
 
         self.assertTrue(result.allowed)
-        self.assertTrue(result.would_block)
-        self.assertEqual(result.outcome, DecisionOutcome.SHADOW_WOULD_BLOCK)
-        self.assertEqual(result.to_dict()["outcome"], "shadow_would_block")
+        self.assertFalse(result.would_block)
+        self.assertEqual(result.outcome, DecisionOutcome.ALLOW)
+        self.assertEqual(result.to_dict()["outcome"], "allow")
 
 
 class DirectProductionRoutingTests(unittest.TestCase):
@@ -552,12 +552,12 @@ class DirectProductionRoutingTests(unittest.TestCase):
                     (max(0, target - 3), target + 3),
                 )
 
-    def test_direct_production_count_ceiling_applies_to_twenty_assignment_window(self):
+    def test_direct_production_count_ceiling_is_retired_and_advisory(self):
         for runtime_provider, direct_provider in self.PROVIDER_CASES:
             ceiling = DEFAULT_POLICY.direct_production_target(direct_provider) + 5
             maximum = ceiling * 20 // 100
             other = DirectProductionProvider.EXTERNAL_OPENAI
-            for prospective_count, allowed in ((maximum, DEFAULT_POLICY.direct_production_target(direct_provider) > 0), (maximum + 1, False)):
+            for prospective_count, allowed in ((maximum, DEFAULT_POLICY.direct_production_target(direct_provider) > 0), (maximum + 1, DEFAULT_POLICY.direct_production_target(direct_provider) > 0)):
                 providers = [direct_provider] * (prospective_count - 1) + [other] * (20 - prospective_count)
                 history = tuple(DirectProductionRecord(str(i), provider, 100 if provider is other else 1)
                                 for i, provider in enumerate(providers))
@@ -592,10 +592,14 @@ class DirectProductionRoutingTests(unittest.TestCase):
             direct_production_history=history,
         )
 
-        self.assertFalse(result.allowed)
+        self.assertTrue(result.allowed)
         self.assertIn(
             "prospective_direct_production_share:cursor:5/20",
             result.advisories,
+        )
+        self.assertNotIn(
+            "direct_production_hard_cap_exceeded:cursor:20",
+            result.violations,
         )
         self.assertIn(
             "direct_production_above_soft_band:cursor:18",
@@ -620,7 +624,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
                 self.assertEqual(result.violations, ())
                 self.assertNotIn("claude", " ".join(result.advisories))
 
-    def test_above_band_candidate_provider_is_hard_blocked_with_soft_advisory(self):
+    def test_above_band_candidate_provider_is_allowed_with_soft_advisory(self):
         result = evaluate_assignment(
             assignment(
                 Provider.CLAUDE,
@@ -631,12 +635,12 @@ class DirectProductionRoutingTests(unittest.TestCase):
             direct_production_history=self._mature_corrective_history(),
         )
 
-        self.assertFalse(result.allowed)
+        self.assertTrue(result.allowed)
         self.assertIn(
             "direct_production_above_soft_band:claude:28",
             result.advisories,
         )
-        self.assertIn(
+        self.assertNotIn(
             "direct_production_hard_cap_exceeded:claude:30",
             result.violations,
         )
@@ -663,13 +667,13 @@ class DirectProductionRoutingTests(unittest.TestCase):
             direct_production_history=direct_history,
         )
 
-        self.assertFalse(result.allowed)
+        self.assertTrue(result.allowed)
         self.assertIn("total_effort_prospective_usage_guard", result.advisories)
         self.assertIn(
             "direct_production_above_soft_band:cursor:18",
             result.advisories,
         )
-        self.assertIn("direct_production_hard_cap_exceeded:cursor:20", result.violations)
+        self.assertNotIn("direct_production_hard_cap_exceeded:cursor:20", result.violations)
 
     def test_only_implementation_enters_prospective_direct_production(self):
         history = tuple(
@@ -704,7 +708,7 @@ class DirectProductionRoutingTests(unittest.TestCase):
         policy = WorkloadPolicy.for_profile("public_research")
         self.assertTrue(evaluate_assignment(request, policy=policy).allowed)
         history = tuple(DirectProductionRecord(str(i), DirectProductionProvider.PERPLEXITY) for i in range(6))
-        self.assertFalse(evaluate_assignment(request, policy=policy, direct_production_history=history).allowed)
+        self.assertTrue(evaluate_assignment(request, policy=policy, direct_production_history=history).allowed)
 
     def test_ordinary_openai_does_not_map_to_external_openai_production(self):
         self.assertIs(direct_production_provider(Provider.OPENAI), DirectProductionProvider.EXTERNAL_OPENAI)
@@ -765,7 +769,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             {Provider.CURSOR, Provider.CLAUDE, Provider.GROK, Provider.PERPLEXITY}
         )
 
-    def test_shadow_selector_observes_caps_without_changing_trusted_routing(self):
+    def test_selector_allows_explicit_provider_over_soft_band(self):
         history = tuple(DirectProductionRecord(f"shadow-{i}",
             DirectProductionProvider.CURSOR) for i in range(19))
         common = dict(assignment_id="SHADOW-CAPPED", kind=WorkKind.IMPLEMENTATION,
@@ -773,8 +777,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             ready_providers=self._eligible(), in_scope_providers=self._eligible(),
             reviewer_independent_providers=self._eligible(),
             direct_production_history=history, explicit_required_provider=Provider.CURSOR)
-        with self.assertRaises(WorkloadPolicyError):
-            select_cheapest_capable_provider(**common)
+        self.assertIs(select_cheapest_capable_provider(**common), Provider.CURSOR)
         self.assertIs(select_cheapest_capable_provider(**common, mode=EnforcementMode.SHADOW),
                       Provider.CURSOR)
         common["ready_providers"] = frozenset({Provider.CURSOR})
@@ -940,7 +943,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
             for index in range(5)
         ) + tuple(
             DirectProductionRecord(f"CLAUDE-{index}", DirectProductionProvider.CLAUDE)
-            for index in range(5)
+            for index in range(4)
         ) + tuple(
             DirectProductionRecord(f"GROK-{index}", DirectProductionProvider.GROK)
             for index in range(3)
@@ -950,6 +953,7 @@ class TrustedProviderSelectionTests(unittest.TestCase):
         ) + (
             DirectProductionRecord("PERPLEXITY-0", DirectProductionProvider.PERPLEXITY),
             DirectProductionRecord("EXTERNAL-0", DirectProductionProvider.EXTERNAL_OPENAI),
+            DirectProductionRecord("EXTERNAL-1", DirectProductionProvider.EXTERNAL_OPENAI),
         )
 
         selected = select_cheapest_capable_provider(
@@ -964,18 +968,18 @@ class TrustedProviderSelectionTests(unittest.TestCase):
         )
 
         self.assertIs(selected, Provider.CLAUDE)
-        with self.assertRaises(WorkloadPolicyError):
-            select_cheapest_capable_provider(
-                assignment_id="SELECT-SOFT-SHARE-EXPLICIT",
-                kind=WorkKind.IMPLEMENTATION,
-                effort_units=1,
-                trusted_profiles=self._profiles(),
-                ready_providers=self._eligible(),
-                in_scope_providers=self._eligible(),
-                reviewer_independent_providers=self._eligible(),
-                direct_production_history=history,
-                explicit_required_provider=Provider.CURSOR,
-            )
+        explicit = select_cheapest_capable_provider(
+            assignment_id="SELECT-SOFT-SHARE-EXPLICIT",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history,
+            explicit_required_provider=Provider.CURSOR,
+        )
+        self.assertIs(explicit, Provider.CURSOR)
 
     def test_selector_chooses_corrective_provider_when_another_is_above_band(self):
         history = DirectProductionRoutingTests._mature_corrective_history()
@@ -992,18 +996,18 @@ class TrustedProviderSelectionTests(unittest.TestCase):
         )
 
         self.assertIs(selected, Provider.CURSOR)
-        with self.assertRaises(WorkloadPolicyError):
-            select_cheapest_capable_provider(
-                assignment_id="SELECT-OVER-CAP-CLAUDE",
-                kind=WorkKind.IMPLEMENTATION,
-                effort_units=1,
-                trusted_profiles=self._profiles(),
-                ready_providers=self._eligible(),
-                in_scope_providers=self._eligible(),
-                reviewer_independent_providers=self._eligible(),
-                direct_production_history=history,
-                explicit_required_provider=Provider.CLAUDE,
-            )
+        explicit = select_cheapest_capable_provider(
+            assignment_id="SELECT-OVER-CAP-CLAUDE",
+            kind=WorkKind.IMPLEMENTATION,
+            effort_units=1,
+            trusted_profiles=self._profiles(),
+            ready_providers=self._eligible(),
+            in_scope_providers=self._eligible(),
+            reviewer_independent_providers=self._eligible(),
+            direct_production_history=history,
+            explicit_required_provider=Provider.CLAUDE,
+        )
+        self.assertIs(explicit, Provider.CLAUDE)
 
     def test_reviewer_independence_filters_the_cheapest_reviewer(self):
         selected = select_cheapest_capable_provider(

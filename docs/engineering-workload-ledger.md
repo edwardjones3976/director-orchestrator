@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 # External engineering assignment ledger
@@ -33,18 +34,19 @@ the proposed new assignment, and `c(p)` the number attributed to allocation buck
 
 ```
 prospective_share(p) = 100 * c(p) / 20
-normal band(p) = target(p) ± 3 percentage points
-hard admission condition(p) = target(p) > 0
-                              and prospective_share(p) <= target(p) + 5
+normal band(p) = target(p) ± 3 percentage points   (advisory routing preference)
+admission condition(p) = target(p) > 0
 ```
 
 Only real reservations fill slots. Unfilled startup slots are reported as unfilled,
 not assigned to fictitious providers. The normal band supplies the under-target
-routing preference; its upper edge is not the hard rejection threshold. Counts
-move in five-percentage-point steps. `next_eligible_routes` ranks admitted-capacity
-candidates by their prospective distance below target, after applying the hard
-ceiling. The caller must still apply capability, exact scope, quota, reviewer
-independence, security and budget gates.
+routing preference only; it never refuses admission. The owner retired the
+former target+5 hard admission ceiling on 2026-09-21 as outdated. `historical_maximum_slots`
+and `historical_hard_caps_ok` in the status payload retain that retired number for
+reference; they are explicitly non-enforcing and never block or refuse a
+reservation. `next_eligible_routes` ranks admitted-capacity candidates by their
+prospective distance below target. The caller must still apply capability, exact
+scope, quota, reviewer independence, security and budget gates.
 
 Every real reservation consumes one assignment once. Reserved, failed, rejected,
 cancelled and ambiguous rows remain in admission history. Settlement never refunds
@@ -92,13 +94,16 @@ Use this canonical policy in the prospective bootstrap manifest:
 `policy-preview --input canonical-policy.json` reads the existing allocation
 authority and reports these numbers without creating a database:
 
-| Allocation bucket | Target | Normal full-window count | Hard ceiling in twenty slots |
+| Allocation bucket | Target | Normal full-window count | Retired hard ceiling (reference only) |
 | --- | --- | --- | --- |
 | OpenAI | 40% | 8 | 9 |
 | Claude | 25% | 5 | 6 |
 | Cursor | 15% | 3 | 4 |
 | Direct Grok | 10% | 2 | 3 |
 | Antigravity | 10% | 2 | 3 |
+
+The retired-ceiling column is historical reference only; the owner retired this
+target+5 admission gate on 2026-09-21 and it no longer blocks a reservation.
 
 For actual Grok Bot, diagnostics report `allocation_binding_missing`; enrolling
 it without a binding fails with that reason. It does not borrow the direct Grok
@@ -300,7 +305,8 @@ cutover, targets, shares, deltas, reserved counts, role/identity limitations,
 unknown costs, reported bound violations and next allocation-eligible routes.
 It reopens the database read-only and checks SQLite integrity, foreign keys and
 policy digest; a changed canonical allocation digest fails closed. It recomputes
-the current window's hard-cap and normal-band checks from actual journal rows.
+the current window's retired-hard-cap reference and normal-band checks from
+actual journal rows; neither is an admission or completion gate.
 These checks cannot detect work omitted from the journal or authenticate an
 operator's imported/native receipts. The completion scorecard must preserve those
 limits; an exported `compliant: true` is not evidence.
@@ -313,7 +319,8 @@ $env:PYTHONPATH = 'src'
 ```
 
 Tests use disposable local SQLite journals, including two separate processes
-competing for the final available OpenAI slot. No provider, live database, Docker
-container, billing setting or deployment is involved.
+concurrently reserving OpenAI assignments above the retired hard ceiling. No
+provider, live database, Docker container, billing setting or deployment is involved.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->

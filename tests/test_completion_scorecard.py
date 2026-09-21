@@ -1,3 +1,5 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
@@ -436,6 +438,43 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(before, path.read_bytes())
             self.assertFalse(report["activation_authorized"])
 
+    def test_twenty_prospective_admissions_pass_despite_allocation_over_target(self):
+        from director_orchestrator.engineering_workload_ledger import EngineeringWorkloadLedger
+        reference = {"reference": "fixture-only", "sha256": "d" * 64}
+        route = {"route_id": "openai-codex:fixture-route", "product_id": "openai-codex", "actor_id": "fixture-actor", "provider_identity": "fixture-provider",
+                 "model_family": "fixture-family", "eligible": True, "roles": ["implementation"],
+                 "enrollment_evidence": reference}
+        # Canonical engineering profile: openai target is 40% with a now-retired
+        # 45% hard ceiling. Twenty real reserve() admissions to the same lane push
+        # its share to 100%, well above the retired ceiling, through the actual
+        # admission path rather than a direct SQL insertion bypass.
+        manifest = {"authorization": reference, "policy_authorization": reference, "operator": "fixture operator",
+                    "cutover_at": (NOW - timedelta(hours=1)).isoformat(),
+                    "policy": {"kind": "canonical", "profile": "engineering"},
+                    "history_mode": "prospective", "history_evidence": reference,
+                    "prior_history_unknown": True, "quiescent_cutover_verified": True,
+                    "all_future_assignments_required": True, "routes": [route]}
+        with tempfile.TemporaryDirectory() as folder, patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            path = Path(folder) / "admissions.sqlite3"
+            ledger = EngineeringWorkloadLedger(path)
+            ledger.bootstrap(manifest)
+            for number in range(20):
+                ledger.reserve({"assignment_id": f"fixture-{number}", "task_id": f"task-{number}", "scope": "test only",
+                                "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
+                                "route_id": "openai-codex:fixture-route",
+                                "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
+                                "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
+                                           "output_bytes_limit": 1000, "usd_limit": 1,
+                                           "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+            status = ledger.status()
+            openai_row = next(r for r in status["utilization"] if r["bucket"] == "openai")
+            self.assertEqual(openai_row["admitted"], 20)
+            self.assertGreater(openai_row["share_percent"], openai_row["target_percent"] + 5)
+
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "PASS")
+
     def test_ci_uses_existing_oracle_actual_steps_and_exact_sha(self):
         jobs = [{"name": name, "conclusion": "success", "steps": [{"name": "actual test"}]} for name in sc.CI_JOBS]
         def external_query(args):
@@ -532,3 +571,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]

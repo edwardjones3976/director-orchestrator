@@ -1,3 +1,5 @@
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:02 UTC | BEGIN]]
@@ -54,7 +56,6 @@ from .allocation_profiles import allocation_targets, canonical_allocation_lane, 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
 COPILOT_LITE_NORMAL_BAND = (0, 4)
-DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS = 5
 
 
 class WorkloadPolicyError(ValueError):
@@ -613,12 +614,8 @@ def direct_assignment_capacity_violation(
     real accepted/prospectively reserved assignments; no credits are invented.
     """
     prior = tuple(history)[-(policy.rolling_window_size - 1):]
-    provider_count = 1 + sum(record.provider is provider for record in prior)
     if policy.direct_production_target(provider) == 0:
         return f"allocation_profile_lane_ineligible:{provider.value}"
-    ceiling = policy.direct_production_target(provider) + DIRECT_PRODUCTION_HARD_TOLERANCE_PERCENTAGE_POINTS
-    if provider_count * 100 > ceiling * policy.rolling_window_size:
-        return f"direct_production_hard_cap_exceeded:{provider.value}:{ceiling}"
     return None
 
 
@@ -1430,3 +1427,5 @@ def _repository_path_scopes_overlap(left: str, right: str) -> bool:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]

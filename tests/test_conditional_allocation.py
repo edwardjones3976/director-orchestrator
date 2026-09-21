@@ -1,3 +1,6 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | BEGIN]]
@@ -15,6 +18,8 @@ from director_orchestrator.allocation_profiles import (
     LANES,
     allocation_profile_digest,
     allocation_targets,
+    historical_allocation_profile_digest,
+    prospective_allocation_profile_digest,
 )
 from director_orchestrator.conditional_allocation import (
     CONDITIONAL_CONTACTS,
@@ -103,6 +108,10 @@ class TestConditionalAllocation(unittest.TestCase):
         self.assertTrue(digest.startswith("sha256:"))
         self.assertEqual(len(digest), 71)
         self.assertEqual(digest, CONDITIONAL_PROFILE_DIGEST)
+        # Pin the exact original serialized v1 identity; this staged PROPOSED
+        # descriptor was never bound to a runtime cap, so its field names and
+        # digest are unchanged by the 2026-09-21 allocation hard-stop retirement.
+        self.assertEqual(digest, "sha256:494541746c456415c8b0e2c96b106a40bd2fc655016a5027383434925b748bc2")
 
         # Changing prerequisites changes digest
         modified_prereq = dataclasses.replace(profile, prerequisites=())
@@ -295,9 +304,14 @@ class TestConditionalAllocation(unittest.TestCase):
             (32, 38, 5, 5, 5, 0, 5, 10),
         )
 
-        # Pin the exact verified legacy digests
+        # Pin the exact verified legacy (retired hard-tolerance) digests. The
+        # historical helper reproduces the original payload; it never binds a
+        # new admission.
         for profile_name, expected_digest in VERIFIED_LEGACY_DIGESTS.items():
-            self.assertEqual(allocation_profile_digest(profile_name), expected_digest)
+            self.assertEqual(historical_allocation_profile_digest(profile_name), expected_digest)
+            # The current callers bind the distinct prospective nonenforcing identity.
+            self.assertNotEqual(allocation_profile_digest(profile_name), expected_digest)
+            self.assertEqual(allocation_profile_digest(profile_name), prospective_allocation_profile_digest(profile_name))
 
     def test_accurate_soft_and_hard_tolerance_metadata(self):
         """Verify window, tolerance bands, and Firecrawl mathematical boundary without admission."""
@@ -376,3 +390,6 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 10:40 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]

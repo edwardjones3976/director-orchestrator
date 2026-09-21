@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | BEGIN]] -->
@@ -42,9 +43,11 @@ an independent reviewer. Gemini and Antigravity share the Antigravity lane.
 
 Assess the prospective last nineteen real assignments plus the candidate using
 a fixed denominator of twenty, including startup. Normal tolerance is plus or
-minus three percentage points; the hard ceiling is target plus five points.
-A zero target is ineligible, even though the numerical ceiling would otherwise
-be five. Startup under-allocation is warming, never permission for filler work.
+minus three percentage points, an advisory routing preference. The owner retired
+the rolling-twenty target-plus-five hard ceiling on 2026-09-21 as outdated; the
+historical ceiling number is preserved for reference and does not block or
+refuse admission. A zero target remains ineligible regardless of history.
+Startup under-allocation is warming, never permission for filler work.
 Engineering targets correspond to eight OpenAI, five Claude, three Cursor, two
 Grok, and two Antigravity assignments per full window; these are targets, not
 mandatory concurrent agents or quotas to fill with unnecessary work.
@@ -199,9 +202,12 @@ VS Code Coding Bot are intentionally equal at 2%.
   activity ledgers and runtime consumer integration remain required and are not
   implemented by this contract.
 - **Window and tolerance:** Evaluated across a 20-slot window (5% per slot), with normal
-  tolerance of +/-3 percentage points (preference) and target + 5 points hard ceiling.
-  For Firecrawl (target 1%), a 5% mathematical slot is within the hard ceiling (6%),
-  but this descriptor conveys no actual admission or execution authority.
+  tolerance of +/-3 percentage points (preference). The descriptor's target + 5 points
+  ceiling is a historical reference number only; this staged PROPOSED descriptor was
+  never bound to a runtime cap, and the owner's 2026-09-21 retirement of the rolling-
+  twenty hard-ceiling mechanism removes nothing from it. For Firecrawl (target 1%), a
+  5% mathematical slot is within that reference ceiling (6%), but this descriptor
+  conveys no actual admission or execution authority.
 - **Specialty boundaries:** Perplexity public research and Firecrawl authorized retrieval
   boundaries are preserved; no permanent specialties exist for other participants.
 - **Canonical digest derivation:** The canonical digest dynamically binds all semantic
@@ -249,3 +255,4 @@ The ledgers are distinct, append-only SQLite files. A rolling 7-day observation 
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->

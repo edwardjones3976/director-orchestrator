@@ -1,3 +1,6 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
@@ -52,10 +55,12 @@ PREVIOUS_ENGINEERING_TARGETS = {
 
 
 def previous_engineering_digest():
-    from director_orchestrator.allocation_profiles import allocation_profile_digest
+    """Reconstruct the original historical hard-tolerance identity for the
+    pre-role-swap targets, never the current prospective identity."""
+    from director_orchestrator.allocation_profiles import historical_allocation_profile_digest
     with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
                {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
-        return allocation_profile_digest("engineering")
+        return historical_allocation_profile_digest("engineering")
 
 
 class AllocationCompatibilityTests(unittest.TestCase):
@@ -80,8 +85,10 @@ class AllocationCompatibilityTests(unittest.TestCase):
             assignment = Assignment(sequence=1, agent=ProviderName.CLAUDE,
                 kind=AssignmentKind.IMPLEMENTATION, task="Bounded fixture work",
                 acceptance=["Verified result"], workload_size=WorkSize.SIMPLE, effort_points=1)
-            with patch("director_orchestrator.allocation_profiles.ALLOCATION_PROFILES",
-                       {"engineering": PREVIOUS_ENGINEERING_TARGETS}):
+            # Bind the real imported profile-digest identity to the pinned
+            # historical value, exactly as a genuinely old row would carry.
+            with patch("director_orchestrator.store.allocation_profile_digest",
+                       return_value=old_digest):
                 prior = store.reserve_workload_assignment(
                     reservation_key=f"{record.task_id}:old-attempt", task_id=record.task_id,
                     assignment_id=f"{record.task_id}:1:1", phase="dispatch", provider=Provider.CLAUDE,
@@ -153,8 +160,7 @@ class AdmissionPolicyTests(unittest.TestCase):
                 self.assertFalse(_valid_history_row({**row, **changes}))
         self.assertEqual("workload_unsupported_allocation_lane",
                          admission_reason("microsoft-365-copilot", []))
-        self.assertEqual("workload_assignment_hard_limit",
-                         admission_reason("openai", ["openai"] * 9 + ["microsoft-365-copilot"] * 10))
+        self.assertIsNone(admission_reason("openai", ["openai"] * 9 + ["microsoft-365-copilot"] * 10))
 
     def test_bootstrap_is_explicit_and_aliases_do_not_invent_credit(self):
         self.assertIsNone(admission_reason("openai", []))
@@ -175,8 +181,7 @@ class AdmissionPolicyTests(unittest.TestCase):
 
     def test_exact_ceiling_and_rollover(self):
         self.assertIsNone(admission_reason("openai", HISTORY))
-        self.assertEqual(admission_reason("openai", HISTORY + ["openai"]),
-                         "workload_assignment_hard_limit")
+        self.assertIsNone(admission_reason("openai", HISTORY + ["openai"]))
         self.assertIsNone(admission_reason("grok", HISTORY + ["openai"]))
         self.assertIsNone(admission_reason("cursor", ["claude"] * 19))
 
@@ -477,7 +482,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         finally:
             fixture.tearDown()
 
-    def test_two_tasks_compete_atomically_for_last_slot(self):
+    def test_two_tasks_competing_can_both_succeed_over_the_old_limit(self):
         self.seed_test_history()
         tasks = [self.task(), self.task()]
         reservations = [self.ready(task) for task in tasks]
@@ -489,9 +494,9 @@ class PostgresAdmissionTests(unittest.TestCase):
                 return hold.reason_code
         with ThreadPoolExecutor(max_workers=2) as executor:
             outcomes = list(executor.map(reserve, range(2)))
-        self.assertCountEqual(outcomes, ["admitted", "workload_assignment_hard_limit"])
-        self.assertEqual(self.count("director_primary_provider_attempt"), 1)
-        self.assertEqual(self.count("director_primary_workload_assignment"), 20)
+        self.assertCountEqual(outcomes, ["admitted", "admitted"])
+        self.assertEqual(self.count("director_primary_provider_attempt"), 2)
+        self.assertEqual(self.count("director_primary_workload_assignment"), 21)
 
     def test_reverse_sequence_hold_propagates_to_real_graph(self):
         from tests.test_primary_default import DefaultPrimaryApplicationIntegrationTests
@@ -601,3 +606,6 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:06 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]

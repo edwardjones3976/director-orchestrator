@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]] -->
@@ -33,7 +34,7 @@ whether any operation is permitted. The report always says
 | 10 | Ten offline Slack runs | Ten consecutive actual-owner events, independent correctness and measured time, zero operational provider calls |
 | 11 | Actual team products | Codex, actual Grok Bot and Gemini/Antigravity transports verified as those products |
 | 12 | Fresh activation captures | Correct surface, identity, binding digest, stage and expiry verified natively |
-| 13 | Rolling twenty allocation | Authoritative assignment history and enforced allocation bounds |
+| 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
 | 14 | Bounded execution | Attempts, cancellation deadline and token/output limits on all selected routes |
 | 15 | Monetary control and usage | Enrolled daily cap, reservations and correlated actual charges |
 | 16 | Executed exact-head CI | All six required jobs completed successfully with actual steps |
@@ -144,9 +145,11 @@ the native producer's sorted compact JSON digest; formatting changes alone do
 not alter that semantic digest.
 
 Check 13 recomputes the current journal through `EngineeringWorkloadLedger.status`.
-It needs twenty actual admissions after the prospective cutover, all inside
-normal allocation bands and hard ceilings, and no reported resource-bound
-violation. Imported historical attestations do not count as authenticated proof.
+It needs twenty actual admissions after the prospective cutover and no reported
+resource-bound violation. The owner retired the rolling-twenty allocation hard
+ceiling on 2026-09-21; normal allocation bands remain an advisory routing
+preference and this check does not gate on either. Imported historical
+attestations do not count as authenticated proof.
 Before twenty prospective admissions exist, UNKNOWN honestly describes the
 incomplete window. This observation does not authorize the journal's policy,
 authenticate declared provider identities or confer dispatch/production credit.

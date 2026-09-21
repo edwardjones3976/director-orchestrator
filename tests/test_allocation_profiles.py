@@ -23,7 +23,7 @@ class AllocationProfilesTests(unittest.TestCase):
         openai_history = ["openai"] * 7
         claude_history = ["claude"] * 7
         self.assertIsNone(admission_reason("openai", openai_history))
-        self.assertEqual(admission_reason("claude", claude_history), "workload_assignment_hard_limit")
+        self.assertIsNone(admission_reason("claude", claude_history))
         self.assertEqual(openai_history, ["openai"] * 7)
         self.assertEqual(claude_history, ["claude"] * 7)
 

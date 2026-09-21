@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | BEGIN]] -->
 # The two twenty-point controls
@@ -13,7 +14,7 @@ The [engineering ledger](engineering-workload-ledger.md) records actual bounded
 assignments in one local SQLite journal. On 2026-09-12 the owner chose to keep the
 existing five-provider engineering allocation:
 
-| Allocation lane | Target | Target count in twenty | Hard maximum in twenty |
+| Allocation lane | Target | Target count in twenty | Retired hard maximum in twenty (reference only) |
 | --- | ---: | ---: | ---: |
 | OpenAI | 40% | 8 | 9 |
 | Claude | 25% | 5 | 6 |
@@ -21,11 +22,13 @@ existing five-provider engineering allocation:
 | Direct Grok | 10% | 2 | 3 |
 | Gemini / Antigravity | 10% | 2 | 3 |
 
-The normal tolerance is three percentage points; the hard ceiling is the target
-plus five. Each assignment contributes five percentage points. Failed, cancelled,
-reserved and ambiguous work stays in history. Retries belong to the same
-assignment and cannot erase its cost or create a new allowance. Pure coordination
-is recorded separately.
+The normal tolerance is three percentage points, an advisory routing preference.
+The owner retired the target-plus-five rolling-twenty hard ceiling on 2026-09-21
+as outdated; it no longer blocks or refuses admission. A zero target remains
+ineligible regardless of history. Each assignment contributes five percentage
+points. Failed, cancelled, reserved and ambiguous work stays in history. Retries
+belong to the same assignment and cannot erase its cost or create a new
+allowance. Pure coordination is recorded separately.
 
 Actual **Grok Bot is a separate product** from direct Grok and from Cursor's Grok
 models. The current allocation has no Grok Bot binding. The journal reports that

@@ -1,3 +1,6 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Behavioral checks against disposable real SQLite journals, never live lanes."""
@@ -112,6 +115,48 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
             self.bootstrap()
         self.assertEqual(self.ledger.status()["total_admitted_assignments"], 1)
 
+    def test_canonical_digest_mismatch_regression(self):
+        """Each fixture is bootstrapped fresh; the append-only journal is never
+        UPDATEd to fabricate a historical or forged canonical_digest."""
+        from director_orchestrator.allocation_profiles import historical_allocation_profile_digest
+        from director_orchestrator.primary_workload import _PRE_RETIREMENT_V3
+
+        # 1. A freshly bootstrapped ledger records and authenticates the current
+        # prospective identity.
+        self.bootstrap()
+        self.ledger.status()
+
+        # 2. A ledger bootstrapped while the current-at-base retired hard-tolerance
+        # identity was in effect still authenticates today without rewriting its
+        # immutable canonical_digest.
+        historical_digest = historical_allocation_profile_digest("engineering")
+        historical_path = Path(self.temp.name) / "historical-v3.sqlite3"
+        with patch("director_orchestrator.engineering_workload_ledger.allocation_profile_digest",
+                   return_value=historical_digest):
+            EngineeringWorkloadLedger(historical_path).bootstrap(manifest())
+        with closing(sqlite3.connect(historical_path)) as db:
+            recorded = json.loads(db.execute("SELECT payload FROM metadata WHERE id=1").fetchone()[0])
+            self.assertEqual(recorded["canonical_digest"], historical_digest)
+        EngineeringWorkloadLedger(historical_path).status()
+
+        # 3. A ledger bootstrapped under the older pre-retirement v3 profile
+        # identity also still authenticates.
+        old_digest = _PRE_RETIREMENT_V3["engineering"][0]
+        old_path = Path(self.temp.name) / "pre-retirement-v3.sqlite3"
+        with patch("director_orchestrator.engineering_workload_ledger.allocation_profile_digest",
+                   return_value=old_digest):
+            EngineeringWorkloadLedger(old_path).bootstrap(manifest())
+        EngineeringWorkloadLedger(old_path).status()
+
+        # 4. A forged/mismatched canonical_digest recorded at bootstrap fails
+        # closed on every subsequent read.
+        forged_path = Path(self.temp.name) / "forged.sqlite3"
+        with patch("director_orchestrator.engineering_workload_ledger.allocation_profile_digest",
+                   return_value="sha256:" + "0" * 64):
+            EngineeringWorkloadLedger(forged_path).bootstrap(manifest())
+        with self.assertRaisesRegex(LedgerError, "canonical_policy_changed_reconciliation_required"):
+            EngineeringWorkloadLedger(forged_path).status()
+
     def test_foreign_database_is_preserved(self):
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("CREATE TABLE runtime_history(value TEXT)")
@@ -146,15 +191,15 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
             self.ledger.reserve(request(i))
             if i < 3:
                 self.ledger.settle(f"test-{i}", "cancelled", evidence())
-        with self.assertRaisesRegex(LedgerError, "hard_cap_exceeded"):
-            self.ledger.reserve(request(9))
+        # Over-target is permitted.
+        self.ledger.reserve(request(9))
         state = self.ledger.status()
         row = next(r for r in state["utilization"] if r["bucket"] == "openai")
-        self.assertEqual((row["admitted"], row["share_percent"], row["delta_points"]), (9, 45, 5))
+        self.assertEqual((row["admitted"], row["share_percent"], row["delta_points"]), (10, 50, 10))
         self.assertEqual(row["normal_band_state"], "above")
-        self.assertEqual(row["reserved_or_in_flight"], 6)
+        self.assertEqual(row["reserved_or_in_flight"], 7)
 
-    def test_two_processes_cannot_claim_the_last_openai_slot(self):
+    def test_two_processes_can_both_claim_slots_over_the_old_limit(self):
         self.bootstrap()
         for i in range(8):
             self.ledger.reserve(request(i))
@@ -170,9 +215,8 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         for child in children:
             child.join(15)
             self.assertEqual(child.exitcode, 0)
-        self.assertEqual(outcomes.count("reserved"), 1)
-        self.assertEqual(sum("hard_cap_exceeded" in value for value in outcomes), 1)
-        self.assertEqual(self.ledger.status()["total_admitted_assignments"], 9)
+        self.assertEqual(outcomes.count("reserved"), 2)
+        self.assertEqual(self.ledger.status()["total_admitted_assignments"], 10)
 
     def test_twenty_first_assignment_evicts_oldest_from_window_not_storage(self):
         self.bootstrap()
@@ -227,7 +271,7 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
 
     def test_product_policy_preview_is_not_an_active_policy(self):
         state = policy_preview(manifest(True)["policy"])
-        self.assertEqual(state["maximum_slots"], {"openai-codex": 9, "grok-bot": 9, "gemini-antigravity": 5})
+        self.assertEqual(state["historical_maximum_slots"], {"openai-codex": 9, "grok-bot": 9, "gemini-antigravity": 5})
         self.assertFalse(state["dispatch_authorized"])
         self.assertFalse(self.path.exists())
         proposed = manifest(True)
@@ -241,8 +285,8 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         self.assertNotIn("xai-grok", state["next_eligible_routes"])
         for i in range(9):
             self.ledger.reserve(request(i, "grok-bot"))
-        with self.assertRaisesRegex(LedgerError, "hard_cap"):
-            self.ledger.reserve(request(9, "grok-bot"))
+        self.ledger.reserve(request(9, "grok-bot"))
+        self.assertEqual(len(self.ledger.status()["records"]), 10)
         from director_orchestrator.allocation_profiles import allocation_targets
         self.assertEqual(dict(allocation_targets())["grok"], 10)
 
@@ -254,9 +298,10 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         self.ledger.reserve(request(1, "xai-grok"))
         self.ledger.reserve(request(2, "grok-bot"))
         self.ledger.reserve(request(3, "grok-bot"))
-        with self.assertRaisesRegex(LedgerError, "hard_cap"):
-            self.ledger.reserve(request(4, "xai-grok"))
-        self.assertEqual({r["product_id"] for r in self.ledger.status()["records"]}, {"xai-grok", "grok-bot"})
+        self.ledger.reserve(request(4, "xai-grok"))
+        records = self.ledger.status()["records"]
+        self.assertEqual(len(records), 4)
+        self.assertEqual({r["product_id"] for r in records}, {"xai-grok", "grok-bot"})
 
     def test_zero_product_target_is_ineligible_even_if_enrolled(self):
         data = manifest(True)
@@ -492,3 +537,6 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]] -->
@@ -50,6 +51,7 @@ authority.
 8. Add or update tests for behavioral changes. Run the relevant tests and report exact commands and results.
 9. Prefer reversible changes. Do not delete data or rewrite history without explicit owner authorization.
 10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, merge, deletion, purchases, external representation, sensitive data, credentials, or expanded access. Stopping is the default and stays the default. The only exception is a decision class the owner has explicitly delegated under `docs/human-out-of-the-loop-operation.md`, which is off unless configured and which never removes a deterministic gate.
+11. Allocation targets and the ±3-point normal band are prospective routing preferences over the rolling twenty-assignment window; the owner retired the target+5 rolling-twenty hard ceiling on 2026-09-21 as outdated. A zero-target lane remains ineligible regardless of history, and this retirement changes no other deterministic gate (approval, budget, attempt, retry, cancellation, enrollment, or review).
 
 ## Contribution attribution
 

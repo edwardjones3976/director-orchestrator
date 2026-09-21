@@ -1,3 +1,6 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
@@ -57,7 +60,7 @@ CHECKS = (
     Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with independent correctness, time and zero-call evidence."),
     Check("11", "Real team products and transports are supported", "runtime", "Attest the actual Codex, Grok Bot and Gemini/Antigravity routes; do not substitute direct xAI or Cursor Grok."),
     Check("12", "Native activation evidence is fresh", "runtime", "Verify current native captures, binding digests, identities and expiry through the activation verifier."),
-    Check("13", "Rolling twenty assignments obey allocation", "coordination", "Use the authoritative append-only assignment ledger, including failed and ambiguous attempts."),
+    Check("13", "Rolling twenty admissions recompute reported resource bounds", "coordination", "Use the authoritative append-only assignment ledger, including failed and ambiguous attempts. The ledger does not authenticate operator-reported usage or attestations; it only recomputes reported bound violations from journal rows."),
     Check("14", "Attempts, time and output are bounded", "runtime", "Verify enforced attempt, cancellation deadline and output/token limits on every selected route."),
     Check("15", "Daily monetary cap and actual usage are enforced", "runtime", "Verify enrolled daily budget reservations and correlated actual charges; unknown cost is not zero."),
     Check("16", "Exact candidate CI really executed and passed", "candidate", "Run all six required CI jobs on this candidate; billing stubs and missing jobs do not pass."),
@@ -442,11 +445,8 @@ def _workload_observation(path: Path, at: datetime) -> Observation:
         cutover = datetime.fromisoformat(status["cutover_at"].replace("Z", "+00:00"))
         times = [datetime.fromisoformat(row["admitted_at"].replace("Z", "+00:00")) for row in rows]
         if cutover.tzinfo is not None and all(value.tzinfo is not None and cutover < value <= at for value in times):
-            utilization = status.get("utilization", [])
-            passed = bool(utilization) and all(row["normal_band_state"] == "within" and
-                         row["admitted"] <= row["hard_limit_slots"] for row in utilization)
-            passed = passed and not any(row.get("reported_bound_violations") for row in rows)
-            explanation = "Recomputed the journal's twenty post-cutover admissions and allocation/bound violations; this does not authenticate external attestations or grant dispatch authority."
+            passed = not any(row.get("reported_bound_violations") for row in rows)
+            explanation = "Recomputed the journal's twenty post-cutover admissions and resource-bound violations; this does not authenticate external attestations or grant dispatch authority."
         else:
             explanation = "This window includes imported, future or unbound history; the tool does not authenticate its attestations."
     facts = {key: status.get(key) for key in ("history_mode", "cutover_at", "rolling_window_complete",
@@ -670,3 +670,6 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]

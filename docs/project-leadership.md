@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]] -->
@@ -64,11 +65,13 @@ Claude's advisory vote is 2.0 and OpenAI's is 2.5, with total
 committee weight unchanged. The canonical numbers are in
 `src/director_orchestrator/allocation_profiles.py` and `team_charter.py`.
 
-Actual assignment history is unchanged. The rolling twenty-assignment window,
-normal tolerance of three percentage points, and hard ceiling of target plus
-five percentage points still apply. Pure coordination creates no production
-credit. OpenAI Pro 20x and Claude Max 5x remain account capacity facts for their
-actual providers, not exchanged subscriptions or API entitlements.
+Actual assignment history is unchanged. The rolling twenty-assignment window and
+normal tolerance of three percentage points still apply as an advisory routing
+preference; the owner retired the hard ceiling of target plus five percentage
+points on 2026-09-21, and a zero target remains ineligible regardless of
+history. Pure coordination creates no production credit. OpenAI Pro 20x and
+Claude Max 5x remain account capacity facts for their actual providers, not
+exchanged subscriptions or API entitlements.
 
 ## Runtime and historical compatibility
 

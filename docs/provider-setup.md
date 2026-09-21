@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 02:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]] -->
@@ -255,9 +256,10 @@ satisfied.
 
 Use the [approved eight-lane allocation profiles](provider-allocation-profiles.md),
 with Engineering as the default. Freeze profile and digest before approval,
-preserve real history, exclude zero-target lanes, and enforce the prospective
-fixed twenty-slot target+5 ceiling. The ±3-point normal band guides preference;
-observed effort is separately reported and cannot create production credit.
+preserve real history, and exclude zero-target lanes over the prospective fixed
+twenty-slot denominator; the owner retired the target+5 hard ceiling on
+2026-09-21. The ±3-point normal band guides preference; observed effort is
+separately reported and cannot create production credit.
 OpenAI production and Antigravity specialist work require their actual scoped
 adapters and non-author verification; a target alone proves no live capability.
 

@@ -1,3 +1,6 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -57,7 +60,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=883f7fafa38449c1ddfbeb9570bddb044c56ccd5ca90b82c5a06748cf4b3cb7e -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=c9e53fbff7ec6de9e4a568a2690c682f26bb02bfe691f24220e74725a63e5619 -->
 
 I am the Director.
 
@@ -106,7 +109,7 @@ attest that a deployed service has switched its executing provider.
 - Owner-approved [allocation profiles](docs/provider-allocation-profiles.md) across all eight
   provider lanes. Engineering defaults to OpenAI 40%, Claude 25%, Cursor 15%, Grok 10%, and
   Antigravity 10%; other profiles reserve real research and enterprise work. A fixed
-  real-assignment twenty-slot window enforces target +5 hard caps and zero-target exclusion,
+  real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement) and zero-target exclusion,
   with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.
 - Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
   twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
@@ -737,3 +740,6 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 07:53 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->

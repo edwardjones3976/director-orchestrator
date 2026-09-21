@@ -1,3 +1,4 @@
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -196,10 +197,12 @@ Each row summarizes the canonical role definitions in
 Select and freeze an [approved allocation profile](provider-allocation-profiles.md)
 before approval; Engineering is the default. All nine lanes have explicit targets;
 zero-target lanes are ineligible. Preserve actual assignment history and apply the
-full twenty-slot startup denominator, target+5 hard ceiling and ±3-point normal
-preference. Report observed total effort separately; control-plane work, retries,
-and failed output never become accepted production credit. Subscription capacity
-signals (OpenAI Pro 20x, Claude Max 5x) do not grant API budgets or capabilities.
+full twenty-slot startup denominator and ±3-point normal preference. The owner
+retired the target+5 rolling-twenty hard ceiling on 2026-09-21 as outdated; it no
+longer blocks admission. Report observed total effort separately; control-plane
+work, retries, and failed output never become accepted production credit.
+Subscription capacity signals (OpenAI Pro 20x, Claude Max 5x) do not grant API
+budgets or capabilities.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
@@ -213,8 +216,9 @@ the selected provider/model, and the tie-break reason.
 For paid routing, only the operator-authored `TRUSTED_PROVIDER_COST_RANKS`
 setting supplies the comparable total order. It must cover every configured
 ready specialist with unique positive ranks and is never inferred, generated,
-or rewritten by a provider. Direct allocation hard caps apply after capability, scope, independence,
-safety, and resource eligibility; the normal band remains a soft preference.
+or rewritten by a provider. Zero-target lane ineligibility applies after capability, scope,
+independence, safety, and resource eligibility; the normal band remains a soft preference,
+and the retired rolling-twenty hard cap no longer blocks admission.
 
 ### Firecrawl privacy routing
 

@@ -323,9 +323,8 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
                 connection.commit()
             mature = reserve("mature")
             # The real startup reservation still occupies capacity alongside the
-            # five accepted Claude fixtures; a seventh Claude is correctly held.
-            self.assertFalse(mature.decision.allowed)
-            self.assertIn("direct_production_hard_cap_exceeded:claude:30", mature.decision.violations)
+            # five accepted Claude fixtures; a seventh Claude is now permitted.
+            self.assertTrue(mature.decision.allowed)
             with closing(sqlite3.connect(path)) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM direct_production_credits").fetchone()[0], 19)
 
