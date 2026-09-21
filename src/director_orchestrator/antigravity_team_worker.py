@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
@@ -103,6 +104,25 @@ def _require_shared_deadline(deadline, what):
 PRIMARY_BOUND_MODE = "director-team-remote-anchor/v1"
 
 
+def _grant_timeout_ceiling():
+    """The task grant's own `timeout_seconds` ceiling, read from the model.
+
+    No director can hold a remote bound longer than its grant, so no
+    authenticated frame can legitimately carry more remaining than this.
+    It is read from `TeamGrant` rather than restated here, so the two cannot
+    drift apart; a model that no longer declares it fails this import closed.
+    """
+
+    declared = [getattr(item, "le", None) for item in TeamGrant.model_fields["timeout_seconds"].metadata]
+    declared = [value for value in declared if value is not None]
+    if len(declared) != 1:
+        raise TeamAuthorizationError("task grant timeout ceiling is not declared")
+    return float(declared[0])
+
+
+MAX_REMAINING_SECONDS = _grant_timeout_ceiling()
+
+
 def anchor_token(frame):
     """The token an authenticated anchor frame issued; nothing else is one.
 
@@ -131,8 +151,10 @@ def anchored_primary_bound(request, *, anchored, issued):
     An explicit `None` is deliberate standalone use and keeps the grant timer
     alone. Anything else - the key absent, an older frame carrying
     `lifetime_seconds` or `primary_cutoff`, a bound naming some other anchor,
-    a non-finite, non-positive or already spent value - is refused rather
-    than treated as unbounded.
+    a non-finite, non-positive or already spent value, or one above the task
+    grant's own timeout ceiling - is refused rather than treated as unbounded.
+    Nothing is clamped: a value this server cannot bind exactly is malformed
+    input, and so is an anchor or result that is not a finite instant.
     """
 
     if (not isinstance(request, dict)
@@ -148,6 +170,11 @@ def anchored_primary_bound(request, *, anchored, issued):
     if (not isinstance(remaining, (int, float)) or isinstance(remaining, bool)
             or not math.isfinite(remaining) or remaining <= 0):
         raise TeamAuthorizationError("primary bound remaining budget is invalid")
+    if remaining > MAX_REMAINING_SECONDS:
+        raise TeamAuthorizationError("primary bound remaining budget exceeds the grant ceiling")
+    if (not isinstance(anchored, (int, float)) or isinstance(anchored, bool)
+            or not math.isfinite(anchored) or not math.isfinite(anchored + float(remaining))):
+        raise TeamAuthorizationError("primary bound anchor is not a finite instant")
     return _require_shared_deadline(anchored + float(remaining), "primary bound")
 
 
@@ -799,3 +826,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]]

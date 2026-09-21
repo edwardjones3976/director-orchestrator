@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
@@ -31,7 +32,7 @@ from director_orchestrator.antigravity_team import TeamAuthority, TeamAuthorizat
 from director_orchestrator.antigravity_team_artifacts import TeamArtifactStore, GitTeamCandidateIntegrator, decode_returned_files
 import director_orchestrator.antigravity_team_worker as worker_module
 from director_orchestrator.antigravity_team_worker import (FrameChannel, LinuxNativeTeamWorker, PinnedSshTeamWorker,
-    PRIMARY_BOUND_MODE, authenticate, run_unprivileged, serve, sign)
+    MAX_REMAINING_SECONDS, PRIMARY_BOUND_MODE, authenticate, run_unprivileged, serve, sign)
 from director_orchestrator.antigravity_team_transport import NativeTeamPacketTransport
 from director_orchestrator.entitlement_contracts import RepositoryScope, EntitlementActionType, document_digest
 from tests.test_antigravity_team import grant, budget
@@ -414,7 +415,7 @@ class WorkerBoundTests(unittest.TestCase):
                 self.assertEqual([],received)
                 self.doCleanups()
 
-    def _serve(self, frames, *, worker):
+    def _serve(self, frames, *, worker, clock=5000.0):
         """The real `serve` on prerecorded director frames, with a fixed clock.
 
         Returns what it raised and every authenticated frame it emitted, in
@@ -432,7 +433,7 @@ class WorkerBoundTests(unittest.TestCase):
              patch.object(worker_module,"protected_bytes",return_value=json.dumps({"secret_files":{}}).encode()), \
              patch.object(worker_module,"sys",stdio), \
              patch.object(worker_module,"os",SimpleNamespace(urandom=lambda n:bytes(range(n)))), \
-             patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:5000.0,sleep=time.sleep)):
+             patch.object(worker_module,"time",SimpleNamespace(monotonic=lambda:clock,sleep=time.sleep)):
             try:
                 serve("synthetic-config")
             except TeamAuthorizationError as exc:
@@ -476,9 +477,17 @@ class WorkerBoundTests(unittest.TestCase):
                "foreign anchor":(self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":"0"*32,"remaining_seconds":30.0})[1],"not anchored"),
                "foreign mode":(self._prepare({"mode":"director-team-cutoff/v0","anchor":ISSUED,"remaining_seconds":30.0})[1],"not anchored"),
                "bare value":(self._prepare(30.0)[1],"not anchored")}
-        for name,remaining in (("infinite",float("inf")),("nan",float("nan")),("zero",0),("negative",-4),
-                               ("boolean",True),("text","30")):
-            cases[name]=(self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,"remaining_seconds":remaining})[1],"remaining budget is invalid")
+        for name,remaining,message in (("infinite",float("inf"),"remaining budget is invalid"),
+                                       ("nan",float("nan"),"remaining budget is invalid"),
+                                       ("zero",0,"remaining budget is invalid"),
+                                       ("negative",-4,"remaining budget is invalid"),
+                                       ("boolean",True,"remaining budget is invalid"),
+                                       ("text","30","remaining budget is invalid"),
+                                       # Finite and positive, yet more than any grant can hold:
+                                       # refused as malformed, never clamped to the ceiling.
+                                       ("just above the grant ceiling",MAX_REMAINING_SECONDS+0.001,"exceeds the grant ceiling"),
+                                       ("absurd",1e12,"exceeds the grant ceiling")):
+            cases[name]=(self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,"remaining_seconds":remaining})[1],message)
         for name,(payload,message) in cases.items():
             with self.subTest(case=name):
                 seen={}
@@ -486,6 +495,53 @@ class WorkerBoundTests(unittest.TestCase):
                 self.assertRegex(str(error),message)
                 self.assertEqual(["anchor"],[kind for kind,_ in emitted],"nothing is acknowledged")
                 self.assertNotIn("prepare",seen,"preparation never starts")
+
+    def test_serve_binds_the_grant_ceiling_exactly_and_never_clamps_above_it(self):
+        """The ceiling is the task grant's own, and it is a boundary, not a cap.
+
+        A director's bound is at most its grant timeout, so exactly the
+        ceiling is admitted as it is; a hair more is refused rather than
+        reduced to it. The ceiling is read from `TeamGrant`, which is proved
+        here to accept it and reject the next second.
+        """
+        self.assertEqual(2700.0,MAX_REMAINING_SECONDS)
+        self.assertEqual(2700,grant(timeout_seconds=2700).timeout_seconds)
+        with self.assertRaises(ValueError):
+            grant(timeout_seconds=2701)
+        seen={}
+        error,emitted=self._serve([self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,
+            "remaining_seconds":MAX_REMAINING_SECONDS})],worker=self._synthetic_worker(seen))
+        self.assertEqual(["anchor","prepared"],[kind for kind,_ in emitted])
+        self.assertEqual(5000.0+MAX_REMAINING_SECONDS,seen["prepare"]["deadline"],"bound exactly, not clamped")
+        self.assertRegex(str(error),"truncated","the prerecorded input ends after preparation")
+        seen={}
+        error,emitted=self._serve([self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,
+            "remaining_seconds":MAX_REMAINING_SECONDS+0.001})],worker=self._synthetic_worker(seen))
+        self.assertRegex(str(error),"exceeds the grant ceiling")
+        self.assertEqual(["anchor"],[kind for kind,_ in emitted])
+        self.assertNotIn("prepare",seen)
+
+    def test_serve_refuses_a_non_finite_anchor_instead_of_binding_to_it(self):
+        """An anchor that is not a finite instant cannot bound anything.
+
+        The server's own clock reading is validated where it is used: with an
+        infinite or undefined anchor a well-formed, otherwise admissible
+        `prepare` frame is refused before preparation, with only the anchor
+        frame emitted, rather than producing a bound that never expires.
+        """
+        for clock in (float("inf"),float("nan")):
+            with self.subTest(clock=clock):
+                seen={}
+                error,emitted=self._serve([self._prepare({"mode":PRIMARY_BOUND_MODE,"anchor":ISSUED,
+                    "remaining_seconds":35.0})],worker=self._synthetic_worker(seen),clock=clock)
+                self.assertRegex(str(error),"anchor is not a finite instant")
+                self.assertEqual(["anchor"],[kind for kind,_ in emitted])
+                self.assertNotIn("prepare",seen)
+        # Standalone use needs no anchor at all, so the same clock admits it.
+        seen={}
+        error,emitted=self._serve([self._prepare(None)],worker=self._synthetic_worker(seen),clock=float("nan"))
+        self.assertEqual(["anchor","prepared"],[kind for kind,_ in emitted])
+        self.assertIsNone(seen["prepare"]["deadline"])
 
     def test_serve_keeps_the_prepared_bound_and_refuses_an_exchange_that_does_not_name_it(self):
         """The exchange frame can only name the anchor; it carries no time value.
@@ -1089,3 +1145,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]]

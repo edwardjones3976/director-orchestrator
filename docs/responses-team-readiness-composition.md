@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]] -->
@@ -164,8 +165,12 @@ grant timer alone. An older client's frame - the revision that sent
 `lifetime_seconds`, the one that sent `primary_cutoff`, or one with no bound
 key at all - is refused before preparation instead of being treated as
 standalone, as is a bound naming an anchor this server did not issue (which
-is what a client that did not wait for the anchor would send), or a
-non-finite, non-positive or already spent value.
+is what a client that did not wait for the anchor would send), a non-finite,
+non-positive or already spent value, or one above the task grant's own
+`timeout_seconds` ceiling (2700 seconds, read from `TeamGrant` rather than
+restated) - which no director holding a valid grant can send, so it is
+refused as malformed rather than clamped. The server's own anchor, and the
+resulting instant, must be finite or the frame is refused too.
 
 **Support is acknowledged before private source.** The `anchor` frame *is* the
 acknowledgment: a server that does not speak this protocol never sends it, so
@@ -376,11 +381,13 @@ arranges exact-head review; none of this is acceptance.
 Every figure below is a run that completed. An earlier revision's final
 `--group full --warnings` and `--group full` attempts were cut off by the
 author window and produced no result; those receipts stand as they are and
-nothing here is claimed from them. This revision changed one production
-module, `antigravity_team_worker.py`, its test module and this document; of
-the selected groups only `--group team` imports that module, so it is the
-only group rerun here, and every other figure is the earlier revision's result
-on bytes this revision did not touch.
+nothing here is claimed from them. The 17:31 and 18:02 UTC revisions changed
+one production module, `antigravity_team_worker.py`, its test module, this
+document and (at 18:02 UTC only) the extraction names in the root-only
+`tests/test_team_process_lifetime.py`, which no selected group runs; of the
+selected groups only `--group team` imports that module, so it is the only
+group rerun here, and every other figure is the earlier revision's result on
+bytes these revisions did not touch.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
   **47 tests, all passing**, at the 16:56 UTC revision on unchanged bytes.
@@ -408,15 +415,16 @@ on bytes this revision did not touch.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
   check): **2 tests, passing**, at the 16:56 UTC revision on unchanged bytes.
-- `--group team` (`test_antigravity_team_worker`): **33 tests, all passing**,
-  this revision. The previous revision's 28 included nine tests that were
-  removed here rather than kept: five exercised only the cutoff helpers or
-  compared dictionaries the implementation also built (the one named for
-  `serve` never called `FrameChannel`, `serve` or `PinnedSshTeamWorker`), one
-  entered preparation already expired and never reached qualification, and
-  three process tests lived inside the PostgreSQL fixture, two of them
-  sleeping on the real clock. Fourteen replacements in a class that acquires
-  no database take their place.
+- `--group team` (`test_antigravity_team_worker`): **35 tests, all passing**,
+  this revision. The 16:56 UTC revision's 28 included nine tests that were
+  removed at 17:31 UTC rather than kept: five exercised only the cutoff
+  helpers or compared dictionaries the implementation also built (the one
+  named for `serve` never called `FrameChannel`, `serve` or
+  `PinnedSshTeamWorker`), one entered preparation already expired and never
+  reached qualification, and three process tests lived inside the PostgreSQL
+  fixture, two of them sleeping on the real clock. Fourteen replacements in a
+  class that acquires no database took their place, joined at 18:02 UTC by
+  the two ceiling and anchor cases below.
 
 What those fourteen actually exercise: the real `PinnedSshTeamWorker` and the
 real `serve` talking over two OS pipes - real `FrameChannel` frames, real
@@ -432,9 +440,13 @@ that never prepares; a server of any earlier revision, which waits to be
 spoken to first, receiving nothing but the challenge before the local timer
 ends it; and a server answering with the wrong kind or shape refused before
 preparation. On the real `serve` with prerecorded director frames: explicit
-`null` as deliberate standalone use through to the capture; twelve legacy,
-unanchored and invalid `prepare` shapes refused with only the anchor frame
-ever emitted; and six `exchange` shapes refused after `prepared` and before
+`null` as deliberate standalone use through to the capture; fourteen legacy,
+unanchored, invalid and over-ceiling `prepare` shapes refused with only the
+anchor frame ever emitted; exactly the grant ceiling bound as it is and a
+thousandth of a second more refused rather than clamped, with `TeamGrant`
+itself shown to accept 2700 and reject 2701; an infinite or undefined server
+anchor refusing an otherwise admissible bound while still admitting
+standalone use; and six `exchange` shapes refused after `prepared` and before
 execution with the prepared bound unchanged. On the real `prepare_binding`
 with the real constructor: the budget consumed by qualification writes no
 claim; the budget consumed during `fsync` retains the claim, refuses
@@ -728,7 +740,7 @@ and the real transport:
   recomputes what `communicate` waits for. The uninterruptible `preexec_fn`
   window and the two separate five-second cleanup waits are disclosed rather
   than covered.
-- **2026-09-21 17:31 UTC (this revision)**: an independent seven-case probe
+- **2026-09-21 17:31 UTC**: an independent seven-case probe
   against the real authenticated `serve` failed four of the previous
   revision's claims: a five-second skew constant presented as a measured
   premise could be masked by transit (a receiver fifteen seconds behind ran
@@ -750,6 +762,16 @@ and the real transport:
   were named for were removed; their replacements drive the real
   `PinnedSshTeamWorker` and `serve` over OS pipes with distinct clocks and
   need no database.
+- **2026-09-21 18:02 UTC (this revision)**: two minimal corrections from the
+  Director's review of the above. `anchored_primary_bound` accepted any finite
+  positive remaining, including values no valid grant could produce, and did
+  not validate its own anchor; it now refuses a remaining above `TeamGrant`'s
+  `timeout_seconds` ceiling and a non-finite anchor or result as malformed
+  input, clamping nothing, with the handshake and process accounting
+  unchanged. `tests/test_team_process_lifetime.py`, the root-only Linux kernel
+  regression, extracts `run_unprivileged` by AST and lacked the two helpers
+  it has called since 16:56 UTC; only those two names were added, and that
+  extraction is checked by the Director separately from any kernel run.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -764,3 +786,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
