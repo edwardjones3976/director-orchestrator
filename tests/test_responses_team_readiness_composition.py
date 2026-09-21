@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -1524,6 +1525,52 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                           raised.exception.reason_code)
         self._assert_no_admission_rows()
 
+    def test_lost_readiness_is_refused_before_any_database_call(self):
+        """The refusal happens ahead of the writer read and the artifact write.
+
+        A known refusal must not first wait on locks and mutate durable state:
+        with no live selection there is no bound to spend, so `None` would
+        also disable the SQL deadline on both of those calls. The sentinels
+        are installed only after setup, so they witness the dispatch itself.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        wave = self._ready_wave()
+        restarted, _settings = self._build_activation(
+            OpenAIResponsesPacketTransport(api_key="test-secret-key", model="configured-model"))
+        restarted.services._packet_router = wave.activation.services._packet_router
+        restarted.services.register(wave.activation.services._record(wave.task_id))
+
+        def artifact_rows():
+            with self.handle.pool.connection() as connection:
+                return connection.execute(
+                    f"SELECT count(*) AS n FROM {self.schema}"
+                    ".director_primary_work_packet_artifact").fetchone()["n"]
+
+        before = artifact_rows()
+        reached = []
+        # Patched on the store class, and only now that setup is finished, so
+        # these sentinels witness the dispatch under test and nothing else.
+        for entry in ("current_task_writer", "record_work_packet_artifact"):
+            patcher = patch.object(
+                type(self.handle.claim_store), entry, autospec=True,
+                side_effect=lambda *_a, _entry=entry, **_k: reached.append(_entry))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        with self._no_provider_call():
+            with self.assertRaises(WorkloadAdmissionHold) as raised:
+                restarted.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual("readiness_selection_unavailable_before_admission",
+                          raised.exception.reason_code)
+        self.assertEqual([], reached,
+                          "neither database entry point may be called")
+        self.assertEqual(before, artifact_rows(),
+                          "no packet artifact is persisted by a refused dispatch")
+        self._assert_no_admission_rows()
+        with self.handle.pool.connection() as connection:
+            self.assertEqual(0, connection.execute(
+                f"SELECT count(*) AS n FROM {self.schema}"
+                ".director_primary_provider_usage").fetchone()["n"])
+
     def test_readiness_lock_wait_is_bounded_before_any_reservation(self):
         """`reserve_ready`'s own acquisition and locks are inside the bound.
 
@@ -2289,3 +2336,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]

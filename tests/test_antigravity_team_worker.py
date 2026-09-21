@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -287,9 +288,160 @@ class TeamCandidatePostgresTests(unittest.TestCase):
         with self.store._pool.connection() as c:
             stages=[r["stage"] for r in c.execute(f"SELECT stage FROM {self.schema}.director_primary_team_boundary ORDER BY created_at").fetchall()]
         self.assertEqual(stages,["disclosure","execution","result","result"])
+
+    # --- the primary lane's authority and shared budget reach this transport ---
+
+    def _primary_transport(self, worker, *, query=None):
+        def boundary_query(stage,command):
+            action={"disclosure":EntitlementActionType.SOURCE_READ,"execution":EntitlementActionType.PROVIDER_DISPATCH,
+                    "result":EntitlementActionType.REPOSITORY_WRITE}[stage]
+            arguments=dict(installation_id="install-one",ref=self.g.commit,path="src/allowed.py",
+                           action_type=action,effect_digest=self.g.digest)
+            if stage=="execution":arguments.update(destination_id="uppercut",reserved_spend_usd=0.00006)
+            return fixtures._boundary_query(**arguments)
+        with self.store._pool.connection() as c,c.transaction():
+            c.execute(f"ALTER TABLE {self.schema}.director_primary_provider_attempt ADD COLUMN task_id text, ADD COLUMN assignment_id text, ADD COLUMN status text, ADD COLUMN event_sequence bigint")
+            c.execute(f"INSERT INTO {self.schema}.director_primary_provider_attempt VALUES(%s,%s,%s,'STARTED',1)",(self.attempt,self.g.task_id,self.g.assignment_id))
+        return NativeTeamPacketTransport(authority=self.authority,pool=self.store._pool,grant_digest=self.g.digest,
+            attempt_digest=self.attempt,query_factory=query or boundary_query,worker=worker,
+            worker_verifier_secret=b"w"*32,source_root=self.repository,artifact_store=self.artifacts,
+            integrator=self.integrator,writer_owner_token="writer-one")
+
+    def _recording_worker(self):
+        """A synthetic worker that records the bound it is given and stops.
+
+        It declares support for the primary bound, so the transport hands it
+        the remaining budget, and it never runs a native provider: reaching
+        `before_execute` is the furthest this fixture goes.
+        """
+        test=self
+        class Worker:
+            accepts_primary_deadline = True
+            executed = False
+            closed = False
+            bounds = []
+
+            def prepare(self,**kwargs):
+                Worker.bounds.append(("prepare",kwargs.get("deadline")))
+                self.challenge=kwargs["challenge"]
+                return sign(b"w"*32,dict(grant_digest=kwargs["grant_digest"],attempt_digest=kwargs["attempt_digest"],
+                    challenge=self.challenge,binding_digest=test.g.binding_digest,workspace_id=test.g.workspace_id,
+                    containment_evidence_digest="f"*64,
+                    expires_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat(),
+                    denied_access=["unassigned_source","git_history","coordinator_credentials",
+                                   "broker_keys","launcher_mutation","production_network"],
+                    authentication_mode="native-account"))
+
+            def exchange(self,**kwargs):
+                Worker.bounds.append(("exchange",kwargs.get("deadline")))
+                kwargs["before_execute"]()
+                Worker.executed = True
+                raise AssertionError("native execution must not be reached in this fixture")
+
+            def close(self):
+                Worker.closed = True
+        return Worker()
+
+    def _primary_context(self, **changes):
+        from time import monotonic
+        fields=dict(timeout_seconds=60,fencing_generation=1,deadline=monotonic()+30,
+                    authority_recheck=None)
+        fields.update(changes)
+        return SimpleNamespace(**fields)
+
+    def _boundary_stages(self):
+        with self.store._pool.connection() as c:
+            return [r["stage"] for r in c.execute(
+                f"SELECT stage FROM {self.schema}.director_primary_team_boundary "
+                "ORDER BY created_at").fetchall()]
+
+    def test_primary_cancellation_after_preparation_never_executes_natively(self):
+        """The recheck refuses after preparation has already waited.
+
+        Preparation and its waits are behind us; this is the instant native
+        execution would be authorized. The coordinator's own durable
+        cancellation/writer check runs here, so a wave cancelled or a writer
+        lost during preparation stops the attempt before any execution
+        entitlement, native run or candidate exists.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        worker=self._recording_worker()
+        transport=self._primary_transport(worker)
+        seen=[]
+        def cancelled():
+            seen.append("recheck")
+            raise WorkloadAdmissionHold("wave_cancelled_before_generation")
+        with self.assertRaises(WorkloadAdmissionHold) as raised:
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context(authority_recheck=cancelled))
+        self.assertEqual("wave_cancelled_before_generation",raised.exception.reason_code)
+        self.assertEqual(["recheck"],seen)
+        self.assertFalse(type(worker).executed,"native execution must not be authorized")
+        self.assertTrue(type(worker).closed,"the worker is still closed on refusal")
+        self.assertEqual(["disclosure"],self._boundary_stages(),
+                         "no execution entitlement is claimed")
+        self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
+
+    def test_expired_primary_deadline_never_prepares_or_executes(self):
+        """An already-spent budget stops before the worker is even prepared."""
+
+        from time import monotonic
+        worker=self._recording_worker()
+        transport=self._primary_transport(worker)
+        with self.assertRaises(RuntimeError) as raised:
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context(deadline=monotonic()-1))
+        self.assertRegex(str(raised.exception),"(?i)(deadline|timeout|expired)")
+        self.assertEqual([],type(worker).bounds,"the worker is never started")
+        self.assertFalse(type(worker).executed)
+        self.assertEqual([],self._boundary_stages(),"no entitlement is claimed at all")
+
+    def test_shared_budget_reaches_the_worker_and_is_never_restarted(self):
+        """The same remaining budget, not a fresh full-grant timer.
+
+        A worker that declares support receives the primary lane's absolute
+        bound for preparation and for the exchange; both see the identical
+        value, so neither stage can restart the budget.
+        """
+        from time import monotonic
+        worker=self._recording_worker()
+        transport=self._primary_transport(worker)
+        bound=monotonic()+30
+        with self.assertRaises(AssertionError):
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context(deadline=bound))
+        self.assertEqual([("prepare",bound),("exchange",bound)],type(worker).bounds)
+        self.assertEqual(["disclosure","execution"],self._boundary_stages())
+
+    def test_standalone_worker_call_keeps_its_own_contract(self):
+        """A worker that declares no support is called exactly as before."""
+
+        test=self
+        class Legacy:
+            executed=False
+            def prepare(self,*,grant_digest,attempt_digest,challenge):
+                self.challenge=challenge
+                return sign(b"w"*32,dict(grant_digest=grant_digest,attempt_digest=attempt_digest,
+                    challenge=challenge,binding_digest=test.g.binding_digest,workspace_id=test.g.workspace_id,
+                    containment_evidence_digest="f"*64,
+                    expires_at=(datetime.now(timezone.utc)+timedelta(minutes=5)).isoformat(),
+                    denied_access=["unassigned_source","git_history","coordinator_credentials",
+                                   "broker_keys","launcher_mutation","production_network"],
+                    authentication_mode="native-account"))
+            def exchange(self,*,grant,work_packet,source,challenge,before_execute,before_local_command):
+                before_execute()
+                Legacy.executed=True
+                raise AssertionError("native execution must not be reached in this fixture")
+        transport=self._primary_transport(Legacy())
+        with self.assertRaises(AssertionError):
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context())
+        self.assertTrue(Legacy.executed,"the unchanged signature is still called")
+        self.assertEqual(["disclosure","execution"],self._boundary_stages())
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]

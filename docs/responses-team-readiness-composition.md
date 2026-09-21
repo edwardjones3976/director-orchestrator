@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]] -->
@@ -46,8 +47,11 @@ takeover, a replaced enrollment registry, or an authority that no longer
 resolves to the checked one is a different selection and fails closed as a
 `WorkloadAdmissionHold` - which `execute_ready` maps to
 `OWNER_DECISION_REQUIRED` - with nothing admitted. A selection this process no
-longer holds (a restart between reservation and dispatch) also fails closed; it
-is never re-derived.
+longer holds (a restart between reservation and dispatch) also fails closed,
+**before either database call**: the lookup's absence raises immediately, so a
+known refusal never reads the writer or persists a packet artifact on the way
+out - and never runs those calls with the `None` deadline that absence implies.
+It is never re-derived.
 
 Two of those points matter because waits happen between them. The ledger
 repeats the authority comparison inside the authoritative locked admission via
@@ -98,6 +102,26 @@ the Responses path, after the input-token count and strictly before the
 generation request. In both cases no generated result exists to be ambiguous
 about, so the hold is an owner decision and the admitted attempt keeps its
 rows, slot and evidence. It is never raised after a generation request is sent.
+
+## The team lane
+
+`NativeTeamPacketTransport` now consumes the same two things the Responses
+lane does. `context.deadline` is the primary lane's remaining budget: it bounds
+every SQL acquisition, statement and transaction this transport opens (through
+`bounded_transaction`), refuses an already-spent bound before the worker is
+prepared, and is handed to a worker that declares `accepts_primary_deadline`
+so preparation and the remote exchange narrow their own grant timer instead of
+restarting a full one each. `context.authority_recheck` runs inside
+`before_execute` - after preparation has waited, immediately before the
+execution entitlement and any native run - and again immediately before the
+durable candidate is integrated. Work after the exchange spends this
+operation's one completion allowance rather than a fresh budget, and a failure
+there is refused conservatively: the capture and the durable attempt remain,
+and nothing is retried.
+
+A standalone caller carries neither value; every one of these checks is then a
+no-op, and a worker that declares no support keeps its previous call signature
+unchanged.
 
 ## Cancellation
 
@@ -268,15 +292,16 @@ author window and produced no result; those receipts stand as they are and
 nothing here is claimed from them.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  **46 tests, all passing**, this revision.
+  **47 tests, all passing**, this revision.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
   `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
   passing**, this revision, including every PostgreSQL deadline case below.
 - `--group full` (all ten selected modules, including
-  `tests/test_langgraph_primary.py`): **416 tests, all passing**, this
-  revision, in 212s with zero resource warnings and a verified lane teardown.
+  `tests/test_langgraph_primary.py`): **417 tests, all passing**, this
+  revision, in 218s with zero resource warnings and a verified lane teardown.
 - `--group startup`: 1 test, passing at the previous revision.
-- `--group transports` (`test_primary_transports`,
+- `--group transports` (not rerun this revision; its 54-test result stands on
+  unchanged bytes) (`test_primary_transports`,
   `test_openai_responses_validation` - two existing modules outside the ten
   selected): **54 tests, all passing**. Two fixtures there had gone stale
   against the current transport: a finite `monotonic` `side_effect` list that
@@ -286,8 +311,25 @@ nothing here is claimed from them.
   named parameters - with no production byte changed and no assertion
   weakened.
 
-Only this document and those two fixtures changed after the 416-test run; no
-production byte did, so that selection was not repeated.
+- `--group compatibility` (the cancellation fixture and the skill suite-set
+  check): **2 tests, passing**, this revision.
+- `--group team` (`test_antigravity_team_worker`): **16 tests, all passing**,
+  this revision, including the four new real-path team regressions.
+
+Two independent probes are preserved as *failed pre-repair* evidence, not as
+current verdicts: the supplied restart probe reached the writer sentinel and
+observed `artifact_rows_before=0, artifact_rows_after=1`, and the supplied
+three-case team probe saw the cancellation hook never invoked and an expired
+deadline reach the synthetic execution sentinel. Both were taken at the frozen
+head before these changes. The independent full host QA at that head (3123
+tests, 6 failures, 1 error, 2 platform skips) also stands as failed QA; two of
+its failures are the fixtures corrected here, and the remaining five - four
+native installer cases and Compose rendering exit 125 - are with the Director
+for harness diagnosis and are untouched by this work. The sealed security scan
+at that head reports two LOW findings and no HIGH/CRITICAL, with a canonical
+metadata discrepancy (completed outcome, partial coverage field, a deferred
+discovery entry) that its own review must reconcile; nothing here claims
+complete coverage, exploitation or deployment.
 
 `tests/test_langgraph_postgres.py::TransactionDeadlineBindingTests` proves the
 timer by wall clock, durable rows and the reported SQLSTATE, never by `SHOW`
@@ -398,6 +440,8 @@ and the real transport:
 | Enrollment pinned across every wait and at the transport | Done, exercised |
 | Late authenticated usage recorded, eligibility unchanged | Done, exercised |
 | Complete replies survive response/client cleanup failure | Done, exercised |
+| A lost selection is refused before any database call | Done, exercised |
+| Team lane honours the primary recheck and shared budget | Done, exercised |
 | Foreground completion, outcome and checkpoint writes bounded | Done, exercised |
 | Concurrency: no cross-request facts, no overspend | Done, exercised |
 | Host full-repository QA and exact-head source/security review | Not done - Director |
@@ -492,12 +536,23 @@ and the real transport:
   witness now demands the whole-transaction cutoff and asserts blob rollback,
   and `bounded_transaction`'s docstring no longer implies a cross-statement
   snapshot.
-- **2026-09-21 15:13 UTC (this revision)**: the host ran
+- **2026-09-21 15:13 UTC**: the host ran
   `tests/test_primary_transports.py`, which sits outside the ten selected
   modules, and found two stale fixtures - not production defects. Both were
   corrected in place without weakening a single assertion, and this document's
   cleanup-case bullet was qualified to match what each of those three tests
   directly asserts.
+- **2026-09-21 16:04 UTC (this revision)**: an independent restart probe showed
+  a dispatch with no live selection still reading the writer and persisting one
+  packet artifact before its intended refusal, so that refusal moved to the
+  lookup itself, ahead of both database calls. The team lane, which had been
+  given a primary recheck and absolute deadline it never consumed, now spends
+  that budget across its SQL, preparation, execution authorization, worker
+  waits and completion, and re-reads the primary authority immediately before
+  native execution and before candidate integration. Two stale fixtures the
+  host found - an unrestricted cancellation Mock and a missing skill suite
+  entry - were corrected, and the pre-repair probe, host QA and security
+  evidence is preserved as historical failure rather than restated as a pass.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -508,3 +563,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->

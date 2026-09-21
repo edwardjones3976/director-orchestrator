@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -42,6 +43,28 @@ DENIED = {"unassigned_source", "git_history", "coordinator_credentials", "broker
 DENY_TOOLS = {"read_file(*)", "write_file(*)", "read_url(*)", "execute_url(*)",
               "command(*)", "unsandboxed(*)", "mcp(*)"}
 MAX_FRAME = 32 * 1024 * 1024
+
+
+def _shared_deadline(own, carried):
+    """The earlier of this worker's own limit and the caller's carried bound.
+
+    A worker keeps its grant timer when it is called standalone, and narrows
+    it - never widens or restarts it - when the primary lane carries its own
+    remaining budget.
+    """
+
+    if own is None:
+        return carried
+    if carried is None:
+        return own
+    return min(own, carried)
+
+
+def _require_shared_deadline(deadline, what):
+    """Refuse a bound that is already spent before starting this stage."""
+
+    if deadline is not None and deadline - time.monotonic() <= 0:
+        raise TeamAuthorizationError(what + " deadline expired before it started")
 
 
 # [[Claude Code | claude-opus-5 | 2026-09-07 | 00:33 UTC | BEGIN]]
@@ -298,7 +321,8 @@ class LinuxNativeTeamWorker:
         # A registry entry or configured flag cannot issue this qualification.
         return qualification
 
-    def prepare(self, *, grant, grant_digest, attempt_digest, challenge):
+    def prepare(self, *, grant, grant_digest, attempt_digest, challenge, deadline=None):
+        _require_shared_deadline(deadline, "worker preparation")
         grant.verify(self.owner_secret, datetime.now(timezone.utc))
         if grant.digest != grant_digest:
             raise TeamAuthorizationError("worker preparation grant mismatch")
@@ -332,11 +356,15 @@ class LinuxNativeTeamWorker:
             containment_evidence_digest=document_digest(qualification), expires_at=qualification["expires_at"],
             denied_access=sorted(DENIED), authentication_mode="native-account"))
 
-    def exchange(self, *, grant, work_packet, source, challenge, before_execute, before_local_command):
+    accepts_primary_deadline = True
+
+    def exchange(self, *, grant, work_packet, source, challenge, before_execute,
+                 before_local_command, deadline=None):
         self.qualify(grant)
         with self.account_lock():
             return self._exchange(grant=grant,work_packet=work_packet,source=source,challenge=challenge,
-                before_execute=before_execute,before_local_command=before_local_command)
+                before_execute=before_execute,before_local_command=before_local_command,
+                deadline=deadline)
 
     @contextmanager
     def account_lock(self):
@@ -346,7 +374,8 @@ class LinuxNativeTeamWorker:
             fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
             yield
 
-    def _exchange(self, *, grant, work_packet, source, challenge, before_execute, before_local_command):
+    def _exchange(self, *, grant, work_packet, source, challenge, before_execute,
+                  before_local_command, deadline=None):
         if self.prepared is None or self.prepared != (grant.digest, self.prepared[1], challenge):
             raise TeamAuthorizationError("worker exchange has no preparation")
         attempt = self.prepared[1]
@@ -366,7 +395,10 @@ class LinuxNativeTeamWorker:
             handle.write(canonical_json_bytes({"grant": grant.digest, "challenge": challenge}))
             handle.flush()
             os.fsync(handle.fileno())
-        deadline = time.monotonic() + grant.timeout_seconds
+        # The grant's own timer, narrowed by whatever the primary lane has
+        # left. A caller that carries no bound is unchanged; a bound that has
+        # already passed never starts native execution.
+        deadline = _shared_deadline(time.monotonic() + grant.timeout_seconds, deadline)
         with tempfile.TemporaryDirectory(dir=self.config["workspace_root"], prefix="team-") as temporary:
             workspace = Path(temporary)
             os.chmod(workspace, 0o755)
@@ -467,14 +499,20 @@ class PinnedSshTeamWorker:
             self.process.stdin.close()
             self.process.stdout.close()
 
-    def prepare(self, *, grant_digest, attempt_digest, challenge):
+    accepts_primary_deadline = True
+
+    def prepare(self, *, grant_digest, attempt_digest, challenge, deadline=None):
         if self.process is not None or grant_digest != self.grant.digest:
             raise TeamAuthorizationError("worker client is single-attempt")
+        _require_shared_deadline(deadline, "worker preparation")
         if hashlib.sha256(self.ssh.read_bytes()).hexdigest() != self.ssh_sha256:
             raise TeamAuthorizationError("SSH executable changed")
         self.process = subprocess.Popen(self.argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, env={"SystemRoot": os.environ.get("SystemRoot", ""), "PATH": str(self.ssh.parent)})
-        self.timer = threading.Timer(self.grant.timeout_seconds, self.process.kill)
+        # One remote lifetime for the whole exchange, never one per stage: the
+        # grant's own limit narrowed by what the primary lane has left.
+        self.deadline = _shared_deadline(time.monotonic() + self.grant.timeout_seconds, deadline)
+        self.timer = threading.Timer(max(0.001, self.deadline - time.monotonic()), self.process.kill)
         self.timer.daemon = True
         self.timer.start()
         self.channel = FrameChannel(self.process.stdout, self.process.stdin, self.secret, challenge, sender="director")
@@ -488,10 +526,15 @@ class PinnedSshTeamWorker:
             self.close()
             raise
 
-    def exchange(self, *, grant, work_packet, source, challenge, before_execute, before_local_command):
+    def exchange(self, *, grant, work_packet, source, challenge, before_execute,
+                 before_local_command, deadline=None):
         try:
             if grant != self.grant or challenge != self.channel.challenge:
                 raise TeamAuthorizationError("SSH exchange changed grant")
+            # The remote exchange continues under the lifetime preparation
+            # already started; it never begins a second full-grant timer.
+            _require_shared_deadline(
+                _shared_deadline(getattr(self, "deadline", None), deadline), "remote exchange")
             self.channel.send("exchange", {"grant":grant.model_dump(mode="json"),"work_packet": work_packet,
                 "source": {p: base64.b64encode(b).decode() for p,b in source.items()}})
             self.channel.receive("before_execute")
@@ -549,3 +592,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]

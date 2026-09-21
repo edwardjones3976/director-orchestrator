@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
@@ -119,11 +120,26 @@ class NativeTeamPacketTransport:
         self.artifacts, self.integrator = artifact_store, integrator
         self.writer_owner_token=writer_owner_token
 
-    def _boundary(self, stage, command=None):
+    def _boundary(self, stage, command=None, *, deadline=None):
+        from .langgraph_postgres import bounded_transaction
         query=self.query_factory(stage,command)
-        with self.pool.connection() as connection, connection.transaction():
+        with bounded_transaction(self.pool, deadline) as connection:
             return self.authority.authorize(connection,grant_digest=self.grant_digest,
                 query=query,stage=stage,attempt_digest=self.attempt_digest,command=command)
+
+    def _worker_bound(self, deadline):
+        """The remaining primary budget, for a worker that honours one.
+
+        Declared support only: a worker that does not accept the primary
+        bound keeps its own grant timer and its existing call signature, so
+        standalone use is unchanged and nothing is silently dropped here -
+        the transport still enforces the same bound at every boundary it
+        owns below.
+        """
+
+        if deadline is None or not getattr(self.worker, "accepts_primary_deadline", False):
+            return {}
+        return {"deadline": deadline}
 
     def _authenticated_evidence(self, response):
         if not isinstance(response,dict) or set(response)!={"evidence","signature"}:
@@ -141,8 +157,22 @@ class NativeTeamPacketTransport:
             if callable(close):close()
 
     def _send(self, work_packet_json: bytes, *, context) -> Mapping[str,object]:
+        from .langgraph_postgres import bounded_transaction, require_deadline_remaining
+        from .primary_parallel import completion_deadline
+        # The primary lane's own absolute budget and authority recheck, carried
+        # in the adapter context. This transport never mints, extends or
+        # restarts either: it spends the remaining budget and re-reads the
+        # same durable authority the coordinator owns. A standalone caller
+        # carries neither, and every check below is then a no-op.
+        deadline = getattr(context, "deadline", None)
+        recheck = getattr(context, "authority_recheck", None)
+
+        def remaining(what):
+            return require_deadline_remaining(deadline, what)
+
+        remaining("native team dispatch")
         work=validate_packet("work",json.loads(work_packet_json,object_pairs_hook=_unique))
-        with self.pool.connection() as connection,connection.transaction():
+        with bounded_transaction(self.pool, deadline) as connection:
             grant,_=self.authority._load(connection,self.grant_digest)
         if (document_digest(work).removeprefix("sha256:")!=grant.packet_digest
                 or work["task_id"]!=grant.task_id or work["assignment_id"]!=grant.assignment_id
@@ -153,13 +183,17 @@ class NativeTeamPacketTransport:
         challenge=secrets.token_hex(32)
         # A fresh protected-worker attestation is required BEFORE any source is
         # exported. This is not a user-configured boolean or provider self-report.
+        remaining("worker preparation")
         prepared=self._authenticated_evidence(self.worker.prepare(grant_digest=grant.digest,
-            attempt_digest=self.attempt_digest,challenge=challenge))
+            attempt_digest=self.attempt_digest,challenge=challenge,**self._worker_bound(deadline)))
+        # Preparation can wait on the worker; what it waited with is the same
+        # budget, and what is left of it still has to cover everything after.
+        remaining("worker preparation")
         verify_team_prepared(prepared,grant=grant,attempt_digest=self.attempt_digest,challenge=challenge)
         if self.artifacts is None or self.integrator is None or not self.writer_owner_token:
             raise TeamAuthorizationError("protected durable candidate integration is unbound")
         # Do not disclose even the packet until its durable STARTED attempt exists.
-        with self.pool.connection() as connection, connection.transaction():
+        with bounded_transaction(self.pool, deadline) as connection:
             row=connection.execute(f"""SELECT 1 FROM {self.authority.schema}.director_primary_provider_attempt a
                 JOIN {self.authority.schema}.director_primary_provider_spend s USING(attempt_digest)
                 WHERE a.attempt_digest=%s AND s.grant_digest=%s AND a.status='STARTED'
@@ -170,29 +204,46 @@ class NativeTeamPacketTransport:
             if row is None:
                 raise TeamAuthorizationError("native team dispatch lacks authoritative active attempt")
         source=verified_source_bytes(grant,self.source_root)
-        self._boundary("disclosure")
+        self._boundary("disclosure",deadline=deadline)
         execution_callbacks=[]
         authorized_commands=[]
         def before_execute():
             if execution_callbacks:
                 raise TeamAuthorizationError("native attempt cannot execute twice")
+            # Immediately before native execution is authorized, and after
+            # preparation has already waited: the primary cancellation, writer
+            # lease and plan binding are re-read from durable state, and the
+            # carried budget must still hold. Nothing here is a post-hoc
+            # elapsed check - refusing at this point means the worker is never
+            # told to execute.
+            if recheck is not None:
+                recheck()
+            remaining("native execution")
             if datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc):
                 raise TeamAuthorizationError("worker qualification expired before execution")
-            execution_callbacks.append(self._boundary("execution"))
+            execution_callbacks.append(self._boundary("execution",deadline=deadline))
         def before_command(argv):
             if not execution_callbacks:
                 raise TeamAuthorizationError("local command before native execution admission")
-            self._boundary("command",tuple(argv))
+            remaining("local command")
+            self._boundary("command",tuple(argv),deadline=deadline)
             authorized_commands.append(list(argv))
         capture=self.worker.exchange(grant=grant,work_packet=work,source=source,challenge=challenge,
             before_execute=before_execute,
-            before_local_command=before_command)
+            before_local_command=before_command,**self._worker_bound(deadline))
         if len(execution_callbacks)!=1:
             raise TeamAuthorizationError("worker did not authorize immediate execution")
+        # Execution happened. What follows records and integrates what it
+        # produced, so it spends the same operation's one completion
+        # allowance - never a fresh budget - and a failure here is refused
+        # conservatively rather than retried: the capture and the durable
+        # attempt remain for reconciliation.
+        settlement = completion_deadline(deadline)
+        require_deadline_remaining(settlement, "team completion")
         result=verify_team_capture(capture,worker_secret=self.secret,grant=grant,work=work,
             attempt_digest=self.attempt_digest,challenge=challenge,prepared=prepared,
             authorized_commands=authorized_commands)
-        self._boundary("result")
+        self._boundary("result",deadline=settlement)
         validated=validate_packet("result",result)
         if self.artifacts is None or self.integrator is None:
             raise TeamAuthorizationError("durable team artifact integration is unbound")
@@ -200,6 +251,12 @@ class NativeTeamPacketTransport:
         if observer is not None:
             observer("antigravity",canonical_json_bytes(capture),validated)
         capture_digest=self.artifacts.put(capture)
+        # The candidate is a durable effect, so the same authority is re-read
+        # immediately before it: a wave cancelled, or a writer lost, while the
+        # worker was running must not gain a candidate commit.
+        if recheck is not None:
+            recheck()
+        require_deadline_remaining(settlement, "candidate integration")
         candidate=self.integrator.integrate(grant=grant,attempt_digest=self.attempt_digest,
             capture_digest=capture_digest,query=self.query_factory("result",None),
             owner_token=self.writer_owner_token,
@@ -302,3 +359,4 @@ def team_packet_adapter(settings, **transport_arguments):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]

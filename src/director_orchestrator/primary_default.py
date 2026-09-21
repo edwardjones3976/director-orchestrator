@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -2781,7 +2782,18 @@ class DefaultPrimaryActivation:
                     # selection. A dispatch with no live selection has no
                     # bound to spend and fails closed below.
                     selected_now = _readiness_selections.get((record.task_id, assignment_id))
-                    dispatch_deadline = None if selected_now is None else selected_now.deadline
+                    if selected_now is None:
+                        # Refused here, before either database call. A dispatch
+                        # with no live selection has no bound to spend, so
+                        # letting it read the writer and persist the packet
+                        # artifact would run an already-doomed refusal
+                        # unbounded and mutate durable state on the way. Same
+                        # reason code `current_selection` raises below; nothing
+                        # is recovered, re-derived or given a fresh deadline.
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold(
+                            "readiness_selection_unavailable_before_admission")
+                    dispatch_deadline = selected_now.deadline
                     writer = handle.claim_store.current_task_writer(
                         record.task_id, deadline=dispatch_deadline)
                     if (
@@ -3550,3 +3562,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]

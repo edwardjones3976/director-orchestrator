@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:46 UTC | BEGIN]]
@@ -12,6 +13,14 @@ class PaidSetupCancellationTests(DefaultPrimaryApplicationIntegrationTests):
     def test_cancel_setup_hold_then_restart_never_dispatches(self):
         dispatcher=Mock(side_effect=AssertionError("cancelled work must never dispatch"))
         dispatcher.preflight=Mock(side_effect=PaidSetupHold())
+        # This dispatcher publishes no readiness bound, which is the legacy
+        # caller shape production still supports. An unrestricted Mock would
+        # instead invent a callable `readiness_deadline` returning a Mock,
+        # which the coordinator then subtracts from a float: a fixture
+        # artefact, not a product defect. Marked absent explicitly, and
+        # asserted, so a real protocol change fails here loudly.
+        del dispatcher.readiness_deadline
+        self.assertIsNone(getattr(dispatcher,'readiness_deadline',None))
         self.use_parallel_graph_completion_services(dispatcher)
         with patch('director_orchestrator.primary_default.preview_plan',return_value=self.parallel_plan()):
             pending=self.application.create_intake(self.intake(),
@@ -47,3 +56,4 @@ def load_tests(loader, tests, pattern):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
