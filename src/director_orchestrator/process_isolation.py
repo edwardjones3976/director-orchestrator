@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 07:25 UTC | BEGIN]]
@@ -7,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import signal
 import subprocess
 from ctypes import wintypes
 from pathlib import Path
@@ -248,3 +250,81 @@ def _resume_only_thread(process_id: int) -> None:
         raise ProcessContainmentError("Windows primary thread resume was ambiguous")
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:03 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 10:45 UTC | END]]
+
+
+def stop_contained_process(
+    process: subprocess.Popen[bytes],
+    guard: ProcessTreeGuard,
+    *,
+    grace_seconds: float = 5.0,
+) -> dict[str, Any]:
+    """End the owned tree, reap the child, close its pipes and release the guard.
+
+    Bounded by its own short grace period rather than by whatever cutoff the
+    caller was working under, because cleanup must still run once that
+    cutoff has passed. On Windows the Job Object ends every descendant,
+    detached ones included. On POSIX the child was started as the leader of
+    a new session, so its whole process group is signalled; a descendant
+    that called `setsid()` itself has left that group and is *not* reached -
+    that limit is real and no protection against it is claimed here.
+
+    Returns what was observed. It raises `ProcessContainmentError`, carrying
+    those observations, when the immediate child is still alive after the
+    grace period or the Job could not be terminated or closed: a caller must
+    never accept a result over an unverified cleanup.
+    """
+
+    observed: dict[str, Any] = {
+        "platform": os.name, "tree_terminated": False, "child_stopped": False,
+        "pipes_closed": False, "guard_closed": False, "returncode": None,
+    }
+    failures: list[str] = []
+    if guard.active:
+        try:
+            guard.terminate()
+            observed["tree_terminated"] = True
+        except ProcessContainmentError as exc:
+            failures.append(str(exc))
+    elif os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            observed["tree_terminated"] = True
+        except ProcessLookupError:
+            # The group is already empty: leader and members are gone.
+            observed["tree_terminated"] = True
+        except OSError as exc:
+            failures.append("process group signal failed: " + str(exc))
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError as exc:
+            failures.append("child kill failed: " + str(exc))
+    try:
+        process.wait(timeout=grace_seconds)
+        observed["child_stopped"] = True
+    except subprocess.TimeoutExpired:
+        failures.append(f"child still running after {grace_seconds} seconds")
+    except OSError as exc:
+        failures.append("child wait failed: " + str(exc))
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            try:
+                stream.close()
+            except OSError as exc:
+                failures.append("pipe close failed: " + str(exc))
+    observed["pipes_closed"] = all(
+        stream is None or stream.closed
+        for stream in (process.stdin, process.stdout, process.stderr)
+    )
+    try:
+        guard.close()
+        observed["guard_closed"] = True
+    except ProcessContainmentError as exc:
+        failures.append(str(exc))
+    observed["returncode"] = process.returncode
+    if failures:
+        raise ProcessContainmentError(
+            "process cleanup unverified: " + "; ".join(failures) + f"; observed={observed!r}"
+        )
+    return observed
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]

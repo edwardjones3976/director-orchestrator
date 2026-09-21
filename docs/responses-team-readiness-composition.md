@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | BEGIN]] -->
@@ -249,6 +250,53 @@ drained. Candidate integration receives the same fixed completion bound
 through its Git and database work rather than starting a sixty-second timer of
 its own.
 
+## The ordinary command boundary
+
+The three ordinary command transports - `NativeCommandPacketTransport`
+(Claude stdin, Cursor argument, Grok prompt file, Antigravity closed
+directive, Copilot argument, as `discover_local_primary_command_transports`
+selects them), `PublicSearchCommandTransport` (both Perplexity and Firecrawl
+argv routes) and the explicit `BoundedJsonCommandTransport` - previously
+handed `subprocess.run` the full relative timeout regardless of the carried
+`context.deadline`. An independent synthetic probe at the C15 head reached the
+spawn with `timeout=30` for a carried bound already expired and for one with
+0.2 seconds left, on every one of those routes. They now share one boundary.
+`_command_cutoff` fixes one finite absolute cutoff at entry: the smaller of
+the context's own timeout and the transport's configured maximum, narrowed by
+the carried deadline when one exists; a carried bound that is not a finite
+number is refused, and one already spent refuses before anything is prepared.
+Prompt construction, the Grok prompt file and the spawn are all charged to
+that cutoff. `_run_bounded_command` checks what is left immediately before
+launching - preparation that consumed it launches nothing - launches through
+the existing `launch_contained_process` (a kill-on-close Job Object on
+Windows, a new session on POSIX), hands `communicate` only the remainder at
+that moment, and afterwards - on a normal exit and when the cutoff passes
+first - runs `stop_contained_process`, which ends whatever the tree still
+holds, reaps the child within its own five-second grace period rather than
+the spent cutoff, closes the pipes and releases the guard. A cleanup that
+cannot be verified is a raised `ProcessContainmentError` carrying what was
+observed, never a result. A cutoff reached after the launch is an ambiguous
+outcome: the command ran, so it is neither retried nor reported as
+unsubmitted, and the existing classification records the one admitted
+attempt AMBIGUOUS with its identity and slot retained. A refusal before the
+launch takes the same conservative classification - the existing rule for
+every non-transient dispatch exception, deliberately unchanged here.
+Provider identity, plan-mode restrictions, environment filtering, the exact
+literal argv, output caps, prompt-file removal and result normalization are
+as they were.
+
+What this does **not** prove, stated rather than implied: on POSIX the
+process group is signalled, so a descendant that called `setsid()` itself has
+left that group and is not reached - no protection against that escape is
+claimed, and the root-only Linux lifetime test still needs its authorized
+lane. The signed Windows host bridge carries no shared-deadline contract at
+all: its client uses `context.timeout_seconds` and its executor its own
+relative timeout, so that route remains UNKNOWN for shared-deadline
+qualification and was not extended into a cross-host protocol here. The
+native Codex host still refuses unenforceable token caps, and no live
+provider was launched: the discovered routes are exercised with a synthetic
+launch, and the one real process is a local Python child.
+
 ## Cancellation
 
 `director_primary_parallel_batch.kill_switch` - the existing authority
@@ -427,15 +475,34 @@ which carry the two new regressions, were rerun for it. The figures for the
 other groups are therefore the earlier revisions' results on bytes that have
 since changed - reused as prior evidence with that limit stated, not claimed
 for this revision - until the Director's host QA covers the current bytes.
+The 21:25 UTC revision changed `primary_transports.py` and
+`process_isolation.py`, which the same broader groups import; only
+`--group transports` and `--group composition` were rerun for it, and the
+same limit applies to the others.
 
 - `--group composition` (`tests/test_responses_team_readiness_composition.py`):
-  **48 tests, all passing**, this revision: the previous 47 plus the
-  writer-reacquisition regression, which reuses the independent witness
-  unchanged - the real `_enrolled_wave`, the real coordinator and
+  **51 tests, all passing**, this revision. 47 stood at 16:56 UTC; 18:52 UTC
+  added the writer-reacquisition regression, which reuses the independent
+  witness unchanged - the real `_enrolled_wave`, the real coordinator and
   disposable PostgreSQL, the lease expired after the real
   `live_provider_admissions` lookup, and an `httpx.AsyncClient` constructor
   sentinel - and asserts the hold's reason code, a reacquired generation 2,
-  zero attempt, spend and workload rows and zero client constructions.
+  zero attempt, spend and workload rows and zero client constructions. 21:25
+  UTC added three constructor-driven bound checks through the real
+  `DefaultPrimaryActivation` dispatcher, coordinator, admission and
+  disposable PostgreSQL. Readiness fixes a six-second bound from a packet
+  whose own timeout is six, so each attempt's relative timeout is two; the
+  dispatch is then delayed by advancing only the transport module's clock
+  four seconds, the case readiness's own refusal cannot cover. A real
+  `NativeCommandPacketTransport` under the constructor-created adapter is
+  handed the carried remainder - more than one second, under the two-second
+  relative timeout a delay would otherwise restart - and its attempt
+  settles SUCCEEDED; the same transport with the clock advanced past the
+  bound launches nothing and leaves one AMBIGUOUS attempt with its identity
+  retained; and the narrow Responses counterpart, where both the count and
+  generation requests carry an HTTPX timeout of that remainder, under the
+  relative timeout, and settle through the real meter, while the clock
+  advanced past the bound sends nothing at all.
 - `--group admission` (`test_primary_parallel`, `test_antigravity_team`,
   `test_primary_coordinator`, `test_langgraph_postgres`): **182 tests, all
   passing**, at the 16:56 UTC revision on unchanged bytes, including every
@@ -447,16 +514,35 @@ for this revision - until the Director's host QA covers the current bytes.
   team` covers it.
 - `--group startup`: 1 test, passing at an earlier revision on unchanged
   bytes.
-- `--group transports` (not rerun this revision; its 54-test result stands on
-  unchanged bytes) (`test_primary_transports`,
-  `test_openai_responses_validation` - two existing modules outside the ten
-  selected): **54 tests, all passing**. Two fixtures there had gone stale
-  against the current transport: a finite `monotonic` `side_effect` list that
-  additional legitimate cutoff checks exhausted, and a meter fake predating
-  `verify_current`/`clock`/`sent_at`. Both were corrected in the fixture - a
-  clock driven by request stages, and the explicit current protocol with
-  named parameters - with no production byte changed and no assertion
-  weakened.
+- `--group transports` (`test_primary_transports`, `test_process_isolation`,
+  `test_openai_responses_validation`): **64 tests, all passing**, this
+  revision, in 9.9s with zero resource warnings. Its earlier 54-test result
+  predates `test_process_isolation` joining the group. Two fixtures there had
+  gone stale against the current transport at 15:13 UTC: a finite `monotonic`
+  `side_effect` list that additional legitimate cutoff checks exhausted, and
+  a meter fake predating `verify_current`/`clock`/`sent_at`. Both were
+  corrected in the fixture - a clock driven by request stages, and the
+  explicit current protocol with named parameters - with no production byte
+  changed and no assertion weakened. At 21:25 UTC the command-boundary tests
+  moved from patching `subprocess.run` to a recording stand-in for
+  `launch_contained_process`, so each still asserts the exact argv, input,
+  `shell=False` and the filtered child environment, and the real
+  `stop_contained_process` now runs against the recorded process. Added:
+  across every route discovery selects (Claude stdin, Cursor argument, Grok
+  prompt file, Antigravity closed directive, Copilot argument, Perplexity
+  and Firecrawl argv) plus the generic JSON command - a carried bound 0.2s
+  away under a 30s relative timeout with the spawn costing 0.05s hands the
+  child exactly 0.15s and ends the tree after a normal exit; the Grok prompt
+  file costing 0.1s leaves 0.1s and costing 0.25s launches nothing and still
+  removes the file; an expired, NaN or infinite carried bound launches
+  nothing; a wait that expires is one ambiguous attempt with terminate, kill,
+  bounded wait and guard release in that order. One real local Python child
+  through the real runner spawns a detached descendant, outlives a
+  half-second bound, is reported ambiguous within the grace period, and
+  afterwards is reaped with its pipes and guard closed and its descendant's
+  marker never written. `test_process_isolation` gains the same real
+  descendant case against `stop_contained_process` directly and a synthetic
+  child that will not stop, whose refusal carries the observations.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
   check): **2 tests, passing**, at the 16:56 UTC revision on unchanged bytes.
@@ -654,6 +740,9 @@ and the real transport:
 | Team lane honours the primary recheck and shared budget | Done, exercised |
 | Readiness generation bound to the writer admission resolves | Done, exercised |
 | Candidate integration re-reads authority inside its writer-locked transaction | Done, exercised |
+| Ordinary command routes spend the carried deadline, not the relative timeout | Done, exercised - synthetic launch, one real local child |
+| Command child trees ended and verified after exit or expiry | Done on Windows (Job); POSIX group signal, `setsid` escape not covered |
+| Host bridge shares the carried deadline | Not done - UNKNOWN, no cross-host contract |
 | One anchored bound; transit and pauses spent, never returned or renewed | Done, exercised |
 | Remote support acknowledged before any private source | Done, exercised |
 | Legacy bound-bearing frames refused; explicit standalone kept deliberate | Done, exercised |
@@ -833,7 +922,7 @@ and the real transport:
   regression, extracts `run_unprivileged` by AST and lacked the two helpers
   it has called since 16:56 UTC; only those two names were added, and that
   extraction is checked by the Director separately from any kernel run.
-- **2026-09-21 18:52 UTC (this revision)**: two confirmed functional gaps and
+- **2026-09-21 18:52 UTC**: two confirmed functional gaps and
   one inaccurate claim. An independent real-PostgreSQL probe expired the task
   writer's lease after the real authority lookup and before the coordinator
   resolved the writer for admission; the coordinator reacquired it under a
@@ -850,6 +939,21 @@ and the real transport:
   document's claim that a hold is never raised after a generation request
   was wrong for the team lane and is corrected above, with the
   classification itself unchanged.
+- **2026-09-21 21:25 UTC (this revision)**: an independent synthetic probe
+  at the accepted C15 head showed the three ordinary command transports
+  reaching `subprocess.run` with the full relative timeout while the carried
+  deadline was already spent or had 0.2 seconds left. They now share one
+  boundary: a finite absolute cutoff fixed at entry from the permitted
+  relative ceiling and the carried deadline, preparation and spawn charged
+  to it, refusal before launch once it is spent, the wait given only the
+  remainder, and the tree launched through the existing
+  `launch_contained_process` and ended, reaped and closed through the new
+  `stop_contained_process` under its own grace period, whose unverified
+  cleanup is a refusal rather than a result. The route matrix, a real local
+  descendant, and delayed/expired command and Responses cases through the
+  real constructor-created dispatcher are exercised. The host bridge's
+  missing shared-deadline contract, the POSIX `setsid` escape and the
+  unrun root Linux lifetime test remain stated unknowns.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -866,3 +970,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 17:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]] -->

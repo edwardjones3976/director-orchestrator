@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -22,6 +23,8 @@ import os
 import unittest
 import uuid
 from dataclasses import replace
+from tempfile import TemporaryDirectory
+from time import monotonic as real_monotonic
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
@@ -76,7 +79,10 @@ import httpx
 from director_orchestrator.packet_contracts import canonical_json_bytes
 from director_orchestrator.packet_contracts import document_digest as packet_document_digest
 from director_orchestrator.primary_parallel import provider_attempt_digest, provider_attempt_idempotency
-from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+from director_orchestrator.primary_transports import (
+    NativeCommandPacketTransport,
+    OpenAIResponsesPacketTransport,
+)
 from director_orchestrator.response_meter import (
     EnrolledResponseMeter,
     ResponseMeterEnrollment,
@@ -85,6 +91,7 @@ from director_orchestrator.response_meter import (
 
 from tests.test_antigravity_team import budget, fixtures, grant, signed
 from tests.test_primary_default import SHA, digest, packet_router
+from tests.test_primary_transports import LAUNCH_SEAM, NATIVE_ENVELOPE, _FakeLaunch
 
 TEST_DSN = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
 
@@ -939,12 +946,20 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 
     # --- the selection must still hold at admission and before I/O ---
 
-    def _ready_wave(self):
-        """Real readiness through real `reserve_ready`, ready to dispatch."""
+    def _ready_wave(self, *, transport=None, provider_timeout_seconds=None):
+        """Real readiness through real `reserve_ready`, ready to dispatch.
 
-        transport = OpenAIResponsesPacketTransport(
+        `transport` defaults to the real Responses transport. A command
+        transport can be placed under the same constructor-created adapter
+        instead: the dispatcher, coordinator, admission and the context they
+        build are then identical, and only the raw transport at the end of
+        that path differs.
+        """
+
+        transport = transport or OpenAIResponsesPacketTransport(
             api_key="test-secret-key", model="configured-model", response_meter=None)
-        activation, settings = self._build_activation(transport)
+        activation, settings = self._build_activation(
+            transport, provider_timeout_seconds=provider_timeout_seconds)
         task_id = "DIR-PG-SEL-" + uuid.uuid4().hex[:8].upper()
         assignment_id, sequence, packet = self._register(activation, settings, task_id=task_id)
         attempt_usd = float(packet["limits"]["budget_usd"]) / 3.0
@@ -1509,6 +1524,153 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         self.assertEqual(wave.writer.fencing_generation + 1, generation,
                          "the coordinator reacquired the expired lease, and that writer was refused")
         self._assert_no_admission_rows()
+
+    # --- the ordinary command boundary, under the constructor-created dispatcher ---
+
+    def _attempt_history(self, task_id):
+        with self.handle.pool.connection() as connection:
+            rows = connection.execute(
+                f"SELECT attempt_digest, status FROM {self.schema}.director_primary_provider_attempt "
+                "WHERE task_id=%s ORDER BY event_sequence", (task_id,)).fetchall()
+        return [row["status"] for row in rows], {row["attempt_digest"] for row in rows}
+
+    def test_command_child_receives_only_the_remaining_carried_bound_through_the_constructor(self):
+        """The real `NativeCommandPacketTransport` at the end of the real dispatch path.
+
+        Readiness fixes this assignment's bound six seconds out, from a packet
+        whose own timeout is six, so each attempt's relative timeout is two.
+        Dispatch is then delayed: only the transport module's clock is
+        advanced four seconds, so every dispatcher-side check has passed on
+        the real clock and the transport is the one to notice that under two
+        seconds of the carried bound remain - the case readiness's own
+        refusal cannot cover. The child must be given that remainder, less
+        than the two-second relative timeout, and the attempt still settles
+        normally. The launch is synthetic; readiness, admission, the
+        coordinator, the context, the transport and its cutoff arithmetic
+        are real.
+        """
+        with TemporaryDirectory() as directory:
+            transport = NativeCommandPacketTransport(
+                "openai", ("native-cli.exe", "--print"), cwd=directory, prompt_mode="stdin")
+            wave = self._ready_wave(transport=transport, provider_timeout_seconds=6)
+            launch = _FakeLaunch(stdout=NATIVE_ENVELOPE)
+            contexts = []
+            original_send = transport.send
+
+            def observed_send(packet, *, context):
+                contexts.append(context)
+                return original_send(packet, context=context)
+
+            transport.send = observed_send
+            with patch(LAUNCH_SEAM, launch), \
+                 patch("director_orchestrator.primary_transports.monotonic",
+                       lambda: real_monotonic() + 4.0):
+                outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual(1, len(launch.calls))
+        [context] = contexts
+        self.assertIsNotNone(context.deadline, "the constructor carried the readiness bound")
+        self.assertEqual(2, context.timeout_seconds, "the packet's six seconds, one third per attempt")
+        self.assertGreater(launch.waits[0], 1.0, "the carried remainder after the delay")
+        self.assertLess(launch.waits[0], context.timeout_seconds,
+                        "never the relative timeout the delay would otherwise restart")
+        self.assertEqual(["terminate", ("wait", 5.0), "close"], launch.stopped)
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, outcome.status,
+                         f"dispatch outcome: {outcome.status} / {outcome.reason_code}")
+        statuses, digests = self._attempt_history(wave.task_id)
+        self.assertEqual(["STARTED", "SUCCEEDED"], statuses)
+        self.assertEqual(1, len(digests))
+
+    def test_command_transport_refuses_a_spent_carried_bound_before_launch_through_the_constructor(self):
+        """The bound runs out between the dispatcher's last check and the transport's entry.
+
+        Modelled by advancing only the transport module's clock ten seconds:
+        every dispatcher-side check has passed, the adapter has validated the
+        packet, and the transport is the first to see the spent bound. It
+        launches nothing. The refusal is classified the way every
+        non-transient dispatch exception is - one AMBIGUOUS attempt that
+        keeps its identity and slot, never a second attempt.
+        """
+        with TemporaryDirectory() as directory:
+            transport = NativeCommandPacketTransport(
+                "openai", ("native-cli.exe", "--print"), cwd=directory, prompt_mode="stdin")
+            wave = self._ready_wave(transport=transport, provider_timeout_seconds=3)
+            launch = _FakeLaunch(stdout=NATIVE_ENVELOPE)
+            with patch(LAUNCH_SEAM, launch), \
+                 patch("director_orchestrator.primary_transports.monotonic",
+                       lambda: real_monotonic() + 10.0):
+                outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual([], launch.calls, "a spent bound launches nothing")
+        self.assertEqual(ParallelAssignmentStatus.AMBIGUOUS, outcome.status)
+        self.assertEqual("provider_outcome_unknown", outcome.reason_code)
+        statuses, digests = self._attempt_history(wave.task_id)
+        self.assertEqual(["STARTED", "AMBIGUOUS"], statuses, "one attempt, retained, not repeated")
+        self.assertEqual(1, len(digests))
+
+    def test_responses_requests_receive_only_the_remaining_carried_bound_through_the_constructor(self):
+        """The narrow Responses counterpart: both requests are bounded by the carried remainder.
+
+        The same six-second bound and four-second delayed dispatch. The count
+        and generation requests each carry an HTTPX timeout of what is left
+        of the carried bound - under the two-second relative timeout - and
+        the attempt then settles through the real meter. With the transport's
+        clock advanced past the bound instead, no request is made at all.
+        """
+        wave = self._enrolled_wave(provider_timeout_seconds=6)
+        timeouts, contexts = [], []
+        original_send = wave.transport.send
+
+        def observed_send(packet, *, context):
+            contexts.append(context)
+            return original_send(packet, context=context)
+
+        wave.transport.send = observed_send
+        main_reply = {"object": "response", "id": "resp-bounded", "status": "completed",
+            "model": wave.model, "service_tier": "default",
+            "created_at": int(datetime.now(timezone.utc).timestamp()),
+            "output": [{"type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": "bounded evidence"}]}],
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150,
+                      "input_tokens_details": {"cached_tokens": 0},
+                      "output_tokens_details": {"reasoning_tokens": 0}}}
+
+        def handle_request(request):
+            timeouts.append(request.extensions["timeout"]["read"])
+            if str(request.url).endswith("/input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
+            return httpx.Response(200, json=main_reply, headers={
+                "openai-organization": "org-synthetic", "openai-project": "proj-synthetic",
+                "x-request-id": "req-bounded"})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient", return_value=client), \
+             patch("director_orchestrator.primary_transports.monotonic",
+                   lambda: real_monotonic() + 4.0):
+            outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
+        self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, outcome.status,
+                         f"dispatch outcome: {outcome.status} / {outcome.reason_code}")
+        [context] = contexts
+        self.assertEqual(2, context.timeout_seconds)
+        self.assertEqual(2, len(timeouts), "one count and one generation request")
+        for observed in timeouts:
+            self.assertGreater(observed, 0.0)
+            self.assertLess(observed, context.timeout_seconds, "the carried remainder, not the relative timeout")
+        self.assertGreater(timeouts[0], 1.0, "the count request saw the remainder after the delay")
+
+        expired = self._enrolled_wave(provider_timeout_seconds=6)
+        requests = []
+        never = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(500)))
+        self.addCleanup(lambda: asyncio.run(never.aclose()))
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient", return_value=never), \
+             patch("director_orchestrator.primary_transports.monotonic",
+                   lambda: real_monotonic() + 10.0):
+            outcome = expired.activation.application._parallel_dispatcher(expired.reservation)
+        self.assertEqual([], requests, "a spent bound sends nothing")
+        self.assertEqual(ParallelAssignmentStatus.AMBIGUOUS, outcome.status)
+        statuses, digests = self._attempt_history(expired.task_id)
+        self.assertEqual(["STARTED", "AMBIGUOUS"], statuses)
+        self.assertEqual(1, len(digests))
 
     def test_added_signed_budget_after_readiness_fails_closed(self):
         """Registry replacement is refused, not silently re-resolved.
@@ -2392,3 +2554,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
