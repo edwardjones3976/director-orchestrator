@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | BEGIN]]
 """Durable returned bytes and immutable Git candidates; never a checkout or merge."""
@@ -124,11 +125,19 @@ class GitTeamCandidateIntegrator:
         return result.stdout
 
     def integrate(self, *, grant, attempt_digest, capture_digest, query,
-                  owner_token, fencing_generation):
+                  owner_token, fencing_generation, deadline=None):
         from .antigravity_team_worker import authenticate
         if not re.fullmatch(r"sha256:[0-9a-f]{64}",attempt_digest):
             raise TeamAuthorizationError("invalid candidate attempt identity")
-        self._deadline.set(time.monotonic()+60)
+        # The primary lane's own completion bound when one is carried; the
+        # standalone sixty seconds only when it is not. Integration never
+        # starts a fresh timer over a budget that is already running, and an
+        # exhausted bound refuses before any Git or database work.
+        if deadline is None:
+            deadline = time.monotonic() + 60
+        elif deadline - time.monotonic() <= 0:
+            raise TeamAuthorizationError("candidate integration deadline exhausted")
+        self._deadline.set(deadline)
         evidence = authenticate(self.worker_secret,self.artifacts.get(capture_digest))
         completed=datetime.fromisoformat(evidence["completed_at"])
         if completed.tzinfo is None or completed>datetime.now(timezone.utc):
@@ -138,7 +147,8 @@ class GitTeamCandidateIntegrator:
             raise TeamAuthorizationError("candidate capture binding mismatch")
         files = decode_returned_files(grant, evidence["returned_files"])
         schema = self.authority.schema
-        with self.pool.connection() as connection, connection.transaction():
+        from .langgraph_postgres import bounded_transaction
+        with bounded_transaction(self.pool, deadline) as connection:
             writer = connection.execute(f"""SELECT task_id FROM {schema}.director_primary_task_writer
                 WHERE task_id=%s AND engine_owner='langgraph' AND owner_token=%s
                 AND fencing_generation=%s AND lease_expires_at>clock_timestamp() FOR UPDATE""",
@@ -201,3 +211,4 @@ class GitTeamCandidateIntegrator:
             return candidate
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]

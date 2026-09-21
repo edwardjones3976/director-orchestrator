@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | BEGIN]]
@@ -130,15 +131,19 @@ class NativeTeamPacketTransport:
     def _worker_bound(self, deadline):
         """The remaining primary budget, for a worker that honours one.
 
-        Declared support only: a worker that does not accept the primary
-        bound keeps its own grant timer and its existing call signature, so
-        standalone use is unchanged and nothing is silently dropped here -
-        the transport still enforces the same bound at every boundary it
-        owns below.
+        A worker that does not declare support keeps its own grant timer and
+        its existing call signature - genuine standalone use, where no
+        primary bound exists. But a primary bound that *does* exist cannot be
+        silently dropped: this transport would then hold a worker to nothing
+        while claiming the wave was bounded, so an unsupported worker is
+        refused before it is invoked at all.
         """
 
-        if deadline is None or not getattr(self.worker, "accepts_primary_deadline", False):
+        if deadline is None:
             return {}
+        if not getattr(self.worker, "accepts_primary_deadline", False):
+            raise TeamAuthorizationError(
+                "native team worker cannot enforce the primary deadline")
         return {"deadline": deadline}
 
     def _authenticated_evidence(self, response):
@@ -221,12 +226,27 @@ class NativeTeamPacketTransport:
             remaining("native execution")
             if datetime.fromisoformat(prepared["expires_at"])<=datetime.now(timezone.utc):
                 raise TeamAuthorizationError("worker qualification expired before execution")
-            execution_callbacks.append(self._boundary("execution",deadline=deadline))
+            admitted=self._boundary("execution",deadline=deadline)
+            # Claiming the execution entitlement takes a pooled connection, a
+            # query and its row locks, and those wait. The decisive recheck is
+            # therefore *after* that wait, with nothing left between it and the
+            # worker being told to execute.
+            if recheck is not None:
+                recheck()
+            remaining("native execution")
+            execution_callbacks.append(admitted)
         def before_command(argv):
             if not execution_callbacks:
                 raise TeamAuthorizationError("local command before native execution admission")
             remaining("local command")
+            if recheck is not None:
+                recheck()
             self._boundary("command",tuple(argv),deadline=deadline)
+            # Same boundary, same reason: the authorization above blocks, and
+            # this command runs immediately after it.
+            if recheck is not None:
+                recheck()
+            remaining("local command")
             authorized_commands.append(list(argv))
         capture=self.worker.exchange(grant=grant,work_packet=work,source=source,challenge=challenge,
             before_execute=before_execute,
@@ -260,7 +280,11 @@ class NativeTeamPacketTransport:
         candidate=self.integrator.integrate(grant=grant,attempt_digest=self.attempt_digest,
             capture_digest=capture_digest,query=self.query_factory("result",None),
             owner_token=self.writer_owner_token,
-            fencing_generation=context.fencing_generation)
+            fencing_generation=context.fencing_generation,
+            # The same fixed completion bound the rest of this settlement uses,
+            # carried through the integrator's Git and database work rather
+            # than replaced by a timer of its own.
+            **({} if settlement is None else {"deadline": settlement}))
         validated["artifacts"]=[a for a in validated["artifacts"] if a["kind"]!="git_commit"]+[
             {"kind":"git_commit","location":grant.repository+"@"+candidate,"digest":"sha256:"+capture_digest}]
         return validate_packet("result",validated)
@@ -360,3 +384,4 @@ def team_packet_adapter(settings, **transport_arguments):
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]

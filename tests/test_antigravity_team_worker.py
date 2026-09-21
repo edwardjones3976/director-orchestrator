@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
@@ -291,14 +292,16 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 
     # --- the primary lane's authority and shared budget reach this transport ---
 
+    def _entitlement_query(self, stage, command):
+        action={"disclosure":EntitlementActionType.SOURCE_READ,"execution":EntitlementActionType.PROVIDER_DISPATCH,
+                "result":EntitlementActionType.REPOSITORY_WRITE}[stage]
+        arguments=dict(installation_id="install-one",ref=self.g.commit,path="src/allowed.py",
+                       action_type=action,effect_digest=self.g.digest)
+        if stage=="execution":arguments.update(destination_id="uppercut",reserved_spend_usd=0.00006)
+        return fixtures._boundary_query(**arguments)
+
     def _primary_transport(self, worker, *, query=None):
-        def boundary_query(stage,command):
-            action={"disclosure":EntitlementActionType.SOURCE_READ,"execution":EntitlementActionType.PROVIDER_DISPATCH,
-                    "result":EntitlementActionType.REPOSITORY_WRITE}[stage]
-            arguments=dict(installation_id="install-one",ref=self.g.commit,path="src/allowed.py",
-                           action_type=action,effect_digest=self.g.digest)
-            if stage=="execution":arguments.update(destination_id="uppercut",reserved_spend_usd=0.00006)
-            return fixtures._boundary_query(**arguments)
+        boundary_query=self._entitlement_query
         with self.store._pool.connection() as c,c.transaction():
             c.execute(f"ALTER TABLE {self.schema}.director_primary_provider_attempt ADD COLUMN task_id text, ADD COLUMN assignment_id text, ADD COLUMN status text, ADD COLUMN event_sequence bigint")
             c.execute(f"INSERT INTO {self.schema}.director_primary_provider_attempt VALUES(%s,%s,%s,'STARTED',1)",(self.attempt,self.g.task_id,self.g.assignment_id))
@@ -413,8 +416,8 @@ class TeamCandidatePostgresTests(unittest.TestCase):
         self.assertEqual([("prepare",bound),("exchange",bound)],type(worker).bounds)
         self.assertEqual(["disclosure","execution"],self._boundary_stages())
 
-    def test_standalone_worker_call_keeps_its_own_contract(self):
-        """A worker that declares no support is called exactly as before."""
+    def _legacy_worker(self):
+        """A worker with the original signature and no declared bound support."""
 
         test=self
         class Legacy:
@@ -432,12 +435,134 @@ class TeamCandidatePostgresTests(unittest.TestCase):
                 before_execute()
                 Legacy.executed=True
                 raise AssertionError("native execution must not be reached in this fixture")
-        transport=self._primary_transport(Legacy())
+        return Legacy()
+
+    def test_worker_that_cannot_enforce_the_primary_bound_is_refused(self):
+        """A carried bound is never silently dropped for a legacy worker.
+
+        Holding this worker to nothing while the wave believes it is bounded
+        is the failure; refusing before it is invoked is the fix. It happens
+        before preparation, so no source is exported and no entitlement is
+        claimed.
+        """
+        worker=self._legacy_worker()
+        transport=self._primary_transport(worker)
+        with self.assertRaisesRegex(TeamAuthorizationError,"cannot enforce the primary deadline"):
+            transport.send(json.dumps(self.work).encode(),context=self._primary_context())
+        self.assertFalse(type(worker).executed)
+        self.assertEqual([],self._boundary_stages())
+
+    def test_standalone_worker_call_keeps_its_own_contract(self):
+        """Genuine standalone use: no primary bound exists at all.
+
+        This is the only case in which the original signature is still
+        called - the caller carries no deadline, so nothing is dropped.
+        """
+        worker=self._legacy_worker()
+        transport=self._primary_transport(worker)
         with self.assertRaises(AssertionError):
             transport.send(json.dumps(self.work).encode(),
-                           context=self._primary_context())
-        self.assertTrue(Legacy.executed,"the unchanged signature is still called")
+                           context=self._primary_context(deadline=None))
+        self.assertTrue(type(worker).executed,"the unchanged signature is still called")
         self.assertEqual(["disclosure","execution"],self._boundary_stages())
+
+    def test_cancellation_during_execution_authorization_never_executes(self):
+        """The decisive recheck is after the authorization wait, not before it.
+
+        The entitlement claim takes a connection, runs a query and holds row
+        locks; a cancellation ordered while that blocks would otherwise be
+        invisible, because the only recheck had already passed. Here the
+        cancellation arrives during that wait and the worker is still never
+        told to execute, even though the entitlement itself was claimed.
+        """
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        worker=self._recording_worker()
+        transport=self._primary_transport(worker)
+        cancelled=[]
+        def authorizing_query(stage,command):
+            if stage=="execution":
+                # Ordered while this authorization is being claimed.
+                cancelled.append("during-authorization")
+            return self._entitlement_query(stage,command)
+        transport.query_factory=authorizing_query
+        def recheck():
+            if cancelled:
+                raise WorkloadAdmissionHold("wave_cancelled_before_generation")
+        with self.assertRaises(WorkloadAdmissionHold):
+            transport.send(json.dumps(self.work).encode(),
+                           context=self._primary_context(authority_recheck=recheck))
+        self.assertFalse(type(worker).executed,"native execution must not be authorized")
+        self.assertEqual(["disclosure","execution"],self._boundary_stages(),
+                         "the entitlement was claimed, and execution still refused")
+        self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
+
+    def test_completion_bound_reaches_real_candidate_integration(self):
+        """The integrator receives the fixed completion bound, not a new timer.
+
+        An exhausted bound refuses before any Git or database work, so no
+        candidate commit exists and the repository head is untouched.
+        """
+        from time import monotonic
+        recorded=[]
+        integrator=self.integrator
+        original=integrator.integrate
+        def integrate(**kwargs):
+            recorded.append(kwargs.get("deadline"))
+            return original(**kwargs)
+        integrator.integrate=integrate
+        self.addCleanup(lambda: setattr(integrator,"integrate",original))
+        with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
+            integrator.integrate(grant=self.g,attempt_digest=self.attempt,
+                capture_digest="0"*64,query=self._entitlement_query("result",None),
+                owner_token="writer-one",fencing_generation=1,
+                deadline=monotonic()-1)
+        self.assertEqual(self.git_command("rev-parse","HEAD"),self.g.commit)
+        with self.store._pool.connection() as c:
+            self.assertEqual(0,c.execute(
+                f"SELECT count(*) AS n FROM {self.schema}.director_primary_team_candidate"
+            ).fetchone()["n"])
+
+    def test_remote_lifetime_crosses_the_frame_as_a_duration(self):
+        """Another host cannot be handed this host's monotonic instant.
+
+        What the authenticated frame carries is the number of seconds still
+        allowed; the receiving side re-anchors it to its own clock. An absent
+        lifetime is standalone use, and a malformed or spent one is refused
+        rather than treated as unbounded.
+        """
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import (
+            _remote_deadline, remote_lifetime_seconds)
+        lifetime=remote_lifetime_seconds(monotonic()+12,"remote preparation")
+        self.assertIsInstance(lifetime,float)
+        self.assertLessEqual(lifetime,12)
+        self.assertGreater(lifetime,11)
+        remote=_remote_deadline({"lifetime_seconds":lifetime})
+        # Re-anchored to this host's clock, and never longer than what was sent.
+        self.assertLessEqual(remote-monotonic(),lifetime+0.5)
+        self.assertIsNone(remote_lifetime_seconds(None,"standalone"))
+        self.assertIsNone(_remote_deadline({}))
+        with self.assertRaisesRegex(TeamAuthorizationError,"expired before it started"):
+            remote_lifetime_seconds(monotonic()-1,"remote preparation")
+        for invalid in ({"lifetime_seconds":0},{"lifetime_seconds":-3},
+                        {"lifetime_seconds":"30"},{"lifetime_seconds":True}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(TeamAuthorizationError,"remote lifetime is invalid"):
+                    _remote_deadline(invalid)
+
+    def test_remaining_budget_is_never_rounded_up_into_a_new_second(self):
+        """`max(1, int(remaining))` would hand back time that is already gone."""
+
+        from time import monotonic
+        from director_orchestrator.antigravity_team_worker import _remaining_seconds
+        remaining=_remaining_seconds(monotonic()+0.4,"native execution")
+        self.assertLess(remaining,1.0,"a fraction stays a fraction")
+        self.assertGreater(remaining,0.0)
+        self.assertIsNone(_remaining_seconds(None,"standalone"))
+        for spent in (monotonic()-0.001,monotonic()-5):
+            with self.subTest(spent=spent):
+                with self.assertRaisesRegex(TeamAuthorizationError,"deadline exhausted"):
+                    _remaining_seconds(spent,"native execution")
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:02 UTC | END]]
@@ -445,3 +570,4 @@ class TeamCandidatePostgresTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
 # [[OpenAI Codex Coordination | GPT-6 | 2026-09-07 | 00:56 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]]

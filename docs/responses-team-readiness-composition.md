@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]] -->
@@ -121,7 +122,30 @@ and nothing is retried.
 
 A standalone caller carries neither value; every one of these checks is then a
 no-op, and a worker that declares no support keeps its previous call signature
-unchanged.
+unchanged. When a primary bound *does* exist, a worker that cannot enforce it
+is refused before it is invoked, rather than being held to nothing while the
+wave believes it is bounded.
+
+The decisive recheck is after the blocking work, not before it: claiming the
+execution entitlement takes a pooled connection, a query and row locks, so the
+authority is re-read once that returns, with nothing between it and the worker
+being told to execute. The local-command boundary does the same.
+
+Across hosts the bound travels as a **duration**, never as this host's
+`time.monotonic()` instant, which means nothing on another machine. The
+authenticated SSH frames carry `lifetime_seconds`, recomputed for preparation
+and again for the exchange, and `serve` re-anchors it to the remote host's own
+clock before the Linux worker starts; an absent lifetime is standalone use and
+a malformed or spent one is refused rather than treated as unbounded. Frame
+flight time is lost on the safe side, so the remote lifetime is always shorter
+than this side's. What that does **not** prove: killing the local SSH process
+bounds this side only, and remote cgroup teardown is not demonstrated here.
+
+Inside the worker, the remaining budget is spent as it is: a fractional
+remainder stays fractional, and a non-positive one is refused instead of
+being rounded up into a fresh second. Candidate integration receives the same
+fixed completion bound through its Git and database work rather than starting
+a sixty-second timer of its own.
 
 ## Cancellation
 
@@ -298,7 +322,8 @@ nothing here is claimed from them.
   passing**, this revision, including every PostgreSQL deadline case below.
 - `--group full` (all ten selected modules, including
   `tests/test_langgraph_primary.py`): **417 tests, all passing**, this
-  revision, in 218s with zero resource warnings and a verified lane teardown.
+  revision, in 273s with zero resource warnings and a verified lane teardown.
+  The team lane is not in this selection; `--group team` covers it.
 - `--group startup`: 1 test, passing at the previous revision.
 - `--group transports` (not rerun this revision; its 54-test result stands on
   unchanged bytes) (`test_primary_transports`,
@@ -313,8 +338,17 @@ nothing here is claimed from them.
 
 - `--group compatibility` (the cancellation fixture and the skill suite-set
   check): **2 tests, passing**, this revision.
-- `--group team` (`test_antigravity_team_worker`): **16 tests, all passing**,
-  this revision, including the four new real-path team regressions.
+- `--group team` (`test_antigravity_team_worker`): **21 tests, all passing**,
+  this revision, including nine real-path team regressions.
+
+What those team regressions actually exercise: the real
+`NativeTeamPacketTransport`, real signed grants and prepared-evidence
+contracts, the real entitlement boundary against the real disposable
+PostgreSQL schema, the real candidate integrator and Git repository, and the
+real frame-lifetime helpers. What they do **not** exercise: a live SSH
+connection, the Linux worker's cgroup/uid containment, any native provider
+execution, and remote cleanup after a lifetime expires. Those remain
+unproven here and are stated as limits rather than coverage.
 
 Two independent probes are preserved as *failed pre-repair* evidence, not as
 current verdicts: the supplied restart probe reached the writer sentinel and
@@ -442,6 +476,11 @@ and the real transport:
 | Complete replies survive response/client cleanup failure | Done, exercised |
 | A lost selection is refused before any database call | Done, exercised |
 | Team lane honours the primary recheck and shared budget | Done, exercised |
+| Remote worker lifetime crosses the frame as a duration | Done, exercised |
+| A worker that cannot enforce the bound is refused | Done, exercised |
+| Recheck after the blocking authorization, before execution | Done, exercised |
+| Completion bound carried into candidate integration | Done, exercised |
+| Remote cgroup teardown after a spent lifetime | Not proven - stated limit |
 | Foreground completion, outcome and checkpoint writes bounded | Done, exercised |
 | Concurrency: no cross-request facts, no overspend | Done, exercised |
 | Host full-repository QA and exact-head source/security review | Not done - Director |
@@ -542,7 +581,7 @@ and the real transport:
   corrected in place without weakening a single assertion, and this document's
   cleanup-case bullet was qualified to match what each of those three tests
   directly asserts.
-- **2026-09-21 16:04 UTC (this revision)**: an independent restart probe showed
+- **2026-09-21 16:04 UTC**: an independent restart probe showed
   a dispatch with no live selection still reading the writer and persisting one
   packet artifact before its intended refusal, so that refusal moved to the
   lookup itself, ahead of both database calls. The team lane, which had been
@@ -553,6 +592,18 @@ and the real transport:
   host found - an unrestricted cancellation Mock and a missing skill suite
   entry - were corrected, and the pre-repair probe, host QA and security
   evidence is preserved as historical failure rather than restated as a pass.
+- **2026-09-21 16:29 UTC (this revision)**: independent review found five
+  remaining team control gaps, two of them probed failing. The SSH lane now
+  forwards an authenticated remote *lifetime* through its frames and `serve`,
+  re-anchored to the receiving host's clock, with the clock-domain assumption
+  and the unproven remote-teardown limit stated rather than implied. A primary
+  bound is no longer silently dropped for a worker that cannot enforce it, and
+  the misleading "standalone" case that supplied a deadline and expected
+  execution was replaced by one that carries none. The authority recheck moved
+  to *after* the blocking execution and command authorizations. Candidate
+  integration receives the fixed completion bound through its Git and database
+  work instead of restarting sixty seconds, and the Linux worker no longer
+  rounds a spent remainder up into a new second.
 <!-- [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]] -->
@@ -564,3 +615,4 @@ and the real transport:
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:29 UTC | END]] -->
