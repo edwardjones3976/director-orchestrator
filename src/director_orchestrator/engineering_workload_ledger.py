@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -377,6 +379,19 @@ class EngineeringWorkloadLedger:
         return None
 
     @staticmethod
+    def _require_current_authority(meta: dict) -> None:
+        """A recognized historical or pre-retirement canonical identity remains
+        readable and supports idempotent replay and late reporting of prior
+        work, but it never mints new admission or new dispatch authority. Only
+        the current canonical identity may authorize a new assignment row or a
+        new attempt permit.
+        """
+        if meta["policy"]["kind"] == "canonical":
+            profile = meta["policy"].get("profile", "engineering")
+            if meta["canonical_digest"] != allocation_profile_digest(profile):
+                raise LedgerError("canonical_policy_superseded_new_authority_required")
+
+    @staticmethod
     def _insert(db, request: dict, bucket: str, created_at: str) -> None:
         db.execute("INSERT INTO assignments(assignment_id,route_id,product_id,bucket,kind,packet_sha,created_at,payload) VALUES (?,?,?,?,?,?,?,?)",
                    (request["assignment_id"], request["route_id"], request["product_id"], bucket, request["kind"], request["packet_evidence"]["sha256"], created_at, _json(request)))
@@ -398,6 +413,7 @@ class EngineeringWorkloadLedger:
                 violation = self._capacity(meta, bucket, self._window(db, 19))
                 if violation:
                     raise LedgerError(violation)
+            self._require_current_authority(meta)
             self._insert(db, request, bucket, _now())
         return {"assignment_id": request["assignment_id"], "already_reserved": False,
                 "dispatch_permitted": False,
@@ -412,7 +428,8 @@ class EngineeringWorkloadLedger:
 
     def begin_attempt(self, assignment_id: str, *, transport: str, new_information_evidence=None) -> dict:
         with self._connection(write=True) as db:
-            self._meta(db)
+            meta = self._meta(db)
+            self._require_current_authority(meta)
             row, request = self._assignment(db, assignment_id)
             if request["kind"] == "coordination":
                 raise LedgerError("coordination_is_record_only_no_provider_dispatch")
@@ -634,3 +651,5 @@ def human_status(status: dict) -> str:
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]

@@ -1,3 +1,5 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]] -->
@@ -146,11 +148,16 @@ the native producer's sorted compact JSON digest; formatting changes alone do
 not alter that semantic digest.
 
 Check 13 recomputes the current journal through `EngineeringWorkloadLedger.status`.
-It needs twenty actual admissions after the prospective cutover and no reported
-resource-bound violation. The owner retired the rolling-twenty allocation hard
-ceiling on 2026-09-21; normal allocation bands remain an advisory routing
-preference and this check does not gate on either. Imported historical
-attestations do not count as authenticated proof.
+It needs twenty actual admissions after the prospective cutover and reads the
+ledger's own authoritative tri-state `reported_resource_bounds_ok`: PASS only
+when every admission's reported usage is fully known and within its declared
+bounds; FAIL as soon as any admission has a known reported bound violation,
+even while other admissions' usage is still unknown; and UNKNOWN whenever
+usage is unknown, incomplete, or the value is malformed — unknown usage is
+never treated as compliant and never yields PASS. The owner retired the
+rolling-twenty allocation hard ceiling on 2026-09-21; normal allocation bands
+remain an advisory routing preference and this check does not gate on either.
+Imported historical attestations do not count as authenticated proof.
 Before twenty prospective admissions exist, UNKNOWN honestly describes the
 incomplete window. This observation does not authorize the journal's policy,
 authenticate declared provider identities or confer dispatch/production credit.
@@ -204,3 +211,5 @@ Postgres lane is needed.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->

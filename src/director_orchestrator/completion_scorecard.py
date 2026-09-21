@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -445,8 +447,19 @@ def _workload_observation(path: Path, at: datetime) -> Observation:
         cutover = datetime.fromisoformat(status["cutover_at"].replace("Z", "+00:00"))
         times = [datetime.fromisoformat(row["admitted_at"].replace("Z", "+00:00")) for row in rows]
         if cutover.tzinfo is not None and all(value.tzinfo is not None and cutover < value <= at for value in times):
-            passed = not any(row.get("reported_bound_violations") for row in rows)
-            explanation = "Recomputed the journal's twenty post-cutover admissions and resource-bound violations; this does not authenticate external attestations or grant dispatch authority."
+            # The ledger already exposes an authoritative tri-state resource-bound
+            # result. Unknown or incomplete reported usage is never treated as
+            # compliant; only a known violation fails, and only fully known,
+            # in-bound usage passes.
+            bounds_ok = status.get("current_window_checks", {}).get("reported_resource_bounds_ok")
+            if type(bounds_ok) is bool:
+                passed = bounds_ok
+                explanation = ("Recomputed the journal's twenty post-cutover admissions; reported resource usage is known and within bounds."
+                               if passed else
+                               "Recomputed the journal's twenty post-cutover admissions; a known reported resource-bound violation exists.")
+                explanation += " This does not authenticate external attestations or grant dispatch authority."
+            else:
+                explanation = "Reported resource usage is unknown or incomplete for one or more of the twenty post-cutover admissions; unknown usage is not treated as compliant."
         else:
             explanation = "This window includes imported, future or unbound history; the tool does not authenticate its attestations."
     facts = {key: status.get(key) for key in ("history_mode", "cutover_at", "rolling_window_complete",
@@ -673,3 +686,5 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]

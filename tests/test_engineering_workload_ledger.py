@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -156,6 +158,64 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
             EngineeringWorkloadLedger(forged_path).bootstrap(manifest())
         with self.assertRaisesRegex(LedgerError, "canonical_policy_changed_reconciliation_required"):
             EngineeringWorkloadLedger(forged_path).status()
+
+    def test_historical_identity_reads_but_never_mints_new_authority(self):
+        """A recognized historical canonical identity stays readable and
+        supports idempotent replay and late reporting of prior work, but it
+        must never authorize a NEW admission or a NEW attempt permit once the
+        real current identity has moved on."""
+        from director_orchestrator.allocation_profiles import historical_allocation_profile_digest
+
+        historical_digest = historical_allocation_profile_digest("engineering")
+        path = Path(self.temp.name) / "historical-authority.sqlite3"
+        ledger = EngineeringWorkloadLedger(path)
+        pending = request(100)
+        attempted = request(101)
+        with patch("director_orchestrator.engineering_workload_ledger.allocation_profile_digest",
+                   return_value=historical_digest):
+            # At bootstrap time, the historical identity was the real current
+            # one, so ordinary admission and dispatch worked normally.
+            ledger.bootstrap(manifest())
+            ledger.reserve(pending)
+            ledger.reserve(attempted)
+            ledger.begin_attempt("test-101", transport="local_cli")
+            ledger.record_outcome("test-101", 1, result())
+
+        with closing(sqlite3.connect(path)) as db:
+            metadata_before = db.execute("SELECT payload FROM metadata WHERE id=1").fetchone()[0]
+            self.assertEqual(json.loads(metadata_before)["canonical_digest"], historical_digest)
+
+        # The real current identity has since moved on. New authority is refused.
+        with self.assertRaisesRegex(LedgerError, "canonical_policy_superseded_new_authority_required"):
+            ledger.reserve(request(102))
+        with self.assertRaisesRegex(LedgerError, "canonical_policy_superseded_new_authority_required"):
+            ledger.begin_attempt("test-100", transport="local_cli")
+
+        # No new admission or attempt row was created by either refusal.
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM assignments").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT payload FROM metadata WHERE id=1").fetchone()[0], metadata_before)
+
+        # An exact idempotent replay of the already-reserved historical request
+        # confers no new authority and is still accepted.
+        replay = ledger.reserve(pending)
+        self.assertTrue(replay["already_reserved"])
+        self.assertFalse(replay["dispatch_permitted"])
+
+        # Late settlement of prior, already-attempted work still succeeds.
+        settled = ledger.settle("test-101", "succeeded", evidence("late-settlement"))
+        self.assertEqual(settled["outcome"], "succeeded")
+
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM assignments").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT payload FROM metadata WHERE id=1").fetchone()[0], metadata_before)
+
+        # A freshly bootstrapped ledger under the real current identity admits
+        # and dispatches new work normally.
+        self.bootstrap()
+        self.ledger.reserve(request(1))
+        self.assertTrue(self.ledger.begin_attempt("test-1", transport="local_cli")["dispatch_permitted"])
 
     def test_foreign_database_is_preserved(self):
         with closing(sqlite3.connect(self.path)) as db, db:
@@ -540,3 +600,5 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]

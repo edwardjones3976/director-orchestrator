@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
@@ -425,13 +427,19 @@ class CompletionScorecardTests(unittest.TestCase):
             ledger = EngineeringWorkloadLedger(path)
             ledger.bootstrap(manifest)
             for number in range(20):
-                ledger.reserve({"assignment_id": f"fixture-{number}", "task_id": f"task-{number}", "scope": "test only",
+                assignment_id = f"fixture-{number}"
+                ledger.reserve({"assignment_id": assignment_id, "task_id": f"task-{number}", "scope": "test only",
                                 "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
                                 "route_id": "openai-codex:fixture-route",
                                 "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
                                 "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
                                            "output_bytes_limit": 1000, "usd_limit": 1,
                                            "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+                # Real reported usage, known and within the declared bounds, so
+                # Check 13's tri-state resource-bound result is genuinely True.
+                ledger.begin_attempt(assignment_id, transport="local_cli")
+                ledger.record_outcome(assignment_id, 1, {"outcome": "succeeded", "evidence": reference,
+                                                          "usage": {"usd": 0.5, "turns": 1, "output_bytes": 500}})
             before = path.read_bytes()
             report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
             self.assertEqual(report["checks"][12]["status"], "PASS")
@@ -460,13 +468,20 @@ class CompletionScorecardTests(unittest.TestCase):
             ledger = EngineeringWorkloadLedger(path)
             ledger.bootstrap(manifest)
             for number in range(20):
-                ledger.reserve({"assignment_id": f"fixture-{number}", "task_id": f"task-{number}", "scope": "test only",
+                assignment_id = f"fixture-{number}"
+                ledger.reserve({"assignment_id": assignment_id, "task_id": f"task-{number}", "scope": "test only",
                                 "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
                                 "route_id": "openai-codex:fixture-route",
                                 "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
                                 "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
                                            "output_bytes_limit": 1000, "usd_limit": 1,
                                            "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+                # Real reported usage, known and within the declared bounds, so
+                # Check 13's tri-state resource-bound result is genuinely True
+                # even though this window is far above the retired allocation ceiling.
+                ledger.begin_attempt(assignment_id, transport="local_cli")
+                ledger.record_outcome(assignment_id, 1, {"outcome": "succeeded", "evidence": reference,
+                                                          "usage": {"usd": 0.5, "turns": 1, "output_bytes": 500}})
             status = ledger.status()
             openai_row = next(r for r in status["utilization"] if r["bucket"] == "openai")
             self.assertEqual(openai_row["admitted"], 20)
@@ -474,6 +489,73 @@ class CompletionScorecardTests(unittest.TestCase):
 
             report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
             self.assertEqual(report["checks"][12]["status"], "PASS")
+
+    def test_twenty_reservations_alone_without_reported_usage_are_unknown(self):
+        """Twenty real admissions with no reported outcome usage must be
+        UNKNOWN, never PASS: unknown usage is not treated as compliant."""
+        from director_orchestrator.engineering_workload_ledger import EngineeringWorkloadLedger
+        reference = {"reference": "fixture-only", "sha256": "d" * 64}
+        route = {"route_id": "openai-codex:fixture-route", "product_id": "openai-codex", "actor_id": "fixture-actor", "provider_identity": "fixture-provider",
+                 "model_family": "fixture-family", "eligible": True, "roles": ["implementation"],
+                 "enrollment_evidence": reference}
+        manifest = {"authorization": reference, "policy_authorization": reference, "operator": "fixture operator",
+                    "cutover_at": (NOW - timedelta(hours=1)).isoformat(),
+                    "policy": {"kind": "product", "targets": {"openai-codex": 100}},
+                    "history_mode": "prospective", "history_evidence": reference,
+                    "prior_history_unknown": True, "quiescent_cutover_verified": True,
+                    "all_future_assignments_required": True, "routes": [route]}
+        with tempfile.TemporaryDirectory() as folder, patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            path = Path(folder) / "admissions.sqlite3"
+            ledger = EngineeringWorkloadLedger(path)
+            ledger.bootstrap(manifest)
+            for number in range(20):
+                ledger.reserve({"assignment_id": f"fixture-{number}", "task_id": f"task-{number}", "scope": "test only",
+                                "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
+                                "route_id": "openai-codex:fixture-route",
+                                "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
+                                "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
+                                           "output_bytes_limit": 1000, "usd_limit": 1,
+                                           "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "UNKNOWN")
+
+    def test_one_known_resource_violation_fails_even_if_others_unknown(self):
+        """A single known reported bound violation must FAIL Check 13, even
+        though the other nineteen admissions have no reported usage yet."""
+        from director_orchestrator.engineering_workload_ledger import EngineeringWorkloadLedger
+        reference = {"reference": "fixture-only", "sha256": "d" * 64}
+        route = {"route_id": "openai-codex:fixture-route", "product_id": "openai-codex", "actor_id": "fixture-actor", "provider_identity": "fixture-provider",
+                 "model_family": "fixture-family", "eligible": True, "roles": ["implementation"],
+                 "enrollment_evidence": reference}
+        manifest = {"authorization": reference, "policy_authorization": reference, "operator": "fixture operator",
+                    "cutover_at": (NOW - timedelta(hours=1)).isoformat(),
+                    "policy": {"kind": "product", "targets": {"openai-codex": 100}},
+                    "history_mode": "prospective", "history_evidence": reference,
+                    "prior_history_unknown": True, "quiescent_cutover_verified": True,
+                    "all_future_assignments_required": True, "routes": [route]}
+        with tempfile.TemporaryDirectory() as folder, patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            path = Path(folder) / "admissions.sqlite3"
+            ledger = EngineeringWorkloadLedger(path)
+            ledger.bootstrap(manifest)
+            for number in range(20):
+                assignment_id = f"fixture-{number}"
+                ledger.reserve({"assignment_id": assignment_id, "task_id": f"task-{number}", "scope": "test only",
+                                "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
+                                "route_id": "openai-codex:fixture-route",
+                                "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
+                                "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
+                                           "output_bytes_limit": 1000, "usd_limit": 1,
+                                           "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+                if number == 0:
+                    # One real, known, over-bound report; the other nineteen
+                    # remain unsettled with unknown usage.
+                    ledger.begin_attempt(assignment_id, transport="local_cli")
+                    ledger.record_outcome(assignment_id, 1, {"outcome": "succeeded", "evidence": reference,
+                                                              "usage": {"usd": 0.5, "turns": 1, "output_bytes": 2000}})
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "FAIL")
 
     def test_ci_uses_existing_oracle_actual_steps_and_exact_sha(self):
         jobs = [{"name": name, "conclusion": "success", "steps": [{"name": "actual test"}]} for name in sc.CI_JOBS]
@@ -573,3 +655,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
