@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:11 UTC | BEGIN]]
@@ -230,14 +232,27 @@ class PrimaryTaskCoordinator:
             )
         return generation
 
-    def _task_writer(self, task_id: str) -> TaskWriterLease:
-        current = self._store.current_task_writer(task_id)
+    def _task_writer(
+        self, task_id: str, *, deadline: float | None = None
+    ) -> TaskWriterLease:
+        """Resolve the current writer, optionally inside a caller's bound.
+
+        Reading, renewing and reacquiring are each real database work that can
+        wait on the writer row or its advisory lock. A caller that already has
+        an absolute deadline passes it here so those waits are inside it; a
+        caller without one keeps the previous unbounded behaviour exactly.
+        """
+
+        # An unbounded caller calls the store exactly as it always did.
+        bound = {} if deadline is None else {"deadline": deadline}
+        current = self._store.current_task_writer(task_id, **bound)
         if current is None:
             writer = self._store.acquire_task_writer(
                 task_id,
                 engine_owner="langgraph",
                 owner_token=self._owner_token,
                 expected_generation=INITIAL_FENCING_GENERATION,
+                **bound,
             )
             self._mark_active_task(task_id)
             return writer
@@ -252,6 +267,7 @@ class PrimaryTaskCoordinator:
                 task_id,
                 owner_token=self._owner_token,
                 fencing_generation=current.fencing_generation,
+                **bound,
             )
             self._mark_active_task(task_id)
             return writer
@@ -263,6 +279,7 @@ class PrimaryTaskCoordinator:
             engine_owner="langgraph",
             owner_token=self._owner_token,
             expected_generation=current.fencing_generation,
+            **bound,
         )
         self._mark_active_task(task_id)
         return writer
@@ -537,10 +554,15 @@ class PrimaryTaskCoordinator:
         team_admission=None,
         budget_admission=None,
         budget_limits=None,
+        deadline: float | None = None,
+        expected_authority_digest: str | None = None,
     ) -> ProviderAttemptReservation:
         return self.parallel.reserve_provider_attempt(
             reservation=reservation,
-            writer=self._task_writer(reservation.task_id),
+            # Resolving the writer can itself read, renew or reacquire a lease;
+            # that work belongs inside the same bound as the admission it is
+            # for, not ahead of it.
+            writer=self._task_writer(reservation.task_id, deadline=deadline),
             attempt_ordinal=attempt_ordinal,
             format_roster=format_roster,
             idempotency_key_digest=idempotency_key_digest,
@@ -548,6 +570,8 @@ class PrimaryTaskCoordinator:
             team_admission=team_admission,
             budget_admission=budget_admission,
             budget_limits=budget_limits,
+            deadline=deadline,
+            expected_authority_digest=expected_authority_digest,
         )
 
     def record_provider_attempt(
@@ -966,3 +990,5 @@ class PrimaryTaskCoordinator:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

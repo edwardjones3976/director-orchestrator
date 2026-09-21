@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | BEGIN]]
@@ -343,6 +346,32 @@ class OpenAIResponsesPacketTransport:
         self.maximum_timeout_seconds = maximum_timeout_seconds
         self.response_meter = response_meter
 
+    def preflight(self, work_packet_json: bytes, *, context) -> None:
+        """Predict eligibility for one planned Responses attempt: no HTTP,
+        no input-token counting, and never the admitted-only `meter.prepare`
+        reservation check. Fail-closed identically to `send`'s own guards, but
+        this method reaches no I/O and mutates nothing.
+        """
+        if context.fencing_generation < 1:
+            raise RuntimeError("OpenAI transport lacks primary writer fencing")
+        timeout = min(context.timeout_seconds, self.maximum_timeout_seconds)
+        if timeout < 1:
+            raise RuntimeError("OpenAI transport timeout is exhausted")
+        token_limit = context.total_token_limit
+        if type(token_limit) is not int or token_limit < 1:
+            raise RuntimeError("OpenAI transport lacks an authoritative total token allowance")
+        deadline = getattr(context, "deadline", None)
+        if deadline is not None and deadline - monotonic() <= 0:
+            raise RuntimeError("OpenAI transport timeout is exhausted")
+        meter = self.response_meter
+        if meter is None:
+            return
+        from .response_meter import ResponseMeterRegistry
+        if isinstance(meter, ResponseMeterRegistry):
+            meter = meter.for_context(context)
+        meter.preflight_binding(context=context, packet=work_packet_json,
+            api_url=self.api_url, model=self.model, api_key=self._api_key)
+
     def send(
         self, work_packet_json: bytes, *, context: ProviderAdapterContext
     ) -> Mapping[str, object]:
@@ -354,11 +383,17 @@ class OpenAIResponsesPacketTransport:
         token_limit = context.total_token_limit
         if type(token_limit) is not int or token_limit < 1:
             raise RuntimeError("OpenAI transport lacks an authoritative total token allowance")
-        deadline = getattr(context, "deadline", None)
-        if deadline is None:
-            deadline = monotonic() + timeout
-        elif deadline - monotonic() <= 0:
+        # A carried assignment-level deadline is never widened, only ever
+        # narrowed to this one request's own bounded window: a generous
+        # remaining assignment budget must not let a single HTTP call run
+        # longer than this transport's own configured maximum.
+        carried_deadline = getattr(context, "deadline", None)
+        if carried_deadline is not None and carried_deadline - monotonic() <= 0:
             raise RuntimeError("OpenAI transport timeout is exhausted")
+        deadline = (
+            monotonic() + timeout if carried_deadline is None
+            else min(carried_deadline, monotonic() + timeout)
+        )
         work = json.loads(work_packet_json)
         body: dict[str, Any] = {
             "model": self.model,
@@ -388,6 +423,7 @@ class OpenAIResponsesPacketTransport:
             return remaining
 
         meter = self.response_meter
+        sent_at = None
         if meter is not None:
             from .response_meter import ResponseMeterRegistry
             if isinstance(meter, ResponseMeterRegistry):
@@ -396,6 +432,11 @@ class OpenAIResponsesPacketTransport:
                 api_url=self.api_url, model=self.model, api_key=self._api_key,
                 remaining_seconds=remaining_seconds))
             body["service_tier"] = meter.enrollment.service_tier
+            # Taken from the meter's own clock immediately after `prepare`
+            # required a current enrollment, so it is the instant this exact
+            # admitted request was authorised and sent - not a later reading
+            # settlement could drift forward.
+            sent_at = meter.clock()
 
         async def invoke():
             # HTTPX timeouts bound individual I/O operations, not total elapsed
@@ -427,7 +468,10 @@ class OpenAIResponsesPacketTransport:
                 # This is a token bound, never a converted or vendor USD cap.
                 body["max_output_tokens"] = output_allowance
                 native, response_headers = await post_json(self.api_url, body, _MAX_RESPONSES_NATIVE_BYTES)
-                remaining_seconds()
+                # No deadline check between receiving a complete provider
+                # response and returning it: discarding it here would throw
+                # away an authenticated fact that already cost real tokens.
+                # Expiry is decided after it has been captured and accounted.
                 return native, input_tokens, output_allowance, response_headers
 
         try:
@@ -443,9 +487,16 @@ class OpenAIResponsesPacketTransport:
         capture_bytes = _responses_capture_bundle(native, response_headers)
         if meter is not None:
             # Complete measured usage remains chargeable even if a subsequent
-            # result-contract or token-limit check rejects the generated output.
-            meter.settle(native, response_headers, remaining_seconds=remaining_seconds)
-            remaining_seconds()
+            # result-contract or token-limit check rejects the generated
+            # output, and even if this attempt's execution budget ran out
+            # while the provider was answering: `sent_at` anchors the tariff
+            # to the moment this admitted request was actually sent, so the
+            # accounting fact survives while eligibility below does not.
+            meter.settle(native, response_headers, remaining_seconds=remaining_seconds,
+                         sent_at=sent_at)
+        # Only now may expiry end this attempt: the response is captured and
+        # its usage recorded, so refusing here loses no authenticated fact.
+        remaining_seconds()
         if (not isinstance(native, dict) or native.get("status") != "completed"
                 or native.get("error") is not None
                 or native.get("incomplete_details") is not None):
@@ -1359,3 +1410,6 @@ def provider_lane_detail(
 # [[Grok Bot | Managed model unknown | 2026-09-13 | 17:50 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

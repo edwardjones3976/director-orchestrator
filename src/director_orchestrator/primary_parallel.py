@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -35,6 +37,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from time import monotonic
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +51,8 @@ from .langgraph_postgres import (
     PostgresConditionalClaimStore,
     PostgresControlPlaneError,
     TaskWriterLease,
+    bind_transaction_deadline,
+    bounded_connection,
 )
 
 
@@ -975,12 +980,23 @@ class PostgresParallelDispatch:
         writer: TaskWriterLease,
         policy: ParallelDispatchPolicy,
         preflight=None,
+        deadline: float | None = None,
     ) -> tuple[ParallelReservation, ...]:
-        """Atomically reserve every dependency-ready, cap-safe assignment."""
+        """Atomically reserve every dependency-ready, cap-safe assignment.
 
+        `deadline` is established by the caller *before* this method acquires
+        anything, so pool acquisition, the writer row, the batch advisory lock
+        and the per-assignment `FOR UPDATE` waits are all inside one bound
+        rather than preceding it. It is optional: a legacy or offline caller
+        that supplies none keeps exactly the previous unbounded behaviour.
+        """
+
+        if deadline is not None and deadline - monotonic() <= 0:
+            raise WorkloadAdmissionHold("readiness_deadline_expired_before_reservation")
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=task_id,
@@ -1123,10 +1139,24 @@ class PostgresParallelDispatch:
         team_admission=None,
         budget_admission=None,
         budget_limits=None,
+        deadline: float | None = None,
+        expected_authority_digest: str | None = None,
     ) -> ProviderAttemptReservation:
-        """Append one STARTED child event before I/O; never reuse an open attempt."""
+        """Append one STARTED child event before I/O; never reuse an open attempt.
+
+        `deadline` (a `time.monotonic()`-comparable bound, established by the
+        caller and never renewed here) is optional for legacy/offline callers
+        that supply none. When supplied: connection acquisition is bounded by
+        the time actually left, and `statement_timeout`/`lock_timeout` are
+        (re)applied at each lock-wait boundary this method already has, so a
+        wait that would outlive the deadline is cancelled by Postgres itself
+        rather than silently completing past it. An already-expired deadline
+        refuses before any I/O as a proven pre-I/O hold, never a fresh window.
+        """
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        if deadline is not None and deadline - monotonic() <= 0:
+            raise WorkloadAdmissionHold("provider_attempt_deadline_expired_before_admission")
         if budget_limits is not None:
             from .antigravity_team import ProviderAttemptBudget
             if not isinstance(budget_limits, ProviderAttemptBudget):
@@ -1135,10 +1165,21 @@ class PostgresParallelDispatch:
                 raise ParallelDispatchError("paid provider attempt requires authoritative monetary admission")
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
+        admitted_authority = None
         if team_admission is not None:
-            budget_evidence_digest = "sha256:" + team_admission.grant_digest
+            admitted_authority = team_admission.grant_digest
         elif budget_admission is not None:
-            budget_evidence_digest = "sha256:" + budget_admission.authority_digest
+            admitted_authority = budget_admission.authority_digest
+        if admitted_authority is not None:
+            budget_evidence_digest = "sha256:" + admitted_authority
+            if (expected_authority_digest is not None
+                    and admitted_authority != expected_authority_digest):
+                # The authority this attempt is about to spend against is not
+                # the one the caller checked. Another individually valid budget
+                # or grant is still a different selection, so refuse here -
+                # inside the same call that would otherwise admit against it -
+                # before any monetary, workload or STARTED row exists.
+                raise WorkloadAdmissionHold("provider_attempt_authority_changed_before_admission")
         _require_digest(idempotency_key_digest, "idempotency_key_digest")
         _require_digest(budget_evidence_digest, "budget_evidence_digest")
         attempt_digest = provider_attempt_digest(
@@ -1148,8 +1189,14 @@ class PostgresParallelDispatch:
             idempotency_key_digest=idempotency_key_digest,
             budget_evidence_digest=budget_evidence_digest)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                # One bound for the whole transaction, armed before its first
+                # lock wait and never re-armed: per-statement timeouts alone
+                # leave commit-time work (a deferred constraint trigger) with a
+                # fresh window, which is how an admission could previously
+                # commit after its absolute deadline.
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=reservation.task_id,
@@ -1271,6 +1318,16 @@ class PostgresParallelDispatch:
                         raise TeamAuthorizationError("provider budget expired during atomic admission")
                     if admitted_grant is not None:
                         admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
+                if deadline is not None and deadline - monotonic() <= 0:
+                    # Already past it before the final write: refuse here
+                    # rather than rely on the server timer alone. Anything the
+                    # timer itself aborts later - including during COMMIT -
+                    # surfaces as an uncaught failure the caller keeps
+                    # ambiguous, because a client cannot tell an aborted
+                    # commit from an unacknowledged one.
+                    raise ParallelDispatchError(
+                        "provider attempt deadline expired during atomic admission"
+                    )
                 row = self._row(
                     connection,
                     f"""
@@ -1757,8 +1814,13 @@ class PostgresParallelDispatch:
 
         if not callable(dispatcher):
             raise ParallelDispatchError("dispatcher must be callable")
+        # The dispatcher may publish the bound its own readiness will work
+        # under, derived from configured limits before anything is acquired.
+        # A dispatcher that publishes none stays unbounded, as before.
+        readiness_deadline = getattr(dispatcher, "readiness_deadline", None)
         reservations = self.reserve_ready(task_id=task_id, writer=writer, policy=policy,
-                                          preflight=getattr(dispatcher, "preflight", None))
+                                          preflight=getattr(dispatcher, "preflight", None),
+                                          deadline=readiness_deadline() if callable(readiness_deadline) else None)
         if not reservations:
             return ()
 
@@ -1906,3 +1968,5 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

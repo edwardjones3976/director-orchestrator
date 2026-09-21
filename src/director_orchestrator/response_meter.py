@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | BEGIN]]
@@ -29,6 +31,11 @@ from .antigravity_team import (
     TeamAuthorizationError,
 )
 from .entitlement_contracts import canonical_json_bytes, document_digest
+
+# One bounded window for writing a receipt whose request was already admitted
+# and sent, used only when the execution budget is already spent. It buys no
+# provider work and no eligibility: an expired execution stays ineligible.
+ACCOUNTING_ALLOWANCE_SECONDS = 5.0
 
 
 class ResponseMeterEnrollment(ClosedModel):
@@ -80,22 +87,41 @@ class EnrolledResponseMeter:
         self.enrollment, self.authority, self.pool = enrollment, authority, pool
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
-    def _verify(self):
+    def _verify_signature(self):
+        """The owner signature over this enrollment. Never relaxed, anywhere."""
+
         e = self.enrollment
         expected = hmac.new(self.authority.entitlements._owner_authority_secret,
             canonical_json_bytes(e.signing_document()), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, e.owner_signature):
             raise TeamAuthorizationError("response meter enrollment signature invalid")
-        now = self.clock()
-        if now.tzinfo is None or not e.valid_from <= now < e.expires_at:
+
+    def _verify_applicable(self, at):
+        """The signed tariff covered `at`, the instant being accounted for."""
+
+        e = self.enrollment
+        if at is None or at.tzinfo is None or not e.valid_from <= at < e.expires_at:
             raise TeamAuthorizationError("response meter enrollment is not current")
 
+    def _verify(self):
+        """Full current-validity gate: signature plus a tariff current *now*."""
+
+        self._verify_signature()
+        self._verify_applicable(self.clock())
+
     @contextmanager
-    def _connection(self, remaining_seconds):
+    def _connection(self, remaining_seconds, *, accounting_allowance_seconds=None):
         from psycopg import Error
         if remaining_seconds is None:
             deadline = monotonic() + min(180, (self.enrollment.expires_at-self.clock()).total_seconds())
             remaining_seconds = lambda: deadline - monotonic()
+        if accounting_allowance_seconds is not None:
+            # Recording an authenticated fact that already happened is not more
+            # execution: when the execution budget is spent, this one bounded
+            # allowance lets the receipt be written and never anything else. It
+            # is anchored here, once, and cannot be renewed by a retry.
+            supplied, floor = remaining_seconds, monotonic() + accounting_allowance_seconds
+            remaining_seconds = lambda: max(supplied(), floor - monotonic())
         def remaining():
             seconds = remaining_seconds()
             if seconds <= 0:
@@ -145,8 +171,7 @@ class EnrolledResponseMeter:
                 e.authority_digest, "openai", e.project_id, e.task_id):
             raise TeamAuthorizationError("response meter budget binding mismatch")
 
-    def prepare(self, *, context, packet: bytes, api_url: str, model: str, api_key: str, remaining_seconds=None):
-        self._verify()
+    def _binding_check(self, *, context, packet: bytes, api_url: str, model: str, api_key: str) -> None:
         e = self.enrollment
         if (api_url != e.origin + "/v1/responses" or model != e.model
                 or hashlib.sha256(api_key.encode()).hexdigest() != e.credential_digest
@@ -155,12 +180,47 @@ class EnrolledResponseMeter:
                 or context.work_packet_digest != e.work_packet_digest
                 or "sha256:" + hashlib.sha256(packet).hexdigest() != e.work_packet_digest):
             raise TeamAuthorizationError("response meter request binding mismatch")
+
+    def preflight_binding(self, *, context, packet: bytes, api_url: str, model: str, api_key: str) -> None:
+        """Pure eligibility check only: signature, validity interval and exact
+        request/context binding. No database read, no HTTP, no reservation -
+        the admitted `prepare()` path performs the authoritative DB reservation
+        check at actual dispatch, immediately before the provider call.
+        """
+        self._verify()
+        self._binding_check(context=context, packet=packet, api_url=api_url, model=model, api_key=api_key)
+
+    def prepare(self, *, context, packet: bytes, api_url: str, model: str, api_key: str, remaining_seconds=None):
+        self._verify()
+        self._binding_check(context=context, packet=packet, api_url=api_url, model=model, api_key=api_key)
         with self._connection(remaining_seconds) as connection:
             self._reservation(connection)
+        e = self.enrollment
         return {"OpenAI-Organization": e.organization_id, "OpenAI-Project": e.api_project_id}
 
-    def settle(self, native, response_headers, *, remaining_seconds=None):
-        self._verify()
+    def settle(self, native, response_headers, *, remaining_seconds=None, sent_at=None):
+        """Record the authenticated usage of one already-admitted request.
+
+        `sent_at` is the instant this exact request was actually sent, after
+        `prepare` had already required a current enrollment. When supplied,
+        the tariff must have covered *that* instant: the accounting fact for a
+        request that was legitimately admitted and sent does not stop being
+        true because the signed window closed while the provider was
+        answering. Settlement then gets one bounded allowance to write the
+        receipt - never more provider work, never a reset execution clock.
+
+        Everything else is unchanged and unrelaxed: the owner signature, the
+        provider-confirmed account association, model/tier/creation freshness,
+        token accounting, the receipt HMAC, and `record_usage`'s reservation
+        binding, duplicate-response and identical/conflicting replay checks.
+        Without `sent_at` the previous current-validity gate applies exactly.
+        """
+
+        self._verify_signature()
+        self._verify_applicable(sent_at if sent_at is not None else self.clock())
+        late = sent_at is not None and not (
+            self.enrollment.valid_from <= self.clock() < self.enrollment.expires_at
+        )
         e = self.enrollment
         headers = {str(k).lower(): v for k, v in response_headers.items()}
         if (headers.get("openai-organization") != e.organization_id
@@ -209,10 +269,17 @@ class EnrolledResponseMeter:
         signature = hmac.new(self.authority.entitlements._route_verifier_secret,
             canonical_json_bytes(receipt.signing_document()), hashlib.sha256).hexdigest()
         receipt = receipt.model_copy(update={"meter_signature": signature})
-        with self._connection(remaining_seconds) as connection:
+        with self._connection(
+            remaining_seconds,
+            accounting_allowance_seconds=(ACCOUNTING_ALLOWANCE_SECONDS if late else None),
+        ) as connection:
             connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                 ("primary-provider-budget:" + e.project_id,))
-            self._verify()
+            # Re-checked after the lock wait, against the same instant this
+            # settlement is accounting for: a window that closed while waiting
+            # does not unmake the request that was already admitted and sent.
+            self._verify_signature()
+            self._verify_applicable(sent_at if sent_at is not None else self.clock())
             self._reservation(connection)
             self.authority.record_usage(connection, receipt)
         return receipt
@@ -279,3 +346,5 @@ def load_response_meter_registry(path, *, authority, pool):
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:07 UTC | END]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 10:16 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 10:34 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

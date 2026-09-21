@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -65,6 +70,7 @@ import re
 import secrets
 import subprocess
 import threading
+from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -304,6 +310,32 @@ def _execute_three_attempt_roster(
         last_digest,
         PROVIDER_ATTEMPT_BUDGET_EXHAUSTED,
     )
+
+
+def _enrollment_digest_for(transport: Any, attempt_digest: str) -> str | None:
+    """The digest of the enrollment document this transport would meter with.
+
+    Reads the transport's own registry for the exact attempt digest without
+    mutating it or constructing a meter for anything else. None means either
+    no meter is enrolled or the registry can no longer resolve that attempt;
+    readiness records which of those applied, so a selection that had an
+    enrollment and now has none is a change, never "no meter required".
+    """
+
+    from .entitlement_contracts import document_digest as _entitlement_digest
+    from .response_meter import ResponseMeterRegistry
+
+    meter = getattr(transport, "response_meter", None)
+    if meter is None:
+        return None
+    enrollment = (
+        meter.enrollments.get(attempt_digest)
+        if isinstance(meter, ResponseMeterRegistry)
+        else getattr(meter, "enrollment", None)
+    )
+    if enrollment is None:
+        return None
+    return _entitlement_digest(enrollment.model_dump(mode="json"))
 
 
 def _primary_provider_lane(provider: ProviderName) -> str:
@@ -2554,6 +2586,30 @@ class DefaultPrimaryActivation:
                     acceptance_handler=live_dependencies.acceptance_handler,
                 )
                 handlers = live_services.handlers()
+                # The complete selection readiness checked, per assignment, for
+                # the same-process dispatch that immediately follows a wave's
+                # reservation: signed authority identity, exact packet, roster,
+                # writer generation, enrollment document and one shared
+                # absolute deadline covering every attempt of that roster. A
+                # missing entry - restart, changed selection, or a legacy or
+                # offline caller that never ran this readiness - fails closed
+                # rather than minting a fresh window or letting admission
+                # re-resolve a different currently valid authority. In-memory
+                # only and never a durable authority; see docs.
+                _readiness_selections: dict[tuple[str, str], ReadinessSelection] = {}
+
+                def _wave_readiness_deadline() -> float:
+                    """The bound `reserve_ready` works under, before it acquires.
+
+                    Derived from configured transport limits only - nothing in
+                    the database has been read yet - so pool acquisition, the
+                    writer row and the batch/assignment locks are all inside a
+                    bound instead of preceding one. Per-assignment readiness
+                    then clamps its own selection to the packet and signed
+                    authority it actually checked.
+                    """
+
+                    return monotonic() + max(1, int(settings.provider_timeout_seconds))
                 def dispatch_parallel_assignment(
                     reservation: ParallelReservation,
                 ) -> ParallelDispatchOutcome:
@@ -2641,22 +2697,74 @@ class DefaultPrimaryActivation:
                             "attempt_limit": 3,
                         }
                     )
+                    selection_key = (record.task_id, assignment_id)
+
+                    def current_selection():
+                        """The recorded selection, if it still holds.
+
+                        Every attempt of this roster re-resolves the same
+                        selection and re-checks the mutable parts of it this
+                        process can still observe: the exact packet it was
+                        checked against, the provider and roster it was
+                        checked for, the writer generation it was checked
+                        under, and its one shared absolute deadline. The
+                        attempt ordinal is deliberately not compared: a retry
+                        is the same selection draining the same bound.
+                        """
+
+                        from .primary_workload import WorkloadAdmissionHold
+                        selected = _readiness_selections.get(selection_key)
+                        if selected is None:
+                            raise WorkloadAdmissionHold("readiness_selection_unavailable_before_admission")
+                        if (selected.packet_digest != packet_digest
+                                or selected.provider != provider
+                                or selected.roster != tuple(format_roster)
+                                or selected.writer_fencing_generation != writer.fencing_generation):
+                            raise WorkloadAdmissionHold("readiness_selection_changed_before_admission")
+                        if selected.deadline - monotonic() <= 0:
+                            raise WorkloadAdmissionHold("readiness_deadline_expired_before_admission")
+                        return selected
+
                     def reserve_attempt(
                         attempt_ordinal: int,
                     ) -> ProviderAttemptReservation:
                         from .primary_parallel import provider_attempt_idempotency
+                        from .primary_workload import WorkloadAdmissionHold
                         idempotency_key_digest = provider_attempt_idempotency(
                             packet["idempotency_key"], attempt_ordinal, format_roster)
+                        # Checked here, strictly before atomic admission (this
+                        # call is outside `_execute_three_attempt_roster`'s own
+                        # dispatch try), so a lost, changed or expired selection
+                        # is refused as a proven pre-I/O hold instead of
+                        # committing admission and only discovering it at
+                        # dispatch - which would leave a real but unusable
+                        # STARTED attempt to reconcile as ambiguous.
+                        selected = current_selection()
+                        admissions = live_provider_admissions(settings=settings,
+                            budget_routing=live_dependencies.budget_routing,
+                            team_routing=team_routing, provider=provider, packet=packet,
+                            attempt_usd=attempt_budget_usd, deadline=selected.deadline)
+                        # `live_provider_admissions` re-resolves authority from
+                        # the database; a different, individually valid budget
+                        # or grant is still not the one readiness checked. Only
+                        # an attempt that actually carries monetary authority
+                        # is compared - one that carries none is already
+                        # refused by the ledger whenever it has budget limits.
+                        admitted = admissions.get("team_admission") or admissions.get("budget_admission")
+                        if admitted is not None:
+                            resolved = getattr(admitted, "grant_digest", None) or getattr(
+                                admitted, "authority_digest", None)
+                            if resolved is None or not selected.matches_admission(authority_digest=resolved):
+                                raise WorkloadAdmissionHold("readiness_authority_changed_before_admission")
                         return self.coordinator.reserve_provider_attempt(
                             reservation=reservation,
                             attempt_ordinal=attempt_ordinal,
                             format_roster=format_roster,
                             idempotency_key_digest=idempotency_key_digest,
                             budget_evidence_digest=budget_evidence_digest,
-                            **live_provider_admissions(settings=settings,
-                                budget_routing=live_dependencies.budget_routing,
-                                team_routing=team_routing, provider=provider, packet=packet,
-                                attempt_usd=attempt_budget_usd),
+                            deadline=selected.deadline,
+                            expected_authority_digest=selected.authority_digest,
+                            **admissions,
                         )
                     def record_attempt(
                         attempt: ProviderAttemptReservation,
@@ -2677,6 +2785,21 @@ class DefaultPrimaryActivation:
                         adapter = (team_routing.adapter(packet,attempt)
                             if team_routing is not None and provider=="antigravity"
                             else live_dependencies.adapter_for_format(provider,(attempt.format_id,attempt.transport_id)))
+                        # Immediately before I/O: the same selection is checked
+                        # once more (packet, roster, writer generation, shared
+                        # deadline) and, for an enrolled meter, the registry
+                        # must still resolve the exact enrollment document
+                        # readiness selected - a replaced registry or file is a
+                        # different selection, not a substitutable one.
+                        selected = current_selection()
+                        if selected.enrollment_digest is not None:
+                            from .primary_workload import WorkloadAdmissionHold
+                            live_enrollment = _enrollment_digest_for(
+                                getattr(adapter, "_transport", None), attempt.attempt_digest)
+                            if live_enrollment != selected.enrollment_digest:
+                                raise WorkloadAdmissionHold(
+                                    "readiness_enrollment_changed_before_dispatch"
+                                )
                         return adapter.dispatch(
                             packet,
                             context=ProviderAdapterContext(
@@ -2697,17 +2820,25 @@ class DefaultPrimaryActivation:
                                     packet["allowed_external_effects"]
                                 ),
                                 fencing_generation=writer.fencing_generation,
+                                deadline=selected.deadline,
                             ),
                         )
 
-                    attempt_status, result, result_digest, attempt_reason = (
-                        _execute_three_attempt_roster(
-                            format_roster=format_roster,
-                            reserve_attempt=reserve_attempt,
-                            record_attempt=record_attempt,
-                            dispatch_attempt=dispatch_attempt,
+                    try:
+                        attempt_status, result, result_digest, attempt_reason = (
+                            _execute_three_attempt_roster(
+                                format_roster=format_roster,
+                                reserve_attempt=reserve_attempt,
+                                record_attempt=record_attempt,
+                                dispatch_attempt=dispatch_attempt,
+                            )
                         )
-                    )
+                    finally:
+                        # Bound this entry's lifetime regardless of outcome,
+                        # including a lost/changed selection that
+                        # `reserve_attempt` refused before `record_attempt`
+                        # ever ran for it.
+                        _readiness_selections.pop(selection_key, None)
                     if attempt_status is not ParallelAssignmentStatus.SUCCEEDED:
                         return ParallelDispatchOutcome(
                             attempt_status,
@@ -2749,9 +2880,20 @@ class DefaultPrimaryActivation:
                     )
 
                 def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage):
-                    from .primary_paid_preflight import check_budget_setup, PlannedProviderAttempt
+                    from .primary_paid_preflight import (
+                        check_budget_setup, check_team_setup, PlannedProviderAttempt, ReadinessSelection,
+                    )
                     from .primary_parallel import PaidSetupHold, provider_attempt_digest, provider_attempt_idempotency
-                    from .entitlement_contracts import canonical_json_bytes
+                    # The packet-contract canonicalizer (RFC 8785), matching the
+                    # exact bytes real dispatch sends via PacketBoundaryAdapter
+                    # (`langgraph_runtime.py`'s `canonical_json_bytes(work)`) and
+                    # what a signed meter enrollment's `work_packet_digest` was
+                    # computed against. `entitlement_contracts.canonical_json_bytes`
+                    # (ordinary JSON, e.g. 1.0 vs 1) is a different byte contract
+                    # used for entitlement/receipt signing elsewhere; using it here
+                    # would make a validly signed enrollment's work-packet digest
+                    # check fail at readiness even though it matches at dispatch.
+                    from .packet_contracts import canonical_json_bytes
                     try:
                         record = services._record(reservation.task_id)
                         if record.plan is None:
@@ -2765,19 +2907,53 @@ class DefaultPrimaryActivation:
                         if not provider_activation.provider_ready(provider, live=True):
                             raise PaidSetupHold()
                         packet = validate_packet("work", services._packet_router.planned_work_packet(record, assignment))
+                        packet_digest = document_digest(packet)
                         limits = packet['limits']
                         attempt_usd = float(limits['budget_usd']) / 3.0
                         if attempt_usd <= 0 or float(limits['budget_usd']) > settings.max_task_budget_usd:
                             raise PaidSetupHold()
-                        # Team preflight needs a pure signed-grant interface;
-                        # do not call the runtime query factory as a probe.
+                        readiness_timeout_seconds = max(1, int(limits['timeout_seconds']) // 3)
+                        roster = tuple(live_dependencies.format_roster(provider))
                         if live_dependencies.team_routing is not None and provider == 'antigravity':
-                            raise PaidSetupHold()
+                            from .antigravity_team_routing import TEAM_FORMAT
+                            roster = (TEAM_FORMAT,)
+                        # One deadline for the whole assignment - every attempt
+                        # of its roster, including retries - established once
+                        # here and clamped by both the packet's own timeout
+                        # budget and the configured transport ceiling, never
+                        # per-attempt: a retry must drain the same absolute
+                        # bound, not restart it.
+                        deadline = monotonic() + min(
+                            int(limits['timeout_seconds']),
+                            max(1, int(settings.provider_timeout_seconds)),
+                        )
+                        selection_key = (reservation.task_id, reservation.assignment_id)
+                        if live_dependencies.team_routing is not None and provider == 'antigravity':
+                            # Pure signed-grant interface: never probe with the
+                            # runtime query factory, worker factory, authorize
+                            # or admissions. Atomic entitlement admission stays
+                            # exclusively at the real dispatch boundary.
+                            grant, team_budget = check_team_setup(connection=connection,
+                                team_routing=live_dependencies.team_routing, settings=settings,
+                                packet=packet, attempt_usd=attempt_usd,
+                                wave_budget_usage=wave_budget_usage)
+                            _readiness_selections[selection_key] = ReadinessSelection(
+                                task_id=reservation.task_id,
+                                assignment_id=reservation.assignment_id,
+                                provider=provider,
+                                packet_digest=packet_digest,
+                                roster=roster,
+                                attempt_ordinal=1,
+                                authority_digest=grant.digest,
+                                writer_fencing_generation=writer.fencing_generation,
+                                deadline=deadline,
+                                authority_day=team_budget.day,
+                            )
+                            return
                         budget = check_budget_setup(connection=connection,
                             routing=live_dependencies.budget_routing, settings=settings,
                             provider=provider, packet=packet, attempt_usd=attempt_usd,
                             wave_budget_usage=wave_budget_usage)
-                        roster = live_dependencies.format_roster(provider)
                         format_id, transport_id = roster[0]
                         idem = provider_attempt_idempotency(packet['idempotency_key'], 1, roster)
                         attempt = provider_attempt_digest(task_id=reservation.task_id,
@@ -2796,19 +2972,38 @@ class DefaultPrimaryActivation:
                         if callable(preflight):
                             preflight(canonical_json_bytes(packet), context=PlannedProviderAttempt(
                                 task_id=reservation.task_id, assignment_id=reservation.assignment_id,
-                                idempotency_key=attempt, work_packet_digest=document_digest(packet),
+                                idempotency_key=attempt, work_packet_digest=packet_digest,
                                 writer_token_digest=services._packet_router.writer_token(record).digest,
                                 fencing_generation=writer.fencing_generation,
-                                timeout_seconds=max(1, int(limits['timeout_seconds']) // 3),
+                                timeout_seconds=readiness_timeout_seconds,
                                 budget_usd=attempt_usd, total_token_limit=budget.token_limit,
                                 max_hops=int(limits["max_hops"]), max_revisions=int(limits["max_revisions"]),
                                 allowed_tools=tuple(packet['allowed_tools']),
-                                allowed_external_effects=tuple(packet['allowed_external_effects'])))
+                                allowed_external_effects=tuple(packet['allowed_external_effects']),
+                                deadline=deadline))
+                        _readiness_selections[selection_key] = ReadinessSelection(
+                            task_id=reservation.task_id,
+                            assignment_id=reservation.assignment_id,
+                            provider=provider,
+                            packet_digest=packet_digest,
+                            roster=roster,
+                            attempt_ordinal=1,
+                            authority_digest=budget.grant_digest,
+                            writer_fencing_generation=writer.fencing_generation,
+                            deadline=deadline,
+                            authority_day=budget.day,
+                            enrollment_digest=_enrollment_digest_for(transport, attempt),
+                        )
                     except Exception as exc:
                         # No exception payload enters the ledger or user surface.
                         raise PaidSetupHold() from None
 
                 dispatch_parallel_assignment.preflight = preflight_parallel_assignment
+                # Published for `execute_ready`, which establishes this bound
+                # before it acquires a connection or takes any lock, so the
+                # wave's own readiness work is inside a deadline rather than
+                # ahead of one.
+                dispatch_parallel_assignment.readiness_deadline = _wave_readiness_deadline
                 parallel_dispatcher = dispatch_parallel_assignment
                 self._live_dependencies_ready = True
             else:
@@ -3106,3 +3301,8 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:49 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 22:29 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:18 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

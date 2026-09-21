@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
@@ -92,6 +93,8 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .langgraph_primary import (
@@ -438,6 +441,59 @@ def _advisory_key(*parts: str) -> int:
         "\x1f".join((CONTROL_PLANE_VERSION, *parts)).encode("utf-8")
     ).digest()[:8]
     return int.from_bytes(raw, "big", signed=True)
+
+
+def deadline_remaining_seconds(deadline: float | None) -> float | None:
+    """Seconds left against a `time.monotonic()` bound, or None when unbounded."""
+
+    return None if deadline is None else deadline - monotonic()
+
+
+def bounded_connection(pool: Any, deadline: float | None) -> Any:
+    """Acquire from `pool`, bounding the wait itself by the time left.
+
+    An unbounded caller keeps the pool's own configured acquisition behaviour
+    exactly as before; a bounded one can never queue for a connection past its
+    deadline.
+    """
+
+    remaining = deadline_remaining_seconds(deadline)
+    if remaining is None:
+        return pool.connection()
+    return pool.connection(timeout=max(0.001, remaining))
+
+
+def bind_transaction_deadline(connection: Any, deadline: float | None) -> None:
+    """Bound this transaction's *total* time, its statements and its lock waits.
+
+    PostgreSQL applies `statement_timeout` to each statement separately and
+    again to COMMIT, so per-statement refreshes alone cannot bound work a
+    deferred constraint trigger performs *during* COMMIT: a transaction can
+    complete successfully well past an absolute deadline that every individual
+    statement respected. `transaction_timeout` (PostgreSQL 17) bounds the whole
+    transaction including that commit-time work. Its assign hook arms the timer
+    from the moment it is set and will not re-arm while already active, so this
+    is a bound that later calls can only observe, never extend.
+
+    All three are set `LOCAL`, so they revert with the transaction and never
+    leak onto a pooled connection. When `transaction_timeout` fires PostgreSQL
+    aborts the transaction and terminates the session; the pool discards that
+    connection, and the caller sees a failure it must classify conservatively
+    rather than a late success.
+    """
+
+    remaining = deadline_remaining_seconds(deadline)
+    if remaining is None:
+        return
+    milliseconds = str(max(1, ceil(remaining * 1000)))
+    connection.execute(
+        "SELECT set_config('statement_timeout',%s,true), set_config('lock_timeout',%s,true)",
+        (milliseconds, milliseconds),
+    )
+    if getattr(connection.info, "server_version", 0) >= 170000:
+        connection.execute(
+            "SELECT set_config('transaction_timeout',%s,true)", (milliseconds,)
+        )
 
 
 def _build_strict_serializer(serializer_type: type[Any]) -> Any:
@@ -3154,6 +3210,7 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         expected_generation: int,
         lease_seconds: float = DEFAULT_LEASE_SECONDS,
+        deadline: float | None = None,
     ) -> TaskWriterLease:
         """Compare-and-swap the writer lease for one task.
 
@@ -3173,8 +3230,9 @@ class PostgresConditionalClaimStore:
         )
         lease = _require_lease_seconds(lease_seconds)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 # Serializes a first acquisition, where there is no row to lock.
                 self._optional_row(
                     connection,
@@ -3267,6 +3325,7 @@ class PostgresConditionalClaimStore:
         owner_token: str,
         fencing_generation: int,
         lease_seconds: float = DEFAULT_LEASE_SECONDS,
+        deadline: float | None = None,
     ) -> TaskWriterLease:
         """Extend an unexpired lease *without* moving the fencing generation.
 
@@ -3281,8 +3340,9 @@ class PostgresConditionalClaimStore:
             fencing_generation, "fencing_generation", minimum=1
         )
         lease = _require_lease_seconds(lease_seconds)
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 row = self._optional_row(
                     connection,
                     f"""
@@ -3311,11 +3371,14 @@ class PostgresConditionalClaimStore:
             )
         return _lease_from_row(row)
 
-    def current_task_writer(self, task_id: str) -> TaskWriterLease | None:
+    def current_task_writer(
+        self, task_id: str, *, deadline: float | None = None
+    ) -> TaskWriterLease | None:
         """Return the recorded writer row, expired or not, for reconciliation."""
 
         _require_id(task_id, "task_id")
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
+            bind_transaction_deadline(connection, deadline)
             row = self._optional_row(
                 connection,
                 f"""
@@ -5318,3 +5381,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]

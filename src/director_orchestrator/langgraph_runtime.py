@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -118,6 +119,14 @@ class ProviderAdapterContext:
     # Populated from the owner-signed budget admitted for this exact attempt,
     # never from the work packet. None means no authoritative token allowance.
     total_token_limit: int | None = None
+    # A `time.monotonic()`-comparable absolute deadline established once, no
+    # later than atomic admission, and carried unchanged into dispatch. None
+    # means no upstream deadline was carried (e.g. a legacy/offline caller, or
+    # a process restart between admission and dispatch); transports fall back
+    # to a fresh bounded window derived from `timeout_seconds` in that case,
+    # never a wider one. Readiness, admission COMMIT, token counting and meter
+    # settlement all draw against this same value; none of them reset it.
+    deadline: float | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1238,3 +1247,4 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
