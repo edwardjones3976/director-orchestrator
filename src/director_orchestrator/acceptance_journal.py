@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | BEGIN]]
@@ -298,6 +299,12 @@ def reject_unsigned_profile(registry_path, registry_sha256, journal_path):
 
 def journal_from_environment(*, read_only=False):
     mode = os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1")
+    if mode == "owner-local-evidence-v1":
+        if (os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256") or
+                os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH") not in
+                (None, "", "/run/director-acceptance-registry/registry.json")):
+            raise ActivationEvidenceError("owner-local evidence cannot ignore a selected provider registry")
+        return None
     if mode == "github-v1":
         reject_unsigned_profile(os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH"),
             os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"),
@@ -315,14 +322,20 @@ def require_runtime_acceptance(settings):
         reject_unsigned_profile(settings.langgraph_primary_acceptance_registry_path,
             settings.langgraph_primary_acceptance_registry_sha256, settings.langgraph_primary_acceptance_journal_path)
         return
-    journal = journal_class(mode)(settings.langgraph_primary_acceptance_journal_path,
-        settings.langgraph_primary_acceptance_registry_path, settings.langgraph_primary_acceptance_registry_sha256,
-        read_only=True)
-    from .primary_activation_evidence import ActivationEvidenceStore
-    store = ActivationEvidenceStore.__new__(ActivationEvidenceStore)
-    store._journal = journal
-    store._revision = None
-    store._acceptance_secrets = None
+    from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
+    if mode == "owner-local-evidence-v1":
+        if os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") != mode:
+            raise ActivationEvidenceError("runtime and owner-local mode selection differ")
+        store = ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
+            acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True)
+    else:
+        journal = journal_class(mode)(settings.langgraph_primary_acceptance_journal_path,
+            settings.langgraph_primary_acceptance_registry_path, settings.langgraph_primary_acceptance_registry_sha256,
+            read_only=True)
+        store = ActivationEvidenceStore.__new__(ActivationEvidenceStore)
+        store._journal = journal
+        store._revision = None
+        store._acceptance_secrets = None
     state = store.load()
     if state is None:
         raise ActivationEvidenceError("v2 runtime acceptance is missing")
@@ -358,3 +371,6 @@ def bind_runtime_database(identity, handle):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 10:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]

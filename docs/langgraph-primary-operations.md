@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
@@ -457,12 +458,52 @@ free-form prose never qualify. For alternative modes, see the separately signed
 [provider-acceptance-v2](provider-acceptance-v2.md) and
 [two-party-activation-v3](two-party-activation-v3.md) contracts. Under `github-v1`, the CI, security, and independent-review issuers
 must supply a closed canonical artifact with a canonical facts digest and their
-separate domain-separated HMAC attestations. The control process does not mint
-those attestations: it requires `-AcceptanceArtifactPath`, independently reads
+separate domain-separated HMAC attestations.
+
+The `github-v1` control process does not mint those attestations: it requires
+`-AcceptanceArtifactPath`, independently reads
 GitHub, and fails unless the supplied artifact exactly matches the observed
 repository, pull request, head, checks, and reviews. `ACCEPTED` accepts only that
 exact artifact path;
 raw `--facts-json` and caller-selected `--evidence-digest` values are rejected.
+
+With explicit owner authorization, `owner-local-evidence-v1` instead adopts an
+exact release's retained local QA, independent review and security evidence. It
+keeps hosted checks recorded as `HOSTED_NOT_EXECUTED`; actual failed run records
+remain in the pinned evidence bundle. This is owner adoption, not a GitHub or
+provider signature. Default `github-v1` and both signed provider modes are unchanged.
+
+Mount the owner-protected evidence directory read-only in **every** Compose
+invocation and the persistent service. Set `LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH`
+to its container-side `adoption.json` and pin its bytes with
+`LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256`. The closed adoption document
+uses `director-primary-local-evidence-adoption/v1`, decision
+`ADOPT_SCOPED_LOCAL_EVIDENCE`, and the existing owner token's domain-separated
+signature. Its QA, independent review and security digests must identify actual
+files in `pinned_evidence`; each path is a simple filename beside the adoption
+document. Loading and replay verify those file bytes. Reviewed source must match
+the candidate tree. An earlier full-suite receipt remains earlier evidence;
+changed code needs fresh focused QA and current-head independent/security review.
+
+The acceptance artifact uses version
+`director-primary-acceptance-artifact/owner-local-evidence-v1` and a single
+`owner_adoption` attestation from `owner-local-evidence-adoption`, signed with the
+existing owner token over its canonical unsigned artifact using the
+`director-primary-acceptance/owner_adoption/owner-local-evidence-adoption/v1` domain.
+The control command checks the explicitly supplied repository, PR and reviewer
+allowlists. It never manufactures an independent reviewer or security signature.
+
+Select a fresh owner-pinned generation with version
+`director-primary-generation/owner-local-evidence-v1`; it retains the existing
+generation fields, substituting `owner_adoption_path`/`owner_adoption_sha256` for
+the provider registry pair. All image, resolved Compose, configuration, provider
+binding, candidate and database checks still run. Its SQLite generation marker
+has a companion `.evidence.json` file for the ordered activation history, so older
+generations are preserved. The existing `SelectGeneration`, `Preflight`, `Accept`,
+`Migrate`, `Backup`, `RestoreDrill`, staging and activation sequence applies.
+Startup verifies readiness and generation before opening the primary database.
+This path changes no enrollment, budget, provider qualification or Slack delivery
+requirement.
 The durable record retains the source artifact and its digest for deterministic
 offline replay. Every reader of an accepted history must be constructed with all
 three distinct verifier secrets; replay revalidates the full closed artifact and
@@ -684,3 +725,6 @@ identity cannot authorize successful completion.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]] -->

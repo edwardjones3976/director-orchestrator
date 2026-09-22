@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
 # OpenAI continuation repairs attribution only here; prior material from
 # Copilot branch head 510251c66a78251bd242e8f773a03c51bf65f99b is preserved.
@@ -53,7 +54,7 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
         script = self.text("windows-langgraph-primary-control.ps1")
         # Execute the actual required-field block without environment reads or Docker.
         selection = script[script.index("$required = @("):script.index("$missing = @($required")]
-        for mode in (None, "github-v1", "provider-v2", "unknown"):
+        for mode in (None, "github-v1", "owner-local-evidence-v1", "provider-v2", "unknown"):
             values = "$values = @{}" if mode is None else "$values = @{LANGGRAPH_PRIMARY_ACCEPTANCE_MODE='" + mode + "'}"
             result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command",
                 "$ErrorActionPreference='Stop'; " + values + "\n" + selection + "\nConvertTo-Json -Compress -InputObject @($required)"],
@@ -68,9 +69,12 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
                 self.assertIn(name, required)
             for name in ("LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
                          "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"):
-                self.assertEqual(mode != "provider-v2", name in required)
+                self.assertEqual(mode not in {"provider-v2", "provider-v3-two-party"}, name in required)
             for suffix in ("REGISTRY_PATH", "REGISTRY_SHA256", "JOURNAL_PATH", "REGISTRY_DIRECTORY"):
-                self.assertEqual(mode == "provider-v2", "LANGGRAPH_PRIMARY_ACCEPTANCE_" + suffix in required)
+                self.assertEqual(mode in {"provider-v2", "provider-v3-two-party"}, "LANGGRAPH_PRIMARY_ACCEPTANCE_" + suffix in required)
+            if mode == "owner-local-evidence-v1":
+                self.assertIn("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH", required)
+                self.assertIn("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256", required)
 
     def test_snapshot_creation_is_exact_and_refuses_replacement(self) -> None:
         text = self.text("windows-primary-snapshot.ps1")
@@ -355,7 +359,11 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertIn("The pull request author cannot self-accept", text)
         self.assertIn("Invoke-Evidence -Command record -Stage ACCEPTED", text)
         self.assertIn("Assert-CanonicalAcceptanceArtifact", text)
-        self.assertIn('[string]$artifact.version -cne "director-primary-acceptance-artifact/v1"', text)
+        self.assertIn("[string]$artifact.version -cne $ExpectedVersion", text)
+        self.assertIn(
+            '-ExpectedVersion "director-primary-acceptance-artifact/owner-local-evidence-v1"',
+            text,
+        )
         self.assertIn("Accept requires -AcceptanceArtifactPath from the independent evidence issuers", text)
         self.assertIn("-AcceptanceArtifactPath $verifiedArtifactPath", text)
         self.assertIn('"--acceptance-artifact", "/run/director-acceptance.json"', text)
@@ -612,3 +620,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 03:13 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
