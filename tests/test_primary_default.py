@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -3114,10 +3115,14 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         # bounded, and the blockers are released in `finally`.
         allowance, first_release, second_release = 4.0, 1.2, 4.8
         self.assertTrue(first_release < allowance and second_release - first_release < allowance < second_release)
-        released, stop, releaser = {}, threading.Event(), None
-        early = psycopg.connect(dsn, connect_timeout=5)
-        later = psycopg.connect(dsn, connect_timeout=5)
-        try:
+        released, waiting, worker_errors = {}, {}, []
+        stop, releaser = threading.Event(), None
+        with (
+            psycopg.connect(dsn, connect_timeout=5) as early,
+            psycopg.connect(dsn, connect_timeout=5) as later,
+            psycopg.connect(dsn, connect_timeout=5, autocommit=True,
+                            options="-c statement_timeout=500") as observer,
+        ):
             early.execute(sql.SQL("LOCK TABLE {}.director_primary_task_projection IN ACCESS EXCLUSIVE MODE")
                           .format(sql.Identifier(self.schema)))
             later.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
@@ -3125,30 +3130,51 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             origin = clock.monotonic()
 
             def stage_releases():
-                for name, blocker, at in (("early", early, first_release), ("later", later, second_release)):
-                    stop.wait(max(0.0, origin + at - clock.monotonic()))
-                    blocker.rollback()
-                    released[name] = clock.monotonic() - origin
+                try:
+                    for name, blocker, at, table in (
+                        ("early", early, first_release, "director_primary_task_projection"),
+                        ("later", later, second_release, "director_primary_slack_delivery"),
+                    ):
+                        # Observe the actual blocked reader, not just the release
+                        # schedule: an unrelated database error must not pass.
+                        while not stop.is_set() and clock.monotonic() < origin + at:
+                            row = observer.execute(
+                                "SELECT pid FROM pg_locks WHERE locktype='relation' "
+                                "AND relation=%s::regclass AND NOT granted "
+                                "AND %s=ANY(pg_blocking_pids(pid))",
+                                (sql.Identifier(self.schema, table).as_string(observer),
+                                 blocker.info.backend_pid),
+                            ).fetchone()
+                            if row is not None:
+                                waiting[name] = row[0]
+                                break
+                            stop.wait(0.02)
+                        if stop.wait(max(0.0, origin + at - clock.monotonic())):
+                            return
+                        blocker.rollback()
+                        released[name] = clock.monotonic() - origin
+                except Exception as error:
+                    worker_errors.append(error)
 
             releaser = threading.Thread(target=stage_releases, name="qa-staged-lock-release", daemon=True)
             releaser.start()
-            with self.assertRaises((psycopg.Error, DeadlineExpired)):
-                store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
-            refused_at = clock.monotonic() - origin
-            releaser.join(timeout=second_release + 5.0)
-            self.assertFalse(releaser.is_alive())
-            self.assertLess(released["early"], refused_at)  # the first wait fit the allowance
-            self.assertLess(refused_at, released["later"])  # refused before the later lock cleared
-            self.assertLess(refused_at, allowance + 0.75)  # one finite absolute bound, not a fresh one
-        finally:
-            stop.set()
-            if releaser is not None:
+            try:
+                with self.assertRaises((psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable,
+                                        psycopg.errors.TransactionTimeout, DeadlineExpired)):
+                    store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
+                refused_at = clock.monotonic() - origin
+                releaser.join(timeout=second_release + 5.0)
+                self.assertFalse(releaser.is_alive())
+                self.assertEqual([], worker_errors)
+                self.assertEqual({"early", "later"}, set(waiting))
+                self.assertEqual(waiting["early"], waiting["later"])
+                self.assertLess(released["early"], refused_at)
+                self.assertLess(refused_at, released["later"])
+                self.assertLess(refused_at, allowance + 0.75)
+            finally:
+                stop.set()
                 releaser.join(timeout=10.0)
-            for blocker in (early, later):
-                try:
-                    blocker.rollback()
-                finally:
-                    blocker.close()
+                self.assertFalse(releaser.is_alive())
         # The lane is intact afterwards and a normal read still completes.
         after = store.read_primary_qualification_evidence(record.task_id)
         self.assertTrue(after["complete"])
@@ -3703,3 +3729,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | END]]
