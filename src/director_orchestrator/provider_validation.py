@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
@@ -523,6 +525,30 @@ class CaptureVerifier:
             return False
 
 
+_GENERATION_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def resolved_provider_validation_generation() -> str:
+    """Resolve the validation generation pin from protected generation selection.
+
+    When DIRECTOR_PROVIDER_VALIDATION_GENERATION is absent, derive it from
+    LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256. Explicit values must match.
+    """
+    import os
+
+    manifest = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "")
+    explicit = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "")
+    if explicit:
+        if _GENERATION_SHA256.fullmatch(explicit) is None:
+            raise ValidationError("validation generation pin is malformed")
+        if manifest and explicit != manifest:
+            raise ValidationError("validation generation differs from staged generation")
+        return explicit
+    if _GENERATION_SHA256.fullmatch(manifest) is None:
+        raise ValidationError("validation generation is unavailable")
+    return manifest
+
+
 def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", require_enabled: bool = True):
     """No DDL or dispatch. Staged readers may opt out of the execution switch.
 
@@ -541,7 +567,7 @@ def capture_verifier_from_environment(*, candidate: str = "", tree: str = "", re
     return CaptureVerifier(PostgresValidationStore(os.environ["DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN"]),
         capture_key=os.environ["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"],
         candidate=os.environ["DIRECTOR_PROVIDER_VALIDATION_CANDIDATE"],
-        generation=os.environ["DIRECTOR_PROVIDER_VALIDATION_GENERATION"],
+        generation=resolved_provider_validation_generation(),
         tree=os.environ["DIRECTOR_PROVIDER_VALIDATION_TREE"],
         team_route=team_route_from_environment(),
         openai_responses_route=responses_route_from_environment())
@@ -1002,3 +1028,5 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

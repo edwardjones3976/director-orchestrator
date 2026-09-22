@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
@@ -391,7 +392,6 @@ class LocalActivationEvidenceTests(unittest.TestCase):
         adoption_path, adoption_pin = self.write_adoption(
             document={
                 **self.adoption_document,
-                "repository": "owner/edge-project",
                 "reviewed_source_commit": ident.candidate_commit,
                 "reviewed_source_tree": ident.candidate_tree,
             }
@@ -405,6 +405,7 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             langgraph_primary_acceptance_journal_path=str(journal),
             repository_snapshot_root=str(project_root),
             repository_allowlist=("owner/edge-project",),
+            langgraph_primary_service_repository="owner/repository",
             allowed_starting_refs=("main",),
             langgraph_primary_pinned_commit_sha=ident.candidate_commit,
             langgraph_primary_pinned_tree_sha=ident.candidate_tree,
@@ -755,3 +756,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

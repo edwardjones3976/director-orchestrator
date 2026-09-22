@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | BEGIN]]
@@ -471,6 +472,149 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("no provider was invoked", result.stdout)
 
+    def test_run_forwards_validation_profile_and_clears_stale_parent_state(self):
+        keys = [
+            "DIRECTOR_PROVIDER_VALIDATION_ENABLED",
+            "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN",
+            "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY",
+            "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN",
+            "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON",
+            "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE",
+            "DIRECTOR_PROVIDER_VALIDATION_TREE",
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION",
+            "DIRECTOR_PROVIDER_VALIDATION_TEAM_CONFIG",
+            "DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
+            "DIRECTOR_HOST_PROVIDER_WORKSPACE",
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            provider = root / "harmless_provider.py"
+            provider.write_text("raise SystemExit(0)\n")
+            argv = [sys.executable, str(provider)]
+            command_map = {lane: argv for lane in SUPPORTED_HOST_LANES}
+            capture = root / "child-environment.json"
+            restored = root / "restored-environment.json"
+            stub = root / "bridge_python.ps1"
+            stub.write_text(
+                f"""
+$ErrorActionPreference = 'Stop'
+if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orchestrator.host_provider_bridge_server') {{
+  $payload = @{{}}
+  $names = $env:BRIDGE_ENV_CAPTURE_KEYS | ConvertFrom-Json
+  foreach ($name in $names) {{
+    $payload[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+  }}
+  Set-Content -LiteralPath '{capture}' -Value ($payload | ConvertTo-Json -Compress) -Encoding utf8
+  $global:LASTEXITCODE = 0
+  return
+}}
+& $env:REAL_PYTHON @args
+""",
+                encoding="utf-8",
+            )
+            environment = root / "fixture.env"
+            values = {
+                "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "offline-fixture-secret-" + "x" * 32,
+                "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps(command_map),
+                "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE": str(root / "bridge.sqlite3"),
+                "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN": "never-connected",
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "offline_fixture",
+                "DIRECTOR_PROVIDER_VALIDATION_ENABLED": "true",
+                "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "postgresql://fixture.invalid/validation",
+                "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": "validation-capture-key-" + "y" * 24,
+                "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN": "validation-owner-token-" + "z" * 24,
+                "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": json.dumps({"openai": ["account.json"]}),
+                "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "f" * 40,
+                "DIRECTOR_PROVIDER_VALIDATION_TREE": "a" * 40,
+                "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "b" * 64,
+            }
+            environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+            parent = dict.fromkeys(keys, "stale-parent-value")
+            parent["DIRECTOR_PROVIDER_VALIDATION_TREE"] = "c" * 40
+            harness = root / "run.ps1"
+            harness.write_text(
+                "& $env:BRIDGE_SCRIPT -Action Run -EnvironmentFile $env:BRIDGE_PROFILE "
+                "-Workspace $env:BRIDGE_WORKSPACE -Python $env:BRIDGE_STUB\n"
+                "$restored = @{}\n"
+                "foreach ($name in ($env:BRIDGE_ENV_CAPTURE_KEYS | ConvertFrom-Json)) {\n"
+                "  $restored[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')\n}\n"
+                f"Set-Content -LiteralPath '{restored}' -Value ($restored | ConvertTo-Json -Compress) -Encoding utf8\n",
+                encoding="utf-8",
+            )
+            for enabled in (True, False):
+                profile = values if enabled else {k: v for k, v in values.items() if k not in keys}
+                profile = {**profile, "DIRECTOR_PROVIDER_VALIDATION_ENABLED": str(enabled).lower()}
+                environment.write_text("".join(f"{key}={value}\n" for key, value in profile.items()))
+                result = subprocess.run(
+                    [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env={**os.environ, **parent, "REAL_PYTHON": sys.executable,
+                         "BRIDGE_ENV_CAPTURE_KEYS": json.dumps(keys),
+                         "BRIDGE_SCRIPT": str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
+                         "BRIDGE_PROFILE": str(environment), "BRIDGE_WORKSPACE": str(root), "BRIDGE_STUB": str(stub)},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                observed = json.loads(capture.read_text(encoding="utf-8-sig"))
+                for name in keys:
+                    expected = str(root.resolve()) if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE" else profile.get(name)
+                    self.assertEqual(observed.get(name) or None, expected, name)
+                self.assertEqual(json.loads(restored.read_text(encoding="utf-8-sig")), parent)
+
+    def test_preflight_rejects_enabled_validation_without_required_profile_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            provider = root / "harmless_provider.py"
+            provider.write_text("raise SystemExit(0)\n")
+            argv = [sys.executable, str(provider)]
+            environment = root / "fixture.env"
+            values = {
+                "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "offline-fixture-secret-" + "x" * 32,
+                "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps({"cursor": argv}),
+                "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE": str(root / "bridge.sqlite3"),
+                "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN": "never-connected",
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "offline_fixture",
+                "DIRECTOR_PROVIDER_VALIDATION_ENABLED": "true",
+            }
+            environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+            result = subprocess.run(
+                [PWSH, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
+                 "-Action", "Preflight", "-EnvironmentFile", str(environment), "-Workspace", str(root),
+                 "-Python", sys.executable],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Provider validation is enabled but incomplete", result.stderr)
+            values.update(
+                DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN="postgresql://fixture.invalid/validation",
+                DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY="capture-" + "c" * 40,
+                DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN="owner-" + "o" * 40,
+                DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON='{"claude":["account.json"]}',
+                DIRECTOR_PROVIDER_VALIDATION_CANDIDATE="a" * 40,
+                DIRECTOR_PROVIDER_VALIDATION_TREE="b" * 40,
+                LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256="c" * 64,
+            )
+            malformed = (
+                {"DIRECTOR_PROVIDER_VALIDATION_TREE": "wrong"},
+                {"DIRECTOR_PROVIDER_VALIDATION_GENERATION": "d" * 64},
+                {"DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": values["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"]},
+                {"DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": '{"claude":"not-an-array"}'},
+            )
+            for change in malformed:
+                environment.write_text("".join(f"{k}={v}\n" for k, v in {**values, **change}.items()))
+                with self.subTest(change=change):
+                    result = subprocess.run(
+                        [PWSH, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
+                         "-Action", "Preflight", "-EnvironmentFile", str(environment), "-Workspace", str(root),
+                         "-Python", sys.executable], capture_output=True, text=True, timeout=300,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("preflight passed", result.stdout)
+
     def test_preflight_preserves_unsupported_and_invalid_command_refusals(self):
         cases = [
             ({"microsoft-365-copilot": None}, "unallowlisted provider"),
@@ -494,3 +638,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 18:19 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
@@ -158,6 +159,31 @@ class PrimaryGenerationTests(unittest.TestCase):
             require_generation(self.settings, self.identity)
         self.assertFalse(self.journal.exists())
 
+    def test_resolved_compose_normalizes_validation_generation_selector(self):
+        import copy
+        image = "sha256:" + "8" * 64
+        document = {"name": "project", "services": {"orchestrator": {
+            "image": image, "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "environment": {"DIRECTOR_RUNTIME_IMAGE_ID": image, "DIRECTOR_RUNTIME_IMAGE": image,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.main:app",
+                "ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_ENABLED": "false",
+                "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
+                "LANGGRAPH_PARALLEL_KILL_SWITCH": "true",
+                "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "a" * 64,
+                "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "a" * 64},
+            "volumes": [], "networks": {"default": None}}}, "networks": {"default": {"name": "project_default"}}}
+        without = copy.deepcopy(document)
+        without["services"]["orchestrator"]["environment"].pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION")
+        self.assertEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(without, image))
+        for value in ("b" * 64, "invalid", 1, 0, None, " " + "a" * 64):
+            conflicting = copy.deepcopy(document)
+            conflicting["services"]["orchestrator"]["environment"]["DIRECTOR_PROVIDER_VALIDATION_GENERATION"] = value
+            with self.subTest(value=value), self.assertRaises(ActivationEvidenceError):
+                resolved_deployment_digest(conflicting, image)
+        changed = copy.deepcopy(without)
+        changed["services"]["orchestrator"]["environment"]["DIRECTOR_PROVIDER_VALIDATION_MANIFEST"] = "/data/validation.json"
+        self.assertNotEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(changed, image))
+
     def test_validation_manifest_cannot_select_another_candidate_or_generation(self):
         validation = self.root / "validation.json"
         document = dict(generation=os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"],
@@ -211,3 +237,4 @@ class PrimaryGenerationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

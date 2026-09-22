@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -722,6 +723,43 @@ class HostProviderBridgeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("windows_copilot", server_source)
 
+    def test_server_composes_validation_only_from_enabled_profile(self) -> None:
+        from director_orchestrator import host_provider_bridge_server as server_module
+        from director_orchestrator.provider_validation import ValidationBridgeService
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = {
+                "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": SECRET,
+                "DIRECTOR_HOST_PROVIDER_WORKSPACE": directory,
+                "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps({"claude": [sys.executable]}),
+                "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE": "unused",
+                "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN": "unused",
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "fixture",
+            }
+            for enabled in (False, True):
+                profile = dict(environment, DIRECTOR_PROVIDER_VALIDATION_ENABLED=str(enabled).lower())
+                if enabled:
+                    profile.update(
+                        DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN="unused-validation",
+                        DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY="c" * 40,
+                        DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN="o" * 40,
+                        DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON='{"claude":[]}',
+                    )
+                server = SimpleNamespace(serve_forever=MagicMock())
+                with patch.dict(os.environ, profile, clear=True), \
+                     patch.object(server_module, "ThreadingHTTPServer", return_value=server), \
+                     patch.object(server_module, "BridgeClaimStore"), \
+                     patch("director_orchestrator.provider_validation.PostgresValidationStore") as store:
+                    server_module.main()
+                server.serve_forever.assert_called_once_with(poll_interval=0.5)
+                self.assertEqual(hasattr(server, "validation_service"), enabled)
+                if enabled:
+                    self.assertIsInstance(server.validation_service, ValidationBridgeService)
+                    self.assertIs(server.validation_service.production, server.executor)
+                    store.assert_called_once_with("unused-validation")
+                else:
+                    store.assert_not_called()
+
     def test_executor_refuses_direct_provider_lanes(self) -> None:
         for provider in ("microsoft-365-copilot",):
             with self.subTest(provider=provider), self.assertRaisesRegex(
@@ -746,3 +784,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

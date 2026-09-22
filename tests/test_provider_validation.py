@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
@@ -725,6 +726,14 @@ class PostgresValidationTests(unittest.TestCase):
         with patch.dict(os.environ,env,clear=False):
             verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
             self.assertEqual(TREE,verifier.tree)
+        derived={k:v for k,v in env.items() if k!="DIRECTOR_PROVIDER_VALIDATION_GENERATION"}
+        derived["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]="0"*64
+        with patch.dict(os.environ,derived,clear=False):
+            verifier=capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
+            self.assertEqual("0"*64,verifier.generation)
+        with patch.dict(os.environ,{**derived,"DIRECTOR_PROVIDER_VALIDATION_GENERATION":"f"*64},clear=False):
+            with self.assertRaisesRegex(ValidationError,"differs from staged generation"):
+                capture_verifier_from_environment(candidate=CANDIDATE,tree=TREE)
             # The environment pin is authoritative: a caller tree that differs
             # from it, or a missing caller tree, is refused before any store
             # access rather than silently adopting either side.
@@ -1387,3 +1396,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

@@ -5,6 +5,7 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]] -->
@@ -39,6 +40,7 @@ This is local host tooling, not a shared provider workflow skill: the Director n
 
 These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than skip when it is absent:
 
+- `tests/test_edge_activation_contract.py`
 - `tests/test_entitlement_control_plane.py`
 - `tests/test_langgraph_postgres.py`
 - `tests/test_primary_authenticated_ingress_postgres.py`
@@ -103,3 +105,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | END]] -->
