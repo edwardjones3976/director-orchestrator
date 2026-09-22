@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
@@ -3144,9 +3145,60 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
             user_id=record.intake.user_id, text_digest=digest("status text"))
         self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
+        # A real generic external effect through the production store producers
+        # (claim -> reservation -> execution marker -> remote binding -> terminal
+        # evidence), fenced by the task's actual writer lease.
+        from director_orchestrator.langgraph_primary import ClaimRequest
+        writer = store.current_task_writer(record.task_id)
+        with self.handle.pool.connection() as connection:
+            budget_row = connection.execute(sql.SQL(
+                "SELECT budget_limit_units FROM {}.director_primary_budget WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (record.task_id,)).fetchone()
+        budget_limit = int(budget_row["budget_limit_units"]) if budget_row else 8
+        store.register_task_budget(record.task_id, budget_limit_units=budget_limit)
+        claim_key, effect_key = digest("effect-claim:" + record.task_id), digest("effect-key:" + record.task_id)
+        effect_attempt, reservation_key = digest("effect-attempt:" + record.task_id), digest("effect-reservation:" + record.task_id)
+        granted = store.claim(ClaimRequest(claim_key=claim_key, task_id=record.task_id, field="effect_status",
+                                           expected_state="CLAIMED", target_state="EXECUTING",
+                                           attempt_digest=effect_attempt, owner_token=writer.owner_token))
+        self.assertTrue(granted.granted)
+        store.reserve_effect_intent(reservation_key=reservation_key, claim_key=claim_key, task_id=record.task_id,
+                                    owner_token=writer.owner_token, effect_key_digest=effect_key,
+                                    effect_attempt_digest=effect_attempt, writer_owner_id=writer.engine_owner,
+                                    reserved_units=1)
+        self.assertTrue(store.claim_effect_execution(reservation_key=reservation_key, owner_token=writer.owner_token))
+        store.bind_remote_effect(reservation_key=reservation_key, owner_token=writer.owner_token,
+                                 remote_system="slack", remote_identifier="1787450010." + record.task_id[-6:].lower())
+        store.record_terminal_evidence(claim_key=claim_key, owner_token=writer.owner_token, disposition="COMPLETED",
+                                       evidence_digest=digest("terminal:" + record.task_id))
+        # Authenticated spend/usage rows joined to the settled attempt digest. The
+        # production meter mints these under a signed grant; the disposable lane has
+        # no grant, so the rows are inserted synthetically under the real DDL/FKs.
+        with self.handle.pool.connection() as connection:
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_budget (authority_digest, document)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb) ON CONFLICT DO NOTHING
+                """).format(sql.Identifier(self.schema)), (digest("budget:" + record.task_id),))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_spend
+                    (attempt_digest, grant_digest, provider_id, project_id, task_id, budget_day, reserved_microusd, token_limit)
+                VALUES (%s, %s, %s, 'synthetic-project', %s, CURRENT_DATE, 50000, 4000)
+                """).format(sql.Identifier(self.schema)),
+                (digest("attempt:" + record.task_id), digest("budget:" + record.task_id), assignment["provider_id"], record.task_id))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_usage (attempt_digest, document, actual_microusd, observed_tokens)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb, 12500, 900)
+                """).format(sql.Identifier(self.schema)), (digest("attempt:" + record.task_id),))
         document = store.read_primary_qualification_evidence(record.task_id)
         document.pop("projection")
         typed = QualificationEvidenceReadback.model_validate(document)  # strict typed serialization
+        self.assertEqual(1, len(typed.effects))
+        self.assertEqual((effect_key, effect_attempt, "COMPLETED"), (typed.effects[0].effect_key_digest,
+                         typed.effects[0].effect_attempt_digest, typed.effects[0].terminal_disposition))
+        self.assertEqual([], typed.absent)
+        self.assertEqual([(digest("attempt:" + record.task_id), 12500, 900, 50000)],
+                         [(row.attempt_digest, row.actual_microusd, row.observed_tokens, row.reserved_microusd)
+                          for row in typed.provider_usage])
         attempts = typed.provider_attempts
         self.assertEqual([1, 2], [row.event_sequence for row in attempts])
         self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
@@ -3159,7 +3211,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual([receipt_id], [row.receipt_id for row in typed.status_receipts])
         self.assertEqual("status-event-" + record.task_id, typed.status_receipts[0].source_event_id)
         self.assertEqual(["synthetic-delivery-" + record.task_id], [row.client_msg_id for row in typed.slack_deliveries])
-        self.assertEqual([], typed.effects)  # no generic external-effect reservation was recorded
+        self.assertEqual(1, typed.task_scope_counters.effect_reservations)
+        self.assertEqual(1, typed.task_scope_counters.attempt_ordinals)
         self.assertTrue(typed.complete)
         # Rows are pinned to the task: another task sees none of them.
         other = self.application.create_intake(
@@ -3205,11 +3258,32 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(["synthetic-delivery-" + record.task_id], evidence["chain"]["delivery_ids"])
         self.assertEqual([digest("result:" + record.task_id)], evidence["chain"]["provider_result_digests"])
         self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
-        self.assertEqual("NO_EXTERNAL_EFFECT_RESERVATION", evidence["external_effect_state"])
+        self.assertEqual("EXTERNAL_EFFECT_TERMINAL:COMPLETED", evidence["external_effect_state"])
+        self.assertEqual([effect_key], evidence["chain"]["effect_ids"])
         self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
         self.assertEqual("synthetic-transport", evidence["lineage"]["transport"])
-        self.assertEqual("UNKNOWN", evidence["usage"]["cost_basis"])  # no usage table in this schema
+        self.assertEqual("authenticated_usage_table", evidence["usage"]["cost_basis"])
+        self.assertEqual(0.0125, evidence["usage"]["actual_cost_usd"])
+        self.assertEqual(50000, evidence["usage"]["actual_usage"]["reserved_budget_microusd"])
+        self.assertEqual(1, evidence["status_receipts"]["durable_receipt_rows"])
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
         self.assertEqual(response.headers["X-Primary-Projection-Digest"], evidence["readback"]["projection_digest"])
+        # Negative composition: a foreign task id in the same real response is refused;
+        # a truncated real readback derives nothing.
+        foreign_response = dict(response.json())
+        foreign_response["qualification_evidence"] = {**foreign_response["qualification_evidence"], "task_id": other.task_id}
+        refused = collector.summarize(record.intake.thread_ts, record.task_id, foreign_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("rejected", refused["qualification_evidence"]["readback"]["state"])
+        self.assertEqual([], refused["qualification_evidence"]["chain"]["attempt_ids"])
+        truncated_document = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        truncated_document.pop("projection")
+        truncated_response = {**response.json(), "qualification_evidence": json.loads(json.dumps(truncated_document, default=str))}
+        partial = collector.summarize(record.intake.thread_ts, record.task_id, truncated_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("incomplete", partial["qualification_evidence"]["readback"]["state"])
+        self.assertEqual("UNKNOWN", partial["qualification_evidence"]["usage"]["cost_basis"])
+        self.assertIsNone(partial["qualification_evidence"]["effect_state"])
         collector.validate_observations({"schema": "director-slack-trial-observations/v1",
             "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
             "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
@@ -3526,3 +3600,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]

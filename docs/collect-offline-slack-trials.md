@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
@@ -161,31 +162,42 @@ readback derives nothing: identities, states and amounts stay empty/UNKNOWN,
 and an incomplete one carries only `readback.partial_diagnostics`
 (`not_proof: true`).
 
-Status-only proof is prospective. The readback exposes `captured_at` and
-`task_scope_counters` (tasks bound to the same Slack thread, this task's
-assignments, provider attempts, started attempts, durable status receipts and
-effect reservations) from the same snapshot. Run the collector once *before*
-the status mention, then again afterwards with `--status-baseline
-<prior receipt.json> --status-receipt-id <receipt_id>`;
-`status_receipt_delta` accepts the pair only when both readbacks are complete,
-describe the same task and engine, the baseline snapshot precedes the
-receipt's `created_at`, the receipt is absent from the baseline and present
-afterwards, no counter decreased and exactly one durable receipt was added.
-Then `tasks_created`, `assignments_created` and `provider_attempts_created`
-are measured deltas with `counter_scope: task-and-thread-local` — never a
-global zero-work claim — and the baseline file's digest is recorded as
-provenance without treating it as self-authenticating. After-only collection
-keeps those counts `null` and reports only `durable_receipt_rows`.
+Status-only evidence is prospective. The readback exposes `captured_at` and
+`task_scope_counters` (`thread_tasks` bound to the same Slack thread, this
+task's `assignments`, `provider_attempts` event rows, distinct
+`attempt_ordinals`, `started_attempts`, durable `status_receipts` and
+`effect_reservations`; scope `task-and-thread-local/v1`) from the same
+snapshot. `status_receipt_delta` compares two complete typed readbacks of the
+same task, source event and engine, with the same runtime head/image and the
+same declared configuration scope/key set/digest, and requires
+before-capture < receipt-creation <= after-capture (timezone-aware), an exact
+unique receipt join absent from the baseline, no decreased counter and
+exactly one added durable receipt row. Consistency is not authentication:
+only readbacks this same process obtained through the authenticated GET (the
+signed synthetic test sequence) yield `proof: true`; a prior receipt supplied
+with `--status-baseline <receipt.json> --status-receipt-id <id>` must first be
+a schema-valid collected observation and then yields only
+`baseline.observed_delta` with `proof: null` and the reason that no existing
+mechanism authenticates a saved file. `provider_attempts_created` counts new
+attempt ordinals, never settlement events; `deduplicated_receipts` is set only
+from an observed replay, while `durable_receipt_rows` is the plain row count.
+After-only collection keeps the created counts `null`.
 
 `revision_binding` is a read-time identity: `configuration_digest` covers the
-allowlisted safe effective values (`configuration_keys`, e.g.
-`ALLOW_PAID_RUNS`, the LangGraph primary switches, schema and allocation
-profile), so a changed safe value changes it while secret, identity and
-unlisted values are excluded by construction and never emitted; malformed
-safe values are refused. It is not the native account/credential pin and
-not an execution-time binding (`execution_time_binding: UNKNOWN` with its
-reason). This block adds evidence; it changes no rubric check and cannot
-turn `EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
+public fields resolved exactly as `Settings` resolves them (`ALLOW_PAID_RUNS`,
+the three LangGraph primary switches as booleans with default `false`,
+`LANGGRAPH_PRIMARY_POSTGRES_SCHEMA` with its declared default and
+`INTAKE_ALLOCATION_PROFILE` lower-cased with the default profile and validated
+against the allocation profiles), scope
+`supplied-public-configuration-resolved-with-declared-defaults/v1`, with
+`configuration_keys` and `supplied_keys` listed and values never emitted. An
+omitted field equal to its default does not change the digest; a changed
+profile, switch or schema does; secret, identity and unlisted keys are
+excluded by construction; malformed values or unknown profiles refuse
+collection. It is neither the native account/credential pin nor an
+execution-time binding (`execution_time_binding: UNKNOWN` with its reason).
+This block adds evidence; it changes no rubric check and cannot turn
+`EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
 
 ## Record one row and stop on failure
 
@@ -279,3 +291,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->

@@ -263,6 +263,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "attempt_ordinals": {
+          "type": "integer",
+          "minimum": 0
+        },
         "started_attempts": {
           "type": "integer",
           "minimum": 0
@@ -280,6 +284,7 @@
         "thread_tasks",
         "assignments",
         "provider_attempts",
+        "attempt_ordinals",
         "started_attempts",
         "status_receipts",
         "effect_reservations"
@@ -693,6 +698,70 @@
                         null
                       ]
                     },
+                    "observed_delta": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "tasks_created": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "assignments_created": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "provider_attempts_created": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "provider_attempt_events_added": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "started_attempts_created": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "durable_receipts_added": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "counter_scope": {
+                              "const": "task-and-thread-local/v1"
+                            },
+                            "baseline_captured_at": {
+                              "type": "string"
+                            },
+                            "receipt_created_at": {
+                              "type": "string"
+                            },
+                            "after_captured_at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "tasks_created",
+                            "assignments_created",
+                            "provider_attempts_created",
+                            "provider_attempt_events_added",
+                            "started_attempts_created",
+                            "durable_receipts_added",
+                            "counter_scope",
+                            "baseline_captured_at",
+                            "receipt_created_at",
+                            "after_captured_at"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "authority": {
+                      "type": "string"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -715,7 +784,7 @@
                       "$ref": "#/$defs/nullableCount"
                     },
                     "counter_scope": {
-                      "const": "task-and-thread-local"
+                      "const": "task-and-thread-local/v1"
                     },
                     "baseline_captured_at": {
                       "type": "string"
@@ -726,6 +795,7 @@
                   },
                   "required": [
                     "proof",
+                    "observed_delta",
                     "reason"
                   ],
                   "additionalProperties": false
@@ -820,9 +890,17 @@
                   "pattern": "^[a-f0-9]{64}$"
                 },
                 "configuration_scope": {
-                  "const": "read-time-safe-effective-values"
+                  "const": "supplied-public-configuration-resolved-with-declared-defaults/v1"
                 },
                 "configuration_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                  },
+                  "maxItems": 20
+                },
+                "supplied_keys": {
                   "type": "array",
                   "items": {
                     "type": "string",
@@ -845,6 +923,7 @@
                 "configuration_digest",
                 "configuration_scope",
                 "configuration_keys",
+                "supplied_keys",
                 "execution_time_binding",
                 "execution_time_reason"
               ],

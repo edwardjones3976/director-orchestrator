@@ -138,6 +138,7 @@
             "thread_tasks": 1,
             "assignments": 1,
             "provider_attempts": 0,
+            "attempt_ordinals": 0,
             "started_attempts": 0,
             "status_receipts": 0,
             "effect_reservations": 0
@@ -209,6 +210,7 @@
             "thread_tasks": 1,
             "assignments": 1,
             "provider_attempts": 0,
+            "attempt_ordinals": 0,
             "started_attempts": 0,
             "status_receipts": 0,
             "effect_reservations": 0
@@ -227,8 +229,16 @@
           "offline_configured": true,
           "paid_configured": false,
           "configuration_digest": "2222222222222222222222222222222222222222222222222222222222222222",
-          "configuration_scope": "read-time-safe-effective-values",
+          "configuration_scope": "supplied-public-configuration-resolved-with-declared-defaults/v1",
           "configuration_keys": [
+            "ALLOW_PAID_RUNS",
+            "INTAKE_ALLOCATION_PROFILE",
+            "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+            "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
+            "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED",
+            "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA"
+          ],
+          "supplied_keys": [
             "ALLOW_PAID_RUNS",
             "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"
           ],

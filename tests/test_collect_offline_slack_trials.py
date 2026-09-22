@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
@@ -89,8 +90,8 @@ def readback_fixture():
         "terminal_reason_code": "effect_readback_verified", "task_created_at": "2026-09-12T10:00:00+00:00",
         "task_updated_at": "2026-09-12T10:00:31+00:00",
         "captured_at": "2026-09-12T10:00:45+00:00",
-        "task_scope_counters": {"thread_tasks": 1, "assignments": 1, "provider_attempts": 2, "started_attempts": 1,
-                                "status_receipts": 1, "effect_reservations": 1},
+        "task_scope_counters": {"thread_tasks": 1, "assignments": 1, "provider_attempts": 2, "attempt_ordinals": 1,
+                                "started_attempts": 1, "status_receipts": 1, "effect_reservations": 1},
         "snapshot": {"isolation": "REPEATABLE READ", "read_only": True, "single_transaction": True,
                      "covers_task_record": True},
         "bounds": {"row_limit": 200, "byte_limit": 262144, "wall_seconds": 5.0, "elapsed_seconds": 0.01},
@@ -365,13 +366,14 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(evidence["lineage"]["provider_routes"], ["claude"])
         self.assertEqual(evidence["lineage"]["transport"], "native-command")
         self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 1)
-        self.assertFalse(evidence["lineage"]["fallback_observed"])
+        self.assertIsNone(evidence["lineage"]["fallback_observed"])  # no producer records fallback linkage
         self.assertEqual(evidence["timestamps"]["completion_at"], "2026-09-12T10:00:25+00:00")
         self.assertNotIn("completion_at", evidence["timestamps"]["unknown_reasons"])
         self.assertEqual(evidence["usage"]["cost_basis"], "authenticated_usage_table")
         self.assertEqual(evidence["usage"]["actual_cost_usd"], 0.0125)
         self.assertEqual(evidence["usage"]["actual_usage"]["reserved_budget_microusd"], 50000)
-        self.assertEqual(evidence["status_receipts"]["deduplicated_receipts"], 1)
+        self.assertEqual(evidence["status_receipts"]["durable_receipt_rows"], 1)
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])  # a row count is not an observed replay
         self.assertIsNone(evidence["status_receipts"]["tasks_created"])  # needs a prospective baseline
         collector_module.validate_observations({**receipt_fixture(), "trials": [
             {**structural_trial(), "qualification_evidence": evidence}]})
@@ -422,6 +424,11 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(evidence["usage"]["cost_basis"], "UNKNOWN")
 
     def test_provider_reported_cost_is_recorded_only_when_finite_numeric_and_never_invented(self):
+        # A top-level task cost is an unbound provider-reported figure: it is
+        # recorded only alongside a complete validated readback without usage rows.
+        collected = readback_fixture()
+        collected["provider_usage"] = []
+        self.task["qualification_evidence"] = collected
         for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None),
                                 (float("inf"), None), (float("nan"), None), (True, None)):
             with self.subTest(value=value):
@@ -429,6 +436,9 @@ class SummaryTests(unittest.TestCase):
                 usage = self.summarize()["qualification_evidence"]["usage"]
                 self.assertEqual(usage["actual_cost_usd"], expected)
                 self.assertEqual(usage["cost_basis"], "provider_reported" if expected is not None else "UNKNOWN")
+        self.task["actual_cost_usd"] = 0.25
+        self.task.pop("qualification_evidence")
+        self.assertEqual("UNKNOWN", self.summarize()["qualification_evidence"]["usage"]["cost_basis"])  # absent readback
         self.assertIsNone(self.summarize()["actual_cost_usd"])  # the older scorecard field stays unmeasured
 
     def test_revision_binding_digests_safe_effective_values_and_excludes_secrets(self):
@@ -438,21 +448,40 @@ class SummaryTests(unittest.TestCase):
         binding = collector_module.revision_binding(runtime, safe)
         self.assertEqual(binding["runtime_head"], "e" * 40)
         self.assertNotIn("container_id", binding)
-        self.assertEqual(["ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], binding["configuration_keys"])
-        self.assertEqual("read-time-safe-effective-values", binding["configuration_scope"])
+        self.assertEqual(sorted(collector_module.SAFE_CONFIGURATION_KEYS), binding["configuration_keys"])
+        self.assertEqual(["ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], binding["supplied_keys"])
+        self.assertEqual(collector_module.CONFIGURATION_SCOPE, binding["configuration_scope"])
         self.assertEqual("UNKNOWN", binding["execution_time_binding"])
         serialized = json.dumps(binding)
         for value in ENV.values():
             self.assertNotIn(value, serialized)
-        self.assertNotIn("false", serialized.replace('"paid_configured": false', ""))  # values digested, not emitted
-        # A safe value change changes the binding; secret/unknown value changes do not.
+        self.assertNotIn("director_primary_v1", serialized)  # resolved values are digested, never emitted
+        # Settings semantics: declared defaults, bool normalization, profile lower-casing.
+        resolved, supplied = collector_module.resolve_safe_configuration(safe)
+        self.assertEqual({"ALLOW_PAID_RUNS": False, "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": False,
+                          "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": True,
+                          "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": False,
+                          "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "director_primary_v1",
+                          "INTAKE_ALLOCATION_PROFILE": "engineering"}, resolved)
+        omitted_default = collector_module.revision_binding(runtime, {**safe, "INTAKE_ALLOCATION_PROFILE": " Engineering "})
+        self.assertEqual(binding["configuration_digest"], omitted_default["configuration_digest"])
+        self.assertEqual(binding["configuration_digest"], collector_module.revision_binding(
+            runtime, {**safe, "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "YES"})["configuration_digest"])
+        # The real profile key drifts the binding; the unused alias does not.
+        profile_drift = collector_module.revision_binding(runtime, {**safe, "INTAKE_ALLOCATION_PROFILE": "public_research"})
+        self.assertNotEqual(binding["configuration_digest"], profile_drift["configuration_digest"])
+        alias = collector_module.revision_binding(runtime, {**safe, "DIRECTOR_ALLOCATION_PROFILE": "public_research"})
+        self.assertEqual(binding["configuration_digest"], alias["configuration_digest"])
         drifted = collector_module.revision_binding(runtime, {**safe, "ALLOW_PAID_RUNS": "true"})
         self.assertNotEqual(binding["configuration_digest"], drifted["configuration_digest"])
+        schema_drift = collector_module.revision_binding(runtime, {**safe, "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "other_schema"})
+        self.assertNotEqual(binding["configuration_digest"], schema_drift["configuration_digest"])
         secret_changed = collector_module.revision_binding(runtime, {**safe, "SLACK_BOT_TOKEN": "rotated-secret"})
         self.assertEqual(binding["configuration_digest"], secret_changed["configuration_digest"])
         unknown_added = collector_module.revision_binding(runtime, {**safe, "NEW_UNLISTED_SWITCH": "x"})
         self.assertEqual(binding["configuration_digest"], unknown_added["configuration_digest"])
-        for bad in ({"ALLOW_PAID_RUNS": "yes please\n"}, {"ALLOW_PAID_RUNS": True}, {"DIRECTOR_ALLOCATION_PROFILE": "x" * 200}):
+        for bad in ({"ALLOW_PAID_RUNS": "yes please\n"}, {"ALLOW_PAID_RUNS": True}, {"INTAKE_ALLOCATION_PROFILE": "quantum"},
+                    {"LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "drop table;"}, {"INTAKE_ALLOCATION_PROFILE": "x" * 300}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 collector_module.revision_binding(runtime, {**safe, **bad})
         schema = json.loads((COLLECTOR_PATH.parents[1] / "docs/schemas/director-slack-trial-observations-v1.schema.json").read_bytes())
@@ -544,8 +573,61 @@ class SummaryTests(unittest.TestCase):
         self.task["qualification_evidence"] = readback
         evidence = self.summarize()["qualification_evidence"]
         self.assertTrue(evidence["lineage"]["retry_observed"])
-        self.assertFalse(evidence["lineage"]["fallback_observed"])
+        self.assertIsNone(evidence["lineage"]["fallback_observed"])  # retry is not fallback; fallback is UNKNOWN
         self.assertEqual(2, evidence["lineage"]["recorded_attempt_count"])
+
+    def test_history_shape_defects_are_refused(self):
+        def rejected(mutate, fragment):
+            readback = readback_fixture()
+            mutate(readback)
+            self.task["qualification_evidence"] = readback
+            evidence = self.summarize()["qualification_evidence"]
+            self.assertEqual("rejected", evidence["readback"]["state"], evidence["readback"]["reason"])
+            self.assertIn(fragment, evidence["readback"]["reason"])
+            self.assertEqual("UNKNOWN", evidence["usage"]["cost_basis"])
+        # terminal event without its STARTED event 1
+        rejected(lambda r: r["provider_attempts"].pop(0), "lacks its STARTED event 1")
+        # history whose first event is not STARTED
+        rejected(lambda r: r["provider_attempts"][0].update(status="SUCCEEDED", result_digest="sha256:" + "2" * 64,
+                                                            outcome_evidence_digest="sha256:" + "7" * 64),
+                 "event 1 is not the STARTED record")
+        rejected(lambda r: r["provider_attempts"][1].update(status="STARTED"), "a later event repeats STARTED")
+        # bool assignment sequence and bool counters
+        rejected(lambda r: r["provider_attempts"][1].update(assignment_sequence=True), "malformed attempt event")
+        rejected(lambda r: r["task_scope_counters"].update(assignments=True), "shape/task binding mismatch")
+        # missing terminal outcome evidence / result digest
+        rejected(lambda r: r["provider_attempts"][1].update(outcome_evidence_digest=None), "lacks outcome evidence")
+        rejected(lambda r: r["provider_attempts"][1].update(result_digest=None), "lacks a result digest")
+        # events recorded out of sequence order
+        rejected(lambda r: r["provider_attempts"][1].update(recorded_at="2026-09-12T09:00:00+00:00"),
+                 "not recorded in sequence order")
+        # missing/malformed external reservation identity and remote binding halves
+        rejected(lambda r: r["effects"][0].update(reservation_key="not-a-digest"), "malformed external-effect reservation")
+        rejected(lambda r: r["effects"][0].update(claim_key=None), "malformed external-effect reservation")
+        rejected(lambda r: r["effects"][0].update(remote_system=None), "lacks its system or identifier")
+        rejected(lambda r: r["effects"][0].update(terminal_evidence_digest=None), "terminal evidence lacks")
+        rejected(lambda r: r["effects"].append(dict(r["effects"][0])), "duplicate external-effect reservation")
+        # unknown top-level readback keys and malformed delivery/receipt rows
+        rejected(lambda r: r.update(extra_claim="verified"), "shape/task binding mismatch")
+        rejected(lambda r: r.pop("captured_at"), "shape/task binding mismatch")
+        rejected(lambda r: r["slack_deliveries"][0].update(state="POSTED"), "malformed Slack delivery row")
+        rejected(lambda r: r["status_receipts"][0].update(created_at="yesterday"), "malformed status receipt row")
+        # a truncated readback with an unbound top-level cost still yields no measured cost
+        readback = readback_fixture()
+        readback.update(complete=False, truncated=["effects"])
+        self.task["qualification_evidence"] = readback
+        self.task["actual_cost_usd"] = 0.5
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("incomplete", evidence["readback"]["state"])
+        self.assertEqual({"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"}, evidence["usage"])
+        # an authenticated callback event 3 directly after event 1 is legitimate
+        readback = readback_fixture()
+        readback["provider_attempts"][1]["event_sequence"] = 3
+        self.task["qualification_evidence"] = readback
+        self.task.pop("actual_cost_usd", None)
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
 
     def test_incomplete_readback_emits_partial_diagnostics_but_no_derived_claims(self):
         readback = readback_fixture()
@@ -567,38 +649,90 @@ class SummaryTests(unittest.TestCase):
             {**structural_trial(), "qualification_evidence": evidence}]})
 
     def test_prospective_status_delta_requires_ordered_compatible_complete_readbacks(self):
+        runtime = {"container_id": "c", "image_id": "sha256:" + "d" * 64, "runtime_head": "e" * 40,
+                   "started_at": None, "offline_configured": True, "paid_configured": False}
+        binding = collector_module.revision_binding(runtime, {"ALLOW_PAID_RUNS": "false"})
+        same = collector_module.SAME_PROCESS_AUTHORITY
         after = readback_fixture()
         before = {**readback_fixture(), "captured_at": "2026-09-12T10:00:35+00:00", "status_receipts": [],
                   "task_scope_counters": {**readback_fixture()["task_scope_counters"], "status_receipts": 0}}
-        proof = collector_module.status_receipt_delta(before, after, "receipt-1")
+        proof = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority=same,
+                                                      before_binding=binding, after_binding=binding)
         self.assertTrue(proof["proof"])
         self.assertEqual((0, 0, 0, 1), (proof["tasks_created"], proof["assignments_created"],
                                         proof["provider_attempts_created"], proof["deduplicated_receipts"]))
-        for label, mutate in (("baseline after receipt", lambda b, a: b.update(captured_at="2026-09-12T10:00:50+00:00")),
-                              ("foreign task", lambda b, a: b.update(task_id="DIR-LG-CD34")),
-                              ("truncated after", lambda b, a: a.update(complete=False)),
-                              ("negative delta", lambda b, a: b["task_scope_counters"].update(assignments=5)),
-                              ("receipt missing after", lambda b, a: a.update(status_receipts=[])),
-                              ("receipt already in baseline", lambda b, a: b.update(status_receipts=a["status_receipts"])),
-                              ("two receipts", lambda b, a: a["task_scope_counters"].update(status_receipts=2)),
-                              ("counters not integers", lambda b, a: a["task_scope_counters"].update(assignments=True)),
-                              ("newer baseline", lambda b, a: b.update(task_updated_at="2026-09-12T11:00:00+00:00"))):
+        self.assertEqual(0, proof["observed_delta"]["provider_attempt_events_added"])
+        # A consistent caller-supplied file yields only an observed delta, never proof.
+        filed = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority="caller-supplied-file",
+                                                      before_binding=binding, after_binding=binding)
+        self.assertIsNone(filed["proof"])
+        self.assertEqual(proof["observed_delta"], filed["observed_delta"])
+        self.assertIn("not authoritative proof", filed["reason"])
+        other_binding = collector_module.revision_binding({**runtime, "runtime_head": "f" * 40}, {"ALLOW_PAID_RUNS": "false"})
+        config_drift = collector_module.revision_binding(runtime, {"ALLOW_PAID_RUNS": "true"})
+        for label, mutate, kwargs in (
+                ("baseline after receipt", lambda b, a: b.update(captured_at="2026-09-12T10:00:50+00:00"), {}),
+                ("after captured before receipt", lambda b, a: a.update(captured_at="2026-09-12T10:00:39+00:00"), {}),
+                ("foreign task", lambda b, a: b.update(task_id="DIR-LG-CD34"), {}),
+                ("different source event", lambda b, a: b.update(source_event_id="another-event"), {}),
+                ("truncated after", lambda b, a: a.update(complete=False), {}),
+                ("negative delta", lambda b, a: b["task_scope_counters"].update(assignments=5), {}),
+                ("receipt missing after", lambda b, a: a.update(status_receipts=[]), {}),
+                ("receipt joins twice", lambda b, a: a["status_receipts"].append(dict(a["status_receipts"][0])), {}),
+                ("receipt already in baseline", lambda b, a: b.update(status_receipts=a["status_receipts"]), {}),
+                ("two receipts", lambda b, a: a["task_scope_counters"].update(status_receipts=2), {}),
+                ("counters not integers", lambda b, a: a["task_scope_counters"].update(assignments=True), {}),
+                ("counter scope mismatch", lambda b, a: a["task_scope_counters"].pop("attempt_ordinals"), {}),
+                ("newer baseline", lambda b, a: b.update(task_updated_at="2026-09-12T11:00:00+00:00"), {}),
+                ("naive timestamp", lambda b, a: b.update(captured_at="2026-09-12T10:00:35"), {}),
+                ("runtime head differs", lambda b, a: None, {"before_binding": other_binding}),
+                ("configuration drift", lambda b, a: None, {"after_binding": config_drift}),
+                ("binding missing", lambda b, a: None, {"before_binding": None})):
             with self.subTest(label=label):
-                b, a = {**before, "task_scope_counters": dict(before["task_scope_counters"])}, \
-                       {**after, "task_scope_counters": dict(after["task_scope_counters"])}
+                b, a = {**before, "task_scope_counters": dict(before["task_scope_counters"]),
+                        "status_receipts": list(before["status_receipts"])}, \
+                       {**after, "task_scope_counters": dict(after["task_scope_counters"]),
+                        "status_receipts": [dict(r) for r in after["status_receipts"]]}
                 mutate(b, a)
-                self.assertIsNone(collector_module.status_receipt_delta(b, a, "receipt-1")["proof"])
-        # Through the collector: a task-created attempt cannot be hidden by the thread-local scope.
+                options = {"baseline_authority": same, "before_binding": binding, "after_binding": binding, **kwargs}
+                verdict = collector_module.status_receipt_delta(b, a, "receipt-1", **options)
+                self.assertIsNone(verdict["proof"], label)
+                self.assertIsNone(verdict["observed_delta"], label)
+        # Through the collector entry path, with the observation schema.
         self.task["qualification_evidence"] = after
-        evidence = self.summarize(baseline=before, receipt_id="receipt-1")["qualification_evidence"]["status_receipts"]
+        collected = self.summarize(baseline=before, receipt_id="receipt-1", baseline_authority=same,
+                                   before_binding=binding, after_binding=binding)["qualification_evidence"]
+        evidence = collected["status_receipts"]
         self.assertEqual((0, 0, 0, 1), (evidence["tasks_created"], evidence["assignments_created"],
                                         evidence["provider_attempts_created"], evidence["deduplicated_receipts"]))
-        self.assertEqual("task-and-thread-local", evidence["baseline"]["counter_scope"])
+        self.assertEqual("task-and-thread-local/v1", evidence["baseline"]["counter_scope"])
         collector_module.validate_observations({**receipt_fixture(), "trials": [
-            {**structural_trial(), "qualification_evidence": self.summarize(baseline=before, receipt_id="receipt-1")["qualification_evidence"]}]})
+            {**structural_trial(), "qualification_evidence": collected}]})
+        filed_evidence = self.summarize(baseline=before, receipt_id="receipt-1",
+                                        before_binding=binding, after_binding=binding)["qualification_evidence"]
+        self.assertIsNone(filed_evidence["status_receipts"]["tasks_created"])
+        self.assertIsNone(filed_evidence["status_receipts"]["deduplicated_receipts"])
+        self.assertEqual(0, filed_evidence["status_receipts"]["baseline"]["observed_delta"]["tasks_created"])
+        collector_module.validate_observations({**receipt_fixture(), "trials": [
+            {**structural_trial(), "qualification_evidence": filed_evidence}]})
         without = self.summarize()["qualification_evidence"]["status_receipts"]
         self.assertIsNone(without["tasks_created"])
-        self.assertIsNone(without["baseline"])
+
+    def test_baseline_from_receipt_requires_a_schema_valid_collected_prior_observation(self):
+        prior = receipt_fixture()
+        self.assertIsNone(collector_module.baseline_from_receipt(prior, TASK_ID))  # absent readback state
+        self.assertIsNone(collector_module.baseline_from_receipt({"schema": "x"}, TASK_ID))
+        self.task["qualification_evidence"] = readback_fixture()
+        collected = self.summarize()["qualification_evidence"]
+        collected["revision_binding"] = collector_module.revision_binding(prior["collection_runtime_before"], {})
+        prior["trials"] = [{**structural_trial(), "qualification_evidence": collected}]
+        baseline = collector_module.baseline_from_receipt(prior, TASK_ID)
+        self.assertEqual(TASK_ID, baseline["task_id"])
+        self.assertEqual(collected["readback"]["task_scope_counters"], baseline["task_scope_counters"])
+        self.assertEqual(collected["revision_binding"], baseline["revision_binding"])
+        self.assertIsNone(collector_module.baseline_from_receipt(prior, "DIR-LG-CD34"))
+        prior["trials"][0]["qualification_evidence"]["readback"]["state"] = "forged"
+        self.assertIsNone(collector_module.baseline_from_receipt(prior, TASK_ID))  # schema-invalid receipt
 
 
 class CollectorTransportTests(unittest.TestCase):
@@ -1116,3 +1250,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]

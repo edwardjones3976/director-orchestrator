@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# Additive: same-process authority, binding and reversed-time negatives only.
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # Additive prospective baseline/after collector composition test only.
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -292,28 +294,53 @@ class StatusReceiptPostgresTests(unittest.TestCase):
             after = api.get(f"/v1/tasks/{self.task.task_id}", headers=auth, params=query)
             self.assertEqual(200, after.status_code, after.text)
         receipt_id = first.json()["receipt_id"]
-        # Actual after-GET JSON and the actual baseline through the collector.
-        row = collector.summarize(
-            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
-            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", baseline=baseline, receipt_id=receipt_id)
-        evidence = row["qualification_evidence"]
-        self.assertEqual("collected", evidence["readback"]["state"])
+        # Same-process authenticated reads on both sides: the same synthetic
+        # runtime/configuration binding is declared for before and after.
+        runtime = {"container_id": "c", "image_id": "sha256:" + "a" * 64, "runtime_head": "b" * 40,
+                   "started_at": None, "offline_configured": True, "paid_configured": False}
+        binding = collector.revision_binding(runtime, {"ALLOW_PAID_RUNS": "false", "INTAKE_ALLOCATION_PROFILE": "engineering"})
+
+        def run_collector(**options):
+            return collector.summarize(
+                self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+                "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", **options)["qualification_evidence"]
+
+        evidence = run_collector(baseline=baseline, receipt_id=receipt_id,
+                                 baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                 before_binding=binding, after_binding=binding)
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
         status = evidence["status_receipts"]
         self.assertTrue(status["baseline"]["proof"], status["baseline"])
         self.assertEqual((0, 0, 0, 1), (status["tasks_created"], status["assignments_created"],
                                         status["provider_attempts_created"], status["deduplicated_receipts"]))
         self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
-        self.assertLess(status["baseline"]["baseline_captured_at"], status["baseline"]["receipt_created_at"])
-        # The same after-GET without a baseline stays UNKNOWN; a baseline captured
-        # after the receipt (the after-GET itself) is refused.
-        self.assertIsNone(collector.summarize(
+        observed = status["baseline"]["observed_delta"]
+        self.assertLess(observed["baseline_captured_at"], observed["receipt_created_at"])
+        self.assertLessEqual(observed["receipt_created_at"], observed["after_captured_at"])
+        row = {**collector.summarize(
             self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
-            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT")["qualification_evidence"]["status_receipts"]["tasks_created"])
-        late = collector.summarize(
-            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
-            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT",
-            baseline=after.json()["qualification_evidence"], receipt_id=receipt_id)
-        self.assertIsNone(late["qualification_evidence"]["status_receipts"]["baseline"]["proof"])
+            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", baseline=baseline, receipt_id=receipt_id,
+            baseline_authority=collector.SAME_PROCESS_AUTHORITY, before_binding=binding, after_binding=binding)}
+        # A caller-supplied file with identical content is only an observed delta.
+        filed = run_collector(baseline=baseline, receipt_id=receipt_id, before_binding=binding, after_binding=binding)
+        self.assertIsNone(filed["status_receipts"]["baseline"]["proof"])
+        self.assertIsNone(filed["status_receipts"]["tasks_created"])
+        self.assertEqual(observed, filed["status_receipts"]["baseline"]["observed_delta"])
+        # Runtime/configuration drift, reversed order and after-only collection are not proof.
+        drifted = collector.revision_binding(runtime, {"ALLOW_PAID_RUNS": "true"})
+        self.assertIsNone(run_collector(baseline=baseline, receipt_id=receipt_id,
+                                        baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                        before_binding=binding, after_binding=drifted)["status_receipts"]["baseline"]["observed_delta"])
+        self.assertIsNone(run_collector(baseline=baseline, receipt_id=receipt_id,
+                                        baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                        before_binding=collector.revision_binding({**runtime, "runtime_head": "c" * 40}, {}),
+                                        after_binding=binding)["status_receipts"]["baseline"]["observed_delta"])
+        self.assertIsNone(run_collector()["status_receipts"]["tasks_created"])
+        late = run_collector(baseline=after.json()["qualification_evidence"], receipt_id=receipt_id,
+                             baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                             before_binding=binding, after_binding=binding)
+        self.assertIsNone(late["status_receipts"]["baseline"]["proof"])
+        self.assertIsNone(late["status_receipts"]["baseline"]["observed_delta"])
         collector.validate_observations({"schema": "director-slack-trial-observations/v1",
             "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
             "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
@@ -1036,3 +1063,4 @@ if __name__ == "__main__":
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]

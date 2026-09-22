@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
@@ -1252,6 +1253,7 @@ class QualificationTaskScopeCounters(BaseModel):
     thread_tasks: int = Field(ge=0)
     assignments: int = Field(ge=0)
     provider_attempts: int = Field(ge=0)
+    attempt_ordinals: int = Field(ge=0)
     started_attempts: int = Field(ge=0)
     status_receipts: int = Field(ge=0)
     effect_reservations: int = Field(ge=0)
@@ -1485,3 +1487,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]

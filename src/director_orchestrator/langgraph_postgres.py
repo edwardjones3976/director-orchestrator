@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
@@ -2795,6 +2796,9 @@ class PostgresConditionalClaimStore:
                              WHERE task_id = %(task_id)s) AS assignments,
                             (SELECT count(*) FROM {schema}.director_primary_provider_attempt
                              WHERE task_id = %(task_id)s) AS provider_attempts,
+                            (SELECT count(DISTINCT (assignment_id, attempt_ordinal))
+                             FROM {schema}.director_primary_provider_attempt
+                             WHERE task_id = %(task_id)s) AS attempt_ordinals,
                             (SELECT count(*) FROM {schema}.director_primary_provider_attempt
                              WHERE task_id = %(task_id)s AND status = 'STARTED') AS started_attempts,
                             (SELECT count(*) FROM {schema}.director_primary_slack_status_receipt
@@ -5866,3 +5870,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
