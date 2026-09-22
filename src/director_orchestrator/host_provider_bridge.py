@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -23,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import sqlite3
@@ -93,6 +95,7 @@ def _signature_payload(
     packet_digest: str,
     writer_owner_token_digest: str,
     work_packet_digest: str = "",
+    host_deadline: str = "",
 ) -> bytes:
     material = [
         BRIDGE_PROTOCOL,
@@ -112,6 +115,8 @@ def _signature_payload(
     # stripped or forged binding changes the signature and fails closed.
     if work_packet_digest:
         material.append(work_packet_digest)
+    if host_deadline:
+        material.extend(("host-monotonic-deadline", host_deadline))
     return "\n".join(material).encode("utf-8")
 
 
@@ -137,13 +142,17 @@ def bridge_response_signature(
 
 
 def bridge_challenge_signature(
-    secret: str, *, timestamp: int, nonce: str, command_map_digest: str = ""
+    secret: str, *, timestamp: int, nonce: str, command_map_digest: str = "",
+    host_monotonic: str = "",
 ) -> str:
     if len(secret) < 32:
         raise HostProviderBridgeError("bridge secret must contain at least 32 characters")
     material = "\n".join(
         (BRIDGE_PROTOCOL, "challenge", str(timestamp), nonce, command_map_digest)
-    ).encode("utf-8")
+    )
+    if host_monotonic:
+        material += "\nhost-monotonic-deadline\n" + host_monotonic
+    material = material.encode("utf-8")
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
 
@@ -154,6 +163,8 @@ class HostBridgeChallengeEvidence:
     configured_providers: frozenset[str]
     command_map_digest: str
     observed_at: int
+    host_monotonic: float | None = None
+    clock_id: str = ""
 
 
 def challenge_host_provider_bridge(
@@ -162,6 +173,7 @@ def challenge_host_provider_bridge(
     *,
     timeout_seconds: int = 5,
     now: int | None = None,
+    deadline: float | None = None,
 ) -> HostBridgeChallengeEvidence:
     """Prove bridge liveness and its allowlisted command map without provider I/O."""
 
@@ -196,6 +208,8 @@ def challenge_host_provider_bridge(
         raise HostProviderBridgeError("host bridge challenge is unavailable") from exc
     if not payload or len(payload) > 65_536:
         raise HostProviderBridgeError("host bridge challenge response is not bounded")
+    if deadline is not None and time.monotonic() >= deadline:
+        raise HostProviderBridgeError("host bridge challenge deadline expired")
     try:
         decoded = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -203,6 +217,18 @@ def challenge_host_provider_bridge(
     providers = decoded.get("configured_providers") if isinstance(decoded, dict) else None
     digest = decoded.get("command_map_digest") if isinstance(decoded, dict) else None
     proof = decoded.get("proof") if isinstance(decoded, dict) else None
+    host_clock = decoded.get("host_monotonic", "") if isinstance(decoded, dict) else ""
+    try:
+        if not isinstance(host_clock, str):
+            raise ValueError("invalid clock type")
+        clock_id, clock_text = host_clock.split(":", 1) if host_clock else ("", "")
+        if host_clock and re.fullmatch(r"[0-9a-f]{32}", clock_id) is None:
+            raise ValueError("invalid clock identity")
+        clock_value = float.fromhex(clock_text) if host_clock else None
+        if clock_value is not None and (not math.isfinite(clock_value) or clock_value < 0):
+            raise ValueError("invalid clock")
+    except (TypeError, ValueError):
+        raise HostProviderBridgeError("host bridge clock is invalid") from None
     if (
         decoded.get("ok") is not True
         or decoded.get("protocol") != BRIDGE_PROTOCOL
@@ -215,11 +241,12 @@ def challenge_host_provider_bridge(
     ):
         raise HostProviderBridgeError("host bridge challenge bindings are invalid")
     expected = bridge_challenge_signature(
-        secret, timestamp=timestamp, nonce=nonce, command_map_digest=digest
+        secret, timestamp=timestamp, nonce=nonce, command_map_digest=digest,
+        host_monotonic=host_clock,
     )
     if not hmac.compare_digest(proof, expected):
         raise HostProviderBridgeError("host bridge challenge authentication failed")
-    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp)
+    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value, clock_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +266,7 @@ class BridgeRequest:
     # packet the posted body was derived from. It is authenticated, never used
     # to reconstruct anything the host was deliberately not shown.
     work_packet_digest: str = ""
+    host_deadline: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider not in SUPPORTED_HOST_LANES:
@@ -271,9 +299,21 @@ class BridgeRequest:
             packet_digest=self.packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=self.work_packet_digest,
+            host_deadline=self.host_deadline,
         )
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
+        if self.host_deadline:
+            try:
+                clock_id, clock_text = self.host_deadline.split(":", 1)
+                if re.fullmatch(r"[0-9a-f]{32}", clock_id) is None:
+                    raise ValueError("invalid clock identity")
+                cutoff = float.fromhex(clock_text)
+                remaining = cutoff - time.monotonic()
+                if not math.isfinite(cutoff) or not 0 < remaining <= 3600:
+                    raise ValueError("invalid deadline")
+            except (TypeError, ValueError):
+                raise HostProviderBridgeError("host bridge deadline expired or invalid") from None
         try:
             packet = json.loads(self.packet)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -415,6 +455,9 @@ class WindowsHostProviderExecutor:
         return providers
 
     def execute(self, request: BridgeRequest, *, execution_observer=None) -> bytes:
+        cutoff = time.monotonic() + self.timeout_seconds
+        if request.host_deadline:
+            cutoff = min(cutoff, float.fromhex(request.host_deadline.split(":", 1)[1]))
         command = self.commands.get(request.provider)
         if command is None:
             raise HostProviderBridgeError("host provider command is not configured")
@@ -422,6 +465,8 @@ class WindowsHostProviderExecutor:
         if verifier is None or not callable(getattr(verifier, "verify", None)):
             raise HostProviderBridgeError("current Postgres writer verification is unavailable")
         verifier.verify(request)
+        if time.monotonic() >= cutoff:
+            raise HostProviderBridgeError("host bridge deadline expired before execution")
         if request.provider == "openai":
             from types import SimpleNamespace
             from .packet_contracts import validate_packet
@@ -432,6 +477,7 @@ class WindowsHostProviderExecutor:
                 timeout_seconds=min(self.timeout_seconds, work["limits"]["timeout_seconds"]),
                 allowed_external_effects=tuple(work["allowed_external_effects"]),
                 execution_observer=execution_observer,
+                deadline=cutoff,
             )
             try:
                 result = self.native_codex.send(request.packet, context=context)
@@ -444,18 +490,22 @@ class WindowsHostProviderExecutor:
             if name.upper() in _SAFE_OS_ENV or name in _LANE_AUTH_ENV[request.provider]
         }
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.cwd,
-                input=request.packet,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-                check=False,
-                timeout=self.timeout_seconds,
-                env=environment,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            if request.host_deadline:
+                # Reuse the existing process-tree owner; killing only the shim
+                # can otherwise leave its model CLI running after the cutoff.
+                from .primary_transports import _run_bounded_command
+                completed = _run_bounded_command(
+                    command, cwd=self.cwd, environment=environment,
+                    input_bytes=request.packet, cutoff=cutoff, what="host provider",
+                )
+            else:
+                completed = subprocess.run(
+                    command, cwd=self.cwd, input=request.packet,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    shell=False, check=False, timeout=self.timeout_seconds,
+                    env=environment,
+                )
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             raise HostProviderBridgeAmbiguous("host provider outcome is ambiguous") from exc
         if completed.returncode != 0:
             raise HostProviderBridgeAmbiguous("host provider outcome is ambiguous")
@@ -569,18 +619,33 @@ class HostBridgePacketTransport:
         self.result_normalizer = result_normalizer
 
     def preflight(self, work_packet_json: bytes, *, context) -> None:
-        """Refuse a carried execution deadline before any host bridge I/O.
-
-        The bridge has no shared cross-host cutoff contract; readiness may
-        carry ``PlannedProviderAttempt.deadline``, which this hook rejects
-        without contacting the host or mutating state.
-        """
+        """Check deadline support through the authenticated, non-dispatch probe."""
         if getattr(context, "deadline", None) is not None:
-            raise RuntimeError(
-                "host bridge route unavailable: unsupported-host-bridge-deadline"
-            )
+            self._host_cutoff(context)
+
+    def _host_cutoff(self, context) -> tuple[float, str]:
+        from .primary_transports import _command_cutoff
+        if self.provider == "openai":
+            raise RuntimeError("native Codex host route lacks process-tree deadline support")
+        cutoff = _command_cutoff(context, 3600, "host bridge")
+        remaining = cutoff - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("host bridge timeout is exhausted")
+        evidence = challenge_host_provider_bridge(
+            self.endpoint, self.secret,
+            timeout_seconds=min(5, remaining), deadline=cutoff,
+        )
+        remaining = cutoff - time.monotonic()
+        if (remaining <= 0 or evidence.host_monotonic is None
+                or self.provider not in evidence.configured_providers):
+            raise RuntimeError("host bridge deadline support is unavailable")
+        # Subtract the entire return trip: this remote cutoff is conservative.
+        # Monotonic clocks need not share an epoch or wall-clock synchronization.
+        return cutoff, evidence.clock_id + ":" + float(evidence.host_monotonic + remaining).hex()
 
     def send(self, work_packet_json: bytes, *, context: ProviderAdapterContext) -> Mapping[str, object]:
+        cutoff, host_deadline = (self._host_cutoff(context)
+            if getattr(context, "deadline", None) is not None else (None, ""))
         if not work_packet_json or len(work_packet_json) > _MAX_PACKET_BYTES:
             raise RuntimeError("host bridge work packet is not bounded")
         packet = json.loads(work_packet_json)
@@ -614,6 +679,7 @@ class HostBridgePacketTransport:
             packet_digest=packet_digest,
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=work_packet_digest,
+            host_deadline=host_deadline,
         )
         headers = {
             "Content-Type": "application/json",
@@ -631,16 +697,30 @@ class HostBridgePacketTransport:
         }
         if work_packet_digest:
             headers["X-Director-Work-Packet-Digest"] = work_packet_digest
+        if host_deadline:
+            headers["X-Director-Host-Deadline"] = host_deadline
         request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
+        remaining = context.timeout_seconds if cutoff is None else cutoff - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("host bridge deadline expired before dispatch")
+        authority_recheck = getattr(context, "authority_recheck", None)
+        if callable(authority_recheck):
+            authority_recheck()
+        if cutoff is not None:
+            remaining = cutoff - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("host bridge deadline expired before dispatch")
         try:
             with urllib.request.build_opener(_NoRedirectHandler()).open(
-                request, timeout=context.timeout_seconds
+                request, timeout=remaining
             ) as response:
                 payload = response.read(_MAX_RESULT_BYTES + 1)
                 response_digest = response.headers.get("X-Director-Response-Digest", "")
                 response_proof = response.headers.get("X-Director-Response-Proof", "")
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
+        if cutoff is not None and time.monotonic() >= cutoff:
+            raise RuntimeError("host provider bridge outcome is ambiguous: deadline expired")
         if not payload or len(payload) > _MAX_RESULT_BYTES:
             raise RuntimeError("host provider bridge returned no bounded result")
         observed_digest = _digest(payload)
@@ -703,3 +783,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -14,6 +15,7 @@ import json
 import hmac
 import os
 import ssl
+import secrets
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,6 +61,8 @@ def _commands() -> dict[str, tuple[str, ...]]:
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "DirectorHostBridge/1"
+    # A restart invalidates deadlines mapped from an earlier host process.
+    _clock_id = secrets.token_hex(16)
 
     def log_message(self, format: str, *args: object) -> None:
         # Do not echo packet paths, identities, headers, or provider output.
@@ -96,13 +100,16 @@ class _Handler(BaseHTTPRequestHandler):
                 command_map_digest = "sha256:" + _digest(
                     json.dumps(configured, separators=(",", ":")).encode("utf-8")
                 )
+                host_monotonic = self._clock_id + ":" + time.monotonic().hex()
                 self._json(200, {
                     "ok": True, "protocol": BRIDGE_PROTOCOL,
                     "configured_providers": configured,
                     "command_map_digest": command_map_digest,
+                    "host_monotonic": host_monotonic,
                     "proof": bridge_challenge_signature(
                         self.server.bridge_secret, timestamp=timestamp, nonce=nonce,  # type: ignore[attr-defined]
                         command_map_digest=command_map_digest,
+                        host_monotonic=host_monotonic,
                     ),
                 })
             except (HostProviderBridgeError, ValueError):
@@ -176,7 +183,10 @@ class _Handler(BaseHTTPRequestHandler):
                 work_packet_digest=self.headers.get(
                     "X-Director-Work-Packet-Digest", ""
                 ),
+                host_deadline=self.headers.get("X-Director-Host-Deadline", ""),
             )
+            if request.host_deadline and request.host_deadline.split(":", 1)[0] != self._clock_id:
+                raise HostProviderBridgeError("host deadline clock changed")
             result = dispatch_bridge_request(
                 request,
                 secret=self.server.bridge_secret,  # type: ignore[attr-defined]
@@ -274,3 +284,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
