@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | BEGIN]]
@@ -206,7 +207,7 @@ class WorksheetWordingTests(unittest.TestCase):
         by_mode = _script_names("switch -CaseSensitive ($acceptanceMode)", "default {", required_additions=True)
         distinct = _script_names("foreach ($secret in @(", "))")
         self.assertGreaterEqual(len(always), 20)
-        self.assertEqual(len(by_mode), 6)
+        self.assertEqual(len(by_mode), 8)
         self.assertEqual(len(distinct), 8)
         self.assertTrue(distinct.issubset(always))
         for name in sorted(always | by_mode | distinct | {"LANGGRAPH_PRIMARY_ACCEPTANCE_MODE"}):
@@ -346,3 +347,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 18:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | END]]
