@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
@@ -15,6 +16,7 @@ import sqlite3
 import re
 
 from .primary_activation_evidence import ActivationEvidenceError
+from .policy import canonical_repository
 
 _OPERATIONAL_SETTINGS = frozenset({
     "allow_paid_runs", "langgraph_primary_enabled", "langgraph_primary_new_intake_enabled",
@@ -149,6 +151,13 @@ def require_generation(settings, identity, *, reserve=False):
                 expected_sha256=evidence_digest, owner_token=settings.langgraph_primary_owner_token)
             if adoption["reviewed_source_tree"] != identity.candidate_tree:
                 raise ValueError("adopted review source differs from generation")
+            if len(settings.repository_allowlist) != 1:
+                raise ValueError("generation selection requires exactly one configured repository")
+            configured_repository = settings.repository_allowlist[0]
+            if canonical_repository(adoption["repository"]) != canonical_repository(
+                configured_repository
+            ):
+                raise ValueError("adopted repository differs from configured allowlist")
         else:
             evidence_path = Path(settings.langgraph_primary_acceptance_registry_path)
             evidence_digest = settings.langgraph_primary_acceptance_registry_sha256
@@ -270,3 +279,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]

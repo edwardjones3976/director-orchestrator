@@ -1,3 +1,4 @@
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
@@ -483,7 +484,8 @@ uses `director-primary-local-evidence-adoption/v1`, decision
 `ADOPT_SCOPED_LOCAL_EVIDENCE`, and the existing owner token's domain-separated
 signature. Its QA, independent review and security digests must identify actual
 files in `pinned_evidence`; each path is a simple filename beside the adoption
-document. Loading and replay verify those file bytes. Reviewed source must match
+document. Loading enforces at most 32 unique pins, a 64 MiB aggregate bundle
+limit, and an 8 MiB per-file cap before hashing. Loading and replay verify those file bytes. Reviewed source must match
 the candidate tree. An earlier full-suite receipt remains earlier evidence;
 changed code needs fresh focused QA and current-head independent/security review.
 
@@ -736,3 +738,4 @@ identity cannot authorize successful completion.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
+<!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->

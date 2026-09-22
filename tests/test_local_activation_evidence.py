@@ -1,3 +1,4 @@
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
@@ -268,7 +269,8 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             langgraph_primary_owner_token=self.owner_token,
             langgraph_primary_local_evidence_adoption_path=str(adoption_path),
             langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
-            langgraph_primary_acceptance_journal_path=str(journal))
+            langgraph_primary_acceptance_journal_path=str(journal),
+            repository_allowlist=("owner/repository",))
         manifest = dict(version="director-primary-generation/owner-local-evidence-v1",
             activation=asdict(ident), journal_path=str(journal),
             owner_adoption_path=str(adoption_path), owner_adoption_sha256=adoption_pin,
@@ -339,6 +341,168 @@ class LocalActivationEvidenceTests(unittest.TestCase):
                         with self.assertRaisesRegex(ActivationEvidenceError, "generation"):
                             store.load()
             self.assertEqual(store.path.read_bytes(), retained)
+
+    def test_require_generation_rejects_repository_allowlist_mismatch(self) -> None:
+        from director_orchestrator.primary_generation import deployment_digest, require_generation
+
+        root = Path(self.temporary.name)
+        adoption_path, adoption_pin = self.write_adoption()
+        journal = root / "selected.sqlite3"
+        ident = identity()
+        base = dict(
+            langgraph_primary_acceptance_mode="owner-local-evidence-v1",
+            langgraph_primary_owner_token=self.owner_token,
+            langgraph_primary_local_evidence_adoption_path=str(adoption_path),
+            langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
+            langgraph_primary_acceptance_journal_path=str(journal),
+        )
+        manifest = dict(
+            version="director-primary-generation/owner-local-evidence-v1",
+            activation=asdict(ident),
+            journal_path=str(journal),
+            owner_adoption_path=str(adoption_path),
+            owner_adoption_sha256=adoption_pin,
+            provider_bindings_sha256=hashlib.sha256(b"{}").hexdigest(),
+            deployment_configuration_sha256=deployment_digest(
+                replace(Settings(), **base, repository_allowlist=("owner/repository",))
+            ),
+            image_id="sha256:" + "8" * 64,
+            resolved_compose_sha256="9" * 64,
+        )
+        source = root / "generation.json"
+        source.write_text(json.dumps(manifest))
+        env = {
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(source),
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest(),
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": "{}",
+            "DIRECTOR_RUNTIME_IMAGE_ID": manifest["image_id"],
+            "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": manifest["resolved_compose_sha256"],
+        }
+        with patch("director_orchestrator.primary_generation.GENERATION_DATA_ROOT", root), patch.dict(
+            os.environ, env
+        ):
+            for settings, label in (
+                (replace(Settings(), **base, repository_allowlist=()), "absent"),
+                (
+                    replace(Settings(), **base, repository_allowlist=("owner/a", "owner/b")),
+                    "multiple",
+                ),
+                (
+                    replace(Settings(), **base, repository_allowlist=("other/repository",)),
+                    "mismatched",
+                ),
+            ):
+                with self.subTest(label=label):
+                    with self.assertRaises(ActivationEvidenceError):
+                        require_generation(settings, ident, reserve=True)
+                    self.assertFalse(journal.exists())
+
+    def test_hosted_ci_failure_cause_rejects_surrounding_whitespace(self) -> None:
+        document = {
+            **self.adoption_document,
+            "hosted_ci_failure_cause": "  payments/spending unavailable  ",
+        }
+        path, pin = self.write_adoption(document=document)
+        with self.assertRaisesRegex(ActivationEvidenceError, "noncanonical"):
+            self.loaded_adoption(path, pin)
+
+    def test_pinned_evidence_rejects_duplicate_paths_before_hashing(self) -> None:
+        pins = list(self.adoption_document["pinned_evidence"])
+        duplicate = dict(pins[0])
+        duplicate["path"] = pins[0]["path"].swapcase()
+        document = {**self.adoption_document, "pinned_evidence": pins + [duplicate]}
+        path, pin = self.write_adoption(document=document)
+        with self.assertRaisesRegex(ActivationEvidenceError, "duplicate paths"):
+            self.loaded_adoption(path, pin)
+
+    def test_pinned_evidence_rejects_excessive_pin_count_before_reading(self) -> None:
+        pins = [{"path": f"receipt{i}.txt", "sha256": "a" * 64} for i in range(33)]
+        document = {**self.adoption_document, "pinned_evidence": pins}
+        path, pin = self.write_adoption(document=document)
+        with self.assertRaisesRegex(ActivationEvidenceError, "allowed count"):
+            self.loaded_adoption(path, pin)
+
+    def test_adoption_and_receipt_reads_require_regular_files(self) -> None:
+        adoption_dir = Path(self.temporary.name) / "adoption.json"
+        adoption_dir.mkdir()
+        with self.assertRaisesRegex(ActivationEvidenceError, "regular file"):
+            load_pinned_owner_local_adoption(
+                adoption_dir,
+                expected_sha256="a" * 64,
+                owner_token=self.owner_token,
+            )
+        path, pin = self.write_adoption()
+        receipt_dir = Path(self.temporary.name) / "security.txt"
+        if receipt_dir.exists():
+            receipt_dir.unlink()
+        receipt_dir.mkdir()
+        with self.assertRaisesRegex(ActivationEvidenceError, "unavailable"):
+            self.loaded_adoption(path, pin)
+
+    def test_owner_local_mode_rejects_valid_legacy_github_artifact(self) -> None:
+        ident = identity()
+        path, pin = self.write_adoption()
+        adoption = self.loaded_adoption(path, pin)
+        facts = owner_local_acceptance_facts(
+            ident,
+            adoption,
+            repository=adoption["repository"],
+            pull_request_number=adoption["pull_request_number"],
+        )
+        github_secrets = {
+            "ci": "ci-authority-secret-that-is-distinct-0001",
+            "independent_review": "review-authority-secret-that-is-distinct-0002",
+            "security": "security-authority-secret-that-is-distinct-0003",
+        }
+        unsigned = {
+            "facts": facts,
+            "facts_digest": canonical_facts_digest(facts),
+            "pull_request_number": adoption["pull_request_number"],
+            "repository": adoption["repository"],
+            "version": "director-primary-acceptance-artifact/v1",
+        }
+        payload = json.dumps(
+            unsigned,
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        from director_orchestrator.primary_activation_evidence import _acceptance_signature
+
+        issuers = {
+            "ci": "github-actions",
+            "independent_review": facts["independent_reviewer"],
+            "security": facts["security_reviewer"],
+        }
+        artifact = {
+            **unsigned,
+            "attestations": {
+                kind: {
+                    "issuer": issuer,
+                    "signature": _acceptance_signature(
+                        kind, issuer, github_secrets[kind], payload
+                    ),
+                }
+                for kind, issuer in issuers.items()
+            },
+        }
+        artifact_path = Path(self.temporary.name) / "legacy-github-artifact.json"
+        artifact_path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+        store = ActivationEvidenceStore(
+            Path(self.temporary.name) / "activation.json",
+            acceptance_secrets={**self.secrets, **github_secrets},
+        )
+        store.record(
+            ident,
+            ActivationStage.PREFLIGHT,
+            evidence_digest=canonical_facts_digest({"compose_config_valid": True}),
+            facts={"compose_config_valid": True},
+        )
+        with self.assertRaisesRegex(ActivationEvidenceError, "selected mode"):
+            store.record_acceptance_artifact(ident, artifact_path)
 
     def test_runtime_rejects_missing_acceptance_before_database_open(self) -> None:
         from director_orchestrator.primary_default import DefaultPrimaryActivation
@@ -439,3 +603,4 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
