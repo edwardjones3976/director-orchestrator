@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
 # OpenAI continuation repairs attribution only here; prior material from
@@ -71,7 +72,8 @@ class WindowsPrimaryActivationToolTests(unittest.TestCase):
                          "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"):
                 self.assertEqual(mode not in {"provider-v2", "provider-v3-two-party"}, name in required)
             for suffix in ("REGISTRY_PATH", "REGISTRY_SHA256", "JOURNAL_PATH", "REGISTRY_DIRECTORY"):
-                self.assertEqual(mode in {"provider-v2", "provider-v3-two-party"}, "LANGGRAPH_PRIMARY_ACCEPTANCE_" + suffix in required)
+                needs_field = mode in {"provider-v2", "provider-v3-two-party"} or (mode == "owner-local-evidence-v1" and suffix == "JOURNAL_PATH")
+                self.assertEqual(needs_field, "LANGGRAPH_PRIMARY_ACCEPTANCE_" + suffix in required)
             if mode == "owner-local-evidence-v1":
                 self.assertIn("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH", required)
                 self.assertIn("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256", required)
@@ -621,3 +623,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]

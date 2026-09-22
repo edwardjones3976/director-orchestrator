@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-22 | 06:10 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
@@ -219,6 +220,8 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             langgraph_primary_pinned_tree_sha="b" * 40,
             langgraph_primary_required_providers=("openai", "claude", "cursor", "grok"),
             langgraph_primary_acceptance_mode="owner-local-evidence-v1",
+            langgraph_primary_local_evidence_adoption_path="",
+            langgraph_primary_local_evidence_adoption_sha256="",
         )
         with self.assertRaisesRegex(ValueError, "LOCAL_EVIDENCE_ADOPTION"):
             settings.validate_langgraph_primary_configuration()
@@ -345,3 +348,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-22 | 06:10 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
