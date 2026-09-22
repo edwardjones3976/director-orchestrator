@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
@@ -5,22 +6,21 @@
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 # Slack collaboration bus
 
-## INVESTIGATOR responsibility
-
-OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
-proactively identify issues while other providers work, document evidence,
-impact, uncertainty, and suggested solutions, then communicate a bounded
-handoff to the responsible provider. Track ownership and resolution evidence;
-do not directly fix an investigated issue or take over the ongoing assignment.
-Use existing approval, safety, budget, and independent-review gates.
-
-See the [team operating charter](team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
-
 
 Slack is the Director's primary human-visible coordination room. Each live task gets one
 Director-owned thread in its configured private project channel. The thread is not only a
 debate surface: it carries bounded delegation, work/research status, accepted evidence,
 review handoffs, disagreement, synthesis, owner questions, and completion.
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+Slack communication follows the existing Director relay and authorization gates.
 
 ## Runtime contract
 
@@ -71,3 +71,4 @@ conversation loops.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->

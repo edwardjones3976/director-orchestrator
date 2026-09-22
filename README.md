@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]] -->
@@ -61,17 +62,6 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director Orchestrator
 
-## INVESTIGATOR responsibility
-
-OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
-proactively identify issues while other providers work, document evidence,
-impact, uncertainty, and suggested solutions, then communicate a bounded
-handoff to the responsible provider. Track ownership and resolution evidence;
-do not directly fix an investigated issue or take over the ongoing assignment.
-Use existing approval, safety, budget, and independent-review gates.
-
-See the [team operating charter](docs/team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
-
 
 <!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=c9e53fbff7ec6de9e4a568a2690c682f26bb02bfe691f24220e74725a63e5619 -->
 
@@ -102,6 +92,16 @@ and that includes me: I may write a change or I may accept one, never both.
 **The policy target is a ChatGPT/Codex Director lane, while non-exempt providers are capability-routed assignment lanes.** See [current project leadership](docs/project-leadership.md)
 and [Claude's project instructions](CLAUDE.md). The leadership handoff does not
 attest that a deployed service has switched its executing provider.
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](docs/team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+Slack communication follows the existing Director relay and authorization gates.
 
 ## What I am built from
 
@@ -757,3 +757,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->

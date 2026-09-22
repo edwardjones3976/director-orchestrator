@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -7,17 +8,6 @@
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-03 | 18:21 UTC | END]] -->
 
 # Claude lane instructions
-
-## INVESTIGATOR responsibility
-
-OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
-proactively identify issues while other providers work, document evidence,
-impact, uncertainty, and suggested solutions, then communicate a bounded
-handoff to the responsible provider. Track ownership and resolution evidence;
-do not directly fix an investigated issue or take over the ongoing assignment.
-Use existing approval, safety, budget, and independent-review gates.
-
-See the [team operating charter](docs/team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
 
 
 This lane has no standing director role. Read `AGENTS.md` and
@@ -42,4 +32,7 @@ grant credentials, authorize self-acceptance, or start a deployment.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]] -->
+An INVESTIGATOR handoff is evidence, not an assignment; act only within your current assignment.
+
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->

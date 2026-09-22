@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -51,7 +52,17 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Director team operating charter
 
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=c9e53fbff7ec6de9e4a568a2690c682f26bb02bfe691f24220e74725a63e5619 -->
+
+**Status:** Owner-authorized operating guidance. Deterministic application policy remains authoritative.
+
 ## OpenAI/Director — INVESTIGATOR
+
+Owner direction (2026-09-22): "Rather than addressing these issues directly, the
+INVESTIGATOR will focus on thoroughly documenting each problem encountered."
+
+The operating details below implement that direction; the finding fields and
+disposition workflow are author-provided guidance, not additional owner quotations.
 
 The OpenAI/Director team, including ChatGPT and Codex, also holds the title
 **INVESTIGATOR**. While other providers carry out ongoing assignments, team
@@ -67,7 +78,11 @@ solutions with a proposed verification check. Distinguish confirmed problems
 from hypotheses; redact credentials and other sensitive content.
 
 Communicate the finding and suggested solutions to the responsible provider
-through the authorized coordination channel. Record the provider owner,
+through the acting Director's task thread, or an existing PR/issue when the
+assignment authorizes that communication. The Director relays Slack messages
+through the existing Slack collaboration bus; this role does not authorize
+providers to post directly. Keep the finding and its disposition in that same
+task thread or PR/issue. Record the provider owner,
 handoff reference, next action, and disposition (open, acknowledged, in
 progress, resolved with evidence, or explicitly deferred with a reason).
 Consolidate duplicate findings and follow actionable changes instead of
@@ -78,13 +93,8 @@ This role does not authorize direct remediation, taking over another provider's
 assignment, paid dispatch, scope expansion, or approval/merge/deployment.
 Escalate urgent safety issues through existing stop and owner-decision gates.
 Any separately requested engineering work requires its own explicit assignment;
-investigation alone is not that assignment. External providers remain the
-priority for implementation and follow-up.
-
-
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=c9e53fbff7ec6de9e4a568a2690c682f26bb02bfe691f24220e74725a63e5619 -->
-
-**Status:** Owner-authorized operating guidance. Deterministic application policy remains authoritative.
+investigation alone is not that assignment. Implementation routing follows the existing capability, allocation, availability,
+and authority selection order in this charter.
 
 ## Purpose
 
@@ -958,3 +968,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->

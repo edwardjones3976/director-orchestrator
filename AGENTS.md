@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
@@ -19,19 +20,18 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
-## INVESTIGATOR responsibility
-
-OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
-proactively identify issues while other providers work, document evidence,
-impact, uncertainty, and suggested solutions, then communicate a bounded
-handoff to the responsible provider. Track ownership and resolution evidence;
-do not directly fix an investigated issue or take over the ongoing assignment.
-Use existing approval, safety, budget, and independent-review gates.
-
-See the [team operating charter](docs/team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
-
 
 These rules apply to every AI coding agent working in this repository.
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](docs/team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+Slack communication follows the existing Director relay and authorization gates.
 
 ## Current project leadership
 
@@ -240,3 +240,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
