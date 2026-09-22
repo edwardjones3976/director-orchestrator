@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
@@ -509,9 +510,10 @@ The durable record retains the source artifact and its digest for deterministic
 offline replay. Every reader needs the selected mode's verifier secrets:
 `github-v1` requires three distinct authorities, while `owner-local-evidence-v1`
 requires the owner adoption authority. Replay revalidates the full closed artifact
-and its attestations before readiness can pass. Every stage digest is also
-recomputed from canonical facts on read, so coordinated public-fact/hash rewrite,
-fact mutation, artifact substitution, or digest replacement fails closed.
+and its attestations before readiness can pass. Acceptance signatures detect
+artifact substitution. Later stage digests detect inconsistent or corrupted
+facts; their public hashes do not authenticate someone who can rewrite both
+facts and hashes. Protect the durable evidence volume and generation pins.
 Operator-set booleans are not acceptance evidence.
 
 For `github-v1`, before issuer signing, `windows-langgraph-primary-control.ps1 -Action
@@ -732,3 +734,5 @@ identity cannot authorize successful completion.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
