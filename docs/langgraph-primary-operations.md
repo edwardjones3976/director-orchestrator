@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
@@ -505,14 +506,15 @@ Startup verifies readiness and generation before opening the primary database.
 This path changes no enrollment, budget, provider qualification or Slack delivery
 requirement.
 The durable record retains the source artifact and its digest for deterministic
-offline replay. Every reader of an accepted history must be constructed with all
-three distinct verifier secrets; replay revalidates the full closed artifact and
-all three attestations before readiness can pass. Every stage digest is also
+offline replay. Every reader needs the selected mode's verifier secrets:
+`github-v1` requires three distinct authorities, while `owner-local-evidence-v1`
+requires the owner adoption authority. Replay revalidates the full closed artifact
+and its attestations before readiness can pass. Every stage digest is also
 recomputed from canonical facts on read, so coordinated public-fact/hash rewrite,
 fact mutation, artifact substitution, or digest replacement fails closed.
 Operator-set booleans are not acceptance evidence.
 
-Before issuer signing, `windows-langgraph-primary-control.ps1 -Action
+For `github-v1`, before issuer signing, `windows-langgraph-primary-control.ps1 -Action
 PrepareAcceptance -GitHubRepository owner/repository -PullRequestNumber 98
 -CandidateCommit <exact-40-character-PR-head>
 -SecurityReviewerAllowlistJson '["security-login"]'
@@ -728,3 +730,5 @@ identity cannot authorize successful completion.
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]] -->

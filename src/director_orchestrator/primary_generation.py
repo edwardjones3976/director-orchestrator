@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
@@ -241,8 +242,9 @@ def main():
         return
     require_generation(settings, expected, reserve=args.command == "reserve")
     if args.command == "validate-providers":
-        from .primary_activation_evidence import ActivationEvidenceStore
-        ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json", read_only=True).require_staged(expected)
+        from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
+        ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
+            acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True).require_staged(expected)
         require_validation_generation(expected)
         # The adopted bounded harness owns authentication, durable admission,
         # budgets, captures and ambiguity handling. Never substitute commands.
@@ -266,3 +268,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | BEGIN]]
 """One-shot publication of existing native captures; no execution or signing."""
@@ -219,14 +220,14 @@ def publish_requests(store, verifier, *, settings, requests, now=None, deadline=
 def publish_file(path, *, settings, identity):
     """Preflight exact generation and restore before opening the write pool."""
     from .primary_generation import require_generation, require_validation_generation
-    from .primary_activation_evidence import ActivationEvidenceStore
+    from .primary_activation_evidence import ActivationEvidenceStore, _acceptance_secrets_from_environment
     from .provider_validation import capture_verifier_from_environment
     from .langgraph_postgres import open_provider_activation_store
     deadline = time.monotonic() + MAX_SECONDS
     require_runtime_off(settings)
     require_generation(settings, identity)
     ActivationEvidenceStore("/data/langgraph-primary-activation-evidence.json",
-        read_only=True).require_staged(identity)
+        acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True).require_staged(identity)
     require_validation_generation(identity)
     generation = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
     if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION") != generation:
@@ -247,3 +248,5 @@ def publish_file(path, *, settings, identity):
     return dict(result, generation=generation)
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]

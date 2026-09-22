@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-22 | 06:10 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
@@ -314,6 +315,56 @@ class LocalActivationEvidenceTests(unittest.TestCase):
                 DefaultPrimaryActivation(settings)
             open_database.assert_not_called()
 
+    def test_qualification_callers_verify_the_actual_staged_history(self) -> None:
+        from director_orchestrator import primary_generation, primary_provider_evidence
+        ident = identity()
+        path, pin = self.write_adoption()
+        artifact_path = Path(self.temporary.name) / "acceptance.json"
+        artifact_path.write_text(json.dumps(self.local_artifact(ident, self.loaded_adoption(path, pin))), encoding="utf-8")
+        store = ActivationEvidenceStore(Path(self.temporary.name) / "ignored.json", acceptance_secrets=self.secrets)
+        def record(stage, facts):
+            store.record(ident, stage, evidence_digest=canonical_facts_digest(facts), facts=facts)
+        record(ActivationStage.PREFLIGHT, {"compose_config_valid": True})
+        store.record_acceptance_artifact(ident, artifact_path)
+        record(ActivationStage.MIGRATED, {"schema_current": True})
+        backup = "sha256:" + "0" * 64
+        record(ActivationStage.BACKED_UP, {"backup_digest": backup})
+        record(ActivationStage.RESTORE_PROVED, {"backup_digest": backup,
+            "required_control_plane_tables": 17, "checkpoint_tables": 4, "schema_evidence_rows": 1})
+        settings = replace(Settings(), app_env=ident.profile_id,
+            langgraph_primary_pinned_commit_sha=ident.candidate_commit,
+            langgraph_primary_pinned_tree_sha=ident.candidate_tree,
+            langgraph_primary_postgres_schema=ident.postgres_schema,
+            langgraph_primary_checkpoint_namespace=ident.checkpoint_namespace,
+            allow_paid_runs=False, langgraph_primary_enabled=False,
+            langgraph_primary_new_intake_enabled=False,
+            langgraph_primary_live_provider_dispatch_enabled=False,
+            langgraph_primary_offline_simulation_enabled=False,
+            langgraph_parallel_kill_switch=True)
+        with patch.dict(os.environ, {"DIRECTOR_COMPOSE_PROJECT_NAME": ident.compose_project,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.primary_staging:app"}), \
+             patch("director_orchestrator.config.Settings", return_value=settings), \
+             patch("director_orchestrator.langgraph_postgres.database_binding",
+                return_value=(ident.database_identity, ident.database_instance_id)), \
+             patch.object(primary_generation, "require_generation", return_value={}), \
+             patch.object(primary_generation, "require_validation_generation",
+                side_effect=RuntimeError("next validation gate")) as next_gate, \
+             patch("director_orchestrator.langgraph_postgres.open_provider_activation_store") as open_store, \
+             patch("sys.argv", ["primary_generation", "validate-providers"]):
+            for caller in (primary_generation.main,
+                    lambda: primary_provider_evidence.publish_file("unused.json", settings=settings, identity=ident)):
+                with self.subTest(caller=caller):
+                    next_gate.reset_mock()
+                    with self.assertRaisesRegex(RuntimeError, "next validation gate"):
+                        caller()
+                    next_gate.assert_called_once_with(ident)
+                    next_gate.reset_mock()
+                    with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_OWNER_TOKEN": "wrong-owner-token-" * 3}):
+                        with self.assertRaises(ActivationEvidenceError):
+                            caller()
+                    next_gate.assert_not_called()
+            open_store.assert_not_called()
+
     def test_later_stage_sequencing_preserved(self) -> None:
         ident = identity()
         path, pin = self.write_adoption()
@@ -349,3 +400,5 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-22 | 06:10 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
