@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | BEGIN]]
@@ -1189,6 +1190,18 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
                 native.send(work, context=self._context())
             [prepared] = recording.inputs
             self.assertTrue(prepared.endswith(work))
+            from jsonschema import Draft202012Validator
+            contract = json.loads(prepared.split(b"\n", 2)[1])
+            validator = Draft202012Validator(contract)
+            validator.validate({"outcome": "EDGE_NATIVE_CANARY_OK", "status": "SUCCEEDED",
+                "checks": [{"command": "packet-only", "result": "No tools used.", "exit_code": None}],
+                "acceptance": [{"check": "packet-only", "status": "PASS", "evidence": "No tools used."}]})
+            for invalid in ({"outcome": "done", "status": "completed"},
+                            {"outcome": "done", "status": "CANCELLED"},
+                            {"outcome": "done", "status": "REVISION_REQUIRED"},
+                            {"outcome": "done", "status": "SUCCEEDED",
+                             "checks": [{"name": "packet-only", "passed": True}]}):
+                self.assertFalse(validator.is_valid(invalid))
             result = native.send(work, context=self._context())
             self.assertEqual(
                 "sha256:" + hashlib.sha256(prepared).hexdigest() + ":" + str(len(prepared)),
@@ -1348,3 +1361,5 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 15:13 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
