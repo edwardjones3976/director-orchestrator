@@ -1,3 +1,7 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]] -->
@@ -181,10 +185,10 @@ project-local fit here and link back for authority boundaries.
 
 | Provider or capability | Good project-local use | Never infer from this role |
 | --- | --- | --- |
-| Claude / acting Director | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
-| Codex / ChatGPT / OpenAI | repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
+| Claude | framing, orchestration, evidence synthesis, plan reshaping, acceptance synthesis, ordinary tie judgment | authority to remove deterministic policy or approve its own producer work |
+| Codex / ChatGPT / OpenAI | Director (project coordination, routing, review orchestration, completion reporting); repository-scale reasoning, implementation, debugging, architecture, independent review | access to an unnamed repository, self-review, merge, deployment, or external representation |
 | Cursor | full-spectrum implementation, reliability, QA, architecture, independent review, technical leadership | an overflow-only role, self-review, or a durable execution target other than the named one |
-| Gemini / Antigravity | bounded subordinate scaffolding, mechanical work, sandboxed alternate ideas, explicitly limited experiments | primary authority, unrestricted project context, final review, acceptance, merge, or methodology truth |
+| Gemini / Antigravity | restricted default fixture contact (bounded scaffolding, mechanical work, sandboxed ideas); explicitly granted team-contract engineering/review | primary authority, unrestricted project context, bypass of admission gates, independent acceptance, merge, or methodology truth |
 | Perplexity | current public-source research, source discovery, fact and method cross-checking | repository context, programming, voting, review verdicts, Slack posts, merges, deployments, or permission changes |
 | Firecrawl | collection, extraction, normalization, and provenance of approved web material | a decision, authority, or a substitute for evidence evaluation |
 | Codex Security | independent security evidence for eligible repository changes | product direction, acceptance, merge, or deployment authority |
@@ -196,10 +200,12 @@ Each row summarizes the canonical role definitions in
 Select and freeze an [approved allocation profile](provider-allocation-profiles.md)
 before approval; Engineering is the default. All nine lanes have explicit targets;
 zero-target lanes are ineligible. Preserve actual assignment history and apply the
-full twenty-slot startup denominator, target+5 hard ceiling and ±3-point normal
-preference. Report observed total effort separately; control-plane work, retries,
-and failed output never become accepted production credit. Subscription capacity
-signals (OpenAI Pro 20x, Claude Max 5x) do not grant API budgets or capabilities.
+full twenty-slot startup denominator and ±3-point normal preference. The owner
+retired the target+5 rolling-twenty hard ceiling on 2026-09-21 as outdated; it no
+longer blocks admission. Report observed total effort separately; control-plane
+work, retries, and failed output never become accepted production credit.
+Subscription capacity signals (OpenAI Pro 20x, Claude Max 5x) do not grant API
+budgets or capabilities.
 
 Choose the cheapest capable trusted model, never simply the cheapest contact.
 First establish exact scope and allowlists, usable transport, readiness,
@@ -213,8 +219,9 @@ the selected provider/model, and the tie-break reason.
 For paid routing, only the operator-authored `TRUSTED_PROVIDER_COST_RANKS`
 setting supplies the comparable total order. It must cover every configured
 ready specialist with unique positive ranks and is never inferred, generated,
-or rewritten by a provider. Direct allocation hard caps apply after capability, scope, independence,
-safety, and resource eligibility; the normal band remains a soft preference.
+or rewritten by a provider. Zero-target lane ineligibility applies after capability, scope,
+independence, safety, and resource eligibility; the normal band remains a soft preference,
+and the retired rolling-twenty hard cap no longer blocks admission.
 
 ### Firecrawl privacy routing
 
@@ -519,3 +526,7 @@ project-specific control.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->

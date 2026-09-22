@@ -1,3 +1,12 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -474,9 +483,49 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                                           "openai", "test-deployment", digest("reservation"))
         writer = SimpleNamespace(engine_owner="langgraph", owner_token=settings.langgraph_primary_owner_token,
                                  lease_live=True, fencing_generation=4)
-        handle.claim_store.current_task_writer = lambda _task: writer
-        handle.claim_store.record_work_packet_artifact = lambda **kwargs: SimpleNamespace(
-            document_digest=document_digest(kwargs["packet"]))
+        # Dispatch reads the writer, persists the artifact and re-reads the
+        # wave's cancellation row inside the bound its own readiness
+        # established, so each double records the bound it was handed.
+        from contextlib import contextmanager
+        bounds = []
+
+        class BatchRow:
+            """The existing `director_primary_parallel_batch` kill switch.
+
+            Answers the same statements the real connection does: the
+            transaction's recorded bound (none yet, on a fresh transaction)
+            and the wave's kill switch.
+            """
+
+            info = SimpleNamespace(server_version=170000)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exception):
+                return False
+
+            @contextmanager
+            def transaction(self):
+                # The bounded read path opens one explicit transaction, so the
+                # LOCAL timeouts it sets still apply to the statement after.
+                yield self
+
+            def execute(self, statement, *_args, **_kwargs):
+                row = ({"bound": None} if "director.transaction_deadline" in statement
+                       else {"kill_switch": False})
+                return SimpleNamespace(fetchone=lambda: row)
+
+        def batch_connection(*_args, **kwargs):
+            bounds.append(("cancellation", kwargs.get("timeout")))
+            return BatchRow()
+
+        handle.pool.connection = batch_connection
+        handle.claim_store.current_task_writer = lambda _task, *, deadline=None: (
+            bounds.append(("writer", deadline)) or writer)
+        handle.claim_store.record_work_packet_artifact = lambda **kwargs: (
+            bounds.append(("artifact", kwargs.get("deadline"))) or SimpleNamespace(
+                document_digest=document_digest(kwargs["packet"])))
         attempt = ProviderAttemptReservation(record.task_id, assignment_id, 1, "openai", "api", "api",
                                              digest("key"), digest("attempt"), digest("budget"),
                                              total_token_limit=731)
@@ -530,6 +579,12 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         self.assertEqual(731, contexts[0].total_token_limit)
         self.assertEqual(attempt.attempt_digest, contexts[0].idempotency_key)
         self.assertEqual(4, contexts[0].fencing_generation)
+        # The same readiness bound reaches the writer read, the artifact write,
+        # the pre-I/O cancellation read and the provider call itself.
+        self.assertEqual({"writer", "artifact", "cancellation"},
+                          {stage for stage, _bound in bounds})
+        self.assertTrue(all(bound is not None and bound > 0 for _stage, bound in bounds), bounds)
+        self.assertIsNotNone(contexts[0].deadline)
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -1908,6 +1963,128 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         )
         self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
 
+    def _contended_wave(self, contend, *, wave_seconds=2.0):
+        """Drive one real wave that contends for a row `contend` locks.
+
+        The contended lock is taken from inside the dispatcher, so readiness
+        and admission are already done: what waits is the foreground
+        completion path the real coordinator runs after execution, with
+        `executor.map` still holding the wave open.
+        """
+        from contextlib import ExitStack
+        from time import monotonic
+
+        held = ExitStack()
+        self.addCleanup(held.close)
+        blocked = []
+
+        def dispatch(reservation):
+            if not blocked:
+                blocked.append(reservation.assignment_id)
+                connection = held.enter_context(self.handle.pool.connection())
+                held.enter_context(connection.transaction())
+                contend(connection, reservation)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"parallel-result-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+
+        dispatch.readiness_deadline = lambda: monotonic() + wave_seconds
+        self.use_parallel_graph_completion_services(dispatch)
+        with patch(
+            "director_orchestrator.primary_default.preview_plan",
+            return_value=self.parallel_plan(),
+        ):
+            pending = self.application.create_intake(
+                self.intake(),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        started = monotonic()
+        raised: Exception | None = None
+        try:
+            try:
+                self.approve(self.application, self.coordinator, pending.task_id)
+            except Exception as error:  # returned to the caller, never swallowed
+                raised = error
+            elapsed = monotonic() - started
+        finally:
+            # Released here, not in cleanup: the schema drop in tearDown would
+            # otherwise wait on this same lock.
+            held.close()
+        return SimpleNamespace(task_id=pending.task_id, elapsed=elapsed, raised=raised,
+                                blocked=blocked[0] if blocked else None)
+
+    def _assert_completion_bound(self, wave, *, wave_seconds=2.0):
+        from director_orchestrator.primary_parallel import COMPLETION_ALLOWANCE_SECONDS
+
+        self.assertIsNotNone(wave.blocked, "the wave never dispatched")
+        self.assertIsNotNone(wave.raised,
+                             "the contended completion write must not have succeeded")
+        self.assertGreater(wave.elapsed, 1.0,
+                            "it must have actually waited on the contended lock")
+        self.assertLess(wave.elapsed, wave_seconds + COMPLETION_ALLOWANCE_SECONDS + 5.0,
+                        "the completion allowance is a bound, not a licence to wait")
+
+    def test_result_settlement_lock_is_bounded_by_the_completion_allowance(self):
+        """`record_result`, called while `executor.map` still waits, is bounded.
+
+        The wave's own bound is two seconds. Settling what already happened may
+        spend the one completion allowance beyond it and nothing more, and an
+        unsettled slot keeps its ACTIVE reservation rather than being released
+        or guessed at.
+        """
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_parallel_assignment "
+            "WHERE task_id=%s AND assignment_id=%s FOR UPDATE",
+            (reservation.task_id, reservation.assignment_id)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            statuses = {row["assignment_id"]: row["status"] for row in connection.execute(
+                f"SELECT assignment_id, status FROM {self.schema}"
+                ".director_primary_parallel_assignment WHERE task_id=%s",
+                (wave.task_id,)).fetchall()}
+        self.assertEqual("ACTIVE", statuses[wave.blocked],
+                          "an unsettled slot is retained for reconciliation")
+
+    def test_outcome_projection_write_is_bounded_by_the_completion_allowance(self):
+        """The same allowance covers publishing the wave's outcome projection."""
+
+        wave = self._contended_wave(lambda connection, reservation: connection.execute(
+            f"SELECT 1 FROM {self.schema}.director_primary_task_projection "
+            "WHERE task_id=%s FOR UPDATE", (reservation.task_id,)))
+        self._assert_completion_bound(wave)
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertIn("SUCCEEDED", settled,
+                      "the ledger keeps what it settled before the projection write")
+
+    def test_checkpoint_completion_write_is_bounded_by_the_completion_allowance(self):
+        """The checkpointer's own storage is bounded by the same cutoff.
+
+        `record_parallel_aggregate` reads the snapshot, updates the state and
+        reads the outcome on connections it acquires itself, so the cutoff is
+        published for that call rather than passed to LangGraph.
+        """
+        wave = self._contended_wave(lambda connection, _reservation: connection.execute(
+            f"LOCK TABLE {self.schema}.checkpoints IN ACCESS EXCLUSIVE MODE"))
+        self._assert_completion_bound(wave)
+        # Persistence that could not be confirmed is classified conservatively:
+        # the call fails, nothing claims a completed wave, and the durable
+        # ledger rows stay exactly as they were for reconciliation.
+        projection = self.coordinator.get_projection(wave.task_id)
+        self.assertNotEqual("SUCCEEDED",
+                            (projection.projection.get("terminal_classification")
+                             if projection is not None else None),
+                            f"raised={wave.raised!r}")
+        with self.handle.pool.connection() as connection:
+            settled = [row["status"] for row in connection.execute(
+                f"SELECT status FROM {self.schema}.director_primary_parallel_assignment "
+                "WHERE task_id=%s", (wave.task_id,)).fetchall()]
+        self.assertTrue(settled, "the ledger rows survive an unconfirmed checkpoint")
+
     def test_paid_setup_hold_preserves_approved_pause_and_recovers_ready_waves(self):
         from director_orchestrator.primary_parallel import PaidSetupHold
         ready = False
@@ -2922,6 +3099,502 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             "provider_dispatch_status": projected.get("provider_dispatch_status"),
         }
 
+    # Tables a read-only qualification readback must never touch.
+    READBACK_MUTATION_WITNESS_TABLES = (
+        "director_primary_task_projection", "director_primary_task_writer", "director_primary_claim",
+        "director_primary_budget", "director_primary_effect_reservation", "director_primary_effect_execution",
+        "director_primary_remote_binding", "director_primary_terminal_evidence",
+        "director_primary_reconciliation_event", "director_primary_slack_delivery",
+        "director_primary_slack_status_receipt", "director_primary_parallel_assignment",
+        "director_primary_provider_attempt", "director_primary_command_receipt", "director_primary_audit_event",
+    )
+
+    def mutation_witness(self) -> dict:
+        import psycopg
+        from psycopg import sql
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        counts = {}
+        with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as connection:
+            for table in self.READBACK_MUTATION_WITNESS_TABLES:
+                counts[table] = connection.execute(sql.SQL("SELECT count(*) FROM {}.{}").format(
+                    sql.Identifier(self.schema), sql.Identifier(table))).fetchone()[0]
+            counts["writer_leases"] = connection.execute(sql.SQL(
+                "SELECT coalesce(string_agg(task_id || ':' || fencing_generation::text, ',' ORDER BY task_id), '') "
+                "FROM {}.director_primary_task_writer").format(sql.Identifier(self.schema))).fetchone()[0]
+        return counts
+
+    def test_opt_in_qualification_readback_is_typed_bounded_read_only_and_keeps_default_get_unchanged(self):
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        from director_orchestrator.models import QualificationEvidenceReadback, TaskRecord
+
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        headers = {"Authorization": "Bearer standalone-qa-synthetic-secret"}
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                default = client.get(f"/v1/tasks/{record.task_id}", headers=headers)
+                self.assertEqual(200, default.status_code, default.text)
+                self.assertNotIn("qualification_evidence", default.json())
+                self.assertNotIn("X-Primary-Qualification-Readback", default.headers)
+                # The strict persisted contract still parses the default response exactly.
+                self.assertEqual(record.task_id, TaskRecord.model_validate(default.json()).task_id)
+                before = self.mutation_witness()
+                opted = client.get(f"/v1/tasks/{record.task_id}", headers=headers,
+                                   params={"include_qualification_evidence": "true"})
+                self.assertEqual(200, opted.status_code, opted.text)
+                self.assertEqual(before, self.mutation_witness())
+                body = opted.json()
+                evidence = body.pop("qualification_evidence")
+                self.assertEqual(set(default.json()), set(body))
+                for key in ("task_id", "status", "intake", "intake_authentication", "plan_generation", "provider_runs"):
+                    self.assertEqual(default.json()[key], body[key])
+                # The ordinary TaskRecord contract forbids the readback field: it is response-only.
+                with self.assertRaises(Exception):
+                    TaskRecord.model_validate({**body, "qualification_evidence": evidence})
+                typed = QualificationEvidenceReadback.model_validate(evidence)
+                self.assertEqual(record.task_id, typed.task_id)
+                self.assertEqual("langgraph", typed.engine_owner)
+                self.assertEqual(default.headers["X-Primary-Projection-Digest"], typed.projection_digest)
+                self.assertEqual(int(default.headers["X-Primary-Projection-Version"]), typed.projection_version)
+                self.assertEqual(record.intake.source_event_id, typed.source_event_id)
+                self.assertEqual("complete", opted.headers["X-Primary-Qualification-Readback"])
+                self.assertTrue(typed.complete)
+                self.assertEqual([], typed.truncated)
+                self.assertIn(typed.absent, ([], ["provider_usage"]))  # usage tables are optional here
+                self.assertEqual(200, typed.bounds.row_limit)
+                self.assertEqual(262144, typed.bounds.byte_limit)
+                self.assertLess(typed.bounds.elapsed_seconds, typed.bounds.wall_seconds)
+                # A fresh intake has no attempts, effects, deliveries or status receipts yet.
+                self.assertEqual(([], [], [], [], []), (typed.provider_attempts, typed.effects,
+                    typed.reconciliation_events, typed.status_receipts, typed.provider_usage))
+                self.assertEqual("langgraph", opted.headers["X-Task-Engine-Owner"])
+                missing = client.get("/v1/tasks/DIR-LG-0000000000", headers=headers,
+                                     params={"include_qualification_evidence": "true"})
+                self.assertEqual(404, missing.status_code)
+                self.assertEqual(401, client.get(f"/v1/tasks/{record.task_id}",
+                                                 params={"include_qualification_evidence": "true"}).status_code)
+            finally:
+                client.close()
+
+    def test_qualification_readback_store_query_is_read_only_bounded_and_pinned(self):
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        for kwargs in ({"row_limit": 0}, {"row_limit": 1001}, {"byte_limit": 10}, {"wall_seconds": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                store.read_primary_qualification_evidence(record.task_id, **kwargs)
+        self.assertIsNone(store.read_primary_qualification_evidence("DIR-LG-0000000000"))
+        before = self.mutation_witness()
+        document = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual(before, self.mutation_witness())
+        self.assertEqual(record.task_id, document["task_id"])
+        self.assertTrue(document["complete"])
+        # Deliveries for this task are pinned; enqueueing one makes it visible and
+        # a one-row limit reports truncation instead of a silently partial list.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"""INSERT INTO {self.schema}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                    VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED'),
+                           (%s, 'hold:synthetic', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')""",
+                (record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-a",
+                 record.task_id, document["projection_digest"], "synthetic-" + record.task_id + "-b"))
+        full = store.read_primary_qualification_evidence(record.task_id)
+        self.assertEqual({"terminal", "hold:synthetic"}, {row["notification_key"] for row in full["slack_deliveries"]})
+        self.assertTrue(all(row["state"] == "SUPPRESSED" for row in full["slack_deliveries"]))
+        bounded = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        self.assertFalse(bounded["complete"])
+        # The planned assignments of a fresh intake may also exceed one row.
+        self.assertIn("slack_deliveries", bounded["truncated"])
+        self.assertTrue(set(bounded["truncated"]) <= {"assignments", "slack_deliveries"}, bounded["truncated"])
+        self.assertEqual(1, len(bounded["slack_deliveries"]))
+        self.assertLessEqual(len(bounded["assignments"]), 1)
+        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=1024)
+        self.assertFalse(tiny["complete"])
+        self.assertIn("response_bytes", tiny["truncated"])
+        self.assertEqual([], tiny["slack_deliveries"])
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        self.assertEqual([], store.read_primary_qualification_evidence(other.task_id)["slack_deliveries"])
+        # The snapshot's own projection is returned so callers derive the task
+        # record from the same REPEATABLE READ view instead of a second read.
+        self.assertEqual(record.task_id, document["projection"].task_id)
+        self.assertEqual(document["projection_digest"], document["projection"].projection_digest)
+        self.assertEqual({"isolation": "REPEATABLE READ", "read_only": True,
+                          "single_transaction": True, "covers_task_record": True}, document["snapshot"])
+
+    def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
+        import time as clock
+        import psycopg
+        from psycopg import sql
+        from psycopg_pool import PoolTimeout
+        from director_orchestrator.langgraph_postgres import (
+            DeadlineExpired, bounded_connection, require_deadline_remaining)
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        # An already-spent bound is refused before any connection or row is touched.
+        with self.assertRaises(DeadlineExpired):
+            require_deadline_remaining(clock.monotonic() - 1, "probe")
+        with self.assertRaises(DeadlineExpired):
+            bounded_connection(self.handle.pool, clock.monotonic() - 1)
+        # Blocked pool acquisition: every pooled connection is held elsewhere, so
+        # the readback must give up within its bound instead of queueing.
+        held = []
+        try:
+            while True:
+                try:
+                    manager = self.handle.pool.connection(timeout=0.5)
+                    manager.__enter__()
+                    held.append(manager)
+                except PoolTimeout:
+                    break
+            started = clock.monotonic()
+            with self.assertRaises(PoolTimeout):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.5)
+            self.assertLess(clock.monotonic() - started, 2.0)
+        finally:
+            for manager in held:
+                manager.__exit__(None, None, None)
+        # Blocked SQL after earlier queries succeeded: a later table is locked by
+        # another session, so the remaining time (not a fresh allowance) bounds
+        # the wait and the whole read fails instead of finishing late.
+        dsn = os.environ.get("LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN", "").strip()
+        with psycopg.connect(dsn, connect_timeout=5) as blocker:
+            blocker.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                            .format(sql.Identifier(self.schema)))
+            started = clock.monotonic()
+            with self.assertRaises(psycopg.Error):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.6)
+            self.assertLess(clock.monotonic() - started, 2.0)
+            blocker.rollback()
+        # QA control for the cumulative bound (a test gap closed here; no product
+        # boundary changed): two ACCESS EXCLUSIVE locks, one on the projection
+        # table the read touches first and one on the delivery table it touches
+        # later, released in stages so that each wait alone fits the allowance
+        # while their sum exceeds it. The real read must refuse before the later
+        # lock is released; a per-stage allowance would instead finish late once
+        # the second lock cleared. Both waits, the join and the cleanup are
+        # bounded, and the blockers are released in `finally`.
+        allowance, first_release, second_release = 4.0, 1.2, 4.8
+        self.assertTrue(first_release < allowance and second_release - first_release < allowance < second_release)
+        released, waiting, worker_errors = {}, {}, []
+        stop, releaser = threading.Event(), None
+        with (
+            psycopg.connect(dsn, connect_timeout=5) as early,
+            psycopg.connect(dsn, connect_timeout=5) as later,
+            psycopg.connect(dsn, connect_timeout=5, autocommit=True,
+                            options="-c statement_timeout=500") as observer,
+        ):
+            early.execute(sql.SQL("LOCK TABLE {}.director_primary_task_projection IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            later.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            origin = clock.monotonic()
+
+            def stage_releases():
+                try:
+                    for name, blocker, at, table in (
+                        ("early", early, first_release, "director_primary_task_projection"),
+                        ("later", later, second_release, "director_primary_slack_delivery"),
+                    ):
+                        # Observe the actual blocked reader, not just the release
+                        # schedule: an unrelated database error must not pass.
+                        while not stop.is_set() and clock.monotonic() < origin + at:
+                            row = observer.execute(
+                                "SELECT pid FROM pg_locks WHERE locktype='relation' "
+                                "AND relation=%s::regclass AND NOT granted "
+                                "AND %s=ANY(pg_blocking_pids(pid))",
+                                (sql.Identifier(self.schema, table).as_string(observer),
+                                 blocker.info.backend_pid),
+                            ).fetchone()
+                            if row is not None:
+                                waiting[name] = row[0]
+                                break
+                            stop.wait(0.02)
+                        if stop.wait(max(0.0, origin + at - clock.monotonic())):
+                            return
+                        blocker.rollback()
+                        released[name] = clock.monotonic() - origin
+                except Exception as error:
+                    worker_errors.append(error)
+
+            releaser = threading.Thread(target=stage_releases, name="qa-staged-lock-release", daemon=True)
+            releaser.start()
+            try:
+                with self.assertRaises((psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable,
+                                        psycopg.errors.TransactionTimeout, DeadlineExpired)):
+                    store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
+                refused_at = clock.monotonic() - origin
+                releaser.join(timeout=second_release + 5.0)
+                self.assertFalse(releaser.is_alive())
+                self.assertEqual([], worker_errors)
+                self.assertEqual({"early", "later"}, set(waiting))
+                self.assertEqual(waiting["early"], waiting["later"])
+                self.assertLess(released["early"], refused_at)
+                self.assertLess(refused_at, released["later"])
+                self.assertLess(refused_at, allowance + 0.75)
+            finally:
+                stop.set()
+                releaser.join(timeout=10.0)
+                self.assertFalse(releaser.is_alive())
+        # The lane is intact afterwards and a normal read still completes.
+        after = store.read_primary_qualification_evidence(record.task_id)
+        self.assertTrue(after["complete"])
+        self.assertLess(after["bounds"]["elapsed_seconds"], after["bounds"]["wall_seconds"])
+
+    def test_qualification_readback_joins_populated_attempts_receipts_and_deliveries_by_real_keys(self):
+        from psycopg import sql
+        from director_orchestrator.models import QualificationEvidenceReadback
+
+        record = self.application.create_intake(
+            self.intake(), intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        store = self.coordinator._store
+        base = store.read_primary_qualification_evidence(record.task_id)
+        self.assertGreaterEqual(len(base["assignments"]), 1)
+        assignment = base["assignments"][0]
+        digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+        with self.handle.pool.connection() as connection:
+            for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
+                connection.execute(sql.SQL("""
+                    INSERT INTO {}.director_primary_provider_attempt
+                        (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id,
+                         transport_id, idempotency_key_digest, attempt_digest, provider_run_id_digest,
+                         status, result_digest, outcome_evidence_digest, reason_code, budget_evidence_digest)
+                    VALUES (%s, %s, 1, %s, %s, 'v1', 'synthetic-transport', %s, %s, %s, %s, %s, %s, %s, %s)
+                    """).format(sql.Identifier(self.schema)),
+                    (record.task_id, assignment["assignment_id"], event, assignment["provider_id"],
+                     digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
+                     digest("run:" + record.task_id) if event == 2 else None, status,
+                     digest("result:" + record.task_id) if event == 2 else None,
+                     digest("outcome:" + record.task_id) if event == 2 else None,
+                     "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
+            connection.execute(sql.SQL("""
+                INSERT INTO {}.director_primary_slack_delivery
+                    (task_id, notification_key, projection_digest, payload, client_msg_id, state)
+                VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')
+                """).format(sql.Identifier(self.schema)),
+                (record.task_id, base["projection_digest"], "synthetic-delivery-" + record.task_id))
+        # A producer-shaped approval delivery row through the real delivery
+        # producer (PrimarySlackDelivery.enqueue builds the 152-character
+        # approval:<request digest>:<projection digest> key and the uuid5
+        # client_msg_id) and a real owner decision bound to a real command
+        # receipt (record_owner_decision). Seam: the dry-run intake is not
+        # gateway-attested, so the producer renders no payload and stores the
+        # row SUPPRESSED; the key, identity and decision columns are the
+        # producer's own. Slack transport is never constructed (transport=None,
+        # no run_once).
+        from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+        projection = self.coordinator.get_projection(record.task_id)
+        pending = projection.projection["pending_approval"]
+        approval_key = "approval:" + pending["request_digest"] + ":" + projection.projection_digest
+        self.assertEqual(152, len(approval_key))
+        delivery_settings = replace(self.settings, langgraph_primary_postgres_schema=self.schema,
+                                    slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER",
+                                    slack_bot_token="synthetic-slack-test-token")
+        producer = PrimarySlackDelivery(SimpleNamespace(handle=self.handle, coordinator=self.coordinator,
+                                                        application=self.application), delivery_settings,
+                                        transport=None)
+        self.coordinator.renew_new_intake()
+        self.assertEqual(1, producer.enqueue())
+        command = SimpleNamespace(task_id=record.task_id, decision="approve", command_id="qa-command-" + record.task_id,
+                                  command_digest=digest("command:" + record.task_id),
+                                  request_digest=pending["request_digest"],
+                                  expected_projection_digest=projection.projection_digest)
+        self.coordinator.record_command_receipt(task_id=record.task_id, operation="approval_resume",
+                                                command_id=command.command_id, command_digest=command.command_digest,
+                                                projection=projection)
+        producer.record_owner_decision(command)
+        produced = [row for row in producer.receipts(record.task_id) if row["notification_key"] == approval_key]
+        self.assertEqual(1, len(produced))
+        self.assertEqual(("SUPPRESSED", "approve", command.command_id),
+                         (produced[0]["state"], produced[0]["owner_decision"], produced[0]["owner_command_id"]))
+        self.assertIsNotNone(produced[0]["owner_decision_at"])
+        approval_identity = produced[0]["client_msg_id"]
+        receipt_id, created, _ = store.record_primary_slack_status_receipt(
+            source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
+            task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
+            user_id=record.intake.user_id, text_digest=digest("status text"))
+        self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
+        # A real generic external effect through the production store producers
+        # (claim -> reservation -> execution marker -> remote binding -> terminal
+        # evidence), fenced by the task's actual writer lease.
+        from director_orchestrator.langgraph_primary import ClaimRequest
+        writer = store.current_task_writer(record.task_id)
+        with self.handle.pool.connection() as connection:
+            budget_row = connection.execute(sql.SQL(
+                "SELECT budget_limit_units FROM {}.director_primary_budget WHERE task_id=%s"
+            ).format(sql.Identifier(self.schema)), (record.task_id,)).fetchone()
+        budget_limit = int(budget_row["budget_limit_units"]) if budget_row else 8
+        store.register_task_budget(record.task_id, budget_limit_units=budget_limit)
+        claim_key, effect_key = digest("effect-claim:" + record.task_id), digest("effect-key:" + record.task_id)
+        effect_attempt, reservation_key = digest("effect-attempt:" + record.task_id), digest("effect-reservation:" + record.task_id)
+        granted = store.claim(ClaimRequest(claim_key=claim_key, task_id=record.task_id, field="effect_status",
+                                           expected_state="CLAIMED", target_state="EXECUTING",
+                                           attempt_digest=effect_attempt, owner_token=writer.owner_token))
+        self.assertTrue(granted.granted)
+        store.reserve_effect_intent(reservation_key=reservation_key, claim_key=claim_key, task_id=record.task_id,
+                                    owner_token=writer.owner_token, effect_key_digest=effect_key,
+                                    effect_attempt_digest=effect_attempt, writer_owner_id=writer.engine_owner,
+                                    reserved_units=1)
+        self.assertTrue(store.claim_effect_execution(reservation_key=reservation_key, owner_token=writer.owner_token))
+        store.bind_remote_effect(reservation_key=reservation_key, owner_token=writer.owner_token,
+                                 remote_system="slack", remote_identifier="1787450010." + record.task_id[-6:].lower())
+        store.record_terminal_evidence(claim_key=claim_key, owner_token=writer.owner_token, disposition="COMPLETED",
+                                       evidence_digest=digest("terminal:" + record.task_id))
+        # Authenticated spend/usage rows joined to the settled attempt digest. The
+        # production meter mints these under a signed grant; the disposable lane has
+        # no grant, so the rows are inserted synthetically under the real DDL/FKs.
+        with self.handle.pool.connection() as connection:
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_budget (authority_digest, document)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb) ON CONFLICT DO NOTHING
+                """).format(sql.Identifier(self.schema)), (digest("budget:" + record.task_id),))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_spend
+                    (attempt_digest, grant_digest, provider_id, project_id, task_id, budget_day, reserved_microusd, token_limit)
+                VALUES (%s, %s, %s, 'synthetic-project', %s, CURRENT_DATE, 50000, 4000)
+                """).format(sql.Identifier(self.schema)),
+                (digest("attempt:" + record.task_id), digest("budget:" + record.task_id), assignment["provider_id"], record.task_id))
+            connection.execute(sql.SQL("""
+                INSERT INTO {0}.director_primary_provider_usage (attempt_digest, document, actual_microusd, observed_tokens)
+                VALUES (%s, '{{"synthetic": true}}'::jsonb, 12500, 900)
+                """).format(sql.Identifier(self.schema)), (digest("attempt:" + record.task_id),))
+        document = store.read_primary_qualification_evidence(record.task_id)
+        document.pop("projection")
+        typed = QualificationEvidenceReadback.model_validate(document)  # strict typed serialization
+        self.assertEqual(1, len(typed.effects))
+        self.assertEqual((effect_key, effect_attempt, "COMPLETED"), (typed.effects[0].effect_key_digest,
+                         typed.effects[0].effect_attempt_digest, typed.effects[0].terminal_disposition))
+        self.assertEqual([], typed.absent)
+        self.assertEqual([(digest("attempt:" + record.task_id), 12500, 900, 50000)],
+                         [(row.attempt_digest, row.actual_microusd, row.observed_tokens, row.reserved_microusd)
+                          for row in typed.provider_usage])
+        attempts = typed.provider_attempts
+        self.assertEqual([1, 2], [row.event_sequence for row in attempts])
+        self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
+                            and row.assignment_sequence == assignment["sequence"]
+                            and row.attempt_digest == digest("attempt:" + record.task_id)
+                            and row.transport_id == "synthetic-transport" for row in attempts))
+        self.assertEqual(["STARTED", "SUCCEEDED"], [row.status for row in attempts])
+        self.assertEqual(digest("run:" + record.task_id), attempts[1].provider_run_id_digest)
+        self.assertEqual(digest("result:" + record.task_id), attempts[1].result_digest)
+        self.assertEqual([receipt_id], [row.receipt_id for row in typed.status_receipts])
+        self.assertEqual("status-event-" + record.task_id, typed.status_receipts[0].source_event_id)
+        self.assertEqual({"synthetic-delivery-" + record.task_id, approval_identity},
+                         {row.client_msg_id for row in typed.slack_deliveries})
+        # The full producer key survives the typed model and the API serialization.
+        produced_row = next(row for row in typed.slack_deliveries if row.client_msg_id == approval_identity)
+        self.assertEqual((approval_key, "approve", command.command_id),
+                         (produced_row.notification_key, produced_row.owner_decision, produced_row.owner_command_id))
+        self.assertEqual(1, typed.task_scope_counters.effect_reservations)
+        self.assertEqual(1, typed.task_scope_counters.attempt_ordinals)
+        self.assertTrue(typed.complete)
+        # Rows are pinned to the task: another task sees none of them.
+        other = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-populated-other"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        foreign = store.read_primary_qualification_evidence(other.task_id)
+        self.assertEqual(([], [], []), (foreign["provider_attempts"], foreign["status_receipts"], foreign["slack_deliveries"]))
+        self.assertEqual(2, typed.task_scope_counters.provider_attempts)
+        self.assertEqual(1, typed.task_scope_counters.started_attempts)
+        self.assertEqual(1, typed.task_scope_counters.status_receipts)
+        self.assertGreaterEqual(typed.task_scope_counters.thread_tasks, 1)
+        # Composition: the real serialized opt-in API response goes through the
+        # collector and the strict observation schema (no handwritten shape).
+        import importlib.util
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        spec = importlib.util.spec_from_file_location(
+            "offline_slack_trial_collector_composition",
+            Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        settings = replace(self.settings, shared_secret="standalone-qa-synthetic-secret",
+                           langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                response = client.get(f"/v1/tasks/{record.task_id}",
+                                      headers={"Authorization": "Bearer standalone-qa-synthetic-secret"},
+                                      params={"include_qualification_evidence": "true"})
+            finally:
+                client.close()
+        self.assertEqual(200, response.status_code, response.text)
+        row = collector.summarize(record.intake.thread_ts, record.task_id, response.json(), [], [], True,
+                                  record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        evidence = row["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        self.assertEqual([digest("attempt:" + record.task_id)], evidence["chain"]["attempt_ids"])
+        self.assertEqual(sorted(row["assignment_id"] for row in base["assignments"]), evidence["chain"]["assignment_ids"])
+        self.assertIn(assignment["assignment_id"], evidence["chain"]["assignment_ids"])
+        self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
+        self.assertEqual(sorted(["synthetic-delivery-" + record.task_id, approval_identity]), evidence["chain"]["delivery_ids"])
+        # The 152-character approval key joins this task's snapshot as its own family.
+        self.assertEqual([approval_key], evidence["chain"]["approval_delivery_keys"])
+        self.assertEqual(response.json()["qualification_evidence"]["projection_digest"],
+                         next(row for row in response.json()["qualification_evidence"]["slack_deliveries"]
+                              if row["notification_key"] == approval_key)["projection_digest"])
+        self.assertEqual([digest("result:" + record.task_id)], evidence["chain"]["provider_result_digests"])
+        self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
+        self.assertEqual("EXTERNAL_EFFECT_TERMINAL:COMPLETED", evidence["external_effect_state"])
+        self.assertEqual([effect_key], evidence["chain"]["effect_ids"])
+        self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
+        self.assertEqual("synthetic-transport", evidence["lineage"]["transport"])
+        self.assertEqual("authenticated_usage_table", evidence["usage"]["cost_basis"])
+        self.assertEqual(0.0125, evidence["usage"]["actual_cost_usd"])
+        self.assertEqual(50000, evidence["usage"]["actual_usage"]["reserved_budget_microusd"])
+        self.assertEqual(1, evidence["status_receipts"]["durable_receipt_rows"])
+        self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
+        self.assertEqual(response.headers["X-Primary-Projection-Digest"], evidence["readback"]["projection_digest"])
+        # Negative composition: a foreign task id in the same real response is refused;
+        # a truncated real readback derives nothing.
+        foreign_response = dict(response.json())
+        foreign_response["qualification_evidence"] = {**foreign_response["qualification_evidence"], "task_id": other.task_id}
+        refused = collector.summarize(record.intake.thread_ts, record.task_id, foreign_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("rejected", refused["qualification_evidence"]["readback"]["state"])
+        self.assertEqual([], refused["qualification_evidence"]["chain"]["attempt_ids"])
+        truncated_document = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
+        truncated_document.pop("projection")
+        # Serialized exactly as the API serializes the typed model (no str() datetimes).
+        truncated_response = {**response.json(), "qualification_evidence":
+                              QualificationEvidenceReadback.model_validate(truncated_document).model_dump(mode="json")}
+        partial = collector.summarize(record.intake.thread_ts, record.task_id, truncated_response, [], [], True,
+                                      record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
+        self.assertEqual("incomplete", partial["qualification_evidence"]["readback"]["state"])
+        self.assertEqual("UNKNOWN", partial["qualification_evidence"]["usage"]["cost_basis"])
+        self.assertIsNone(partial["qualification_evidence"]["effect_state"])
+        # Neither a rejected nor a truncated real readback promotes any delivery,
+        # key, route or sequence into the qualification chain.
+        for derived in (refused["qualification_evidence"], partial["qualification_evidence"]):
+            self.assertEqual(([], [], [], []), (derived["chain"]["delivery_ids"], derived["chain"]["approval_delivery_keys"],
+                                                derived["chain"]["assignment_sequences"], derived["lineage"]["provider_routes"]))
+            self.assertEqual("ordinary task-record/deliveries context; not the validated snapshot join",
+                             derived["unjoined_context"]["note"])
+        collector.validate_observations({"schema": "director-slack-trial-observations/v1",
+            "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
+            "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
+                "runtime_head": "b" * 40, "started_at": None, "offline_configured": True, "paid_configured": False},
+            "collection_runtime_after": None, "runtime_collection_binding_stable": None,
+            "runtime_health_at_collection": {"paid_runs_enabled": None, "ambiguous_effect_count": None,
+                "reconciliation_hold_reason": None, "primary_runtime_active": None},
+            "collector_sha256": None, "read_only": True, "slack_writes": 0, "provider_dispatches": 0,
+            "scorecard_mutations": 0, "qualified_run_count": None, "ten_consecutive_runs_verified": False,
+            "native_source_reads": [], "trials": [{**row, "input_rubric_sha256": None,
+                "rubric_evaluation": collector.evaluate_rubric(row, {"declared_at": "2020-01-01T00:00:00+00:00"}, "0" * 64),
+                "source_errors": [], "runtime_collection_binding_stable": None}], "limitations": []})
+
     def test_intake_503_after_committed_reservation_keeps_the_reserved_task(self):
         import psycopg
         import httpx
@@ -3222,3 +3895,12 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:53 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

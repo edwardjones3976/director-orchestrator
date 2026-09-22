@@ -1,3 +1,10 @@
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]] -->
@@ -33,7 +40,7 @@ whether any operation is permitted. The report always says
 | 10 | Ten offline Slack runs | Ten consecutive actual-owner events, independent correctness and measured time, zero operational provider calls |
 | 11 | Actual team products | Codex, actual Grok Bot and Gemini/Antigravity transports verified as those products |
 | 12 | Fresh activation captures | Correct surface, identity, binding digest, stage and expiry verified natively |
-| 13 | Rolling twenty allocation | Authoritative assignment history and enforced allocation bounds |
+| 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
 | 14 | Bounded execution | Attempts, cancellation deadline and token/output limits on all selected routes |
 | 15 | Monetary control and usage | Enrolled daily cap, reservations and correlated actual charges |
 | 16 | Executed exact-head CI | All six required jobs completed successfully with actual steps |
@@ -144,9 +151,16 @@ the native producer's sorted compact JSON digest; formatting changes alone do
 not alter that semantic digest.
 
 Check 13 recomputes the current journal through `EngineeringWorkloadLedger.status`.
-It needs twenty actual admissions after the prospective cutover, all inside
-normal allocation bands and hard ceilings, and no reported resource-bound
-violation. Imported historical attestations do not count as authenticated proof.
+It needs twenty actual admissions after the prospective cutover and reads the
+ledger's own authoritative tri-state `reported_resource_bounds_ok`: PASS only
+when every admission's reported usage is fully known and within its declared
+bounds; FAIL as soon as any admission has a known reported bound violation,
+even while other admissions' usage is still unknown; and UNKNOWN whenever
+usage is unknown, incomplete, or the value is malformed — unknown usage is
+never treated as compliant and never yields PASS. The owner retired the
+rolling-twenty allocation hard ceiling on 2026-09-21; normal allocation bands
+remain an advisory routing preference and this check does not gate on either.
+Imported historical attestations do not count as authenticated proof.
 Before twenty prospective admissions exist, UNKNOWN honestly describes the
 incomplete window. This observation does not authorize the journal's policy,
 authenticate declared provider identities or confer dispatch/production credit.
@@ -179,6 +193,33 @@ stays null. The recorder retains a non-qualifying row and stops further appends.
 Saved receipts do not become scored observations, and the in-process check-10
 collector remains a separate work order.
 
+## Qualification verdicts with explicit UNKNOWN cost
+
+`evaluate_qualification_record` classifies one canary's **asserted** lineage
+row (source event digest, task, assignment/attempt/effect identities, provider
+route, exact runtime SHA, image and configuration digest, effect state,
+delivery/readback, status-receipt counts, duplicate-effect and policy-violation
+counters) into `QUALIFIED_COST_MEASURED`, `QUALIFIED_COST_UNKNOWN`,
+`NOT_QUALIFIED` or `UNKNOWN`. The row is untrusted caller input: the function
+checks that the asserted links are complete, well-formed, unique and bound to
+the exact revision; it cannot verify that any link is real, and its reasons
+say "asserted links only". Authenticated collector correlation remains a
+separate requirement that no verdict here claims. It is deliberately separate
+from the check 10/20 criterion: `evaluate_run_record` still returns `None` for
+an unknown cost and never accepts a `QUALIFIED_COST_UNKNOWN` row as a
+measured-cost PASS.
+
+Strict inputs: identities must match the compact identifier form and be unique
+within each lineage list; `provider_route` must be one of the canonical
+`allocation_profiles.LANES` (aliases such as `external_openai` are not
+accepted); counters must be exact non-negative integers (booleans and floats
+are rejected); a cost must be a finite non-negative number (`inf`/`nan` are
+not measured costs). A `ZERO_PROVIDER_EFFECT` simulation is `NOT_QUALIFIED`
+for a live provider round trip, as are ambiguity, duplicates, violations,
+unverified readback and foreign revision or configuration bindings. Missing or
+malformed links and absent status-receipt counts (the Issue #230 dependency)
+stay `UNKNOWN`. No verdict from this function contributes points.
+
 ## Validation
 
 ```powershell
@@ -198,3 +239,10 @@ Postgres lane is needed.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->

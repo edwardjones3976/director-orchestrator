@@ -1,3 +1,5 @@
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
 # Director-Orchestrator operator guide
@@ -85,12 +87,12 @@ build (explicit) → BootstrapDatabaseIdentity → SelectGeneration
   → [StageRuntime → ValidateProviders] → Activate
 ```
 
-Building is not acceptance. `Accept` reads the canonical GitHub pull request and
+Building is not acceptance. Under the default `github-v1` acceptance mode, `Accept` reads the canonical GitHub pull request and
 requires the head to equal the frozen candidate, every named CI check completed
 successfully with none skipped, pending or failed, and two distinct non-author
 artifacts — security and independent review — each an `APPROVED` review whose
 body is exactly the canonical `director-activation-review/v1` JSON. Comments,
-quoted markers and prose never qualify.
+quoted markers and prose never qualify. This runtime-activation requirement is distinct from ordinary single-reviewer engineering review. Alternative modes apply their own specific evidence rules. See [langgraph-primary-operations.md](langgraph-primary-operations.md) for the `github-v1` path, [provider-acceptance-v2.md](provider-acceptance-v2.md) and [provider-acceptance-v2-runtime.md](provider-acceptance-v2-runtime.md) for v2, and [two-party-activation-v3.md](two-party-activation-v3.md) for v3's explicit signed adoption path. Exact candidate, CI, security, independent identity, owner approvals, and fail-closed requirements remain mandatory where the selected contract imposes them, without imposing v3's signed `owner_adoption` mechanism on all modes.
 
 ## Backups
 
@@ -176,3 +178,5 @@ production credit. No lane, including the Director, may accept or merge its own
 material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->

@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -118,6 +122,32 @@ class ProviderAdapterContext:
     # Populated from the owner-signed budget admitted for this exact attempt,
     # never from the work packet. None means no authoritative token allowance.
     total_token_limit: int | None = None
+    # A `time.monotonic()`-comparable absolute deadline established once, no
+    # later than atomic admission, and carried unchanged into dispatch. None
+    # means no upstream deadline was carried (e.g. a legacy/offline caller, or
+    # a process restart between admission and dispatch); transports fall back
+    # to a fresh bounded window derived from `timeout_seconds` in that case,
+    # never a wider one. Readiness, admission COMMIT, token counting and meter
+    # settlement all draw against this same value; none of them reset it.
+    deadline: float | None = None
+    # The digest of the enrollment document the caller's selection checked.
+    # A transport that resolves its own meter binds the one it actually got
+    # to this value, so a registry substitution between that check and the
+    # send cannot slip a different signed tariff into the same attempt.
+    # None means no meter was enrolled for this selection.
+    enrollment_digest: str | None = None
+    # Supplied by the live coordinator: re-reads this task's durable
+    # cancellation, writer lease/fencing and plan binding. A transport that
+    # waits on the provider before its real request (Responses counts input
+    # tokens first) calls this at that instant, so a cancellation or writer
+    # takeover during the wait stops the request instead of being noticed
+    # afterwards. The native team lane calls it again after execution, at
+    # each local-command boundary and before candidate integration; its
+    # integrator calls it as `authority_recheck(connection=..., stage=
+    # "candidate")` on its own writer-locked connection. It raises rather
+    # than returning a verdict, and no transport may treat its absence as
+    # authority.
+    authority_recheck: Callable[..., None] | None = None
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:38 UTC | END]]
 
 
@@ -1238,3 +1268,7 @@ class LangGraphPacketRuntime:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:04 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 09:43 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]

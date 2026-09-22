@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]]
@@ -884,6 +886,105 @@ class ValidationBridgeService:
             except Exception:
                 pass
             raise
+
+
+# ---------------------------------------------------------------------------
+# Read-only all-lane qualification preflight
+# ---------------------------------------------------------------------------
+#
+# The static lane inventory (eight canonical lanes plus three separately
+# qualified contacts). Lane classes are descriptive only; every allocation
+# weight is read from the owner-approved allocation_profiles authority rather
+# than duplicated here. The inventory grants nothing: enrollment, live
+# eligibility and paid readiness stay UNKNOWN because no authenticated
+# collector exists yet. Research-only lanes keep an engineering target of zero.
+_LANE_CLASSES = {
+    "openai": "director_control_plane",
+    "claude": "capability_routed_lane",
+    "cursor": "capability_routed_lane",
+    "grok": "capability_routed_lane",
+    "antigravity": "capability_routed_lane",
+    "perplexity": "evidence_only_research",
+    "firecrawl": "public_search_transport",
+    "github-copilot": "capability_routed_lane",
+}
+
+
+def _canonical_lanes():
+    from .allocation_profiles import ALLOCATION_PROFILES, LANES
+    if set(_LANE_CLASSES) != set(LANES):
+        raise ValidationError("lane inventory drifted from the allocation authority")
+    return tuple((lane, _LANE_CLASSES[lane],
+                  {profile: int(targets[lane]) for profile, targets in ALLOCATION_PROFILES.items()})
+                 for lane in LANES)
+
+
+CANONICAL_LANES = _canonical_lanes()
+ADDITIONAL_CONTACTS = (
+    ("grok-bot", "Grok Bot", "Unverified as an enrolled transport; direct Grok evidence cannot qualify this contact."),
+    ("z-ai", "Z.ai", "Separate tools-off Lite trial contract; not a canonical production lane."),
+    ("vscode-coding-bot", "VS Code Coding Bot", "Editor host; the actual underlying provider/model identity must be preserved."),
+)
+RESEARCH_ONLY_LANES = frozenset({"perplexity", "firecrawl"})
+PREFLIGHT_VERDICT = "UNKNOWN"
+
+
+def preflight_fixture() -> dict:
+    """One synthetic read-only fixture shared by every lane; never dispatched."""
+    return {"schema_version": "director-preflight-fixture/v1", "task_id": "PREFLIGHT-synthetic",
+            "assignment_id": "PREFLIGHT-synthetic", "objective": "Read-only lane preflight; no provider contact.",
+            "allowed_tools": [], "allowed_external_effects": [], "starting_ref": "0" * 40,
+            "limits": {"max_hops": 0, "max_revisions": 0, "timeout_seconds": 0, "budget_units": 0}}
+
+
+def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
+                             evidence: Mapping[str, Mapping] | None = None) -> dict:
+    """Evaluate every enrolled-or-listed lane against one synthetic fixture.
+
+    Zero provider, work or spend calls: this function only projects the static
+    inventory plus caller-supplied evidence rows, which are recorded verbatim
+    as *asserted* (untrusted) evidence. No string in that evidence can change a
+    lane's enrollment or live eligibility: both stay UNKNOWN until an
+    authenticated collector exists, and missing evidence is never converted
+    into a pass or a failure. Unknown lane names are reported, not admitted.
+    """
+    fixture = preflight_fixture() if fixture is None else dict(fixture)
+    if fixture.get("allowed_tools") or fixture.get("allowed_external_effects") \
+            or int(fixture.get("limits", {}).get("budget_units", 1)) != 0:
+        raise ValidationError("preflight fixture must reserve no tools, effects or budget")
+    fixture_digest = digest(canonical_json_bytes(fixture))
+    known = {name: (lane_class, profiles) for name, lane_class, profiles in CANONICAL_LANES}
+    requested = list(known) if lanes is None else list(dict.fromkeys(lanes))
+    evidence = dict(evidence or {})
+    rows = []
+    for name in requested:
+        if name not in known:
+            rows.append({"lane": name, "lane_class": None, "allocation_profiles": None,
+                         "enrollment_and_live_eligibility": PREFLIGHT_VERDICT, "research_only": None,
+                         "asserted_evidence": None, "verdict": PREFLIGHT_VERDICT, "reason": "not_a_canonical_lane"})
+            continue
+        lane_class, profiles = known[name]
+        row_evidence = evidence.get(name)
+        asserted = dict(row_evidence) if isinstance(row_evidence, Mapping) else None
+        rows.append({"lane": name, "lane_class": lane_class, "allocation_profiles": dict(profiles),
+                     "enrollment_and_live_eligibility": PREFLIGHT_VERDICT,
+                     "research_only": name in RESEARCH_ONLY_LANES,
+                     "engineering_target_percent": profiles["engineering"],
+                     "asserted_evidence": asserted,
+                     "verdict": PREFLIGHT_VERDICT,
+                     "reason": "no_authenticated_collector" if asserted is None
+                     else "asserted_evidence_recorded_not_verified"})
+    contacts = [{"contact": key, "name": label, "canonical_lane": None,
+                 "separate_contact_qualification": PREFLIGHT_VERDICT, "general_enrollment": PREFLIGHT_VERDICT,
+                 "note": note} for key, label, note in ADDITIONAL_CONTACTS]
+    return {"schema": "director-lane-preflight/v1", "read_only": True, "fixture_sha256": fixture_digest,
+            "provider_calls": 0, "work_reservations": 0, "spend_reservations": 0,
+            "lanes": rows, "additional_contacts": contacts,
+            "qualified_lane_count": 0, "unknown_lane_count": sum(row["verdict"] == PREFLIGHT_VERDICT for row in rows),
+            "limitations": ["Static inventory plus caller-asserted evidence only; no provider, work or spend call was made.",
+                            "Asserted evidence is untrusted and never establishes enrollment or eligibility; no authenticated collector exists yet.",
+                            "UNKNOWN is never converted into pass or failure; a live canary needs separate owner authorization.",
+                            "Research-only lanes keep their public-research restrictions; no trial route is promoted."]}
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
@@ -899,3 +1000,5 @@ class ValidationBridgeService:
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]

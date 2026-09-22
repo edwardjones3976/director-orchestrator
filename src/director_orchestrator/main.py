@@ -1,3 +1,9 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -58,8 +64,12 @@ from .approvals import (
     SLACK_INTAKE_ISSUED_AT_HEADER,
     SLACK_INTAKE_NONCE_HEADER,
     SLACK_INTAKE_SIGNATURE_HEADER,
+    SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER,
+    SLACK_STATUS_RECEIPT_NONCE_HEADER,
+    SLACK_STATUS_RECEIPT_SIGNATURE_HEADER,
     task_effect_key,
     verify_slack_intake_attestation,
+    verify_slack_status_receipt_attestation,
     verify_slack_gateway_proof,
 )
 from .callbacks import (
@@ -92,6 +102,10 @@ from .models import (
     OwnerApproval,
     OwnerApprovalSource,
     SlackIntake,
+    SlackStatusReceipt,
+    SlackThreadBinding,
+    StatusReceiptRecord,
+    TaskReadbackRecord,
     TaskRecord,
     TaskStatus,
     UsageCheckRecord,
@@ -761,14 +775,133 @@ def intake(
     return stored
 
 
+@app.get(
+    "/v1/slack-thread-bindings",
+    response_model=SlackThreadBinding,
+    dependencies=[Depends(require_auth)],
+)
+def slack_thread_binding(
+    channel_id: str,
+    thread_ts: str,
+) -> SlackThreadBinding:
+    if primary_default_activation is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipts are unavailable",
+        )
+    assert primary_default_activation.application is not None
+    try:
+        task_id = primary_default_activation.application.resolve_slack_thread_binding(
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return SlackThreadBinding(
+        channel_id=channel_id,
+        thread_ts=thread_ts,
+        task_id=task_id,
+    )
+
+
+@app.post(
+    "/v1/status-receipts",
+    response_model=StatusReceiptRecord,
+    dependencies=[Depends(require_auth)],
+)
+def status_receipt(
+    payload: SlackStatusReceipt,
+    receipt_issued_at: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER
+    ),
+    receipt_nonce: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_NONCE_HEADER
+    ),
+    receipt_signature: str | None = Header(
+        default=None, alias=SLACK_STATUS_RECEIPT_SIGNATURE_HEADER
+    ),
+) -> StatusReceiptRecord:
+    if primary_default_activation is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipts are unavailable",
+        )
+    try:
+        verify_slack_status_receipt_attestation(
+            settings.slack_gateway_secret,
+            settings.shared_secret,
+            payload,
+            expected_owner_user_id=settings.slack_owner_user_id,
+            expected_channel_id=settings.slack_channel_id,
+            issued_at=receipt_issued_at,
+            nonce=receipt_nonce,
+            signature=receipt_signature,
+        )
+    except StaleApproval as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    assert primary_default_activation.application is not None
+    try:
+        return primary_default_activation.application.create_status_receipt(payload)
+    except StaleApproval as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        from .langgraph_postgres import PostgresControlPlaneError
+
+        if isinstance(exc, PostgresControlPlaneError):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail="LangGraph primary status receipt is unavailable",
+        ) from exc
+
+
 @app.get("/v1/tasks/{task_id}", response_model=TaskRecord, dependencies=[Depends(require_auth)])
-def get_task(task_id: str, response: Response) -> TaskRecord:
+def get_task(
+    task_id: str, response: Response, include_qualification_evidence: bool = False
+) -> TaskRecord | JSONResponse:
+    # The default response is the ordinary TaskRecord contract, byte-for-byte
+    # unchanged. Only an explicit opt-in returns the typed readback subclass,
+    # serialized directly so the default response model is never widened.
     if primary_default_activation is not None:
         assert primary_default_activation.application is not None
-        primary_record = primary_default_activation.application.get_task(task_id)
+        assert primary_default_activation.coordinator is not None
+        evidence = None
+        if include_qualification_evidence:
+            # One bounded, REPEATABLE READ / READ ONLY snapshot supplies both
+            # the evidence and the projection the task record is derived from,
+            # so the record and the evidence describe the same version. Only
+            # the writer-generation header below is read outside that snapshot.
+            from .langgraph_postgres import DeadlineExpired
+
+            try:
+                evidence = primary_default_activation.coordinator.read_qualification_evidence(
+                    task_id
+                )
+            except DeadlineExpired as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary qualification readback exceeded its deadline",
+                ) from exc
+            if evidence is None:
+                primary_record = None
+            else:
+                projection = evidence.pop("projection")
+                primary_record = primary_default_activation.application._record_from_projection(
+                    projection
+                )
+        else:
+            primary_record = primary_default_activation.application.get_task(task_id)
+            projection = (
+                primary_default_activation.coordinator.get_projection(task_id)
+                if primary_record is not None else None
+            )
         if primary_record is not None:
-            assert primary_default_activation.coordinator is not None
-            projection = primary_default_activation.coordinator.get_projection(task_id)
             writer = primary_default_activation.coordinator.get_task_writer(task_id)
             if projection is None or writer is None:
                 raise HTTPException(
@@ -791,6 +924,22 @@ def get_task(task_id: str, response: Response) -> TaskRecord:
                 response.headers["X-Primary-Approval-Digest"] = str(
                     pending["request_digest"]
                 )
+            if evidence is not None:
+                # Response-only: nothing is persisted or digested. The bound
+                # covers the snapshot (task record + evidence), not the writer
+                # header read or HTTP transport, and that scope is declared.
+                readback = TaskReadbackRecord.model_validate(
+                    {**primary_record.model_dump(mode="python"),
+                     "qualification_evidence": evidence}
+                )
+                headers = dict(response.headers)
+                headers["X-Primary-Qualification-Readback"] = (
+                    "complete" if evidence["complete"] else "incomplete"
+                )
+                headers["X-Primary-Qualification-Readback-Scope"] = (
+                    "task-record+evidence;single-snapshot;writer-header-outside"
+                )
+                return JSONResponse(content=readback.model_dump(mode="json"), headers=headers)
             return primary_record
     versioned = store.get_versioned(task_id)
     if versioned is None:
@@ -1736,3 +1885,9 @@ def complete_run(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

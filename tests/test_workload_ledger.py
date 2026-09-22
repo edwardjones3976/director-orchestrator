@@ -1,3 +1,6 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:51 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | BEGIN]]
@@ -875,9 +878,39 @@ class WorkloadLedgerTests(unittest.TestCase):
             item = self.reserve(f"retained-{index}", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
             self.assertTrue(item.decision.allowed, item.decision.violations)
             self.store.finalize_workload_reservation(item.reservation_key, WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
-        held = self.reserve("retained-seventh", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
-        self.assertFalse(held.decision.allowed)
-        self.assertIn("allocation_admission_hard_cap_exceeded:claude:30", held.decision.violations)
+        # The owner retired the rolling-twenty target+5 hard ceiling on 2026-09-21;
+        # a seventh claude admission beyond the old cap is now permitted.
+        seventh = self.reserve("retained-seventh", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(seventh.decision.allowed, seventh.decision.violations)
+        self.assertNotIn("allocation_admission_hard_cap_exceeded:claude:30", seventh.decision.violations)
+        self.store.finalize_workload_reservation(seventh.reservation_key, WorkloadAttemptOutcome.FAILED_PRE_SUBMIT)
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM workload_profile_bindings WHERE admitted=1").fetchone()[0],
+                7,
+            )
+        # The bounded pre-submit retry ladder deliberately opens a NEW reservation
+        # key after a FAILED_PRE_SUBMIT result; it never reuses the failed root
+        # key or invents a second admitted binding for the same assignment.
+        retry = self.reserve("retained-seventh", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertTrue(retry.created)
+        self.assertEqual(retry.reservation_key, "retained-seventh#pre-submit-retry-1")
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM workload_profile_bindings WHERE admitted=1").fetchone()[0],
+                7,
+            )
+        self.assertEqual(self.store.list_recent_direct_production(), [])
+        # While that retry is still pending (not finalized), replaying the same
+        # root key returns the same pending retry reservation, not a new one.
+        replay = self.reserve("retained-seventh", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
+        self.assertFalse(replay.created)
+        self.assertEqual(replay.reservation_key, "retained-seventh#pre-submit-retry-1")
+        with closing(sqlite3.connect(self.path)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM workload_profile_bindings WHERE admitted=1").fetchone()[0],
+                7,
+            )
         self.assertEqual(self.store.list_recent_direct_production(), [])
 
     def test_research_profile_admits_perplexity_without_fabricated_history(self):
@@ -1063,8 +1096,8 @@ class WorkloadLedgerTests(unittest.TestCase):
         pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(pending.decision.allowed, pending.decision.violations)
         sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
-        self.assertFalse(sibling.decision.allowed)
-        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertTrue(sibling.decision.allowed)
+        self.assertNotIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
         self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
 
@@ -1138,8 +1171,8 @@ class WorkloadLedgerTests(unittest.TestCase):
         pending = self.reserve("pending", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
         self.assertTrue(pending.decision.allowed, pending.decision.violations)
         sibling = self.reserve("sibling", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
-        self.assertFalse(sibling.decision.allowed)
-        self.assertIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
+        self.assertTrue(sibling.decision.allowed)
+        self.assertNotIn("direct_production_rollover_pending_unresolved", sibling.decision.violations)
         self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
     # [[Claude Code | Claude Fable 5 | 2026-08-29 | 05:52 UTC | END]]
@@ -1227,8 +1260,8 @@ class WorkloadLedgerTests(unittest.TestCase):
         self.assertTrue(invoked.decision.allowed, invoked.decision.violations)
         self.store.finalize_workload_reservation(invoked.reservation_key, WorkloadAttemptOutcome.INVOKED)
         candidate = self.reserve("next", Provider.CLAUDE, kind=WorkKind.IMPLEMENTATION)
-        self.assertFalse(candidate.decision.allowed)
-        self.assertIn("direct_production_rollover_pending_unresolved", candidate.decision.violations)
+        self.assertTrue(candidate.decision.allowed)
+        self.assertNotIn("direct_production_rollover_pending_unresolved", candidate.decision.violations)
         self.assertEqual(len(self.store.list_recent_direct_production()), 19)
 
 
@@ -1297,3 +1330,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:34 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:51 UTC | END]]

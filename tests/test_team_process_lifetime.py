@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Real Linux kernel regression, runnable without provider dependencies.
@@ -22,7 +23,9 @@ class ProcessLifetimeTests(unittest.TestCase):
     def test_setsid_descendant_dies_on_success_and_timeout(self):
         source = Path(__file__).resolve().parents[1] / "src/director_orchestrator/antigravity_team_worker.py"
         tree = ast.parse(source.read_text())
-        names = {"protected_bytes", "protected_directory", "_limits", "require_cgroup_root", "run_unprivileged"}
+        # `run_unprivileged` spends an absolute bound through these two helpers.
+        names = {"protected_bytes", "protected_directory", "_limits", "require_cgroup_root", "run_unprivileged",
+                 "_shared_deadline", "_remaining_seconds"}
         tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         scope = dict(os=os, sys=sys, ctypes=ctypes, Path=Path, subprocess=subprocess, tempfile=tempfile,
                      time=time, TeamAuthorizationError=RuntimeError)
@@ -55,3 +58,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:02 UTC | END]]

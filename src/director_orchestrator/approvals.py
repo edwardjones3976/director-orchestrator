@@ -1,3 +1,6 @@
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
+# Administrative attribution only; material implementation remains Cursor-authored.
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
@@ -34,6 +37,7 @@ from .models import (
     ReviewVerdict,
     SlackGatewayProof,
     SlackIntake,
+    SlackStatusReceipt,
     TaskEffectEvidence,
     TaskRecord,
     TaskStatus,
@@ -62,9 +66,13 @@ PAID_REARM_MESSAGE = (
 )
 _SLACK_GATEWAY_MIN_SECRET_LENGTH = 32
 _SLACK_INTAKE_ATTESTATION_VERSION = "v1"
+_SLACK_STATUS_RECEIPT_ATTESTATION_VERSION = "v1"
 SLACK_INTAKE_ISSUED_AT_HEADER = "X-Director-Intake-Issued-At"
 SLACK_INTAKE_NONCE_HEADER = "X-Director-Intake-Nonce"
 SLACK_INTAKE_SIGNATURE_HEADER = "X-Director-Intake-Signature"
+SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER = "X-Director-Status-Receipt-Issued-At"
+SLACK_STATUS_RECEIPT_NONCE_HEADER = "X-Director-Status-Receipt-Nonce"
+SLACK_STATUS_RECEIPT_SIGNATURE_HEADER = "X-Director-Status-Receipt-Signature"
 _SLACK_INTAKE_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _SLACK_INTAKE_SIGNATURE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -187,6 +195,115 @@ def verify_slack_intake_attestation(
     return (
         _canonical_digest({"nonce": nonce}),
         _canonical_digest(intake.model_dump(mode="json")),
+    )
+
+
+def _slack_status_receipt_attestation_payload(
+    receipt: SlackStatusReceipt, *, issued_at: int, nonce: str
+) -> bytes:
+    return json.dumps(
+        {
+            "version": _SLACK_STATUS_RECEIPT_ATTESTATION_VERSION,
+            "method": "POST",
+            "path": "/v1/status-receipts",
+            "issued_at": issued_at,
+            "nonce": nonce,
+            "receipt": receipt.model_dump(mode="json"),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_slack_status_receipt_attestation(
+    secret: str,
+    shared_secret: str,
+    receipt: SlackStatusReceipt,
+    *,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+) -> dict[str, str]:
+    """Bind one short-lived Slack status receipt to its canonical payload."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Slack gateway signing secret is not securely configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    observed_at = (
+        issued_at
+        if issued_at is not None
+        else int(datetime.now(timezone.utc).timestamp())
+    )
+    observed_nonce = nonce or secrets.token_urlsafe(32)
+    if not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(observed_nonce):
+        raise StaleApproval("Slack status receipt attestation nonce is malformed")
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_status_receipt_attestation_payload(
+            receipt, issued_at=observed_at, nonce=observed_nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        SLACK_STATUS_RECEIPT_ISSUED_AT_HEADER: str(observed_at),
+        SLACK_STATUS_RECEIPT_NONCE_HEADER: observed_nonce,
+        SLACK_STATUS_RECEIPT_SIGNATURE_HEADER: signature,
+    }
+
+
+def verify_slack_status_receipt_attestation(
+    secret: str,
+    shared_secret: str,
+    receipt: SlackStatusReceipt,
+    *,
+    expected_owner_user_id: str,
+    expected_channel_id: str,
+    issued_at: str | None,
+    nonce: str | None,
+    signature: str | None,
+    now: int | None = None,
+) -> tuple[str, str]:
+    """Fail closed unless the Slack gateway attested this owner status receipt."""
+
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Authenticated Slack status receipt attestation is required")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Slack gateway signing secret must be distinct")
+    if not owner_identity_matches(receipt.user_id, expected_owner_user_id):
+        raise StaleApproval("Slack status receipt owner identity mismatch")
+    if (
+        not receipt.channel_id
+        or not expected_channel_id
+        or not hmac.compare_digest(receipt.channel_id, expected_channel_id)
+    ):
+        raise StaleApproval("Slack status receipt channel mismatch")
+    if (
+        issued_at is None
+        or nonce is None
+        or signature is None
+        or not issued_at.isdigit()
+        or not _SLACK_INTAKE_NONCE_PATTERN.fullmatch(nonce)
+        or not _SLACK_INTAKE_SIGNATURE_PATTERN.fullmatch(signature)
+    ):
+        raise StaleApproval("Slack status receipt attestation is missing or malformed")
+    issued_timestamp = int(issued_at)
+    current_time = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = current_time - issued_timestamp
+    if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
+        raise StaleApproval("Slack status receipt attestation is expired or not yet valid")
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        _slack_status_receipt_attestation_payload(
+            receipt, issued_at=issued_timestamp, nonce=nonce
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise StaleApproval("Slack status receipt attestation signature is invalid")
+    return (
+        _canonical_digest({"nonce": nonce}),
+        _canonical_digest(receipt.model_dump(mode="json")),
     )
 
 
@@ -1412,3 +1529,7 @@ def apply_failed_predispatch_retry(record: TaskRecord, approval: OwnerApproval) 
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 00:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 01:00 UTC | END]]
+
+# [[Cursor | Composer 2.5 | 2026-09-21 | 20:19 UTC | END]]
+
+# [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]

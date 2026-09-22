@@ -1,3 +1,10 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Local admission journal for external engineering work; never a dispatcher.
@@ -18,7 +25,10 @@ import re
 import sqlite3
 from typing import Any
 
-from .allocation_profiles import allocation_profile_digest, allocation_targets
+from .allocation_profiles import (
+    allocation_profile_digest, allocation_targets,
+    historical_allocation_profile_digest, PRE_RETIREMENT_V3,
+)
 from .workload_policy import (
     DirectProductionProvider, FailureKind, RetryRequest, Transport,
     WorkloadPolicy, direct_assignment_capacity_violation, evaluate_retry,
@@ -111,7 +121,7 @@ def policy_preview(policy: dict) -> dict:
         "policy_version": VERSION, "policy_digest": _digest(policy), "kind": kind,
         "targets": targets, "product_bindings": bindings, "window": WINDOW,
         "normal_tolerance_points": 3, "hard_tolerance_points": 5,
-        "maximum_slots": {key: min(WINDOW, (target + 5) * WINDOW // 100)
+        "historical_maximum_slots": {key: min(WINDOW, (target + 5) * WINDOW // 100)
                           if target else 0 for key, target in targets.items()},
         "dispatch_authorized": False,
     }
@@ -166,8 +176,16 @@ class EngineeringWorkloadLedger:
             raise LedgerError("ledger_version_unsupported")
         if meta.get("policy_digest") != _digest(meta["policy"]):
             raise LedgerError("stored_policy_digest_mismatch")
-        if meta["policy"]["kind"] == "canonical" and meta["canonical_digest"] != allocation_profile_digest(meta["policy"].get("profile", "engineering")):
-            raise LedgerError("canonical_policy_changed_reconciliation_required")
+        if meta["policy"]["kind"] == "canonical":
+            profile = meta["policy"].get("profile", "engineering")
+            # Bind the current prospective identity for new admissions while still
+            # authenticating rows recorded under the retired hard-tolerance identity
+            # or an earlier pre-retirement profile revision, without rewriting them.
+            valid = {allocation_profile_digest(profile), historical_allocation_profile_digest(profile)}
+            if profile in PRE_RETIREMENT_V3:
+                valid.add(PRE_RETIREMENT_V3[profile][0])
+            if meta["canonical_digest"] not in valid:
+                raise LedgerError("canonical_policy_changed_reconciliation_required")
         return meta
 
     @staticmethod
@@ -360,9 +378,20 @@ class EngineeringWorkloadLedger:
         target = preview["targets"].get(bucket, 0)
         if not target:
             return "allocation_policy_product_ineligible"
-        if (1 + sum(row["bucket"] == bucket for row in history[-19:])) * 100 > (target + 5) * WINDOW:
-            return "external_assignment_hard_cap_exceeded"
         return None
+
+    @staticmethod
+    def _require_current_authority(meta: dict) -> None:
+        """A recognized historical or pre-retirement canonical identity remains
+        readable and supports idempotent replay and late reporting of prior
+        work, but it never mints new admission or new dispatch authority. Only
+        the current canonical identity may authorize a new assignment row or a
+        new attempt permit.
+        """
+        if meta["policy"]["kind"] == "canonical":
+            profile = meta["policy"].get("profile", "engineering")
+            if meta["canonical_digest"] != allocation_profile_digest(profile):
+                raise LedgerError("canonical_policy_superseded_new_authority_required")
 
     @staticmethod
     def _insert(db, request: dict, bucket: str, created_at: str) -> None:
@@ -386,6 +415,7 @@ class EngineeringWorkloadLedger:
                 violation = self._capacity(meta, bucket, self._window(db, 19))
                 if violation:
                     raise LedgerError(violation)
+            self._require_current_authority(meta)
             self._insert(db, request, bucket, _now())
         return {"assignment_id": request["assignment_id"], "already_reserved": False,
                 "dispatch_permitted": False,
@@ -400,7 +430,8 @@ class EngineeringWorkloadLedger:
 
     def begin_attempt(self, assignment_id: str, *, transport: str, new_information_evidence=None) -> dict:
         with self._connection(write=True) as db:
-            self._meta(db)
+            meta = self._meta(db)
+            self._require_current_authority(meta)
             row, request = self._assignment(db, assignment_id)
             if request["kind"] == "coordination":
                 raise LedgerError("coordination_is_record_only_no_provider_dispatch")
@@ -550,8 +581,9 @@ class EngineeringWorkloadLedger:
                 utilization.append({"bucket": bucket, "target_percent": target, "admitted": count,
                     "share_percent": count * 100 / WINDOW, "delta_points": delta,
                     "normal_band_state": "below" if delta < -3 else "above" if delta > 3 else "within",
-                    "hard_limit_slots": preview["maximum_slots"][bucket],
+                    "historical_hard_limit_slots": preview["historical_maximum_slots"][bucket],
                     "reserved_or_in_flight": sum(r["bucket"] == bucket and r["assignment_id"] not in completions for r in window)})
+
             routes = self._routes(db)
             eligibility = []
             products_enrolled = {r["product_id"] for r in routes.values()}
@@ -584,10 +616,11 @@ class EngineeringWorkloadLedger:
                 "journal_consistency": {"sqlite_integrity_ok": True, "policy_digest_matches": True,
                     "operator_attestations_are_not_cryptographic_proof": True},
                 "current_window_checks": {
-                    "hard_caps_ok": all(r["admitted"] <= r["hard_limit_slots"] for r in utilization),
+                    "historical_hard_caps_ok": all(r["admitted"] <= r["historical_hard_limit_slots"] for r in utilization),
                     "normal_bands_ok": all(r["normal_band_state"] == "within" for r in utilization),
                     "reported_resource_bounds_ok": False if any(r["reported_bound_violations"] for r in records)
-                        else True if records and all(r["reported_usage"]["turns"] is not None
+                        else True if records and all(r["attempt_count"] == r["settled_attempts"]
+                            and r["reported_usage"]["turns"] is not None
                             and r["reported_usage"]["output_bytes"] is not None
                             and (r["bounds"]["usd_limit"] is None or r["reported_usage"]["usd"] is not None)
                             for r in records) else None,
@@ -618,3 +651,11 @@ def human_status(status: dict) -> str:
     return "\n".join(lines)
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:04 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]

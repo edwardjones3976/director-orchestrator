@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | BEGIN]]
@@ -2946,17 +2948,13 @@ class TaskStore:
                     )
                     # Profile admission retains real reservations after failure or
                     # ambiguity; accepted-output accounting stays a separate ledger.
+                    # The owner retired the rolling-twenty target+5 hard ceiling on
+                    # 2026-09-21 as outdated; only zero-target ineligibility remains.
                     if kind is not WorkKind.COORDINATION and (bound is None or not bool(bound["admitted"])):
                         lane = canonical_allocation_lane(provider.value)
                         target = allocation_targets(allocation_profile)[lane]
-                        recent = connection.execute(
-                            "SELECT provider FROM workload_profile_bindings WHERE admitted = 1 ORDER BY rowid DESC LIMIT 19"
-                        ).fetchall()
-                        count = 1 + sum(canonical_allocation_lane(str(item["provider"])) == lane for item in recent)
                         if target == 0:
                             extra_violations.append(f"allocation_profile_lane_ineligible:{lane}")
-                        elif count * 5 > target + 5:
-                            extra_violations.append(f"allocation_admission_hard_cap_exceeded:{lane}:{target + 5}")
                     decision = self._decision_with_violations(
                         decision, extra_violations
                     )
@@ -4201,3 +4199,5 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 06:33 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]

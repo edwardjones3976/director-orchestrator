@@ -1,3 +1,5 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | BEGIN]] -->
@@ -5,6 +7,14 @@
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | BEGIN]] -->
 # Delegation matrix — 2026-09-13 delivery (rev 2)
+
+> **Superseding note, 2026-09-21.** The owner retired the rolling-twenty
+> target-plus-five hard ceiling referenced below (§§1–2) as outdated. The
+> historical hard-ceiling numbers below are preserved for reference only; they
+> no longer block or refuse admission. Zero-target lane refusal, soft-band
+> preference, capability, evidence, and approval gates described below remain
+> unchanged and current. This note supersedes only the hard-ceiling enforcement
+> claims below; it does not alter this document's original dated text.
 
 > **Correction, 2026-09-09 (WO-COMBINED-1).** Eligibility depends on the
 > selected allocation profile. A zero target refuses the lane in that profile
@@ -372,3 +382,5 @@ documented route is not an authorized one.
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:43 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 20:53 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->

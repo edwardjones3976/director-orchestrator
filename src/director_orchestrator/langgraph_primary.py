@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:06 UTC | BEGIN]]
@@ -2487,8 +2488,20 @@ class PrimaryWorkflowRuntime:
         succeeded: bool,
         ambiguous_slot_count: int,
         setup_hold_reasons: tuple[str, ...] = (),
+        deadline: float | None = None,
     ) -> PrimaryOutcome:
-        """Checkpoint deterministic Postgres aggregation without performing I/O."""
+        """Checkpoint deterministic Postgres aggregation without performing I/O.
+
+        `deadline` is the caller's completion cutoff for recording a wave that
+        has already run. The checkpointer acquires its own connections, so the
+        cutoff is published for this call's context and the shared pool applies
+        it to the snapshot read, the state update and the outcome read alike.
+        It is never renewed here and grants no execution: an exhausted cutoff
+        refuses the write, leaving the durable ledger rows to be reconciled
+        rather than reporting a checkpoint that did not happen.
+        """
+
+        from .langgraph_postgres import checkpoint_deadline
 
         if any(reason != "paid_setup_required" for reason in setup_hold_reasons):
             raise ValueError("unknown setup hold reason")
@@ -2502,37 +2515,38 @@ class PrimaryWorkflowRuntime:
             raise ValueError("a successful parallel aggregate must be terminal")
         if type(ambiguous_slot_count) is not int or ambiguous_slot_count < 0:
             raise ValueError("ambiguous_slot_count must be non-negative")
-        snapshot = self._snapshot(task_id)
-        if not snapshot.values:
-            raise ValueError("primary graph checkpoint does not exist")
-        held = snapshot.values.get("parallel_plan_digest")
-        if held is not None and not _secure_equal(str(held), plan_digest):
-            raise ValueError("parallel plan binding changed")
-        if snapshot.values.get("parallel_terminal") is True:
-            if not (
-                terminal
-                and bool(snapshot.values.get("parallel_succeeded")) == succeeded
-                and _secure_equal(
-                    str(snapshot.values.get("parallel_aggregate_digest") or ""),
-                    aggregate_digest,
-                )
-                and int(snapshot.values.get("parallel_ambiguous_slot_count", 0))
-                == ambiguous_slot_count
-            ):
-                raise ValueError("terminal parallel aggregate cannot be rewritten")
+        with checkpoint_deadline(deadline):
+            snapshot = self._snapshot(task_id)
+            if not snapshot.values:
+                raise ValueError("primary graph checkpoint does not exist")
+            held = snapshot.values.get("parallel_plan_digest")
+            if held is not None and not _secure_equal(str(held), plan_digest):
+                raise ValueError("parallel plan binding changed")
+            if snapshot.values.get("parallel_terminal") is True:
+                if not (
+                    terminal
+                    and bool(snapshot.values.get("parallel_succeeded")) == succeeded
+                    and _secure_equal(
+                        str(snapshot.values.get("parallel_aggregate_digest") or ""),
+                        aggregate_digest,
+                    )
+                    and int(snapshot.values.get("parallel_ambiguous_slot_count", 0))
+                    == ambiguous_slot_count
+                ):
+                    raise ValueError("terminal parallel aggregate cannot be rewritten")
+                return self._outcome(task_id)
+            self._graph.update_state(
+                self._config(task_id),
+                {
+                    "parallel_plan_digest": plan_digest,
+                    "parallel_aggregate_digest": aggregate_digest,
+                    "parallel_terminal": terminal,
+                    "parallel_succeeded": succeeded,
+                    "parallel_ambiguous_slot_count": ambiguous_slot_count,
+                    "setup_hold_reasons": setup_hold_reasons,
+                },
+            )
             return self._outcome(task_id)
-        self._graph.update_state(
-            self._config(task_id),
-            {
-                "parallel_plan_digest": plan_digest,
-                "parallel_aggregate_digest": aggregate_digest,
-                "parallel_terminal": terminal,
-                "parallel_succeeded": succeeded,
-                "parallel_ambiguous_slot_count": ambiguous_slot_count,
-                "setup_hold_reasons": setup_hold_reasons,
-            },
-        )
-        return self._outcome(task_id)
 
     def record_parallel_workload_hold(
         self, task_id: str, *, aggregate_digest: str, reason_code: str
@@ -3289,3 +3303,4 @@ class PrimaryWorkflowRuntime:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]

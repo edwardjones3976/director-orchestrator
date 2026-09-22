@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | BEGIN]]
@@ -25,9 +27,11 @@ class PrimaryProviderBudgetRouting:
             raise TeamAuthorizationError("typed enrolled provider budget authority required")
         self.authority, self.pool = authority, pool
 
-    def admission(self, provider, packet):
+    def admission(self, provider, packet, *, deadline=None):
+        from .langgraph_postgres import bind_transaction_deadline, bounded_connection
         day = self.authority.entitlements._clock().astimezone(timezone.utc).date().isoformat()
-        with self.pool.connection() as connection, connection.transaction():
+        with bounded_connection(self.pool, deadline) as connection, connection.transaction():
+            bind_transaction_deadline(connection, deadline)
             rows = connection.execute(f"""SELECT authority_digest FROM {self.authority.schema}.director_primary_provider_budget
                 WHERE document->>'task_id'=%s AND document->>'provider_id'=%s
                 AND document->>'project_id'=%s AND document->>'day'=%s""",
@@ -75,8 +79,14 @@ def configured_provider_budget_routing(settings, handle):
         authority=PrimaryProviderBudgetAuthority(store, primary_schema=handle.schema), pool=handle.pool)
 
 
-def live_provider_admissions(*, settings, budget_routing, team_routing, provider, packet, attempt_usd):
-    """Every live attempt supplies monetary authority, including team-off lanes."""
+def live_provider_admissions(*, settings, budget_routing, team_routing, provider, packet, attempt_usd,
+                             deadline=None):
+    """Every live attempt supplies monetary authority, including team-off lanes.
+
+    `deadline` is the caller's absolute bound: resolving authority is real
+    database work that runs before the ledger's own transaction opens, so it
+    belongs inside the same bound rather than ahead of it.
+    """
     if not isinstance(budget_routing, PrimaryProviderBudgetRouting):
         raise TeamAuthorizationError("live primary requires typed daily provider budget routing")
     limits = ProviderAttemptBudget.from_usd(project_id=packet["project"],
@@ -85,9 +95,9 @@ def live_provider_admissions(*, settings, budget_routing, team_routing, provider
     if team_routing is not None and provider == "antigravity":
         if not settings.langgraph_primary_antigravity_team_enabled or not isinstance(team_routing, PrimaryTeamRouting):
             raise TeamAuthorizationError("primary team mode lacks typed enrolled routing services")
-        admissions = team_routing.admissions(provider, packet)
+        admissions = team_routing.admissions(provider, packet, deadline=deadline)
     else:
-        admissions = dict(budget_admission=budget_routing.admission(provider, packet))
+        admissions = dict(budget_admission=budget_routing.admission(provider, packet, deadline=deadline))
     return dict(admissions, budget_limits=limits)
 
 
@@ -116,8 +126,10 @@ class PrimaryTeamRouting:
         self.transport_arguments=dict(authority=authority,pool=pool,worker_verifier_secret=worker_verifier_secret,
             source_root=source_root,artifact_store=artifact_store,integrator=integrator,writer_owner_token=writer_owner_token)
 
-    def grant_for(self, packet):
-        with self.pool.connection() as connection,connection.transaction():
+    def grant_for(self, packet, *, deadline=None):
+        from .langgraph_postgres import bind_transaction_deadline, bounded_connection
+        with bounded_connection(self.pool, deadline) as connection,connection.transaction():
+            bind_transaction_deadline(connection, deadline)
             rows=connection.execute(f"""SELECT grant_digest FROM {self.authority.schema}.director_primary_team_grant
                 WHERE document->>'task_id'=%s AND document->>'assignment_id'=%s AND NOT revoked""",
                 (packet["task_id"],packet["assignment_id"])).fetchall()
@@ -128,17 +140,19 @@ class PrimaryTeamRouting:
                 raise TeamAuthorizationError("registered team packet changed")
             return grant
 
-    def admissions(self, provider, packet):
+    def admissions(self, provider, packet, *, deadline=None):
         if provider=="antigravity":
-            grant=self.grant_for(packet)
+            grant=self.grant_for(packet, deadline=deadline)
             return dict(team_admission=TeamAttemptAdmission(self.authority,grant.digest,
                 self.query_factory(grant,"dispatch",None)))
-        return dict(budget_admission=self.budget_routing.admission(provider, packet))
+        return dict(budget_admission=self.budget_routing.admission(provider, packet, deadline=deadline))
 
-    def adapter(self, packet, attempt):
+    def adapter(self, packet, attempt, *, deadline=None):
         if (attempt.format_id,attempt.transport_id)!=TEAM_FORMAT:
             raise TeamAuthorizationError("team assignment selected an unqualified format")
-        grant=self.grant_for(packet)
+        # Building the adapter re-reads the signed grant; that read spends the
+        # caller's bound like every other database operation on this path.
+        grant=self.grant_for(packet, deadline=deadline)
         return team_packet_adapter(self.settings,**self.transport_arguments,grant_digest=grant.digest,
             attempt_digest=attempt.attempt_digest,query_factory=lambda stage,command:self.query_factory(grant,stage,command),
             worker=self.worker_factory(grant))
@@ -155,3 +169,5 @@ class PrimaryTeamRouting:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 18:17 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]

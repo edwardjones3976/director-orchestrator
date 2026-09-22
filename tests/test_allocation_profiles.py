@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | BEGIN]]
@@ -23,7 +24,7 @@ class AllocationProfilesTests(unittest.TestCase):
         openai_history = ["openai"] * 7
         claude_history = ["claude"] * 7
         self.assertIsNone(admission_reason("openai", openai_history))
-        self.assertEqual(admission_reason("claude", claude_history), "workload_assignment_hard_limit")
+        self.assertIsNone(admission_reason("claude", claude_history))
         self.assertEqual(openai_history, ["openai"] * 7)
         self.assertEqual(claude_history, ["claude"] * 7)
 
@@ -48,3 +49,4 @@ class AllocationProfilesTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]

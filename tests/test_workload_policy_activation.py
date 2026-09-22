@@ -1,3 +1,5 @@
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | BEGIN]]
@@ -572,7 +574,7 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
         )
         return plan
 
-    def test_real_plan_install_persists_selection_hold_without_dispatch_or_credit(self):
+    def test_real_plan_install_approves_despite_allocation_without_dispatch_or_credit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "director.sqlite3"
             settings = replace(Settings(), sqlite_path=str(path), allow_paid_runs=True,
@@ -600,9 +602,73 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
             asyncio.run(engine.run(record.task_id))
             held = store.get(record.task_id)
             self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED, held.error)
-            self.assertEqual(held.message, WorkloadSelectionHold.code)
-            self.assertTrue(all(reason.startswith("direct_production_hard_cap_exceeded:") for reason in held.workload_selection_hold_reasons))
+            self.assertEqual(held.message, "Review selected plan")
+            self.assertEqual(held.workload_selection_hold_reasons, [])
             self.assertEqual(len(store.list_recent_direct_production(limit=50)), 19)
+            self.assertEqual(held.provider_runs, [])
+            self.assertEqual([event.kind for event in held.task_effect_ledger],
+                             ["director_intent", "director_observation"])
+            engine._require_verified_plan_materialization(held)
+            self.assertEqual(current_owner_decision(held).kind, "plan_approval")
+            # Real trusted cost ranks (cursor:1, claude:2, grok:3) select cursor;
+            # the retired allocation cap no longer forces claude by elimination.
+            self.assertEqual(held.plan.assignments[0].agent, ProviderName.CURSOR)
+            for provider in providers.values():
+                self.assertEqual(provider.mock_calls, [])
+
+    @staticmethod
+    def _selection_plan_with_ineligible_research_lane() -> DirectorPlan:
+        """A real, still-enforced hold: a zero-target lane, not the retired cap."""
+        plan = WorkloadPolicyActivationTests._selection_plan()
+        return plan.model_copy(update={
+            "assignments": [
+                *plan.assignments,
+                Assignment(
+                    sequence=3,
+                    agent=ProviderName.PERPLEXITY,
+                    kind=AssignmentKind.RESEARCH,
+                    workload_size=WorkSize.SHORT,
+                    effort_points=2,
+                    task="Find current public evidence for the bounded change",
+                    acceptance=["Report sources"],
+                    public_research_query="public evidence for the bounded change",
+                    requires_approval=True,
+                ),
+            ],
+        })
+
+    def test_real_plan_install_persists_selection_hold_without_dispatch_or_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "director.sqlite3"
+            settings = replace(Settings(), sqlite_path=str(path), allow_paid_runs=True,
+                openai_api_key="fixture", project_allowlist=("demo",),
+                repository_allowlist=("example/demo",),
+                trusted_provider_cost_ranks_json='{"cursor":1,"claude":2,"grok":3,"perplexity":4}',
+                claude_routine_url="https://example.invalid/claude", claude_routine_token="fixture",
+                cursor_api_key="fixture", grok_enabled=True, grok_api_key="fixture",
+                perplexity_enabled=True, perplexity_api_key="fixture")
+            store = TaskStore(path)
+            providers = {provider: Mock() for provider in
+                         (ProviderName.CLAUDE, ProviderName.CURSOR, ProviderName.GROK, ProviderName.PERPLEXITY)}
+            engine = OrchestrationEngine(settings, store, providers=providers)
+            from director_orchestrator import main
+            held_plan = self._selection_plan_with_ineligible_research_lane()
+            approved_plan = self._selection_plan().model_copy(update={
+                "owner_question": None, "approval_required": True,
+                "approval_reasons": ["Review selected plan"],
+            })
+            engine.director = Mock(plan=AsyncMock(side_effect=[held_plan, approved_plan]))
+            record = TaskRecord(task_id="DIR-SELECTION-HOLD", status=TaskStatus.QUEUED,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                intake=SlackIntake(source_event_id="selection-hold", channel_id="C1",
+                    thread_ts="1.1", user_id="U1", text="Implement and independently review the bounded change"))
+            store.create(record)
+            asyncio.run(engine.run(record.task_id))
+            held = store.get(record.task_id)
+            self.assertEqual(held.status, TaskStatus.OWNER_DECISION_REQUIRED, held.error)
+            self.assertEqual(held.message, WorkloadSelectionHold.code)
+            self.assertTrue(all(reason.startswith("allocation_profile_lane_ineligible:")
+                                 for reason in held.workload_selection_hold_reasons))
             self.assertEqual(held.provider_runs, [])
             self.assertEqual([event.kind for event in held.task_effect_ledger],
                              ["director_intent", "director_observation"])
@@ -639,25 +705,15 @@ class WorkloadPolicyActivationTests(unittest.TestCase):
                     OwnerApproval(owner_user_id="U1", note="Reconsider available routes",
                                   workload_selection_decision_digest=decision.digest))
             self.assertIsNone(store.get(record.task_id).plan)
-            asyncio.run(engine.run(record.task_id))
-            held = store.get(record.task_id)
-            self.assertEqual(held.message, WorkloadSelectionHold.code)
-            self.assertEqual(len(store.list_recent_direct_production(limit=50)), 19)
-            self.assertEqual(engine.director.plan.await_count, 2)
-            # Mature TEST credits permit a separately bound clarification to
-            # reach normal selected-plan approval; written input never waives caps.
-            self._seed_mature_selector_history(path)
-            with patch.object(main, "settings", settings):
-                main._consume_owner_decision(store, record.task_id,
-                    OwnerApproval(owner_user_id="U1", note="Reassess with the current ledger",
-                                  workload_selection_decision_digest=current_owner_decision(held).digest))
+            # The owner's clarification requests a fresh plan; a revised plan
+            # without the zero-target research lane installs normally.
             asyncio.run(engine.run(record.task_id))
             installed = store.get(record.task_id)
             self.assertEqual(installed.workload_selection_hold_reasons, [])
             self.assertEqual(current_owner_decision(installed).kind, "plan_approval", installed.error)
-            self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CLAUDE)
-            self.assertEqual(len(store.list_recent_direct_production(limit=50)), 38)
-            self.assertEqual(engine.director.plan.await_count, 3)
+            # Real trusted cost ranks select cursor; see the sibling PASS test.
+            self.assertEqual(installed.plan.assignments[0].agent, ProviderName.CURSOR)
+            self.assertEqual(engine.director.plan.await_count, 2)
             for provider in providers.values():
                 self.assertEqual(provider.mock_calls, [])
 
@@ -1062,3 +1118,5 @@ class DirectorAuthorshipBoundaryTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:58 UTC | END]]
+# [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]

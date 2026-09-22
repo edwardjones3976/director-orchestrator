@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | BEGIN]]
@@ -99,10 +104,14 @@ def inspect_runtime(expected_head):
             or not re.fullmatch(r"U[A-Z0-9]+", env.get("SLACK_OWNER_USER_ID", ""))
             or not env.get("SLACK_BOT_TOKEN") or not env.get("ORCHESTRATOR_SHARED_SECRET")):
         raise ValueError("Canonical runtime channel/identity/credentials unavailable")
+    # The public flags are resolved exactly as Settings resolves them (1/true/
+    # yes/on, defaults) through the same safe resolver revision_binding uses,
+    # so a spelling difference cannot split the flags from their binding.
+    resolved, _ = resolve_safe_configuration(env)
     public = {"container_id": item["Id"], "image_id": item["Image"],
         "runtime_head": expected_head, "started_at": item["State"].get("StartedAt"),
-        "offline_configured": env.get("LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED") == "true",
-        "paid_configured": env.get("ALLOW_PAID_RUNS") == "true"}
+        "offline_configured": resolved["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
+        "paid_configured": resolved["ALLOW_PAID_RUNS"]}
     return public, env
 
 
@@ -131,6 +140,9 @@ class Collector:
         elif url == API + "/health" or re.fullmatch(
                 re.escape(API) + r"/v1/(?:tasks/DIR-LG-[A-F0-9]+|primary/tasks/DIR-LG-[A-F0-9]+/deliveries)", url):
             token = self.env["ORCHESTRATOR_SHARED_SECRET"]
+            # The only permitted API query is the read-only readback opt-in on a task.
+            if params is not None and (params != READBACK_QUERY or "/v1/tasks/" not in url):
+                raise ValueError("Unsupported API query")
         else:
             raise ValueError("Unsupported source")
         started = utc()
@@ -238,7 +250,740 @@ def owner_pause(rows, wall, input_ts, final_ts):
         return None, None
 
 
-def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot, headers, channel):
+UNKNOWN = "UNKNOWN"
+READBACK_QUERY = {"include_qualification_evidence": "true"}
+READBACK_SCHEMA = "director-qualification-readback/v1"
+STATUS_RECEIPT_DEPENDENCY = "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
+SECTIONS = ("assignments", "provider_attempts", "effects", "reconciliation_events",
+            "slack_deliveries", "status_receipts", "provider_usage")
+DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
+
+
+def _identities(items, key):
+    return sorted({item[key] for item in items if isinstance(item, dict)
+                   and isinstance(item.get(key), str) and item[key]})
+
+
+def _typed_list(task, key):
+    return task.get(key) if isinstance(task.get(key), list) else None
+
+
+ATTEMPT_STATUSES = ("STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS")
+DELIVERY_STATES = ("PENDING", "POSTING", "ACKNOWLEDGED", "DELIVERED", "AMBIGUOUS", "REFUSED", "SUPPRESSED", "SUPERSEDED")
+IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
+# The exact top-level shape of the typed response-only readback; any other
+# key, or a missing one, means the response is not the contract this
+# collector understands and nothing is derived from it.
+READBACK_KEYS = frozenset({
+    "schema_version", "task_id", "engine_owner", "projection_version", "projection_digest", "source_event_id",
+    "execution_mode", "terminal_classification", "terminal_reason_code", "task_created_at", "task_updated_at",
+    "captured_at", "task_scope_counters", "snapshot", "bounds", "truncated", "absent", "complete",
+    "assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
+    "status_receipts", "provider_usage",
+})
+COUNTER_KEYS = ("thread_tasks", "assignments", "provider_attempts", "attempt_ordinals", "started_attempts",
+                "status_receipts", "effect_reservations")
+
+
+def _is_id(value):
+    return isinstance(value, str) and bool(IDENTITY.fullmatch(value))
+
+
+def _is_count(value):
+    return type(value) is int and value >= 0
+
+
+def _when(value):
+    """Timezone-aware datetime from an ISO string, or None when unusable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _validate_attempts(assignments, attempts):
+    """Bind every attempt event to its assignment/provider and its immutable attempt.
+
+    Returns (latest_valid_event_per_attempt, error). Events of one attempt
+    (assignment, ordinal) must share digest, idempotency/budget identity,
+    provider, format and transport; event sequences are unique and within the
+    producer's 1..3 contract; a digest never names two attempts. The latest
+    valid event settles the attempt, so an authenticated later SUCCEEDED
+    callback (event 3) supersedes an earlier AMBIGUOUS event 2.
+    """
+    by_assignment = {}
+    for row in assignments:
+        if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
+                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment
+                or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
+                                             "OWNER_DECISION_REQUIRED")):
+            return None, "malformed or duplicate assignment row"
+        for field in ("reservation_digest", "result_digest"):
+            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
+                return None, "malformed assignment digest"
+        by_assignment[row["assignment_id"]] = row
+    grouped = {}
+    for row in attempts:
+        key = (row.get("assignment_id"), row.get("attempt_ordinal"))
+        assignment = by_assignment.get(row.get("assignment_id"))
+        if assignment is None:
+            return None, "attempt does not join a listed assignment"
+        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
+                or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
+                or not _is_count(row.get("assignment_sequence"))
+                or row.get("status") not in ATTEMPT_STATUSES
+                or not DIGEST.fullmatch(str(row.get("attempt_digest", "")))
+                or not DIGEST.fullmatch(str(row.get("idempotency_key_digest", "")))
+                or not DIGEST.fullmatch(str(row.get("budget_evidence_digest", "")))
+                or not _is_id(row.get("provider_id")) or not _is_id(row.get("format_id"))
+                or not _is_id(row.get("transport_id")) or not _is_id(row.get("reason_code"))
+                or _when(row.get("recorded_at")) is None):
+            return None, "malformed attempt event"
+        if row["provider_id"] != assignment["provider_id"] or row["assignment_sequence"] != assignment["sequence"]:
+            return None, "attempt provider/sequence disagrees with its assignment"
+        for field in ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"):
+            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
+                return None, "malformed attempt digest"
+        # Event positions carry meaning: event 1 is the STARTED record; later
+        # events are settlements or ambiguity, and a settlement carries its
+        # outcome evidence (and, when SUCCEEDED, a result digest).
+        if row["event_sequence"] == 1 and row["status"] != "STARTED":
+            return None, "event 1 is not the STARTED record"
+        if row["event_sequence"] > 1 and row["status"] == "STARTED":
+            return None, "a later event repeats STARTED"
+        if row["status"] in ("SUCCEEDED", "FAILED") and row.get("outcome_evidence_digest") is None:
+            return None, "terminal event lacks outcome evidence"
+        if row["status"] == "SUCCEEDED" and row.get("result_digest") is None:
+            return None, "SUCCEEDED event lacks a result digest"
+        grouped.setdefault(key, []).append(row)
+    digests = {}
+    latest = {}
+    for key, events in grouped.items():
+        identity = {(e["attempt_digest"], e["idempotency_key_digest"], e["budget_evidence_digest"],
+                     e["provider_id"], e["format_id"], e["transport_id"]) for e in events}
+        sequences = [e["event_sequence"] for e in events]
+        if len(identity) != 1 or len(set(sequences)) != len(sequences):
+            return None, "attempt identity changed across its events or duplicate events"
+        digest_value = events[0]["attempt_digest"]
+        if digests.setdefault(digest_value, key) != key:
+            return None, "attempt digest reused by another attempt"
+        ordered = sorted(events, key=lambda e: e["event_sequence"])
+        if ordered[0]["event_sequence"] != 1:
+            return None, "attempt history lacks its STARTED event 1"
+        # Event 3 (authenticated callback settlement) may legitimately follow
+        # event 1 directly; event 2 is not fabricated to satisfy this check.
+        if any(_when(a["recorded_at"]) > _when(b["recorded_at"]) for a, b in zip(ordered, ordered[1:])):
+            return None, "attempt events are not recorded in sequence order"
+        latest[key] = ordered[-1]
+    return latest, None
+
+
+def _validate_effects(effects):
+    keys = set()
+    for row in effects:
+        if (not DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not DIGEST.fullmatch(str(row.get("claim_key", "")))
+                or not DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
+                or not DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
+                or not _is_id(row.get("writer_owner_id")) or not _is_count(row.get("fencing_generation"))
+                or not _is_count(row.get("reserved_units")) or _when(row.get("reserved_at")) is None):
+            return "malformed external-effect reservation identity"
+        if row["reservation_key"] in keys:
+            return "duplicate external-effect reservation"
+        keys.add(row["reservation_key"])
+        if (row.get("remote_identifier") is None) != (row.get("remote_system") is None):
+            return "remote binding lacks its system or identifier"
+        if row.get("remote_identifier") is not None and (not _is_id(row["remote_system"])
+                                                          or not isinstance(row["remote_identifier"], str)
+                                                          or not row["remote_identifier"].strip()
+                                                          or _when(row.get("bound_at")) is None):
+            return "malformed remote binding"
+        if row.get("terminal_disposition") is not None and (
+                not _is_id(row["terminal_disposition"]) or not DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
+                or _when(row.get("terminal_recorded_at")) is None):
+            return "terminal evidence lacks its digest or time"
+        for field in ("execution_started_at", "bound_at", "terminal_recorded_at"):
+            if row.get(field) is not None and _when(row[field]) is None:
+                return "malformed external-effect timestamp"
+    return None
+
+
+# Notification-key families exactly as the delivery producer builds them
+# (primary_slack_delivery.enqueue): the fixed terminal key, hold:<state digest>
+# and approval:<request digest>:<projection digest>, each digest being one
+# sha256-prefixed value. Generic identity bounds are not widened for these.
+NOTIFICATION_KEY_FAMILIES = (
+    ("terminal", re.compile(r"terminal\Z")),
+    ("hold", re.compile(r"hold:sha256:[a-f0-9]{64}\Z")),
+    ("approval", re.compile(r"approval:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}\Z")),
+)
+
+
+def notification_key_family(value):
+    """Return the producer family of a notification key, or None when malformed."""
+    if not isinstance(value, str):
+        return None
+    for family, pattern in NOTIFICATION_KEY_FAMILIES:
+        if pattern.fullmatch(value):
+            return family
+    return None
+
+
+def _validate_deliveries_and_receipts(deliveries, receipts):
+    if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
+        return "duplicate Slack delivery identity"
+    if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
+        return "duplicate Slack notification key"
+    for row in deliveries:
+        if (not _is_id(row.get("client_msg_id")) or notification_key_family(row.get("notification_key")) is None
+                or row.get("state") not in DELIVERY_STATES or not _is_count(row.get("readback_attempts"))
+                or _when(row.get("created_at")) is None):
+            return "malformed Slack delivery row"
+        if row.get("owner_decision") not in (None, "approve", "reject"):
+            return "malformed Slack delivery row"
+        if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
+            return "owner decision recorded on a non-approval notification"
+        for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
+            if row.get(field) is not None and _when(row[field]) is None:
+                return "malformed Slack delivery timestamp"
+        if row.get("slack_ts") is not None and not TS.fullmatch(str(row["slack_ts"])):
+            return "malformed Slack delivery timestamp"
+    if len({r.get("receipt_id") for r in receipts}) != len(receipts):
+        return "duplicate status receipt identity"
+    for row in receipts:
+        if not _is_id(row.get("receipt_id")) or not isinstance(row.get("source_event_id"), str) \
+                or not row["source_event_id"] or _when(row.get("created_at")) is None:
+            return "malformed status receipt row"
+    return None
+
+
+def _validate_usage(usage_rows, latest):
+    """Usage joins exactly one valid attempt of the same provider, never twice."""
+    seen = set()
+    for row in usage_rows:
+        digest_value = row.get("attempt_digest")
+        owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
+        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
+                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
+                                                            "reserved_microusd", "token_limit"))):
+            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
+        seen.add(digest_value)
+    return None
+
+
+def _has_nonfinite(value):
+    """JSON payloads may carry NaN/Infinity tokens; no numeric field may be non-finite."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, float):
+        return value != value or value in (float("inf"), float("-inf"))
+    if isinstance(value, dict):
+        return any(_has_nonfinite(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_nonfinite(v) for v in value)
+    return False
+
+
+def _typed_readback_error(readback, task_id):
+    """Strict JSON-shape validation through the existing typed readback model.
+
+    ``QualificationEvidenceReadback`` (models.py) is validated in strict JSON
+    mode so nested shapes, unknown keys, bool/string count coercion and naive
+    or malformed timestamps are refused by the product model itself; the
+    checks below add only what the model cannot express: this task's binding,
+    the collector's schema/counter contract, non-finite numbers, ordered
+    timezone-aware times, complete/truncated consistency, known section names
+    and counter/row relationships. Diagnostics never echo the payload.
+    """
+    from pydantic import ValidationError
+    from director_orchestrator.models import QualificationEvidenceReadback
+    if not isinstance(readback, dict) or set(readback) != READBACK_KEYS:
+        return "readback shape/task binding mismatch"
+    if _has_nonfinite(readback):
+        return "readback carries a non-finite number"
+    try:
+        typed = QualificationEvidenceReadback.model_validate_json(json.dumps(readback), strict=True)
+    except (ValidationError, ValueError, TypeError) as error:
+        if not isinstance(error, ValidationError):
+            return "readback is not serializable JSON"
+        # Locations only; values never surface in the observation.
+        places = sorted({".".join(str(p) for p in item.get("loc", ())) for item in error.errors()})[:5]
+        return "readback rejected by the typed model at " + (",".join(places) or "document")
+    if typed.task_id != task_id or typed.schema_version != READBACK_SCHEMA:
+        return "readback shape/task binding mismatch"
+    if set(readback["task_scope_counters"]) != set(COUNTER_KEYS) \
+            or not all(_is_count(readback["task_scope_counters"][k]) for k in COUNTER_KEYS):
+        return "readback counter contract mismatch"
+    for field in ("captured_at", "task_updated_at", "task_created_at"):
+        if _when(readback.get(field)) is None:
+            return "readback timestamp is missing, naive or malformed: " + field
+    if not (_when(readback["task_created_at"]) <= _when(readback["task_updated_at"]) <= _when(readback["captured_at"])):
+        return "readback times are not ordered created <= updated <= captured"
+    for name in ("truncated", "absent"):
+        values = readback[name]
+        if len(set(values)) != len(values) or any(v not in SECTIONS and v != "response_bytes" for v in values):
+            return "readback names an unknown or duplicate section under " + name
+    if readback["complete"] != (not readback["truncated"]):
+        return "readback completeness disagrees with its truncated sections"
+    if any(readback[name] for name in readback["absent"] if name in SECTIONS):
+        return "readback reports rows for an absent section"
+    bounds = readback["bounds"]
+    if not (0 <= float(bounds["elapsed_seconds"]) <= float(bounds["wall_seconds"])):
+        return "readback elapsed time exceeds its declared bound"
+    if any(len(readback[name]) > int(bounds["row_limit"]) for name in SECTIONS):
+        return "readback section exceeds its declared row limit"
+    return None
+
+
+def _counter_consistency_error(readback):
+    """A complete readback's task-scope counters must agree with its own rows."""
+    if not readback["complete"]:
+        return None
+    counters = readback["task_scope_counters"]
+    events = readback["provider_attempts"]
+    expected = {"assignments": len(readback["assignments"]), "provider_attempts": len(events),
+                "attempt_ordinals": len({(e.get("assignment_id"), e.get("attempt_ordinal")) for e in events}),
+                "started_attempts": sum(1 for e in events if e.get("status") == "STARTED"),
+                "status_receipts": len(readback["status_receipts"]),
+                "effect_reservations": len(readback["effects"])}
+    if any(counters[key] != value for key, value in expected.items()) or counters["thread_tasks"] < 1:
+        return "readback counters disagree with its complete rows"
+    return None
+
+
+def _readback(task_id, task):
+    """Accept the typed opt-in readback only when it is bound and internally consistent."""
+    readback = task.get("qualification_evidence")
+    if readback is None:
+        return None, None, "absent", "opt-in readback not present in the task response"
+    error = _typed_readback_error(readback, task_id)
+    if error is not None:
+        return None, None, "rejected", error
+    latest, error = _validate_attempts(readback["assignments"], readback["provider_attempts"])
+    if error is None:
+        error = _validate_usage(readback["provider_usage"], latest)
+    if error is None:
+        error = _validate_effects(readback["effects"])
+    if error is None:
+        error = _validate_deliveries_and_receipts(readback["slack_deliveries"], readback["status_receipts"])
+    if error is None:
+        error = _counter_consistency_error(readback)
+    if error is not None:
+        return None, None, "rejected", error
+    if not readback["complete"]:
+        return readback, latest, "incomplete", "readback truncated: " + ",".join(map(str, readback.get("truncated", [])))
+    return readback, latest, "collected", None
+
+
+def _provider_effect_state(latest):
+    """Aggregate the latest valid event of every attempt; any open uncertainty wins."""
+    if not latest:
+        return "ZERO_PROVIDER_ATTEMPT"
+    statuses = {e["status"] for e in latest.values()}
+    if "AMBIGUOUS" in statuses:
+        return "PROVIDER_ATTEMPT_AMBIGUOUS"
+    if "STARTED" in statuses:
+        return "PROVIDER_ATTEMPT_STARTED_UNSETTLED"
+    return "PROVIDER_RESULT_RECORDED"
+
+
+def _effect_row_state(row):
+    if row.get("terminal_disposition"):
+        return "TERMINAL:" + str(row["terminal_disposition"])
+    if row.get("execution_started_at") and not row.get("remote_identifier"):
+        return "AMBIGUOUS"
+    if row.get("remote_identifier"):
+        return "BOUND_UNCONFIRMED"
+    return "RESERVED_NO_EFFECT"
+
+
+def _external_effect_state(effects):
+    """Aggregate every reservation; one terminal sibling never hides another."""
+    if not effects:
+        return "NO_EXTERNAL_EFFECT_RESERVATION"
+    states = {_effect_row_state(r) for r in effects}
+    if "AMBIGUOUS" in states:
+        return "EXTERNAL_EFFECT_AMBIGUOUS"
+    if "BOUND_UNCONFIRMED" in states:
+        return "EXTERNAL_EFFECT_BOUND_UNCONFIRMED"
+    terminal = sorted(s.removeprefix("TERMINAL:") for s in states if s.startswith("TERMINAL:"))
+    if "RESERVED_NO_EFFECT" in states and terminal:
+        return "EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:" + ",".join(terminal)
+    if terminal:
+        return "EXTERNAL_EFFECT_TERMINAL:" + ",".join(terminal)
+    return "EXTERNAL_EFFECT_RESERVED_NO_EFFECT"
+
+
+def qualification_evidence(task_id, task, rows, rows_bound, input_message, final, *, baseline=None, receipt_id=None,
+                           baseline_authority="caller-supplied-file", before_binding=None, after_binding=None):
+    """Section 4 correlation chain derived from the typed opt-in readback.
+
+    Identities come from real persisted keys: assignment_id/sequence, attempt
+    digest/ordinal, effect reservation/effect_key digests, Slack delivery
+    client_msg_id and status receipt_id are kept as distinct families. Nothing
+    here manufactures a receipt, an attempt or a cost; an absent, rejected or
+    truncated readback leaves the derived facts null with the stated reason.
+    """
+    intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
+    outcomes = _typed_list(task, "assignment_outcomes") or []
+    history = _typed_list(task, "provider_run_history")
+    contacts = _typed_list(task, "provider_contact_attempts")
+    readback, latest, state, reason = _readback(task_id, task)
+    collected = state == "collected"
+    # Only a complete, validated readback yields derived identities, states or
+    # amounts: the chain below never falls back to the ordinary TaskRecord
+    # projection or the separate deliveries endpoint, because those are not
+    # the validated single-snapshot join. An incomplete readback keeps its raw
+    # diagnostics under the readback block, explicitly marked partial.
+    latest = latest if collected else {}
+    effects = readback["effects"] if collected else []
+    deliveries = readback["slack_deliveries"] if collected else []
+    receipts = readback["status_receipts"] if collected else []
+    usage_rows = readback["provider_usage"] if collected else []
+    # Ordinary, unjoined context from the task record and deliveries endpoint,
+    # reported separately and never as qualification evidence.
+    unjoined = {
+        "assignment_sequences": sorted({int(o["assignment_sequence"]) for o in outcomes
+                                        if isinstance(o, dict) and type(o.get("assignment_sequence")) is int}),
+        "provider_result_digests": _identities(outcomes, "provider_result_digest"),
+        "provider_routes": _identities(outcomes, "provider"),
+        "delivery_ids": _identities(rows, "client_msg_id") if rows_bound else [],
+        "note": "ordinary task-record/deliveries context; not the validated snapshot join",
+    }
+    terminal = [r for r in deliveries if r.get("notification_key") == "terminal"]
+    delivery = terminal[0] if len(terminal) == 1 else {}
+    delivery_states = {str(r.get("state")) for r in deliveries}
+    settled = [e for e in latest.values() if e["status"] in ("SUCCEEDED", "FAILED")]
+    provider_state = _provider_effect_state(latest) if collected else None
+    external_state = _external_effect_state(effects) if collected else None
+    if not collected:
+        effect_state = None
+    elif ("AMBIGUOUS" in delivery_states or provider_state == "PROVIDER_ATTEMPT_AMBIGUOUS"
+            or external_state in ("EXTERNAL_EFFECT_AMBIGUOUS", "EXTERNAL_EFFECT_BOUND_UNCONFIRMED")):
+        effect_state = "AMBIGUOUS_DELIVERY_EFFECT"
+    elif not latest and not any(r.get("execution_started_at") for r in effects):
+        effect_state = "ZERO_PROVIDER_EFFECT"
+    elif provider_state == "PROVIDER_RESULT_RECORDED" and any(e["status"] == "SUCCEEDED" for e in latest.values()):
+        effect_state = "PROVIDER_EFFECT_RECORDED"
+    else:
+        effect_state = None
+    if usage_rows:
+        # Validated in _readback: unique, joined to a valid attempt of the same
+        # provider, exact non-negative integers. Amount families stay separate.
+        measured_cost, cost_basis = sum(r["actual_microusd"] for r in usage_rows) / 1_000_000, "authenticated_usage_table"
+        usage = {"authenticated_microusd": sum(r["actual_microusd"] for r in usage_rows),
+                 "observed_tokens": sum(r["observed_tokens"] for r in usage_rows),
+                 "reserved_budget_microusd": sum(r["reserved_microusd"] for r in usage_rows),
+                 "attempt_digests": _identities(usage_rows, "attempt_digest"),
+                 "invoice_charge": UNKNOWN, "local_estimate_usd": None}
+    elif collected:
+        # A top-level task cost is an unbound provider-reported figure: only a
+        # complete, validated readback may carry it, as a finite non-negative
+        # non-boolean number; it is never an authenticated accounting amount.
+        cost = task.get("actual_cost_usd")
+        measured_cost = cost if type(cost) in (int, float) and cost == cost and cost not in (float("inf"),) \
+            and cost >= 0 else None
+        cost_basis = "provider_reported" if measured_cost is not None else UNKNOWN
+        usage = task.get("usage") if isinstance(task.get("usage"), dict) else None
+    else:
+        measured_cost, cost_basis, usage = None, UNKNOWN, None
+    ordinals = sorted(latest)
+    per_assignment = {}
+    for assignment_id, ordinal in ordinals:
+        per_assignment.setdefault(assignment_id, []).append(ordinal)
+    retried = any(len(v) > 1 for v in per_assignment.values())
+    # No producer records fallback linkage (every attempt is bound to its
+    # assignment's immutable provider), so fallback is UNKNOWN, not inferred.
+    fallback = None
+    completion = max((str(e["recorded_at"]) for e in settled), default=None)
+    counters = readback.get("task_scope_counters") if collected else None
+    if collected and baseline is not None and receipt_id is not None:
+        delta = status_receipt_delta(baseline, readback, receipt_id, baseline_authority=baseline_authority,
+                                     before_binding=before_binding, after_binding=after_binding)
+    elif baseline is not None:
+        delta = {"proof": None, "observed_delta": None,
+                 "reason": "after readback not collected or receipt identity missing"}
+    else:
+        delta = None
+    return {
+        "readback": {"state": state, "reason": reason,
+                     "source": (API + "/v1/tasks/" + task_id + "?include_qualification_evidence=true")
+                     if readback is not None else None,
+                     "complete": readback.get("complete") if readback else None,
+                     "truncated": list(readback.get("truncated", [])) if readback else [],
+                     "absent": list(readback.get("absent", [])) if readback else [],
+                     "snapshot": readback.get("snapshot") if readback else None,
+                     "projection_digest": readback.get("projection_digest") if readback else None,
+                     "engine_owner": readback.get("engine_owner") if readback else None,
+                     "captured_at": str(readback["captured_at"]) if readback and readback.get("captured_at") else None,
+                     "task_updated_at": str(readback["task_updated_at"]) if readback and readback.get("task_updated_at") else None,
+                     "task_scope_counters": counters,
+                     "status_receipt_rows": [{"receipt_id": r.get("receipt_id"), "created_at": str(r.get("created_at"))}
+                                             for r in receipts],
+                     "partial_diagnostics": ({"row_counts": {name: len(readback[name]) for name in SECTIONS},
+                                              "not_proof": True} if state == "incomplete" else None)},
+        "unjoined_context": unjoined,
+        "chain": {
+            "source_event_id_sha256": digest(encode(intake["source_event_id"]))
+                if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
+            "task_id": task_id,
+            "assignment_ids": _identities(readback["assignments"], "assignment_id") if collected else [],
+            "assignment_sequences": sorted({int(r["sequence"]) for r in readback["assignments"]}) if collected else [],
+            "attempt_ids": sorted({e["attempt_digest"] for e in latest.values()}),
+            "effect_ids": _identities(effects, "effect_key_digest"),
+            "delivery_ids": _identities(deliveries, "client_msg_id"),
+            "approval_delivery_keys": sorted(r["notification_key"] for r in deliveries
+                                             if notification_key_family(r.get("notification_key")) == "approval"),
+            "status_receipt_ids": _identities(receipts, "receipt_id"),
+            "provider_result_digests": _identities(settled, "result_digest"),
+            "slack_delivery_ts": delivery.get("slack_ts") if TS.fullmatch(str(delivery.get("slack_ts", ""))) else None,
+            "slack_readback_state": delivery.get("state") if isinstance(delivery.get("state"), str) else None,
+        },
+        "timestamps": {
+            "request_ts": input_message.get("ts") if input_message else None,
+            "first_byte_at": None,
+            "completion_at": completion,
+            "validation_at": None,
+            "delivery_at": str(delivery["acknowledged_at"]) if delivery.get("acknowledged_at") else None,
+            "readback_at": str(delivery["delivered_at"]) if delivery.get("delivered_at") else None,
+            "unknown_reasons": {"first_byte_at": "no producer records provider first-byte time",
+                                "validation_at": "no producer records a separate validation time",
+                                **({"completion_at": "no settled provider attempt row"} if completion is None else {})},
+        },
+        "lineage": {
+            "provider_routes": sorted({e["provider_id"] for e in latest.values()}),
+            "transport": ",".join(sorted({e["transport_id"] for e in latest.values()})) or None,
+            "recorded_attempt_count": len(ordinals) if collected else None,
+            "retry_observed": retried if latest else None,
+            "attempt_history_count": len(history) if history is not None else None,
+            "contact_attempt_count": len(contacts) if contacts is not None else None,
+            "fallback_observed": fallback,
+        },
+        "effect_state": effect_state,
+        "provider_effect_state": provider_state,
+        "external_effect_state": external_state,
+        "usage": {"actual_usage": usage, "actual_cost_usd": measured_cost, "cost_basis": cost_basis},
+        "status_receipts": {"tasks_created": delta.get("tasks_created") if delta else None,
+                            "assignments_created": delta.get("assignments_created") if delta else None,
+                            "provider_attempts_created": delta.get("provider_attempts_created") if delta else None,
+                            # Only an observed replay (proof) is a deduplication result; a
+                            # durable row count alone is reported under durable_receipt_rows.
+                            "deduplicated_receipts": delta.get("deduplicated_receipts") if delta and delta.get("proof")
+                            else None,
+                            "durable_receipt_rows": len(receipts) if collected else None,
+                            "counter_scope": "task-and-thread-local; not a global zero-work claim",
+                            "task_scope_counters": counters,
+                            "baseline": delta,
+                            "baseline_provenance": None,
+                            "dependency": STATUS_RECEIPT_DEPENDENCY},
+        "allocation": {"rolling_twenty": UNKNOWN, "deviation_from_target_points": None},
+        "revision_binding": None,
+        "terminal_message_ts": final.get("ts") if final else None,
+    }
+
+
+# Safe effective-configuration values: an explicit allowlist of switches and
+# route/profile selectors whose values are never secrets. Anything outside it
+# (tokens, secrets, DSNs, allowlists, identities, unknown keys) is excluded by
+# construction, so the digest can bind value drift of these keys without ever
+# hashing or emitting confidential material. It is a read-time binding of this
+# bounded scope, not the native account/credential pin.
+# The public configuration fields this collector resolves, with the exact
+# semantics config.Settings applies to them (declared here so the resolution is
+# reproducible without instantiating host-ambient Settings or reading .env):
+#   bool  -> value.strip().lower() in {"1","true","yes","on"}, default False
+#   str   -> value.strip(), declared default
+#   profile -> value.strip().lower(), default DEFAULT_ALLOCATION_PROFILE, must
+#            name an allocation profile (Settings rejects anything else)
+# Secret-bearing or unknown keys are excluded by construction and never read.
+CONFIGURATION_SCOPE = "supplied-public-configuration-resolved-with-declared-defaults/v1"
+SAFE_BOOL_KEYS = (
+    "ALLOW_PAID_RUNS",
+    "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
+    "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED",
+    "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+)
+SAFE_STRING_DEFAULTS = {"LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "director_primary_v1"}
+SAFE_PROFILE_KEY = "INTAKE_ALLOCATION_PROFILE"
+SAFE_CONFIGURATION_KEYS = SAFE_BOOL_KEYS + tuple(SAFE_STRING_DEFAULTS) + (SAFE_PROFILE_KEY,)
+SCHEMA_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
+
+
+def resolve_safe_configuration(env):
+    """Resolve the public fields exactly as Settings would, from a supplied mapping."""
+    from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE
+    resolved, supplied = {}, []
+    for key in SAFE_CONFIGURATION_KEYS:
+        raw = env.get(key)
+        if raw is not None:
+            if not isinstance(raw, str) or len(raw) > 256 or any(ord(c) < 32 for c in raw):
+                raise ValueError("Malformed configuration value for " + key)
+            supplied.append(key)
+        if key in SAFE_BOOL_KEYS:
+            resolved[key] = False if raw is None else raw.strip().lower() in {"1", "true", "yes", "on"}
+        elif key == SAFE_PROFILE_KEY:
+            profile = DEFAULT_ALLOCATION_PROFILE if raw is None else raw.strip().lower()
+            if profile not in ALLOCATION_PROFILES:
+                raise ValueError("Unknown allocation profile")
+            resolved[key] = profile
+        else:
+            value = SAFE_STRING_DEFAULTS[key] if raw is None else raw.strip()
+            if not SCHEMA_NAME.fullmatch(value):
+                raise ValueError("Malformed configuration value for " + key)
+            resolved[key] = value
+    return resolved, supplied
+
+
+def safe_configuration_digest(env):
+    """Digest of the resolved public fields; malformed or unknown profiles refuse."""
+    resolved, supplied = resolve_safe_configuration(env)
+    return digest(encode({"scope": CONFIGURATION_SCOPE, "resolved": resolved})), sorted(resolved), sorted(supplied)
+
+
+def revision_binding(runtime, env):
+    """Read-time revision identity plus the bounded public configuration binding.
+
+    The digest covers the resolved public fields (declared defaults applied,
+    Settings types and normalization), so a changed profile or switch changes
+    it while an omitted field equal to its default does not. It is not the
+    native account/credential pin and not an execution-time binding: no
+    producer records the configuration in force when the task executed.
+    """
+    resolved, _ = resolve_safe_configuration(env)
+    # The emitted public flags and the digest come from the same resolver, so
+    # equivalent spellings (1/true/yes/on) and declared defaults agree.
+    public = {"runtime_head": runtime.get("runtime_head"), "image_id": runtime.get("image_id"),
+              "offline_configured": resolved["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
+              "paid_configured": resolved["ALLOW_PAID_RUNS"]}
+    configuration_digest, keys, supplied = safe_configuration_digest(env)
+    return {**public, "configuration_digest": digest(encode({**public, "safe_configuration_digest": configuration_digest})),
+            "configuration_scope": CONFIGURATION_SCOPE,
+            "configuration_keys": keys,
+            "supplied_keys": supplied,
+            "execution_time_binding": UNKNOWN,
+            "execution_time_reason": "no producer records the configuration in force at execution time"}
+
+
+COUNTER_SCOPE_VERSION = "task-and-thread-local/v1"
+SAME_PROCESS_AUTHORITY = "same-process-authenticated-reads"
+
+
+def baseline_from_receipt(receipt, task_id):
+    """Rebuild a readback-like baseline from a prior collector receipt's trial.
+
+    The prior receipt must first be a schema-valid observation with a
+    collected readback for this task; only then are the raw snapshot facts the
+    collector recorded (counters, capture time, receipt rows, revision and
+    configuration binding) reused. Validity is a consistency check, not
+    authentication: a file-supplied baseline can never yield authoritative
+    proof, only an explicitly limited observed delta.
+    """
+    try:
+        validate_observations(receipt)
+    except (jsonschema.ValidationError, TypeError, AttributeError):
+        return None
+    for trial in receipt.get("trials", []):
+        evidence = trial.get("qualification_evidence") if isinstance(trial, dict) else None
+        block = (evidence or {}).get("readback")
+        if not isinstance(block, dict) or trial.get("task_id") != task_id or block.get("state") != "collected":
+            continue
+        return {"schema_version": READBACK_SCHEMA, "task_id": task_id, "engine_owner": block.get("engine_owner"),
+                "complete": block.get("complete"), "task_scope_counters": block.get("task_scope_counters"),
+                "task_updated_at": block.get("task_updated_at"), "captured_at": block.get("captured_at"),
+                "source_event_id_sha256": (evidence.get("chain") or {}).get("source_event_id_sha256"),
+                "status_receipts": block.get("status_receipt_rows") or [],
+                "revision_binding": evidence.get("revision_binding")}
+    return None
+
+
+def status_receipt_delta(before, after, receipt_id, *, baseline_authority="caller-supplied-file",
+                         before_binding=None, after_binding=None):
+    """Prospective status-only evidence from two readbacks around one receipt.
+
+    Both documents must be complete typed readbacks of the same task, source
+    event and engine with the same counter scope version, the same runtime
+    head/image and the same declared configuration scope/key set/digest, in
+    order: before capture < receipt creation <= after capture, all
+    timezone-aware. The receipt must join exactly once in the after readback
+    and be absent from the baseline; no counter may decrease and exactly one
+    durable receipt row is added. Anything missing, malformed, duplicate,
+    foreign, stale, negative or truncated is refused as evidence.
+
+    Consistency is not authentication. Only readbacks obtained by this same
+    process through the authenticated GET (``baseline_authority`` ==
+    SAME_PROCESS_AUTHORITY, as the signed synthetic test sequence does) yield
+    ``proof``; a caller-supplied baseline file, however consistent, yields an
+    explicitly limited ``observed_delta`` with ``proof`` UNKNOWN, because no
+    existing mechanism authenticates a saved file and no signing framework is
+    added here.
+    """
+    def refused(reason):
+        return {"proof": None, "observed_delta": None, "reason": reason}
+
+    def readback(document):
+        if (not isinstance(document, dict) or document.get("schema_version") != READBACK_SCHEMA
+                or document.get("complete") is not True or not isinstance(document.get("task_scope_counters"), dict)
+                or set(document["task_scope_counters"]) != set(COUNTER_KEYS)
+                or not all(_is_count(document["task_scope_counters"][k]) for k in COUNTER_KEYS)
+                or not isinstance(document.get("status_receipts"), list)
+                or any(not isinstance(r, dict) for r in document["status_receipts"])):
+            return None
+        return document
+    first, second = readback(before), readback(after)
+    if first is None or second is None:
+        return refused("baseline or after readback missing, truncated, or without complete counters")
+    if first.get("task_id") != second.get("task_id") or first.get("engine_owner") != second.get("engine_owner"):
+        return refused("baseline and after readbacks describe different tasks or engines")
+    before_source = first.get("source_event_id_sha256") or (
+        digest(encode(first["source_event_id"])) if isinstance(first.get("source_event_id"), str) else None)
+    after_source = digest(encode(second["source_event_id"])) if isinstance(second.get("source_event_id"), str) else None
+    if before_source is None or after_source is None or before_source != after_source:
+        return refused("baseline and after readbacks are bound to different or unknown source events")
+    binding_fields = ("runtime_head", "image_id", "configuration_scope", "configuration_keys", "configuration_digest")
+    if not isinstance(before_binding, dict) or not isinstance(after_binding, dict) or any(
+            before_binding.get(f) is None or before_binding.get(f) != after_binding.get(f) for f in binding_fields):
+        return refused("runtime head/image or configuration scope/key set/digest differ or are missing")
+    updated_before, updated_after = _when(first.get("task_updated_at")), _when(second.get("task_updated_at"))
+    if updated_before is None or updated_after is None or updated_before > updated_after:
+        return refused("baseline is newer than the after readback or timestamps are unusable")
+    matches = [r for r in second["status_receipts"] if r.get("receipt_id") == receipt_id]
+    if len(matches) != 1 or any(r.get("receipt_id") == receipt_id for r in first["status_receipts"]):
+        return refused("receipt does not join exactly once after, or was already present in the baseline")
+    receipt = matches[0]
+    captured_before, created, captured_after = (_when(first.get("captured_at")), _when(receipt.get("created_at")),
+                                                _when(second.get("captured_at")))
+    if captured_before is None or created is None or captured_after is None \
+            or not (captured_before < created <= captured_after):
+        return refused("required order before-capture < receipt-creation <= after-capture does not hold")
+    a, b = first["task_scope_counters"], second["task_scope_counters"]
+    delta = {k: b[k] - a[k] for k in COUNTER_KEYS}
+    if any(v < 0 for v in delta.values()):
+        return refused("negative counter delta")
+    if delta["status_receipts"] != 1:
+        return refused("durable receipt delta is not exactly one")
+    observed = {"tasks_created": delta["thread_tasks"], "assignments_created": delta["assignments"],
+                "provider_attempts_created": delta["attempt_ordinals"],
+                "provider_attempt_events_added": delta["provider_attempts"],
+                "started_attempts_created": delta["started_attempts"], "durable_receipts_added": delta["status_receipts"],
+                "counter_scope": COUNTER_SCOPE_VERSION, "baseline_captured_at": str(first["captured_at"]),
+                "receipt_created_at": str(receipt["created_at"]), "after_captured_at": str(second["captured_at"])}
+    if baseline_authority != SAME_PROCESS_AUTHORITY:
+        return {"proof": None, "observed_delta": observed, "authority": str(baseline_authority),
+                "reason": "baseline is caller-supplied; no existing mechanism authenticates a saved file, "
+                          "so the consistent observed delta is not authoritative proof"}
+    return {"proof": True, "observed_delta": observed, "authority": SAME_PROCESS_AUTHORITY, "reason": None,
+            "tasks_created": observed["tasks_created"], "assignments_created": observed["assignments_created"],
+            "provider_attempts_created": observed["provider_attempts_created"],
+            "started_attempts_created": observed["started_attempts_created"], "deduplicated_receipts": 1,
+            "counter_scope": COUNTER_SCOPE_VERSION, "baseline_captured_at": observed["baseline_captured_at"],
+            "receipt_created_at": observed["receipt_created_at"]}
+
+
+def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot, headers, channel,
+              *, baseline=None, receipt_id=None, baseline_authority="caller-supplied-file",
+              before_binding=None, after_binding=None):
     """Summarize observed source data; this cannot create scorecard observations."""
     task = task if isinstance(task, dict) else {}
     intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
@@ -317,7 +1062,11 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "simulation_charge_basis": "offline double outcomes and empty exposed attempt/interaction lists; not billing or complete runtime-attempt authority",
         "actual_cost_usd": None, "operational_provider_attempts_verified": None,
         "independent_correctness_verified": None, "global_task_deduplication_verified": None,
-        "execution_image_binding_verified": None, "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED"}
+        "execution_image_binding_verified": None, "verdict": "EVIDENCE_ONLY_NOT_QUALIFIED",
+        "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final,
+                                                         baseline=baseline, receipt_id=receipt_id,
+                                                         baseline_authority=baseline_authority,
+                                                         before_binding=before_binding, after_binding=after_binding)}
 
 
 RUBRIC_REQUIREMENTS = {
@@ -375,13 +1124,28 @@ def main(argv=None):
     parser.add_argument("--rubric", type=Path, required=True)
     parser.add_argument("--private-dir", type=Path, help="Optional new private directory; sensitive originals are withheld")
     parser.add_argument("--output-dir", type=Path, required=True, help="New directory; existing reports are never overwritten")
+    parser.add_argument("--status-baseline", type=Path, help="Prior collector receipt captured before a status mention")
+    parser.add_argument("--status-receipt-id", help="Durable receipt_id of that status mention")
     args = parser.parse_args(argv)
     trials, records, collector, created = [], [], None, False
+    baseline_receipt, baseline_provenance = None, None
     try:
         if not HEAD.fullmatch(args.expected_head):
             raise ValueError("Expected head must be a full lowercase SHA")
         trials = parse_trials(args.trial)
         rubric, rubric_digest = load_rubric(args.rubric)
+        if (args.status_baseline is None) != (args.status_receipt_id is None):
+            raise ValueError("A status baseline and its receipt identity are supplied together")
+        if args.status_baseline is not None:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", args.status_receipt_id):
+                raise ValueError("Malformed status receipt identity")
+            with args.status_baseline.open("rb") as handle:
+                raw_baseline = handle.read(MAX_BYTES + 1)
+            if len(raw_baseline) > MAX_BYTES:
+                raise ValueError("Status baseline exceeds byte bound")
+            baseline_receipt = json.loads(raw_baseline)
+            baseline_provenance = {"file_sha256": digest(raw_baseline),
+                                   "authentication": "caller-supplied prior collector receipt; digest recorded, not self-authenticating"}
         args.output_dir.mkdir(parents=True, exist_ok=False)
         created = True
         if args.private_dir is not None:
@@ -410,21 +1174,33 @@ def main(argv=None):
                         "verdict": "COLLECTION_UNAVAILABLE"})
                     continue
                 try:
-                    task, headers = collector.get(API + "/v1/tasks/" + task_id)
+                    # The opt-in readback rides the same authenticated GET; the
+                    # ordinary record is unchanged and the projection is read-only.
+                    task, headers = collector.get(API + "/v1/tasks/" + task_id, params=dict(READBACK_QUERY))
                 except (ValueError, httpx.HTTPError):
                     errors.append("task_api_unavailable")
                 try:
                     deliveries, _ = collector.get(API + "/v1/primary/tasks/" + task_id + "/deliveries")
                 except (ValueError, httpx.HTTPError):
                     errors.append("delivery_api_unavailable")
+                baseline = baseline_from_receipt(baseline_receipt, task_id) if baseline_receipt is not None else None
+                binding = revision_binding(before, env)
                 row = summarize(thread, task_id, task, deliveries, messages, complete,
-                    env["SLACK_OWNER_USER_ID"], bot, headers, env["SLACK_DIRECTOR_CHANNEL_ID"])
+                    env["SLACK_OWNER_USER_ID"], bot, headers, env["SLACK_DIRECTOR_CHANNEL_ID"],
+                    baseline=baseline if baseline is not None else ({} if baseline_receipt is not None else None),
+                    receipt_id=args.status_receipt_id, baseline_authority="caller-supplied-file",
+                    before_binding=(baseline or {}).get("revision_binding"), after_binding=binding)
+                if baseline_receipt is not None:
+                    row["qualification_evidence"]["status_receipts"]["baseline_provenance"] = baseline_provenance
                 # The owner's matched source event commits the rubric bytes before
                 # dispatch. A backdated or subsequently edited rubric cannot pass.
                 markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", (task or {}).get("intake", {}).get("text", ""))
                 row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
                 row["rubric_evaluation"] = evaluate_rubric(row, rubric, rubric_digest)
                 row["source_errors"] = errors + ([error] if error else [])
+                # Read-time revision/configuration identity, not proof of the
+                # image that executed the task (see limitations).
+                row["qualification_evidence"]["revision_binding"] = binding
                 records.append(row)
         stable = None
         try:
@@ -453,7 +1229,8 @@ def main(argv=None):
                 "Complete bounded replies are a snapshot, not assurance against a later duplicate or edit.",
                 "Simulation zero-call support is separate from actual billing; unknown actual cost remains null.",
                 "Structural correctness is not provider answer quality or complete operational-attempt evidence.",
-                "Private capture is optional, uses platform access controls and withholds sensitive originals; copied receipts are not self-authenticating."]}
+                "Private capture is optional, uses platform access controls and withholds sensitive originals; copied receipts are not self-authenticating.",
+                "Qualification evidence links only exposed identities; provider first-byte/completion/validation times, transport, fallback, status receipts and allocation remain UNKNOWN until their collectors exist."]}
         path = args.output_dir / "receipt.json"
         validate_observations(report)
         serialized = encode(report) + b"\n"
@@ -490,3 +1267,8 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 10:24 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 | 2026-09-14 | 20:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]

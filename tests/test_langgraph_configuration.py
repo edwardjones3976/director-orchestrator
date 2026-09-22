@@ -1,3 +1,5 @@
+# [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | BEGIN]]
+# Fallback-author correction: relative-vs-absolute import scan only.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:17 UTC | BEGIN]]
@@ -27,6 +29,29 @@ from director_orchestrator.config import Settings, langgraph_resume_claim_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _absolute_imported_module_names(source: str) -> set[str]:
+    """Module names from absolute imports only.
+
+    ``ast.ImportFrom.module`` never includes the leading dots of a relative
+    import, so ``from .langgraph_postgres import X`` and the external
+    ``langgraph`` package both surface as a name starting with ``langgraph``
+    unless the node's ``level`` (dot count) is checked. Repository-relative
+    imports (``level > 0``) are excluded here on purpose.
+    """
+
+    tree = ast.parse(source)
+    return {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 0
+    }
 
 
 @contextmanager
@@ -280,17 +305,7 @@ class LangGraphConfigurationTests(unittest.TestCase):
         source = (ROOT / "src" / "director_orchestrator" / "main.py").read_text(
             encoding="utf-8"
         )
-        tree = ast.parse(source)
-        imported_modules = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        } | {
-            node.module or ""
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        }
+        imported_modules = _absolute_imported_module_names(source)
 
         self.assertLess(
             source.index("settings.validate_langgraph_configuration()"),
@@ -315,6 +330,23 @@ class LangGraphConfigurationTests(unittest.TestCase):
             primary_source,
         )
         self.assertFalse(any(name.startswith("langgraph") for name in imported_modules))
+
+    def test_import_scan_excludes_relative_and_still_detects_absolute_langgraph(self):
+        synthetic_source = (
+            "from .langgraph_postgres import PostgresControlPlaneError\n"
+            "from ..langgraph_shared import helper\n"
+            "from langgraph.graph import StateGraph\n"
+            "import langgraph\n"
+            "import langgraph.checkpoint.sqlite as sqlite_checkpoint\n"
+        )
+        imported_modules = _absolute_imported_module_names(synthetic_source)
+
+        self.assertNotIn("langgraph_postgres", imported_modules)
+        self.assertNotIn("langgraph_shared", imported_modules)
+        self.assertIn("langgraph.graph", imported_modules)
+        self.assertIn("langgraph", imported_modules)
+        self.assertIn("langgraph.checkpoint.sqlite", imported_modules)
+        self.assertTrue(any(name.startswith("langgraph") for name in imported_modules))
 
     def test_primary_runtime_defaults_off_and_never_claims_observed_authority(self):
         settings = self.base_settings()
@@ -498,3 +530,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:25 UTC | END]]
+# [[Claude | Sonnet 5 | 2026-09-21 | 21:35 UTC | END]]

@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:45 UTC | BEGIN]]
@@ -35,6 +40,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from time import monotonic
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,10 +54,29 @@ from .langgraph_postgres import (
     PostgresConditionalClaimStore,
     PostgresControlPlaneError,
     TaskWriterLease,
+    bind_transaction_deadline,
+    bounded_connection,
+    bounded_transaction,
 )
 
 
 from .workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
+
+
+# One bounded window for durably recording what has already happened - an
+# attempt outcome, a settled slot, the wave aggregate and its checkpoint -
+# once the operation's own execution deadline is spent. It is derived from
+# that same absolute deadline, so every call in one operation computes the
+# identical instant and no call can renew it. It buys no execution, no retry
+# authority and no eligibility: a spent operation stays spent, and its facts
+# are simply not lost.
+COMPLETION_ALLOWANCE_SECONDS = 5.0
+
+
+def completion_deadline(deadline: float | None) -> float | None:
+    """The one completion cutoff for an operation bounded by `deadline`."""
+
+    return None if deadline is None else deadline + COMPLETION_ALLOWANCE_SECONDS
 
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -493,7 +518,18 @@ class PostgresParallelDispatch:
         task_id: str,
         owner_token: str,
         fencing_generation: int,
+        live_at_clock: bool = False,
     ) -> Mapping[str, Any]:
+        """Hold this task's writer row and prove the lease is still current.
+
+        `now()` is transaction-start time, which is what the first check in a
+        transaction wants. A second check *after* that transaction has waited
+        on locks needs the real clock: holding the row blocks a takeover but
+        cannot stop the lease from running out, so `live_at_clock` compares
+        against `clock_timestamp()` the way the writer-artifact path does.
+        """
+
+        liveness = "clock_timestamp()" if live_at_clock else "now()"
         row = self._row(
             connection,
             f"""
@@ -503,7 +539,7 @@ class PostgresParallelDispatch:
               AND engine_owner = 'langgraph'
               AND owner_token = %(owner_token)s
               AND fencing_generation = %(generation)s
-              AND lease_expires_at > now()
+              AND lease_expires_at > {liveness}
             FOR UPDATE
             """,
             {
@@ -975,12 +1011,23 @@ class PostgresParallelDispatch:
         writer: TaskWriterLease,
         policy: ParallelDispatchPolicy,
         preflight=None,
+        deadline: float | None = None,
     ) -> tuple[ParallelReservation, ...]:
-        """Atomically reserve every dependency-ready, cap-safe assignment."""
+        """Atomically reserve every dependency-ready, cap-safe assignment.
 
+        `deadline` is established by the caller *before* this method acquires
+        anything, so pool acquisition, the writer row, the batch advisory lock
+        and the per-assignment `FOR UPDATE` waits are all inside one bound
+        rather than preceding it. It is optional: a legacy or offline caller
+        that supplies none keeps exactly the previous unbounded behaviour.
+        """
+
+        if deadline is not None and deadline - monotonic() <= 0:
+            raise WorkloadAdmissionHold("readiness_deadline_expired_before_reservation")
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=task_id,
@@ -1086,8 +1133,12 @@ class PostgresParallelDispatch:
                 if preflight is not None:
                     for candidate in reserved:
                         try:
+                            # The same bound this reservation is already
+                            # spending, so readiness clamps to it instead of
+                            # starting a fresh one after the waits above.
                             preflight(candidate, writer=writer, connection=connection,
-                                      wave_budget_usage=wave_budget_usage)
+                                      wave_budget_usage=wave_budget_usage,
+                                      deadline=deadline)
                         except PaidSetupHold:
                             held.append(candidate)
                 if held:
@@ -1123,10 +1174,25 @@ class PostgresParallelDispatch:
         team_admission=None,
         budget_admission=None,
         budget_limits=None,
+        deadline: float | None = None,
+        expected_authority_digest: str | None = None,
+        revalidate_selection=None,
     ) -> ProviderAttemptReservation:
-        """Append one STARTED child event before I/O; never reuse an open attempt."""
+        """Append one STARTED child event before I/O; never reuse an open attempt.
+
+        `deadline` (a `time.monotonic()`-comparable bound, established by the
+        caller and never renewed here) is optional for legacy/offline callers
+        that supply none. When supplied: connection acquisition is bounded by
+        the time actually left, and `statement_timeout`/`lock_timeout` are
+        (re)applied at each lock-wait boundary this method already has, so a
+        wait that would outlive the deadline is cancelled by Postgres itself
+        rather than silently completing past it. An already-expired deadline
+        refuses before any I/O as a proven pre-I/O hold, never a fresh window.
+        """
 
         format_id, transport_id = format_for_attempt(format_roster, attempt_ordinal)
+        if deadline is not None and deadline - monotonic() <= 0:
+            raise WorkloadAdmissionHold("provider_attempt_deadline_expired_before_admission")
         if budget_limits is not None:
             from .antigravity_team import ProviderAttemptBudget
             if not isinstance(budget_limits, ProviderAttemptBudget):
@@ -1135,10 +1201,21 @@ class PostgresParallelDispatch:
                 raise ParallelDispatchError("paid provider attempt requires authoritative monetary admission")
         if team_admission is not None and budget_admission is not None:
             raise ParallelDispatchError("team admission already includes monetary authority")
+        admitted_authority = None
         if team_admission is not None:
-            budget_evidence_digest = "sha256:" + team_admission.grant_digest
+            admitted_authority = team_admission.grant_digest
         elif budget_admission is not None:
-            budget_evidence_digest = "sha256:" + budget_admission.authority_digest
+            admitted_authority = budget_admission.authority_digest
+        if admitted_authority is not None:
+            budget_evidence_digest = "sha256:" + admitted_authority
+            if (expected_authority_digest is not None
+                    and admitted_authority != expected_authority_digest):
+                # The authority this attempt is about to spend against is not
+                # the one the caller checked. Another individually valid budget
+                # or grant is still a different selection, so refuse here -
+                # inside the same call that would otherwise admit against it -
+                # before any monetary, workload or STARTED row exists.
+                raise WorkloadAdmissionHold("provider_attempt_authority_changed_before_admission")
         _require_digest(idempotency_key_digest, "idempotency_key_digest")
         _require_digest(budget_evidence_digest, "budget_evidence_digest")
         attempt_digest = provider_attempt_digest(
@@ -1148,8 +1225,14 @@ class PostgresParallelDispatch:
             idempotency_key_digest=idempotency_key_digest,
             budget_evidence_digest=budget_evidence_digest)
         schema = self._schema
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                # One bound for the whole transaction, armed before its first
+                # lock wait and never re-armed: per-statement timeouts alone
+                # leave commit-time work (a deferred constraint trigger) with a
+                # fresh window, which is how an admission could previously
+                # commit after its absolute deadline.
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=reservation.task_id,
@@ -1229,6 +1312,18 @@ class PostgresParallelDispatch:
                         or binding["provider_id"] != reservation.provider_id
                         or binding["reservation_digest"] != reservation.reservation_digest):
                     raise ParallelDispatchError("workload parallel reservation binding changed")
+                # The same kill switch `reserve_ready` honours, read here under
+                # this transaction's own lock. A cancellation ordered while
+                # this admission was waiting must stop it: an ACTIVE slot with
+                # no STARTED attempt gets no attempt, spend or workload row.
+                switched = self._row(
+                    connection,
+                    f"""SELECT kill_switch FROM {schema}.director_primary_parallel_batch
+                    WHERE task_id = %(task_id)s FOR UPDATE""",
+                    {"task_id": reservation.task_id},
+                )
+                if switched is None or bool(switched["kill_switch"]):
+                    raise WorkloadAdmissionHold("parallel_wave_cancelled_before_admission")
                 monetary_clock = None
                 admitted_grant = None
                 admitted_budget = None
@@ -1271,6 +1366,39 @@ class PostgresParallelDispatch:
                         raise TeamAuthorizationError("provider budget expired during atomic admission")
                     if admitted_grant is not None:
                         admitted_grant.verify(team_admission.authority.entitlements._owner_authority_secret, admitted_at)
+                # The final fence, after every lock this transaction waited on
+                # and before the STARTED row it is about to write. The writer
+                # lease is proved against the real clock rather than this
+                # transaction's start time: holding the row blocks a takeover
+                # but cannot stop the lease from expiring during those waits.
+                self._writer(
+                    connection,
+                    task_id=reservation.task_id,
+                    owner_token=writer.owner_token,
+                    fencing_generation=writer.fencing_generation,
+                    live_at_clock=True,
+                )
+                if revalidate_selection is not None:
+                    # At that same fence the caller re-checks the complete
+                    # selection it chose this attempt under - signed authority,
+                    # enrollment document, packet, writer generation. It is
+                    # handed this transaction's own connection so it can
+                    # re-select the current authority without acquiring a
+                    # second pooled connection while these locks are held.
+                    # Anything raised here rolls the monetary, workload and
+                    # attempt writes back together, because they are all still
+                    # uncommitted.
+                    revalidate_selection(connection)
+                if deadline is not None and deadline - monotonic() <= 0:
+                    # Already past it before the final write: refuse here
+                    # rather than rely on the server timer alone. Anything the
+                    # timer itself aborts later - including during COMMIT -
+                    # surfaces as an uncaught failure the caller keeps
+                    # ambiguous, because a client cannot tell an aborted
+                    # commit from an unacknowledged one.
+                    raise ParallelDispatchError(
+                        "provider attempt deadline expired during atomic admission"
+                    )
                 row = self._row(
                     connection,
                     f"""
@@ -1321,8 +1449,14 @@ class PostgresParallelDispatch:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
-        """Append the immutable outcome for one exact child attempt."""
+        """Append the immutable outcome for one exact child attempt.
+
+        `deadline` is the completion cutoff for recording what the provider
+        already did. It bounds this write and its lock waits; it grants no
+        execution, retry or eligibility. Unbounded callers are unchanged.
+        """
 
         if status not in {
             ParallelAssignmentStatus.SUCCEEDED,
@@ -1350,8 +1484,9 @@ class PostgresParallelDispatch:
                 "reason_code": reason_code,
             }
         )
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=attempt.task_id,
@@ -1401,8 +1536,13 @@ class PostgresParallelDispatch:
         status: ParallelAssignmentStatus,
         result_digest: str | None,
         reason_code: str,
+        deadline: float | None = None,
     ) -> None:
-        """Settle any reservation order; ambiguous outcomes keep their slot."""
+        """Settle any reservation order; ambiguous outcomes keep their slot.
+
+        `deadline` is the completion cutoff: it bounds recording an outcome
+        that already happened and authorises nothing further.
+        """
 
         if status not in {
             ParallelAssignmentStatus.OWNER_DECISION_REQUIRED,
@@ -1417,8 +1557,9 @@ class PostgresParallelDispatch:
             _require_digest(result_digest, "result_digest")
         if _CODE.fullmatch(reason_code) is None:
             raise ParallelDispatchError("reason_code is invalid")
-        with self._pool.connection() as connection:
+        with bounded_connection(self._pool, deadline) as connection:
             with connection.transaction():
+                bind_transaction_deadline(connection, deadline)
                 self._writer(
                     connection,
                     task_id=reservation.task_id,
@@ -1748,17 +1889,27 @@ class PostgresParallelDispatch:
         writer: TaskWriterLease,
         policy: ParallelDispatchPolicy,
         dispatcher: Any,
+        deadline: float | None = None,
     ) -> tuple[ParallelReservation, ...]:
         """Execute the reserved ready set concurrently and durably settle each.
 
         Reservations are committed before threads start. An exception after that
         boundary is classified as ambiguous and permanently retains its slot.
+
+        `deadline` is the caller's absolute bound, already covering whatever
+        writer acquisition it did first. Only a caller that supplies none falls
+        back to the dispatcher's published bound, so this method never widens
+        a bound its caller has already begun spending.
         """
 
         if not callable(dispatcher):
             raise ParallelDispatchError("dispatcher must be callable")
+        if deadline is None:
+            published = getattr(dispatcher, "readiness_deadline", None)
+            deadline = published() if callable(published) else None
         reservations = self.reserve_ready(task_id=task_id, writer=writer, policy=policy,
-                                          preflight=getattr(dispatcher, "preflight", None))
+                                          preflight=getattr(dispatcher, "preflight", None),
+                                          deadline=deadline)
         if not reservations:
             return ()
 
@@ -1779,12 +1930,17 @@ class PostgresParallelDispatch:
                     result_digest=None,
                     reason_code="provider_outcome_unknown",
                 )
+            # Recording what already happened draws on the completion
+            # allowance, not on execution time: every slot's outcome must be
+            # durable even when the wave's own deadline has just passed, and
+            # `executor.map` below is still waiting for this call.
             self.record_result(
                 reservation=reservation,
                 writer=writer,
                 status=outcome.status,
                 result_digest=outcome.result_digest,
                 reason_code=outcome.reason_code,
+                deadline=completion_deadline(deadline),
             )
 
         with ThreadPoolExecutor(
@@ -1794,10 +1950,10 @@ class PostgresParallelDispatch:
             tuple(executor.map(invoke, reservations))
         return reservations
 
-    def aggregate(self, task_id: str) -> ParallelAggregate:
+    def aggregate(self, task_id: str, *, deadline: float | None = None) -> ParallelAggregate:
         """Return a stable aggregation independent of completion arrival order."""
 
-        with self._pool.connection() as connection:
+        with bounded_transaction(self._pool, deadline) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"""
@@ -1906,3 +2062,8 @@ class PostgresParallelDispatch:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 18:48 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-14 | 06:14 UTC | END]]
+# [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
