@@ -1,4 +1,6 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-13 | 21:39 UTC | BEGIN]]
@@ -356,6 +358,14 @@ class Settings:
     langgraph_primary_acceptance_registry_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH", ""))
     langgraph_primary_acceptance_registry_sha256: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256", ""))
     langgraph_primary_acceptance_journal_path: str = field(default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH", ""))
+    langgraph_primary_local_evidence_adoption_path: str = field(
+        default_factory=lambda: os.getenv("LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH", "").strip()
+    )
+    langgraph_primary_local_evidence_adoption_sha256: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256", ""
+        ).strip().lower()
+    )
 
     langgraph_primary_pinned_commit_sha: str = field(
         default_factory=lambda: os.getenv(
@@ -1879,6 +1889,18 @@ class Settings:
                 "LANGGRAPH_PRIMARY_PINNED_TREE_SHA must be supplied together "
                 "as 40-character hexadecimal values"
             )
+        if self.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
+            pin = self.langgraph_primary_local_evidence_adoption_sha256
+            if not self.langgraph_primary_local_evidence_adoption_path.strip():
+                problems.append(
+                    "owner-local-evidence-v1 requires "
+                    "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH"
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", pin or ""):
+                problems.append(
+                    "owner-local-evidence-v1 requires "
+                    "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256"
+                )
         if problems:
             raise ValueError(
                 "Invalid enabled LangGraph primary configuration: "
@@ -2397,3 +2419,5 @@ class Settings:
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 06:05 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]

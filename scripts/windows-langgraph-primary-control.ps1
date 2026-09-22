@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
@@ -277,10 +278,37 @@ function Get-GitHubAcceptanceFacts {
     }
 }
 
+function Get-OwnerLocalEvidenceAcceptanceFacts {
+    if ($script:GitHubRepository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $script:PullRequestNumber -lt 1) {
+        throw "Owner-local acceptance requires the explicit repository and pull request."
+    }
+    # The same read-only evidence bundle and protected pins must be available to
+    # one-off commands, staging, and the restarted service through Compose.
+    $output = @(Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c @"
+from director_orchestrator.primary_activation_evidence import ActivationIdentity, owner_local_adoption_from_environment, owner_local_acceptance_facts
+import json, os
+adopt = owner_local_adoption_from_environment()
+identity = ActivationIdentity(candidate_commit='$($script:candidateCommit)', candidate_tree='$($script:candidateTree)', profile_id=os.environ['APP_ENV'], compose_project=os.environ['DIRECTOR_COMPOSE_PROJECT_NAME'], database_identity='$($script:databaseIdentity)', database_instance_id='$($script:databaseInstanceId)', postgres_schema=os.environ['LANGGRAPH_PRIMARY_POSTGRES_SCHEMA'], checkpoint_namespace=os.environ['LANGGRAPH_PRIMARY_CHECKPOINT_NAMESPACE'])
+facts = owner_local_acceptance_facts(identity, adopt, repository='$($script:GitHubRepository)', pull_request_number=$($script:PullRequestNumber))
+print(json.dumps(facts, separators=(',', ':'), sort_keys=True))
+"@)
+    $factsJson = [string](@($output | Select-Object -Last 1))
+    try { $facts = $factsJson | ConvertFrom-Json -Depth 20 }
+    catch { throw "Owner-local acceptance facts could not be verified." }
+    $securityActors = Get-TrustedActorAllowlist "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON"
+    $independentActors = Get-TrustedActorAllowlist "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"
+    if ($securityActors -cnotcontains [string]$facts.security_reviewer -or $independentActors -cnotcontains [string]$facts.independent_reviewer) {
+        throw "Adopted acceptance reviewers are not allowlisted."
+    }
+    return $factsJson
+}
+
 function Assert-CanonicalAcceptanceArtifact {
     param(
         [Collections.Specialized.OrderedDictionary]$Facts,
-        [string]$Path
+        [string]$FactsJson,
+        [string]$Path,
+        [string]$ExpectedVersion = "director-primary-acceptance-artifact/v1"
     )
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "Accept requires -AcceptanceArtifactPath from the independent evidence issuers."
@@ -296,24 +324,30 @@ function Assert-CanonicalAcceptanceArtifact {
     if (($observedNames -join "|") -cne (($expectedNames | Sort-Object) -join "|")) {
         throw "The independently supplied acceptance artifact contract is invalid."
     }
-    $factsJson = $Facts | ConvertTo-Json -Depth 8 -Compress
+    $factsJson = if (-not [string]::IsNullOrWhiteSpace($FactsJson)) {
+        $FactsJson
+    }
+    else {
+        $Facts | ConvertTo-Json -Depth 8 -Compress
+    }
     $artifactFactsJson = $artifact.facts | ConvertTo-Json -Depth 8 -Compress
     if ($artifactFactsJson -cne $factsJson -or
         [string]$artifact.facts_digest -cne (Get-Sha256Text $factsJson) -or
         [long]$artifact.pull_request_number -ne $script:PullRequestNumber -or
         [string]$artifact.repository -cne $script:GitHubRepository -or
-        [string]$artifact.version -cne "director-primary-acceptance-artifact/v1") {
+        [string]$artifact.version -cne $ExpectedVersion) {
         throw "The independently supplied artifact does not match canonical GitHub facts."
     }
     $attestationNames = @($artifact.attestations.PSObject.Properties.Name | Sort-Object)
-    $expectedAttestationNames = @("ci", "independent_review", "security")
+    $ownerLocal = $ExpectedVersion -ceq "director-primary-acceptance-artifact/owner-local-evidence-v1"
+    $expectedAttestationNames = if ($ownerLocal) { @("owner_adoption") } else { @("ci", "independent_review", "security") }
     if (($attestationNames -join "|") -cne (($expectedAttestationNames | Sort-Object) -join "|")) {
         throw "The independently supplied acceptance attestations are invalid."
     }
-    $expectedIssuers = @{
-        ci = "github-actions"
-        independent_review = [string]$artifact.facts.independent_reviewer
-        security = [string]$artifact.facts.security_reviewer
+    $expectedIssuers = if ($ownerLocal) {
+        @{ owner_adoption = "owner-local-evidence-adoption" }
+    } else {
+        @{ ci = "github-actions"; independent_review = [string]$artifact.facts.independent_reviewer; security = [string]$artifact.facts.security_reviewer }
     }
     foreach ($kind in $expectedAttestationNames) {
         $attestation = $artifact.attestations.$kind
@@ -411,9 +445,13 @@ function Invoke-Evidence {
         $arguments += @("--legacy-inventory-digest", $LegacyInventoryDigest, "--legacy-task-count", [string]$LegacyTaskCount)
     }
     if ($Command -eq "record" -and $Stage -eq "ACCEPTED") {
-        Invoke-Compose run --rm --no-deps --pull never -T `
-            -v "${AcceptanceArtifactPath}:/run/director-acceptance.json:ro" `
-            --entrypoint python orchestrator @arguments
+        $composeArgs = @(
+            "run", "--rm", "--no-deps", "--pull", "never", "-T",
+            "-v", "${AcceptanceArtifactPath}:/run/director-acceptance.json:ro"
+        )
+        $composeArgs += @("--entrypoint", "python", "orchestrator")
+        $composeArgs += $arguments
+        Invoke-Compose @composeArgs
     }
     else {
         Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator @arguments
@@ -504,6 +542,19 @@ switch -CaseSensitive ($acceptanceMode) {
         }
         $required += @("LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
                        "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON")
+    }
+    "owner-local-evidence-v1" {
+        if ([string]$values["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256"] -or
+            [string]$values["LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH"] -cnotin @("", "/run/director-acceptance-registry/registry.json")) {
+            throw "owner-local-evidence-v1 cannot ignore a selected provider registry."
+        }
+        $required += @(
+            "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH",
+            "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH",
+            "LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON",
+            "LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON"
+        )
     }
     { $_ -cin @("provider-v2", "provider-v3-two-party") } {
         $required += @("LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH",
@@ -619,7 +670,7 @@ $databaseIdentity = [string]$databaseBinding[0]
 $databaseInstanceId = [string]$databaseBinding[1]
 
 if ($Action -eq "SelectGeneration") {
-    if ($acceptanceMode -cnotin @("provider-v2", "provider-v3-two-party")) { throw "SelectGeneration requires signed provider acceptance." }
+    if ($acceptanceMode -cnotin @("provider-v2", "provider-v3-two-party", "owner-local-evidence-v1")) { throw "SelectGeneration requires explicit signed acceptance." }
     if (-not $GenerationManifestPath -or $GenerationManifestSha256 -cnotmatch '^[0-9a-f]{64}$') {
         throw "SelectGeneration requires the owner-provided manifest and exact SHA256."
     }
@@ -653,7 +704,7 @@ if ($Action -eq "SelectGeneration") {
     Write-Host "Fresh generation selected atomically; all mutating services remain stopped."
     return
 }
-if ($acceptanceMode -cin @("provider-v2", "provider-v3-two-party")) {
+if ($acceptanceMode -cin @("provider-v2", "provider-v3-two-party", "owner-local-evidence-v1")) {
     $env:DIRECTOR_RESOLVED_DEPLOYMENT_SHA256 = Get-ResolvedDeploymentDigest
     Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -m director_orchestrator.primary_generation verify
 }
@@ -672,6 +723,16 @@ if ($Action -eq "Accept") {
         $verifiedArtifactPath = (Resolve-Path -LiteralPath $AcceptanceArtifactPath).Path
         Invoke-Evidence -Command record -Stage ACCEPTED -AcceptanceArtifactPath $verifiedArtifactPath
         Write-Host "Signed provider acceptance atomically recorded."
+        return
+    }
+    if ($acceptanceMode -ceq "owner-local-evidence-v1") {
+        $factsJson = Get-OwnerLocalEvidenceAcceptanceFacts
+        $verifiedArtifactPath = Assert-CanonicalAcceptanceArtifact `
+            -FactsJson $factsJson `
+            -Path $AcceptanceArtifactPath `
+            -ExpectedVersion "director-primary-acceptance-artifact/owner-local-evidence-v1"
+        Invoke-Evidence -Command record -Stage ACCEPTED -AcceptanceArtifactPath $verifiedArtifactPath
+        Write-Host "Owner-local evidence acceptance was bound without fabricating hosted CI success."
         return
     }
     $facts = Get-GitHubAcceptanceFacts
@@ -895,3 +956,6 @@ if ($Action -eq "Rollback") {
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
