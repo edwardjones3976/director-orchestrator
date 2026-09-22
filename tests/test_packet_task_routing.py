@@ -1,3 +1,4 @@
+# [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | BEGIN]]
@@ -8,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +27,7 @@ from director_orchestrator.models import (
     AntigravityFixtureLane,
     Assignment,
     AssignmentKind,
+    AssignmentOutcome,
     DirectorPlan,
     ProviderName,
     RiskLevel,
@@ -319,6 +322,226 @@ class PacketTaskRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(PacketRoutingError, "pre-stage authority"):
             self.router.planned_work_packet(undirected_record, undirected)
 
+    def test_dependent_reviewer_packet_includes_accepted_producer_outcome(self) -> None:
+        producer = self.assignment.model_copy(update={"agent": ProviderName.GROK})
+        reviewer = self.assignment.model_copy(
+            update={
+                "sequence": 2,
+                "task": "Independently verify the accepted producer answer.",
+                "depends_on": [1],
+                "allow_draft_pr": False,
+            }
+        )
+        answer = "PRODUCER-ANSWER-EXACT-71c1: paper picks require operator review."
+        self.record.plan.assignments = [producer, reviewer]
+        self.record.assignment_outcomes = [
+            AssignmentOutcome(
+                assignment_sequence=1,
+                provider=ProviderName.GROK,
+                run_id="synthetic-run",
+                result=answer,
+                review_summary=answer,
+                provider_result_digest="a" * 64,
+            )
+        ]
+
+        packet = self.router.work_packet(self.record, reviewer)
+        encoded = json.dumps(packet)
+        dependency = packet["dependencies"][0]
+
+        self.assertEqual(packet["objective"], reviewer.task)
+        self.assertEqual(len(packet["dependencies"]), 1)
+        self.assertEqual(dependency["assignment_id"], "DIR-ROUTER-1")
+        self.assertEqual(set(dependency), {"assignment_id", "accepted_outcome_digest"})
+        self.assertTrue(dependency["accepted_outcome_digest"].startswith("sha256:"))
+        self.assertIn(answer, encoded)
+        self.assertIn("sha256:" + "a" * 64, encoded)
+        self.assertEqual(packet["allowed_tools"], ["READ_REPOSITORY", "RUN_TESTS"])
+        self.assertEqual(packet["allowed_external_effects"], [])
+        self.router.validate_bound_packet(self.record, reviewer, packet)
+
+        independent = self.router.work_packet(
+            self.record.model_copy(
+                update={
+                    "plan": self.record.plan.model_copy(
+                        update={"assignments": [self.assignment]}
+                    ),
+                    "assignment_outcomes": [],
+                }
+            ),
+            self.assignment,
+        )
+        self.assertEqual(independent["dependencies"], [])
+        self.assertNotIn(answer, json.dumps(independent))
+        self.router.validate_bound_packet(
+            self.record.model_copy(
+                update={
+                    "plan": self.record.plan.model_copy(
+                        update={"assignments": [self.assignment]}
+                    ),
+                    "assignment_outcomes": [],
+                }
+            ),
+            self.assignment,
+            independent,
+        )
+
+    def test_validate_bound_packet_rejects_bad_predecessor_context(self) -> None:
+        producer = self.assignment.model_copy(update={"agent": ProviderName.GROK})
+        reviewer = self.assignment.model_copy(
+            update={
+                "sequence": 2,
+                "task": "Independently verify the accepted producer answer.",
+                "depends_on": [1],
+                "allow_draft_pr": False,
+            }
+        )
+        answer = "PRODUCER-ANSWER-EXACT-71c1: paper picks require operator review."
+        outcome = AssignmentOutcome(
+            assignment_sequence=1,
+            provider=ProviderName.GROK,
+            run_id="synthetic-run",
+            result=answer,
+            review_summary=answer,
+            provider_result_digest="a" * 64,
+        )
+        self.record.plan.assignments = [producer, reviewer]
+        self.record.assignment_outcomes = [outcome]
+        packet = self.router.work_packet(self.record, reviewer)
+        prefix = DirectorPacketTaskRouter._PREDECESSOR_CONSTRAINT_PREFIX
+
+        altered = dict(packet)
+        altered["constraints"] = [
+            item.replace(answer, "substituted-producer-answer") if answer in item else item
+            for item in packet["constraints"]
+        ]
+        with self.assertRaisesRegex(PacketRoutingError, "predecessor context changed"):
+            self.router.validate_bound_packet(self.record, reviewer, altered)
+
+        missing = dict(packet)
+        missing["constraints"] = [
+            item for item in packet["constraints"] if not item.startswith(prefix)
+        ]
+        with self.assertRaisesRegex(PacketRoutingError, "predecessor context changed"):
+            self.router.validate_bound_packet(self.record, reviewer, missing)
+
+        duplicated_lines = dict(packet)
+        duplicated_lines["constraints"] = [
+            *packet["constraints"],
+            next(item for item in packet["constraints"] if item.startswith(prefix)),
+        ]
+        with self.assertRaisesRegex(PacketRoutingError, "predecessor context changed"):
+            self.router.validate_bound_packet(self.record, reviewer, duplicated_lines)
+
+        stale = self.record.model_copy(
+            update={
+                "assignment_outcomes": [
+                    outcome.model_copy(
+                        update={
+                            "result": "stale-producer-answer",
+                            "review_summary": "stale-producer-answer",
+                            "provider_result_digest": "b" * 64,
+                        }
+                    )
+                ]
+            }
+        )
+        with self.assertRaisesRegex(PacketRoutingError, "dependencies changed"):
+            self.router.validate_bound_packet(stale, reviewer, packet)
+
+        duplicated_outcomes = self.record.model_copy(
+            update={
+                "assignment_outcomes": [
+                    outcome,
+                    outcome.model_copy(update={"run_id": "synthetic-run-2"}),
+                ]
+            }
+        )
+        with self.assertRaisesRegex(PacketRoutingError, "duplicate accepted outcomes"):
+            self.router.work_packet(duplicated_outcomes, reviewer)
+        with self.assertRaisesRegex(PacketRoutingError, "duplicate accepted outcomes"):
+            self.router.validate_bound_packet(duplicated_outcomes, reviewer, packet)
+
+    def test_public_and_closed_lanes_omit_private_predecessor_output(self) -> None:
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        answer = "PRODUCER-ANSWER-EXACT-71c1: paper picks require operator review."
+        outcome = AssignmentOutcome(
+            assignment_sequence=1,
+            provider=ProviderName.GROK,
+            run_id="synthetic-run",
+            result=answer,
+            review_summary=answer,
+            provider_result_digest="a" * 64,
+        )
+
+        research_plan = preview_plan(
+            "Project: demo\nResearch current public sources.", settings
+        )
+        assert research_plan.prestage is not None
+        producer = self.assignment.model_copy(
+            update={"starting_ref": research_plan.prestage.branch}
+        )
+        research = min(research_plan.assignments, key=lambda item: item.sequence).model_copy(
+            update={"sequence": 2, "depends_on": [1]}
+        )
+        research_record = self.record.model_copy(
+            update={
+                "plan": research_plan.model_copy(
+                    update={"assignments": [producer, research]}
+                ),
+                "assignment_outcomes": [outcome],
+            }
+        )
+        research_packet = self.router.planned_work_packet(research_record, research)
+        self.assertNotIn(answer, json.dumps(research_packet))
+        self.assertEqual(research.public_research_query, research_packet["objective"])
+        self.assertEqual(["PUBLIC_WEB_SEARCH"], research_packet["allowed_tools"])
+        self.assertEqual(
+            set(research_packet["dependencies"][0]),
+            {"assignment_id", "accepted_outcome_digest"},
+        )
+
+        closed_plan = preview_plan(
+            "Project: demo\nProduce a bounded generic module skeleton.", settings
+        )
+        assert closed_plan.prestage is not None
+        antigravity = Assignment(
+            sequence=2,
+            agent=ProviderName.GEMINI,
+            kind=AssignmentKind.SCAFFOLDING,
+            task="Produce a bounded generic module skeleton.",
+            acceptance=["Return bounded evidence for the assigned lane"],
+            repository=None,
+            starting_ref=closed_plan.prestage.branch,
+            depends_on=[1],
+            antigravity_directive=AntigravityDirective(
+                lane=AntigravityFixtureLane.MODULE_SKELETON
+            ),
+            requires_approval=False,
+            allow_draft_pr=False,
+        )
+        closed_producer = self.assignment.model_copy(
+            update={"starting_ref": closed_plan.prestage.branch}
+        )
+        closed_record = self.record.model_copy(
+            update={
+                "plan": closed_plan.model_copy(
+                    update={"assignments": [closed_producer, antigravity]}
+                ),
+                "assignment_outcomes": [outcome],
+            }
+        )
+        closed_packet = self.router.planned_work_packet(closed_record, antigravity)
+        self.assertNotIn(answer, json.dumps(closed_packet))
+        self.assertEqual(
+            antigravity_directive_objective(antigravity.antigravity_directive),
+            closed_packet["objective"],
+        )
+        self.assertEqual(
+            set(closed_packet["dependencies"][0]),
+            {"assignment_id", "accepted_outcome_digest"},
+        )
+
 
 class PacketResultConsumerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -514,3 +737,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 07:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
+# [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]

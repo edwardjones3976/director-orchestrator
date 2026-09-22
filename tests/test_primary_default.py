@@ -1,3 +1,6 @@
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
+# Material repair and regression authored by Grok; applied by Codex from the retained provider response.
+# Codex QA aligned the existing reconciliation test double with the occupied() interface.
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -699,7 +702,7 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         activation.application = SimpleNamespace(
             recover=lambda _task_id: (_ for _ in ()).throw(RuntimeError("boom"))
         )
-        activation.services = object()
+        activation.services = SimpleNamespace(occupied=lambda _task_id: False)
         projection = SimpleNamespace(
             task_id="task-freshness",
             projection={"terminal_classification": None},
@@ -2922,6 +2925,104 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(before.projection_digest, recovered.projection_digest)
         self.assertEqual(1, restarted_coordinator.readiness().graph_task_count)
 
+    def test_in_flight_planning_survives_concurrent_recovery_and_cleanup(self) -> None:
+        planning_entered = threading.Event()
+        recovery_finished = threading.Event()
+        captured: dict[str, object] = {}
+        errors: list[BaseException] = []
+        original_record = self.services._record
+
+        def gated_record(task_id: str):
+            record = original_record(task_id)
+            if sys._getframe(1).f_code.co_name == "plan" and not planning_entered.is_set():
+                captured["task_id"] = task_id
+                planning_entered.set()
+                if not recovery_finished.wait(timeout=10):
+                    raise TimeoutError("concurrent recovery did not finish during planning")
+            return record
+
+        def run_recovery() -> None:
+            try:
+                if not planning_entered.wait(timeout=10):
+                    raise TimeoutError("planning did not reach the shared record read")
+                task_id = str(captured["task_id"])
+                self.assertTrue(self.services.occupied(task_id))
+                captured["recovered"] = self.application.recover(task_id)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                recovery_finished.set()
+
+        self.services._record = gated_record
+        worker = threading.Thread(target=run_recovery)
+        worker.start()
+        try:
+            record = self.application.create_intake(
+                self.intake().model_copy(
+                    update={"source_event_id": "event-default-lifetime"}
+                ),
+                intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+            )
+        finally:
+            self.services._record = original_record
+            worker.join(timeout=10)
+
+        self.assertFalse(worker.is_alive(), "recovery worker did not finish")
+        self.assertFalse(errors, errors)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, record.status)
+        self.assertGreaterEqual(record.plan_generation, 1)
+        assert record.plan is not None
+        assignment = min(record.plan.assignments, key=lambda item: item.sequence)
+        expected_packet = self.services._packet_router.work_packet(record, assignment)
+        graph_state = self.coordinator._runtime.compact_state(record.task_id)
+        self.assertEqual(
+            document_digest(expected_packet), graph_state["work_packet_digest"]
+        )
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertNotEqual(
+            "plan_handler_error", projection.projection.get("reason_code")
+        )
+        self.assertEqual(
+            "execution_approval_required", projection.projection["reason_code"]
+        )
+        self.assertEqual(
+            record.plan_generation,
+            projection.projection["application"]["task_record"]["plan_generation"],
+        )
+        self.assertNotIn(record.task_id, self.services._records)
+
+        recovered = self.application.recover(record.task_id)
+        self.assertEqual(record.task_id, recovered.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, recovered.status)
+        self.assertEqual(record.plan_generation, recovered.plan_generation)
+        self.assertEqual(
+            document_digest(expected_packet),
+            self.coordinator._runtime.compact_state(record.task_id)["work_packet_digest"],
+        )
+
+        cancelled = self.application.cancel(record.task_id)
+        self.assertEqual(TaskStatus.FAILED, cancelled.status)
+        cancelled_projection = self.coordinator.get_projection(record.task_id)
+        assert cancelled_projection is not None
+        self.assertEqual(
+            "CANCELLED", cancelled_projection.projection["terminal_classification"]
+        )
+        self.assertNotIn(record.task_id, self.services._records)
+
+        later = self.application.create_intake(
+            self.intake().model_copy(
+                update={"source_event_id": "event-default-lifetime-later"}
+            ),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+        )
+        self.assertNotEqual(record.task_id, later.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, later.status)
+        self.assertNotIn(later.task_id, self.services._records)
+        later_recovered = self.application.recover(later.task_id)
+        self.assertEqual(later.task_id, later_recovered.task_id)
+        self.assertEqual(TaskStatus.OWNER_DECISION_REQUIRED, later_recovered.status)
+
     def test_offline_simulation_traverses_full_graph_once(self):
         settings = replace(
             self.settings,
@@ -4066,3 +4167,5 @@ if __name__ == "__main__":
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]

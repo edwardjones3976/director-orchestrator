@@ -1,3 +1,5 @@
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
+# Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -1387,33 +1389,84 @@ class DefaultDryRunServices:
         self._effect_grants: dict[str, dict | None] = {}
         self._execution_modes: dict[str, str] = {}
         self._lock = threading.RLock()
+        self._owners: dict[str, int] = {}
 
     def register(self, record: TaskRecord, *, effect_grant: dict | None = None,
                  execution_mode: str | None = None) -> None:
-        with self._lock:
-            self._records[record.task_id] = record.model_copy(deep=True)
-            self._effect_grants[record.task_id] = None if effect_grant is None else dict(effect_grant)
-            self._execution_modes[record.task_id] = execution_mode or (
-                "offline_simulation" if self.settings.langgraph_primary_offline_simulation_enabled
-                else "live" if self._live_composition else "paid_off")
+        self._acquire_record(
+            record, effect_grant=effect_grant, execution_mode=execution_mode
+        )
 
     def discard(self, task_id: str) -> None:
         with self._lock:
+            owners = self._owners.get(task_id, 0)
+            if owners > 1:
+                self._owners[task_id] = owners - 1
+                return
+            self._owners.pop(task_id, None)
             self._records.pop(task_id, None)
             self._effect_grants.pop(task_id, None)
             self._execution_modes.pop(task_id, None)
 
+    def occupied(self, task_id: str) -> bool:
+        """Return whether an in-process caller still owns this task record."""
+
+        with self._lock:
+            return self._owners.get(task_id, 0) > 0
+
     def hydrate(self, projection: PrimaryTaskProjection) -> None:
         """Rehydrate bounded service input from the graph-owned task projection."""
 
+        self._hydrate_projection(projection)
+
+    def try_hydrate_recovery(self, projection: PrimaryTaskProjection) -> bool:
+        """Hydrate for recovery only when no in-process caller owns the record."""
+
+        return self._hydrate_projection(projection, exclusive=True)
+
+    def _hydrate_projection(
+        self, projection: PrimaryTaskProjection, *, exclusive: bool = False
+    ) -> bool:
         application = projection.projection.get("application")
         if not isinstance(application, Mapping):
             raise RuntimeError("primary recovery projection lacks application state")
         raw = application.get("task_record")
         if not isinstance(raw, Mapping):
             raise RuntimeError("primary recovery projection lacks its task record")
-        self.register(TaskRecord.model_validate(dict(raw)), effect_grant=application.get("effect_grant"),
-                      execution_mode=application.get("execution_mode", "unknown"))
+        return self._acquire_record(
+            TaskRecord.model_validate(dict(raw)),
+            effect_grant=application.get("effect_grant"),
+            execution_mode=application.get("execution_mode", "unknown"),
+            exclusive=exclusive,
+        )
+
+    def _acquire_record(
+        self,
+        record: TaskRecord,
+        *,
+        effect_grant: dict | None = None,
+        execution_mode: str | None = None,
+        exclusive: bool = False,
+    ) -> bool:
+        with self._lock:
+            task_id = record.task_id
+            owners = self._owners.get(task_id, 0)
+            if owners > 0:
+                if exclusive:
+                    return False
+                self._owners[task_id] = owners + 1
+                return True
+            self._records[task_id] = record.model_copy(deep=True)
+            self._effect_grants[task_id] = (
+                None if effect_grant is None else dict(effect_grant)
+            )
+            self._execution_modes[task_id] = execution_mode or (
+                "offline_simulation"
+                if self.settings.langgraph_primary_offline_simulation_enabled
+                else "live" if self._live_composition else "paid_off"
+            )
+            self._owners[task_id] = 1
+            return True
 
     def _record(self, task_id: str) -> TaskRecord:
         with self._lock:
@@ -2397,7 +2450,12 @@ class DefaultPrimaryApplication:
         projection = self.coordinator.get_projection(task_id)
         if projection is None:
             raise KeyError(task_id)
-        self.services.hydrate(projection)
+        if not self.services.try_hydrate_recovery(projection):
+            # Another in-process register/hydrate owns the live application
+            # record. Do not replay generation-0 recovery over that graph or
+            # discard the owner's shared task record. Writer leases remain the
+            # cross-process authority.
+            return self._record_from_projection(projection)
         try:
             self._ensure_parallel_lifecycle(self._record_from_projection(projection))
             updated = self.coordinator.recover(task_id)
@@ -3502,6 +3560,11 @@ class DefaultPrimaryActivation:
                     for value in aggregate.statuses.values()
                 ):
                     continue
+            # Planning publishes a live writer before any parallel
+            # ACTIVE/AMBIGUOUS slots exist. Skip this process-local owner
+            # without holding the application lock through provider work.
+            if self.services.occupied(projection.task_id):
+                continue
             try:
                 recovered.append(self.application.recover(projection.task_id))
             except HistoricalParallelPlanHold:
@@ -3682,3 +3745,5 @@ class DefaultPrimaryActivation:
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+
+# [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
