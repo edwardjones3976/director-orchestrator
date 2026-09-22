@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]] -->
@@ -122,17 +123,34 @@ derived `qualification_evidence` object: `readback.state` is `collected`,
 `incomplete` (truncated sections are named), `rejected` (task/schema mismatch,
 duplicate attempt/assignment/effect/delivery/receipt identities, or attempts
 that do not join a listed assignment) or `absent` (no opt-in response), with
-the reason. Identity families stay distinct in `chain`: `assignment_ids` and
-`assignment_sequences` (AssignmentOutcome carries a sequence, not an ID),
-`attempt_ids` (primary attempt digests, never external run IDs),
-`effect_ids` (external-effect `effect_key_digest`), `delivery_ids` (Slack
-`client_msg_id`), `status_receipt_ids` and settled `provider_result_digests`.
+the reason. The raw JSON is first validated through the product's own typed
+`QualificationEvidenceReadback` model (`models.py`) in strict JSON mode, so
+nested shapes, unknown keys at any level, boolean or string counts and naive
+or malformed timestamps are refused by the model itself; the collector adds
+only what the model cannot express: this task's binding and schema version,
+no `NaN`/`Infinity` anywhere, timezone-aware `task_created_at <=
+task_updated_at <= captured_at`, known and unique `truncated`/`absent`
+sections, `complete` agreeing with `truncated`, absent sections empty,
+elapsed time within `wall_seconds`, no section above `row_limit`, and for a
+complete readback `task_scope_counters` equal to its own rows. Rejection
+diagnostics name field locations, never payload values. Identity families
+stay distinct in `chain`: `assignment_ids` and `assignment_sequences`
+(AssignmentOutcome carries a sequence, not an ID), `attempt_ids` (primary
+attempt digests, never external run IDs), `effect_ids` (external-effect
+`effect_key_digest`), `delivery_ids` (Slack `client_msg_id`),
+`approval_delivery_keys`, `status_receipt_ids` and settled
+`provider_result_digests`. Slack notification keys must belong to the
+delivery producer's families: `terminal`, `hold:sha256:<64 hex>` or
+`approval:sha256:<64 hex>:sha256:<64 hex>` (152 characters); a malformed
+family or digest rejects the readback, an owner decision is accepted only on
+an approval row, and the generic identity bounds are not widened for them.
 `timestamps` keeps request, completion (latest settled attempt row),
 delivery (Slack acknowledgement) and readback distinct and lists every
 unproduced edge with its reason under `unknown_reasons`; first-byte and
 validation times have no producer. `lineage` reports provider routes,
-transports and the attempt-ordinal count from real attempt rows and derives
-`fallback_observed` from ordinals/providers per assignment.
+transports and the attempt-ordinal count from real attempt rows;
+`fallback_observed` stays `null` because no producer records fallback
+linkage (every attempt is bound to its assignment's immutable provider).
 `provider_effect_state` (`ZERO_PROVIDER_ATTEMPT`, `…STARTED_UNSETTLED`,
 `…AMBIGUOUS`, `PROVIDER_RESULT_RECORDED`) and `external_effect_state`
 (reservation, bound-unconfirmed, ambiguous or terminal disposition) are kept
@@ -156,11 +174,15 @@ effects are aggregated across every reservation: one completed sibling never
 hides an executed-but-unbound one (`EXTERNAL_EFFECT_AMBIGUOUS`), and a mix of
 reserved-only and terminal rows is reported as
 `EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:…`. `retry_observed` comes from
-a second ordinal on the same assignment; `fallback_observed` only from a
-different provider recorded for one assignment. A rejected or incomplete
-readback derives nothing: identities, states and amounts stay empty/UNKNOWN,
-and an incomplete one carries only `readback.partial_diagnostics`
-(`not_proof: true`).
+a second ordinal on the same assignment. A rejected, incomplete or absent
+readback derives nothing: identities, sequences, routes, states and amounts
+stay empty/UNKNOWN, the chain never falls back to the ordinary task record's
+`assignment_outcomes` or to the separate deliveries endpoint, and an
+incomplete one carries only `readback.partial_diagnostics` (`not_proof:
+true`). That ordinary context (outcome sequences, providers and result
+digests, delivery `client_msg_id`s) is reported only under
+`unjoined_context` with a fixed note; it is not the validated snapshot join
+and is never qualification evidence.
 
 Status-only evidence is prospective. The readback exposes `captured_at` and
 `task_scope_counters` (`thread_tasks` bound to the same Slack thread, this
@@ -194,7 +216,12 @@ against the allocation profiles), scope
 omitted field equal to its default does not change the digest; a changed
 profile, switch or schema does; secret, identity and unlisted keys are
 excluded by construction; malformed values or unknown profiles refuse
-collection. It is neither the native account/credential pin nor an
+collection. `inspect_runtime` derives the emitted `offline_configured` and
+`paid_configured` flags through that same resolver (`1`/`true`/`yes`/`on`
+and declared defaults, as `Settings` reads them), and `revision_binding`
+re-derives its public flags from the resolver rather than copying the
+runtime dict, so a spelling difference can never split the flags from their
+digest. It is neither the native account/credential pin nor an
 execution-time binding (`execution_time_binding: UNKNOWN` with its reason).
 This block adds evidence; it changes no rubric check and cannot turn
 `EVIDENCE_ONLY_NOT_QUALIFIED` into a pass.
@@ -292,3 +319,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -3103,6 +3104,51 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 store.read_primary_qualification_evidence(record.task_id, wall_seconds=0.6)
             self.assertLess(clock.monotonic() - started, 2.0)
             blocker.rollback()
+        # QA control for the cumulative bound (a test gap closed here; no product
+        # boundary changed): two ACCESS EXCLUSIVE locks, one on the projection
+        # table the read touches first and one on the delivery table it touches
+        # later, released in stages so that each wait alone fits the allowance
+        # while their sum exceeds it. The real read must refuse before the later
+        # lock is released; a per-stage allowance would instead finish late once
+        # the second lock cleared. Both waits, the join and the cleanup are
+        # bounded, and the blockers are released in `finally`.
+        allowance, first_release, second_release = 4.0, 1.2, 4.8
+        self.assertTrue(first_release < allowance and second_release - first_release < allowance < second_release)
+        released, stop, releaser = {}, threading.Event(), None
+        early = psycopg.connect(dsn, connect_timeout=5)
+        later = psycopg.connect(dsn, connect_timeout=5)
+        try:
+            early.execute(sql.SQL("LOCK TABLE {}.director_primary_task_projection IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            later.execute(sql.SQL("LOCK TABLE {}.director_primary_slack_delivery IN ACCESS EXCLUSIVE MODE")
+                          .format(sql.Identifier(self.schema)))
+            origin = clock.monotonic()
+
+            def stage_releases():
+                for name, blocker, at in (("early", early, first_release), ("later", later, second_release)):
+                    stop.wait(max(0.0, origin + at - clock.monotonic()))
+                    blocker.rollback()
+                    released[name] = clock.monotonic() - origin
+
+            releaser = threading.Thread(target=stage_releases, name="qa-staged-lock-release", daemon=True)
+            releaser.start()
+            with self.assertRaises((psycopg.Error, DeadlineExpired)):
+                store.read_primary_qualification_evidence(record.task_id, wall_seconds=allowance)
+            refused_at = clock.monotonic() - origin
+            releaser.join(timeout=second_release + 5.0)
+            self.assertFalse(releaser.is_alive())
+            self.assertLess(released["early"], refused_at)  # the first wait fit the allowance
+            self.assertLess(refused_at, released["later"])  # refused before the later lock cleared
+            self.assertLess(refused_at, allowance + 0.75)  # one finite absolute bound, not a fresh one
+        finally:
+            stop.set()
+            if releaser is not None:
+                releaser.join(timeout=10.0)
+            for blocker in (early, later):
+                try:
+                    blocker.rollback()
+                finally:
+                    blocker.close()
         # The lane is intact afterwards and a normal read still completes.
         after = store.read_primary_qualification_evidence(record.task_id)
         self.assertTrue(after["complete"])
@@ -3140,6 +3186,42 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 VALUES (%s, 'terminal', %s, '{{}}'::jsonb, %s, 'SUPPRESSED')
                 """).format(sql.Identifier(self.schema)),
                 (record.task_id, base["projection_digest"], "synthetic-delivery-" + record.task_id))
+        # A producer-shaped approval delivery row through the real delivery
+        # producer (PrimarySlackDelivery.enqueue builds the 152-character
+        # approval:<request digest>:<projection digest> key and the uuid5
+        # client_msg_id) and a real owner decision bound to a real command
+        # receipt (record_owner_decision). Seam: the dry-run intake is not
+        # gateway-attested, so the producer renders no payload and stores the
+        # row SUPPRESSED; the key, identity and decision columns are the
+        # producer's own. Slack transport is never constructed (transport=None,
+        # no run_once).
+        from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
+        projection = self.coordinator.get_projection(record.task_id)
+        pending = projection.projection["pending_approval"]
+        approval_key = "approval:" + pending["request_digest"] + ":" + projection.projection_digest
+        self.assertEqual(152, len(approval_key))
+        delivery_settings = replace(self.settings, langgraph_primary_postgres_schema=self.schema,
+                                    slack_channel_id="CDEFAULT", slack_owner_user_id="UOWNER",
+                                    slack_bot_token="synthetic-slack-test-token")
+        producer = PrimarySlackDelivery(SimpleNamespace(handle=self.handle, coordinator=self.coordinator,
+                                                        application=self.application), delivery_settings,
+                                        transport=None)
+        self.coordinator.renew_new_intake()
+        self.assertEqual(1, producer.enqueue())
+        command = SimpleNamespace(task_id=record.task_id, decision="approve", command_id="qa-command-" + record.task_id,
+                                  command_digest=digest("command:" + record.task_id),
+                                  request_digest=pending["request_digest"],
+                                  expected_projection_digest=projection.projection_digest)
+        self.coordinator.record_command_receipt(task_id=record.task_id, operation="approval_resume",
+                                                command_id=command.command_id, command_digest=command.command_digest,
+                                                projection=projection)
+        producer.record_owner_decision(command)
+        produced = [row for row in producer.receipts(record.task_id) if row["notification_key"] == approval_key]
+        self.assertEqual(1, len(produced))
+        self.assertEqual(("SUPPRESSED", "approve", command.command_id),
+                         (produced[0]["state"], produced[0]["owner_decision"], produced[0]["owner_command_id"]))
+        self.assertIsNotNone(produced[0]["owner_decision_at"])
+        approval_identity = produced[0]["client_msg_id"]
         receipt_id, created, _ = store.record_primary_slack_status_receipt(
             source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
             task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
@@ -3210,7 +3292,12 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(digest("result:" + record.task_id), attempts[1].result_digest)
         self.assertEqual([receipt_id], [row.receipt_id for row in typed.status_receipts])
         self.assertEqual("status-event-" + record.task_id, typed.status_receipts[0].source_event_id)
-        self.assertEqual(["synthetic-delivery-" + record.task_id], [row.client_msg_id for row in typed.slack_deliveries])
+        self.assertEqual({"synthetic-delivery-" + record.task_id, approval_identity},
+                         {row.client_msg_id for row in typed.slack_deliveries})
+        # The full producer key survives the typed model and the API serialization.
+        produced_row = next(row for row in typed.slack_deliveries if row.client_msg_id == approval_identity)
+        self.assertEqual((approval_key, "approve", command.command_id),
+                         (produced_row.notification_key, produced_row.owner_decision, produced_row.owner_command_id))
         self.assertEqual(1, typed.task_scope_counters.effect_reservations)
         self.assertEqual(1, typed.task_scope_counters.attempt_ordinals)
         self.assertTrue(typed.complete)
@@ -3255,7 +3342,12 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(sorted(row["assignment_id"] for row in base["assignments"]), evidence["chain"]["assignment_ids"])
         self.assertIn(assignment["assignment_id"], evidence["chain"]["assignment_ids"])
         self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
-        self.assertEqual(["synthetic-delivery-" + record.task_id], evidence["chain"]["delivery_ids"])
+        self.assertEqual(sorted(["synthetic-delivery-" + record.task_id, approval_identity]), evidence["chain"]["delivery_ids"])
+        # The 152-character approval key joins this task's snapshot as its own family.
+        self.assertEqual([approval_key], evidence["chain"]["approval_delivery_keys"])
+        self.assertEqual(response.json()["qualification_evidence"]["projection_digest"],
+                         next(row for row in response.json()["qualification_evidence"]["slack_deliveries"]
+                              if row["notification_key"] == approval_key)["projection_digest"])
         self.assertEqual([digest("result:" + record.task_id)], evidence["chain"]["provider_result_digests"])
         self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
         self.assertEqual("EXTERNAL_EFFECT_TERMINAL:COMPLETED", evidence["external_effect_state"])
@@ -3278,12 +3370,21 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual([], refused["qualification_evidence"]["chain"]["attempt_ids"])
         truncated_document = store.read_primary_qualification_evidence(record.task_id, row_limit=1)
         truncated_document.pop("projection")
-        truncated_response = {**response.json(), "qualification_evidence": json.loads(json.dumps(truncated_document, default=str))}
+        # Serialized exactly as the API serializes the typed model (no str() datetimes).
+        truncated_response = {**response.json(), "qualification_evidence":
+                              QualificationEvidenceReadback.model_validate(truncated_document).model_dump(mode="json")}
         partial = collector.summarize(record.intake.thread_ts, record.task_id, truncated_response, [], [], True,
                                       record.intake.user_id, "UBOT", dict(response.headers), record.intake.channel_id)
         self.assertEqual("incomplete", partial["qualification_evidence"]["readback"]["state"])
         self.assertEqual("UNKNOWN", partial["qualification_evidence"]["usage"]["cost_basis"])
         self.assertIsNone(partial["qualification_evidence"]["effect_state"])
+        # Neither a rejected nor a truncated real readback promotes any delivery,
+        # key, route or sequence into the qualification chain.
+        for derived in (refused["qualification_evidence"], partial["qualification_evidence"]):
+            self.assertEqual(([], [], [], []), (derived["chain"]["delivery_ids"], derived["chain"]["approval_delivery_keys"],
+                                                derived["chain"]["assignment_sequences"], derived["lineage"]["provider_routes"]))
+            self.assertEqual("ordinary task-record/deliveries context; not the validated snapshot join",
+                             derived["unjoined_context"]["note"])
         collector.validate_observations({"schema": "director-slack-trial-observations/v1",
             "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
             "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
@@ -3601,3 +3702,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -103,10 +104,14 @@ def inspect_runtime(expected_head):
             or not re.fullmatch(r"U[A-Z0-9]+", env.get("SLACK_OWNER_USER_ID", ""))
             or not env.get("SLACK_BOT_TOKEN") or not env.get("ORCHESTRATOR_SHARED_SECRET")):
         raise ValueError("Canonical runtime channel/identity/credentials unavailable")
+    # The public flags are resolved exactly as Settings resolves them (1/true/
+    # yes/on, defaults) through the same safe resolver revision_binding uses,
+    # so a spelling difference cannot split the flags from their binding.
+    resolved, _ = resolve_safe_configuration(env)
     public = {"container_id": item["Id"], "image_id": item["Image"],
         "runtime_head": expected_head, "started_at": item["State"].get("StartedAt"),
-        "offline_configured": env.get("LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED") == "true",
-        "paid_configured": env.get("ALLOW_PAID_RUNS") == "true"}
+        "offline_configured": resolved["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
+        "paid_configured": resolved["ALLOW_PAID_RUNS"]}
     return public, env
 
 
@@ -405,14 +410,41 @@ def _validate_effects(effects):
     return None
 
 
+# Notification-key families exactly as the delivery producer builds them
+# (primary_slack_delivery.enqueue): the fixed terminal key, hold:<state digest>
+# and approval:<request digest>:<projection digest>, each digest being one
+# sha256-prefixed value. Generic identity bounds are not widened for these.
+NOTIFICATION_KEY_FAMILIES = (
+    ("terminal", re.compile(r"terminal\Z")),
+    ("hold", re.compile(r"hold:sha256:[a-f0-9]{64}\Z")),
+    ("approval", re.compile(r"approval:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}\Z")),
+)
+
+
+def notification_key_family(value):
+    """Return the producer family of a notification key, or None when malformed."""
+    if not isinstance(value, str):
+        return None
+    for family, pattern in NOTIFICATION_KEY_FAMILIES:
+        if pattern.fullmatch(value):
+            return family
+    return None
+
+
 def _validate_deliveries_and_receipts(deliveries, receipts):
     if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
         return "duplicate Slack delivery identity"
+    if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
+        return "duplicate Slack notification key"
     for row in deliveries:
-        if (not _is_id(row.get("client_msg_id")) or not _is_id(row.get("notification_key"))
+        if (not _is_id(row.get("client_msg_id")) or notification_key_family(row.get("notification_key")) is None
                 or row.get("state") not in DELIVERY_STATES or not _is_count(row.get("readback_attempts"))
                 or _when(row.get("created_at")) is None):
             return "malformed Slack delivery row"
+        if row.get("owner_decision") not in (None, "approve", "reject"):
+            return "malformed Slack delivery row"
+        if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
+            return "owner decision recorded on a non-approval notification"
         for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
             if row.get(field) is not None and _when(row[field]) is None:
                 return "malformed Slack delivery timestamp"
@@ -441,24 +473,94 @@ def _validate_usage(usage_rows, latest):
     return None
 
 
+def _has_nonfinite(value):
+    """JSON payloads may carry NaN/Infinity tokens; no numeric field may be non-finite."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, float):
+        return value != value or value in (float("inf"), float("-inf"))
+    if isinstance(value, dict):
+        return any(_has_nonfinite(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_nonfinite(v) for v in value)
+    return False
+
+
+def _typed_readback_error(readback, task_id):
+    """Strict JSON-shape validation through the existing typed readback model.
+
+    ``QualificationEvidenceReadback`` (models.py) is validated in strict JSON
+    mode so nested shapes, unknown keys, bool/string count coercion and naive
+    or malformed timestamps are refused by the product model itself; the
+    checks below add only what the model cannot express: this task's binding,
+    the collector's schema/counter contract, non-finite numbers, ordered
+    timezone-aware times, complete/truncated consistency, known section names
+    and counter/row relationships. Diagnostics never echo the payload.
+    """
+    from pydantic import ValidationError
+    from director_orchestrator.models import QualificationEvidenceReadback
+    if not isinstance(readback, dict) or set(readback) != READBACK_KEYS:
+        return "readback shape/task binding mismatch"
+    if _has_nonfinite(readback):
+        return "readback carries a non-finite number"
+    try:
+        typed = QualificationEvidenceReadback.model_validate_json(json.dumps(readback), strict=True)
+    except (ValidationError, ValueError, TypeError) as error:
+        if not isinstance(error, ValidationError):
+            return "readback is not serializable JSON"
+        # Locations only; values never surface in the observation.
+        places = sorted({".".join(str(p) for p in item.get("loc", ())) for item in error.errors()})[:5]
+        return "readback rejected by the typed model at " + (",".join(places) or "document")
+    if typed.task_id != task_id or typed.schema_version != READBACK_SCHEMA:
+        return "readback shape/task binding mismatch"
+    if set(readback["task_scope_counters"]) != set(COUNTER_KEYS) \
+            or not all(_is_count(readback["task_scope_counters"][k]) for k in COUNTER_KEYS):
+        return "readback counter contract mismatch"
+    for field in ("captured_at", "task_updated_at", "task_created_at"):
+        if _when(readback.get(field)) is None:
+            return "readback timestamp is missing, naive or malformed: " + field
+    if not (_when(readback["task_created_at"]) <= _when(readback["task_updated_at"]) <= _when(readback["captured_at"])):
+        return "readback times are not ordered created <= updated <= captured"
+    for name in ("truncated", "absent"):
+        values = readback[name]
+        if len(set(values)) != len(values) or any(v not in SECTIONS and v != "response_bytes" for v in values):
+            return "readback names an unknown or duplicate section under " + name
+    if readback["complete"] != (not readback["truncated"]):
+        return "readback completeness disagrees with its truncated sections"
+    if any(readback[name] for name in readback["absent"] if name in SECTIONS):
+        return "readback reports rows for an absent section"
+    bounds = readback["bounds"]
+    if not (0 <= float(bounds["elapsed_seconds"]) <= float(bounds["wall_seconds"])):
+        return "readback elapsed time exceeds its declared bound"
+    if any(len(readback[name]) > int(bounds["row_limit"]) for name in SECTIONS):
+        return "readback section exceeds its declared row limit"
+    return None
+
+
+def _counter_consistency_error(readback):
+    """A complete readback's task-scope counters must agree with its own rows."""
+    if not readback["complete"]:
+        return None
+    counters = readback["task_scope_counters"]
+    events = readback["provider_attempts"]
+    expected = {"assignments": len(readback["assignments"]), "provider_attempts": len(events),
+                "attempt_ordinals": len({(e.get("assignment_id"), e.get("attempt_ordinal")) for e in events}),
+                "started_attempts": sum(1 for e in events if e.get("status") == "STARTED"),
+                "status_receipts": len(readback["status_receipts"]),
+                "effect_reservations": len(readback["effects"])}
+    if any(counters[key] != value for key, value in expected.items()) or counters["thread_tasks"] < 1:
+        return "readback counters disagree with its complete rows"
+    return None
+
+
 def _readback(task_id, task):
     """Accept the typed opt-in readback only when it is bound and internally consistent."""
     readback = task.get("qualification_evidence")
     if readback is None:
         return None, None, "absent", "opt-in readback not present in the task response"
-    if (not isinstance(readback, dict) or set(readback) != READBACK_KEYS
-            or readback.get("schema_version") != READBACK_SCHEMA
-            or readback.get("task_id") != task_id or type(readback.get("complete")) is not bool
-            or not isinstance(readback.get("task_scope_counters"), dict)
-            or set(readback["task_scope_counters"]) != set(COUNTER_KEYS)
-            or not all(_is_count(readback["task_scope_counters"][k]) for k in COUNTER_KEYS)
-            or _when(readback.get("captured_at")) is None or _when(readback.get("task_updated_at")) is None
-            or not _is_id(readback.get("engine_owner")) or not isinstance(readback.get("projection_digest"), str)
-            or not _is_count(readback.get("projection_version"))
-            or not isinstance(readback.get("truncated"), list) or not isinstance(readback.get("absent"), list)
-            or any(not isinstance(readback.get(name), list) for name in SECTIONS)
-            or any(not isinstance(row, dict) for name in SECTIONS for row in readback[name])):
-        return None, None, "rejected", "readback shape/task binding mismatch"
+    error = _typed_readback_error(readback, task_id)
+    if error is not None:
+        return None, None, "rejected", error
     latest, error = _validate_attempts(readback["assignments"], readback["provider_attempts"])
     if error is None:
         error = _validate_usage(readback["provider_usage"], latest)
@@ -466,6 +568,8 @@ def _readback(task_id, task):
         error = _validate_effects(readback["effects"])
     if error is None:
         error = _validate_deliveries_and_receipts(readback["slack_deliveries"], readback["status_receipts"])
+    if error is None:
+        error = _counter_consistency_error(readback)
     if error is not None:
         return None, None, "rejected", error
     if not readback["complete"]:
@@ -529,13 +633,25 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
     readback, latest, state, reason = _readback(task_id, task)
     collected = state == "collected"
     # Only a complete, validated readback yields derived identities, states or
-    # amounts. An incomplete readback keeps its raw diagnostics under the
-    # readback block, explicitly marked partial, and derives nothing.
+    # amounts: the chain below never falls back to the ordinary TaskRecord
+    # projection or the separate deliveries endpoint, because those are not
+    # the validated single-snapshot join. An incomplete readback keeps its raw
+    # diagnostics under the readback block, explicitly marked partial.
     latest = latest if collected else {}
     effects = readback["effects"] if collected else []
-    deliveries = readback["slack_deliveries"] if collected else (rows if rows_bound and readback is None else [])
+    deliveries = readback["slack_deliveries"] if collected else []
     receipts = readback["status_receipts"] if collected else []
     usage_rows = readback["provider_usage"] if collected else []
+    # Ordinary, unjoined context from the task record and deliveries endpoint,
+    # reported separately and never as qualification evidence.
+    unjoined = {
+        "assignment_sequences": sorted({int(o["assignment_sequence"]) for o in outcomes
+                                        if isinstance(o, dict) and type(o.get("assignment_sequence")) is int}),
+        "provider_result_digests": _identities(outcomes, "provider_result_digest"),
+        "provider_routes": _identities(outcomes, "provider"),
+        "delivery_ids": _identities(rows, "client_msg_id") if rows_bound else [],
+        "note": "ordinary task-record/deliveries context; not the validated snapshot join",
+    }
     terminal = [r for r in deliveries if r.get("notification_key") == "terminal"]
     delivery = terminal[0] if len(terminal) == 1 else {}
     delivery_states = {str(r.get("state")) for r in deliveries}
@@ -608,20 +724,20 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
                                              for r in receipts],
                      "partial_diagnostics": ({"row_counts": {name: len(readback[name]) for name in SECTIONS},
                                               "not_proof": True} if state == "incomplete" else None)},
+        "unjoined_context": unjoined,
         "chain": {
             "source_event_id_sha256": digest(encode(intake["source_event_id"]))
                 if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
             "task_id": task_id,
             "assignment_ids": _identities(readback["assignments"], "assignment_id") if collected else [],
-            "assignment_sequences": sorted({int(r["sequence"]) for r in readback["assignments"]}) if collected else
-                                     sorted({int(o["assignment_sequence"]) for o in outcomes
-                                             if isinstance(o, dict) and type(o.get("assignment_sequence")) is int}),
+            "assignment_sequences": sorted({int(r["sequence"]) for r in readback["assignments"]}) if collected else [],
             "attempt_ids": sorted({e["attempt_digest"] for e in latest.values()}),
             "effect_ids": _identities(effects, "effect_key_digest"),
             "delivery_ids": _identities(deliveries, "client_msg_id"),
+            "approval_delivery_keys": sorted(r["notification_key"] for r in deliveries
+                                             if notification_key_family(r.get("notification_key")) == "approval"),
             "status_receipt_ids": _identities(receipts, "receipt_id"),
-            "provider_result_digests": _identities(settled, "result_digest") if collected else
-                                       _identities(outcomes, "provider_result_digest"),
+            "provider_result_digests": _identities(settled, "result_digest"),
             "slack_delivery_ts": delivery.get("slack_ts") if TS.fullmatch(str(delivery.get("slack_ts", ""))) else None,
             "slack_readback_state": delivery.get("state") if isinstance(delivery.get("state"), str) else None,
         },
@@ -637,8 +753,7 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
                                 **({"completion_at": "no settled provider attempt row"} if completion is None else {})},
         },
         "lineage": {
-            "provider_routes": sorted({e["provider_id"] for e in latest.values()}) if collected
-                               else _identities(outcomes, "provider"),
+            "provider_routes": sorted({e["provider_id"] for e in latest.values()}),
             "transport": ",".join(sorted({e["transport_id"] for e in latest.values()})) or None,
             "recorded_attempt_count": len(ordinals) if collected else None,
             "retry_observed": retried if latest else None,
@@ -736,7 +851,12 @@ def revision_binding(runtime, env):
     native account/credential pin and not an execution-time binding: no
     producer records the configuration in force when the task executed.
     """
-    public = {key: runtime.get(key) for key in ("runtime_head", "image_id", "offline_configured", "paid_configured")}
+    resolved, _ = resolve_safe_configuration(env)
+    # The emitted public flags and the digest come from the same resolver, so
+    # equivalent spellings (1/true/yes/on) and declared defaults agree.
+    public = {"runtime_head": runtime.get("runtime_head"), "image_id": runtime.get("image_id"),
+              "offline_configured": resolved["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
+              "paid_configured": resolved["ALLOW_PAID_RUNS"]}
     configuration_digest, keys, supplied = safe_configuration_digest(env)
     return {**public, "configuration_digest": digest(encode({**public, "safe_configuration_digest": configuration_digest})),
             "configuration_scope": CONFIGURATION_SCOPE,
@@ -1151,3 +1271,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]

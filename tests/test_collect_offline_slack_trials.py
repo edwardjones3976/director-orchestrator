@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -17,6 +18,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -78,6 +80,17 @@ def sample():
     }]
     headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest"}
     return task, deliveries, messages, headers
+
+
+def recount(readback):
+    """Keep a mutated fixture's task-scope counters consistent with its rows."""
+    events = readback["provider_attempts"]
+    readback["task_scope_counters"].update(
+        assignments=len(readback["assignments"]), provider_attempts=len(events),
+        attempt_ordinals=len({(e["assignment_id"], e["attempt_ordinal"]) for e in events}),
+        started_attempts=sum(1 for e in events if e["status"] == "STARTED"),
+        status_receipts=len(readback["status_receipts"]), effect_reservations=len(readback["effects"]))
+    return readback
 
 
 def readback_fixture():
@@ -328,13 +341,18 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(evidence["readback"]["source"])
         self.assertEqual(chain["task_id"], TASK_ID)
         self.assertEqual(chain["source_event_id_sha256"], collector_module.digest(collector_module.encode(SOURCE_EVENT)))
-        # Without the readback, delivery identities come from the deliveries API only.
-        self.assertEqual(chain["delivery_ids"], [FINAL_ID])
-        self.assertEqual((chain["assignment_ids"], chain["attempt_ids"], chain["effect_ids"],
-                          chain["status_receipt_ids"]), ([], [], [], []))
-        self.assertEqual(chain["slack_delivery_ts"], FINAL_TS)
+        # Without the readback nothing is joined: the deliveries endpoint and the
+        # ordinary task record survive only as labeled unjoined context.
+        self.assertEqual((chain["assignment_ids"], chain["assignment_sequences"], chain["attempt_ids"],
+                          chain["effect_ids"], chain["delivery_ids"], chain["approval_delivery_keys"],
+                          chain["status_receipt_ids"], chain["provider_result_digests"]),
+                         ([], [], [], [], [], [], [], []))
+        self.assertIsNone(chain["slack_delivery_ts"])
+        self.assertIsNone(chain["slack_readback_state"])
+        self.assertEqual(evidence["unjoined_context"]["delivery_ids"], [FINAL_ID])
+        self.assertEqual(evidence["lineage"]["provider_routes"], [])
         self.assertEqual(stamps["request_ts"], THREAD)
-        self.assertEqual(stamps["delivery_at"], "2026-09-12T10:00:30+00:00")
+        self.assertIsNone(stamps["delivery_at"])
         self.assertIsNone(stamps["first_byte_at"])
         self.assertIn("first_byte_at", stamps["unknown_reasons"])
         self.assertIsNone(evidence["effect_state"])
@@ -403,7 +421,7 @@ class SummaryTests(unittest.TestCase):
         started_only["effects"] = [dict(started_only["effects"][0], execution_started_at=None,
                                         remote_identifier=None, remote_system=None, terminal_disposition=None,
                                         terminal_evidence_digest=None)]
-        self.task["qualification_evidence"] = started_only
+        self.task["qualification_evidence"] = recount(started_only)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual(evidence["provider_effect_state"], "PROVIDER_ATTEMPT_STARTED_UNSETTLED")
         self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_RESERVED_NO_EFFECT")
@@ -417,7 +435,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(evidence["effect_state"], "AMBIGUOUS_DELIVERY_EFFECT")
         zero = readback_fixture()
         zero.update(provider_attempts=[], effects=[], provider_usage=[])
-        self.task["qualification_evidence"] = zero
+        self.task["qualification_evidence"] = recount(zero)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual(evidence["effect_state"], "ZERO_PROVIDER_EFFECT")
         self.assertEqual(evidence["provider_effect_state"], "ZERO_PROVIDER_ATTEMPT")
@@ -512,11 +530,18 @@ class SummaryTests(unittest.TestCase):
         rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "usage is orphaned")
         # 3b. duplicate usage rows must not double the cost
         rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "usage is orphaned")
-        # bool-as-number and negative amounts
-        rejected(lambda r: r["provider_usage"][0].update(actual_microusd=True), "non-integer")
-        rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1), "non-integer")
+        # bool-as-number and negative amounts: the strict typed model refuses them
+        # first (locations only); the collector's own integer check stays behind it.
+        rejected(lambda r: r["provider_usage"][0].update(actual_microusd=True),
+                 "typed model at provider_usage.0.actual_microusd")
+        rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1),
+                 "typed model at provider_usage.0.observed_tokens")
+        self.assertEqual("usage is orphaned, duplicated, provider-mismatched or non-integer",
+                         collector_module._validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
+                                                          {("a", 1): readback_fixture()["provider_attempts"][1]}))
         # malformed identities, sequences and statuses
-        rejected(lambda r: r["provider_attempts"][1].update(event_sequence=7), "malformed attempt event")
+        rejected(lambda r: r["provider_attempts"][1].update(event_sequence=7),
+                 "typed model at provider_attempts.1.event_sequence")
         rejected(lambda r: r["provider_attempts"][1].update(status="DONE"), "malformed attempt event")
         rejected(lambda r: r["assignments"][0].update(assignment_id=""), "malformed or duplicate assignment")
         rejected(lambda r: r["provider_attempts"][1].update(assignment_sequence=2), "disagrees with its assignment")
@@ -532,8 +557,9 @@ class SummaryTests(unittest.TestCase):
                                     "effect_key_digest": "sha256:" + "b" * 64, "remote_system": None,
                                     "remote_identifier": None, "bound_at": None, "terminal_disposition": None,
                                     "terminal_evidence_digest": None, "terminal_recorded_at": None})
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
         self.assertEqual("EXTERNAL_EFFECT_AMBIGUOUS", evidence["external_effect_state"])
         self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
         # 5. an AMBIGUOUS event 2 is superseded by an authenticated SUCCEEDED event 3
@@ -548,8 +574,9 @@ class SummaryTests(unittest.TestCase):
         readback["provider_attempts"].append({**readback_fixture()["provider_attempts"][1], "event_sequence": 3,
                                               "reason_code": "authenticated_callback_settled",
                                               "recorded_at": "2026-09-12T10:00:26+00:00"})
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
         self.assertEqual("PROVIDER_RESULT_RECORDED", evidence["provider_effect_state"])
         self.assertEqual("PROVIDER_EFFECT_RECORDED", evidence["effect_state"])
         self.assertEqual("2026-09-12T10:00:26+00:00", evidence["timestamps"]["completion_at"])
@@ -561,7 +588,7 @@ class SummaryTests(unittest.TestCase):
                                     "remote_system": None, "remote_identifier": None, "bound_at": None,
                                     "terminal_disposition": None, "terminal_evidence_digest": None,
                                     "terminal_recorded_at": None})
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:COMPLETED", evidence["external_effect_state"])
         # retry (second ordinal, same provider) is not reported as a fallback
@@ -570,8 +597,9 @@ class SummaryTests(unittest.TestCase):
                    "idempotency_key_digest": "sha256:" + "c" * 64} for e in readback["provider_attempts"]]
         readback["provider_attempts"].extend(second)
         readback["provider_usage"] = []
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
         self.assertTrue(evidence["lineage"]["retry_observed"])
         self.assertIsNone(evidence["lineage"]["fallback_observed"])  # retry is not fallback; fallback is UNKNOWN
         self.assertEqual(2, evidence["lineage"]["recorded_attempt_count"])
@@ -592,9 +620,11 @@ class SummaryTests(unittest.TestCase):
                                                             outcome_evidence_digest="sha256:" + "7" * 64),
                  "event 1 is not the STARTED record")
         rejected(lambda r: r["provider_attempts"][1].update(status="STARTED"), "a later event repeats STARTED")
-        # bool assignment sequence and bool counters
-        rejected(lambda r: r["provider_attempts"][1].update(assignment_sequence=True), "malformed attempt event")
-        rejected(lambda r: r["task_scope_counters"].update(assignments=True), "shape/task binding mismatch")
+        # bool assignment sequence and bool counters (strict typed model, no coercion)
+        rejected(lambda r: r["provider_attempts"][1].update(assignment_sequence=True),
+                 "typed model at provider_attempts.1.assignment_sequence")
+        rejected(lambda r: r["task_scope_counters"].update(assignments=True),
+                 "typed model at task_scope_counters.assignments")
         # missing terminal outcome evidence / result digest
         rejected(lambda r: r["provider_attempts"][1].update(outcome_evidence_digest=None), "lacks outcome evidence")
         rejected(lambda r: r["provider_attempts"][1].update(result_digest=None), "lacks a result digest")
@@ -603,7 +633,7 @@ class SummaryTests(unittest.TestCase):
                  "not recorded in sequence order")
         # missing/malformed external reservation identity and remote binding halves
         rejected(lambda r: r["effects"][0].update(reservation_key="not-a-digest"), "malformed external-effect reservation")
-        rejected(lambda r: r["effects"][0].update(claim_key=None), "malformed external-effect reservation")
+        rejected(lambda r: r["effects"][0].update(claim_key=None), "typed model at effects.0.claim_key")
         rejected(lambda r: r["effects"][0].update(remote_system=None), "lacks its system or identifier")
         rejected(lambda r: r["effects"][0].update(terminal_evidence_digest=None), "terminal evidence lacks")
         rejected(lambda r: r["effects"].append(dict(r["effects"][0])), "duplicate external-effect reservation")
@@ -611,7 +641,8 @@ class SummaryTests(unittest.TestCase):
         rejected(lambda r: r.update(extra_claim="verified"), "shape/task binding mismatch")
         rejected(lambda r: r.pop("captured_at"), "shape/task binding mismatch")
         rejected(lambda r: r["slack_deliveries"][0].update(state="POSTED"), "malformed Slack delivery row")
-        rejected(lambda r: r["status_receipts"][0].update(created_at="yesterday"), "malformed status receipt row")
+        rejected(lambda r: r["status_receipts"][0].update(created_at="yesterday"), "typed model at status_receipts.0.created_at")
+        rejected(lambda r: r["status_receipts"][0].update(source_event_id=""), "malformed status receipt row")
         # a truncated readback with an unbound top-level cost still yields no measured cost
         readback = readback_fixture()
         readback.update(complete=False, truncated=["effects"])
@@ -647,6 +678,144 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(evidence["status_receipts"]["deduplicated_receipts"])
         collector_module.validate_observations({**receipt_fixture(), "trials": [
             {**structural_trial(), "qualification_evidence": evidence}]})
+
+    def test_production_notification_key_families_are_accepted_and_malformed_ones_refused(self):
+        request_digest, projection_digest = "sha256:" + "5" * 64, "sha256:" + "6" * 64
+        approval_key = f"approval:{request_digest}:{projection_digest}"
+        self.assertEqual(152, len(approval_key))
+        self.assertEqual("approval", collector_module.notification_key_family(approval_key))
+        self.assertEqual("hold", collector_module.notification_key_family("hold:sha256:" + "7" * 64))
+        self.assertEqual("terminal", collector_module.notification_key_family("terminal"))
+        for bad in ("approval:" + request_digest, f"approval:{request_digest}:{projection_digest}:extra",
+                    "approval:sha256:" + "5" * 63 + ":" + projection_digest, "approval:5:6", "hold:" + "7" * 64,
+                    "hold:sha256:" + "G" * 64, "terminal:1", "", None, "x" * 152):
+            with self.subTest(bad=bad):
+                self.assertIsNone(collector_module.notification_key_family(bad))
+        readback = readback_fixture()
+        readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": approval_key,
+                                             "client_msg_id": "approval-message", "owner_decision": "approve",
+                                             "owner_decision_at": "2026-09-12T10:00:22+00:00",
+                                             "owner_command_id": "command-1"})
+        readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": "hold:sha256:" + "7" * 64,
+                                             "client_msg_id": "hold-message", "state": "SUPPRESSED"})
+        self.task["qualification_evidence"] = readback
+        evidence = self.summarize()["qualification_evidence"]
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        self.assertEqual([approval_key], evidence["chain"]["approval_delivery_keys"])
+        self.assertEqual(sorted(["approval-message", "hold-message", FINAL_ID]), evidence["chain"]["delivery_ids"])
+        self.assertEqual((FINAL_TS, "DELIVERED"), (evidence["chain"]["slack_delivery_ts"], evidence["chain"]["slack_readback_state"]))
+        collector_module.validate_observations({**receipt_fixture(), "trials": [
+            {**structural_trial(), "qualification_evidence": evidence}]})
+        for label, mutate in (("truncated approval digest", lambda r: r["slack_deliveries"][1].update(
+                                    notification_key="approval:sha256:" + "5" * 63 + ":" + projection_digest)),
+                              ("decision on terminal", lambda r: r["slack_deliveries"][0].update(owner_decision="approve")),
+                              ("unknown decision", lambda r: r["slack_deliveries"][1].update(owner_decision="maybe")),
+                              ("duplicate key", lambda r: r["slack_deliveries"][2].update(notification_key=approval_key))):
+            with self.subTest(label=label):
+                mutated = readback_fixture()
+                mutated["slack_deliveries"] = [dict(row) for row in readback["slack_deliveries"]]
+                mutate(mutated)
+                self.task["qualification_evidence"] = mutated
+                self.assertEqual("rejected", self.summarize()["qualification_evidence"]["readback"]["state"])
+
+    def test_typed_model_and_semantic_guards_reject_malformed_readbacks(self):
+        def rejected(label, mutate):
+            readback = readback_fixture()
+            mutate(readback)
+            self.task["qualification_evidence"] = readback
+            evidence = self.summarize()["qualification_evidence"]
+            with self.subTest(label=label):
+                self.assertEqual("rejected", evidence["readback"]["state"], evidence["readback"]["reason"])
+                self.assertEqual(([], [], [], "UNKNOWN", None, None), (
+                    evidence["chain"]["attempt_ids"], evidence["chain"]["delivery_ids"],
+                    evidence["lineage"]["provider_routes"], evidence["usage"]["cost_basis"],
+                    evidence["provider_effect_state"], evidence["effect_state"]))
+                # Diagnostics are sanitized: field locations only, never payload values.
+                self.assertNotIn("synthetic", evidence["readback"]["reason"])
+                self.assertNotIn(FINAL_ID, evidence["readback"]["reason"])
+        rejected("null bounds", lambda r: r.update(bounds=None))
+        rejected("naive task_created_at", lambda r: r.update(task_created_at="2026-09-12T10:00:00"))
+        rejected("malformed task_created_at", lambda r: r.update(task_created_at="yesterday"))
+        rejected("invalid reconciliation row", lambda r: r.update(reconciliation_events=[{"event_id": "x"}]))
+        rejected("unknown nested key", lambda r: r["snapshot"].update(verified=True))
+        rejected("unknown effect key", lambda r: r["effects"][0].update(remote_receipt="ok"))
+        rejected("bool counter", lambda r: r["task_scope_counters"].update(thread_tasks=True))
+        rejected("string counter", lambda r: r["task_scope_counters"].update(assignments="1"))
+        rejected("string projection version", lambda r: r.update(projection_version="3"))
+        rejected("NaN elapsed", lambda r: r["bounds"].update(elapsed_seconds=float("nan")))
+        rejected("infinite wall", lambda r: r["bounds"].update(wall_seconds=float("inf")))
+        rejected("elapsed beyond bound", lambda r: r["bounds"].update(elapsed_seconds=9.0))
+        rejected("reversed times", lambda r: r.update(task_updated_at="2026-09-12T11:00:00+00:00"))
+        rejected("captured before updated", lambda r: r.update(captured_at="2026-09-12T10:00:30+00:00"))
+        rejected("impossible counters", lambda r: r["task_scope_counters"].update(provider_attempts=7))
+        rejected("zero thread tasks", lambda r: r["task_scope_counters"].update(thread_tasks=0))
+        rejected("complete with truncated sections", lambda r: r.update(truncated=["effects"]))
+        rejected("incomplete without truncated sections", lambda r: r.update(complete=False))
+        rejected("unknown truncated section", lambda r: r.update(complete=False, truncated=["mystery"]))
+        rejected("duplicate absent section", lambda r: r.update(absent=["provider_usage", "provider_usage"]))
+        rejected("absent section with rows", lambda r: r.update(absent=["provider_usage"]))
+        rejected("row limit exceeded", lambda r: r["bounds"].update(row_limit=1))
+        rejected("snapshot not read-only", lambda r: r["snapshot"].update(read_only=False))
+        rejected("delivery naive time", lambda r: r["slack_deliveries"][0].update(created_at="2026-09-12T10:00:19"))
+
+    def test_rejected_or_truncated_readback_never_promotes_ordinary_context_to_qualification(self):
+        # Populated ordinary projections and supplied delivery rows on both paths.
+        self.task["assignment_outcomes"] = [{"run_id": "offline-double:x", "result": collector_module.LABEL,
+                                             "assignment_sequence": 1, "provider": "openai",
+                                             "provider_result_digest": "a" * 64}]
+        self.task["actual_cost_usd"] = 0.5
+        for label, readback in (("rejected", {**readback_fixture(), "task_id": "DIR-LG-CD34"}),
+                                ("truncated", {**readback_fixture(), "complete": False, "truncated": ["effects"]})):
+            with self.subTest(label=label):
+                self.task["qualification_evidence"] = readback
+                evidence = self.summarize()["qualification_evidence"]
+                self.assertEqual(label if label == "rejected" else "incomplete", evidence["readback"]["state"])
+                chain = evidence["chain"]
+                self.assertEqual(([], [], [], [], [], []), (chain["assignment_sequences"], chain["provider_result_digests"],
+                                                            chain["delivery_ids"], chain["approval_delivery_keys"],
+                                                            chain["attempt_ids"], evidence["lineage"]["provider_routes"]))
+                self.assertIsNone(chain["slack_delivery_ts"])
+                self.assertIsNone(evidence["timestamps"]["delivery_at"])
+                self.assertEqual({"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"}, evidence["usage"])
+                self.assertIsNone(evidence["effect_state"])
+                self.assertEqual({"assignment_sequences": [1], "provider_result_digests": ["a" * 64],
+                                  "provider_routes": ["openai"], "delivery_ids": [FINAL_ID],
+                                  "note": "ordinary task-record/deliveries context; not the validated snapshot join"},
+                                 evidence["unjoined_context"])
+                collector_module.validate_observations({**receipt_fixture(), "trials": [
+                    {**structural_trial(), "qualification_evidence": evidence}]})
+
+    def test_inspect_runtime_and_binding_normalize_flags_through_the_safe_resolver(self):
+        def inspected(env_pairs):
+            item = {"Id": "container", "Image": "sha256:" + "d" * 64,
+                    "Config": {"Labels": {"org.director.candidate.commit": "e" * 40},
+                               "Env": [f"{k}={v}" for k, v in {**ENV, **env_pairs}.items()]},
+                    "State": {"Running": True, "StartedAt": "2026-09-12T09:00:00Z"},
+                    "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]}}}
+            completed = SimpleNamespace(returncode=0, stdout=json.dumps([item]).encode())
+            with patch.object(collector_module.subprocess, "run", return_value=completed):
+                return collector_module.inspect_runtime("e" * 40)
+        baseline_public, baseline_env = inspected({"LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "true",
+                                                   "ALLOW_PAID_RUNS": "false"})
+        self.assertEqual((True, False), (baseline_public["offline_configured"], baseline_public["paid_configured"]))
+        baseline = collector_module.revision_binding(baseline_public, baseline_env)
+        for spelling in ("1", "TRUE", "yes", " on "):
+            with self.subTest(spelling=spelling):
+                public, env = inspected({"LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": spelling, "ALLOW_PAID_RUNS": "0"})
+                self.assertTrue(public["offline_configured"])
+                self.assertFalse(public["paid_configured"])
+                self.assertEqual(baseline["configuration_digest"],
+                                 collector_module.revision_binding(public, env)["configuration_digest"])
+        defaulted_public, defaulted_env = inspected({})
+        self.assertEqual((False, False), (defaulted_public["offline_configured"], defaulted_public["paid_configured"]))
+        changed_public, changed_env = inspected({"ALLOW_PAID_RUNS": "yes"})
+        self.assertTrue(changed_public["paid_configured"])
+        self.assertNotEqual(baseline["configuration_digest"],
+                            collector_module.revision_binding(changed_public, changed_env)["configuration_digest"])
+        # The binding's public flags come from the resolver, not from a stale runtime dict.
+        stale = collector_module.revision_binding({**baseline_public, "paid_configured": True}, baseline_env)
+        self.assertFalse(stale["paid_configured"])
+        self.assertEqual(baseline["configuration_digest"], stale["configuration_digest"])
 
     def test_prospective_status_delta_requires_ordered_compatible_complete_readbacks(self):
         runtime = {"container_id": "c", "image_id": "sha256:" + "d" * 64, "runtime_head": "e" * 40,
@@ -1251,3 +1420,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]

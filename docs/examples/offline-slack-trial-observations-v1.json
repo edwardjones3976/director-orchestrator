@@ -146,6 +146,19 @@
           "status_receipt_rows": [],
           "partial_diagnostics": null
         },
+        "unjoined_context": {
+          "assignment_sequences": [],
+          "provider_result_digests": [
+            "1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "provider_routes": [
+            "openai"
+          ],
+          "delivery_ids": [
+            "synthetic-terminal-message"
+          ],
+          "note": "ordinary task-record/deliveries context; not the validated snapshot join"
+        },
         "chain": {
           "source_event_id_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "task_id": "DIR-LG-AB12",
@@ -160,10 +173,9 @@
           "delivery_ids": [
             "synthetic-terminal-message"
           ],
+          "approval_delivery_keys": [],
           "status_receipt_ids": [],
-          "provider_result_digests": [
-            "1111111111111111111111111111111111111111111111111111111111111111"
-          ],
+          "provider_result_digests": [],
           "slack_delivery_ts": "1789300830.100000",
           "slack_readback_state": "DELIVERED"
         },
@@ -181,9 +193,7 @@
           }
         },
         "lineage": {
-          "provider_routes": [
-            "openai"
-          ],
+          "provider_routes": [],
           "transport": null,
           "recorded_attempt_count": 0,
           "retry_observed": null,
