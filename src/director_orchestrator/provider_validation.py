@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
@@ -535,8 +536,8 @@ def resolved_provider_validation_generation() -> str:
     """
     import os
 
-    manifest = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "").strip().lower()
-    explicit = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "").strip().lower()
+    manifest = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "")
+    explicit = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "")
     if explicit:
         if _GENERATION_SHA256.fullmatch(explicit) is None:
             raise ValidationError("validation generation pin is malformed")
@@ -1028,3 +1029,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

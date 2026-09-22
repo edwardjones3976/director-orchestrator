@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | BEGIN]]
@@ -76,6 +77,10 @@ foreach ($provider in $commands.Keys) {
 }
 
 $validationEnabled = [string]$values["DIRECTOR_PROVIDER_VALIDATION_ENABLED"] -eq "true"
+if ($values.ContainsKey("DIRECTOR_PROVIDER_VALIDATION_ENABLED") -and
+    [string]$values["DIRECTOR_PROVIDER_VALIDATION_ENABLED"] -cnotin @("true", "false")) {
+    throw "Provider validation switch must be true or false."
+}
 $validationNames = @(
     "DIRECTOR_PROVIDER_VALIDATION_ENABLED",
     "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN",
@@ -109,8 +114,35 @@ if ($validationEnabled) {
         "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY",
         "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"
     )) {
-        if ([string]$values[$validationSecret] -ceq [string]$values["LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"]) {
-            throw "Provider validation keys must be distinct from the host bridge secret."
+        if (([string]$values[$validationSecret]).Length -lt 32 -or
+            [string]$values[$validationSecret] -ceq [string]$values["LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET"]) {
+            throw "Provider validation keys must be at least 32 characters and distinct from the host bridge secret."
+        }
+    }
+    if ([string]$values["DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"] -ceq
+        [string]$values["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"]) {
+        throw "Provider validation owner and capture keys must be distinct."
+    }
+    foreach ($pin in @("DIRECTOR_PROVIDER_VALIDATION_CANDIDATE", "DIRECTOR_PROVIDER_VALIDATION_TREE")) {
+        if ([string]$values[$pin] -cnotmatch '^[0-9a-f]{40}$') {
+            throw "Provider validation source pins are malformed."
+        }
+    }
+    $manifestGeneration = [string]$values["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
+    $explicitGeneration = [string]$values["DIRECTOR_PROVIDER_VALIDATION_GENERATION"]
+    $selectedGeneration = if ($manifestGeneration) { $manifestGeneration } else { $explicitGeneration }
+    if ($selectedGeneration -cnotmatch '^[0-9a-f]{64}$' -or
+        ($explicitGeneration -and $explicitGeneration -cne $selectedGeneration)) {
+        throw "Provider validation generation is missing, malformed or conflicting."
+    }
+    try { $accounts = $values["DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON"] | ConvertFrom-Json -AsHashtable }
+    catch { throw "Provider validation account-file bindings are malformed." }
+    if ($accounts -isnot [System.Collections.IDictionary]) {
+        throw "Provider validation account-file bindings must be an object."
+    }
+    foreach ($paths in $accounts.Values) {
+        if ($paths -isnot [array] -or @($paths | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count) {
+            throw "Provider validation account-file bindings must contain path arrays."
         }
     }
 }
@@ -154,3 +186,4 @@ finally {
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 07:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

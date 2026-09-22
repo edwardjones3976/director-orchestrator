@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
@@ -275,3 +276,4 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]] -->

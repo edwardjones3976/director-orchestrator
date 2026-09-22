@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
@@ -1957,11 +1958,6 @@ class Settings:
             problems.append(
                 "LANGGRAPH_PRIMARY_SERVICE_REPOSITORY must be an exact owner/name identity"
             )
-        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip()
-        if project_commit and not self.langgraph_primary_service_repository.strip():
-            problems.append(
-                "split project execution requires LANGGRAPH_PRIMARY_SERVICE_REPOSITORY"
-            )
         if self.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
             pin = self.langgraph_primary_local_evidence_adoption_sha256
             if not self.langgraph_primary_local_evidence_adoption_path.strip():
@@ -2496,3 +2492,4 @@ class Settings:
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]

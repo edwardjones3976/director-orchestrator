@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
@@ -33,7 +34,7 @@ _MODE_ENVIRONMENTS = {
 }
 _SELF_REFERENCES = {
     "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH", "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
-    "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256", "DIRECTOR_PROVIDER_VALIDATION_GENERATION",
+    "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256",
 }
 
 
@@ -58,6 +59,13 @@ def resolved_deployment_digest(document, image_id):
         if service.get("entrypoint") not in (None, []):
             raise ValueError("unexpected entrypoint override")
         environment = service["environment"]
+        validation_generation = environment.pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION", "")
+        if validation_generation != "" and (
+            not isinstance(validation_generation, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", validation_generation)
+            or validation_generation != environment.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+        ):
+            raise ValueError("validation generation differs from protected selection")
         if environment.get("DIRECTOR_RUNTIME_IMAGE_ID") != image_id:
             raise ValueError("runtime image metadata mismatch")
         if environment.get("DIRECTOR_RUNTIME_IMAGE") != image_id or environment.get("DIRECTOR_ASGI_APP") != command[1]:
@@ -157,6 +165,8 @@ def require_generation(settings, identity, *, reserve=False):
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("generation selection requires exactly one configured repository")
             service_repository = settings.langgraph_primary_service_repository.strip()
+            if service_repository and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", service_repository):
+                raise ValueError("malformed service repository")
             expected_repository = service_repository or settings.repository_allowlist[0]
             if adoption["repository"] != expected_repository:
                 raise ValueError("adopted repository differs from configured authority")
@@ -288,3 +298,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
