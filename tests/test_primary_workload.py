@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -304,6 +306,17 @@ class PostgresAdmissionTests(unittest.TestCase):
             connection.execute(f"DROP SCHEMA {self.schema} CASCADE")
         self.handle.close()
 
+    def seed_unknown_history_digest(self, target=None):
+        """One disposable row with a policy_digest no recognized identity
+        authenticates. This is the real, still-enforced unknown-history
+        refusal gate, not the retired allocation-share cap.
+        """
+        target = target or self
+        with target.handle.claim_store._pool.connection() as connection:
+            connection.execute(f"INSERT INTO {target.schema}.director_primary_workload_assignment "
+                "(task_id,assignment_id,provider_lane,reservation_digest,fencing_generation,policy_version,policy_digest) "
+                "VALUES ('unknown','1','claude',%s,1,%s,%s)", (DIGEST, POLICY_VERSION, DIGEST))
+
     def seed_test_history(self, target=None, *, capped=False):
         target = target or self
         providers = (["openai"] * 9 + ["claude"] * 6 + ["cursor"] * 4) if capped else HISTORY
@@ -463,7 +476,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         fixture = DefaultPrimaryApplicationIntegrationTests(methodName="runTest")
         fixture.setUp()
         try:
-            self.seed_test_history(fixture, capped=True)
+            self.seed_unknown_history_digest(fixture)
             record = fixture.application.create_intake(fixture.intake(),
                 intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
             def dispatcher(reservation):
@@ -474,7 +487,7 @@ class PostgresAdmissionTests(unittest.TestCase):
                 self.fail("provider must not be invoked")
             fixture.application._parallel_dispatcher = dispatcher
             aggregate = fixture.application._drive_parallel_lifecycle(record)
-            self.assertTrue(aggregate.workload_hold_reasons)
+            self.assertEqual(aggregate.workload_hold_reasons, ("workload_history_invalid",))
             projection = fixture.coordinator.get_projection(record.task_id)
             self.assertEqual(projection.projection["terminal_classification"],
                              "OWNER_DECISION_REQUIRED")
@@ -504,7 +517,7 @@ class PostgresAdmissionTests(unittest.TestCase):
         fixture = DefaultPrimaryApplicationIntegrationTests(methodName="runTest")
         fixture.setUp()
         try:
-            self.seed_test_history(fixture, capped=True)
+            self.seed_unknown_history_digest(fixture)
             assignments = (
                 ParallelAssignment("leaf", 1, "cursor", "test", ("middle",)),
                 ParallelAssignment("middle", 2, "claude", "test", ("root",)),
@@ -533,6 +546,7 @@ class PostgresAdmissionTests(unittest.TestCase):
                 self.assertTrue(aggregate.terminal)
                 self.assertFalse(aggregate.succeeded)
                 self.assertEqual(aggregate.ambiguous_slot_count, 0)
+                self.assertEqual(aggregate.workload_hold_reasons, ("workload_history_invalid",))
                 projection = fixture.coordinator.get_projection(record.task_id)
                 self.assertEqual(projection.projection["terminal_classification"],
                                  "OWNER_DECISION_REQUIRED")
@@ -609,3 +623,6 @@ class PostgresAdmissionTests(unittest.TestCase):
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]

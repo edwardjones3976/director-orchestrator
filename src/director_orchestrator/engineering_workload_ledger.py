@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -617,7 +619,8 @@ class EngineeringWorkloadLedger:
                     "historical_hard_caps_ok": all(r["admitted"] <= r["historical_hard_limit_slots"] for r in utilization),
                     "normal_bands_ok": all(r["normal_band_state"] == "within" for r in utilization),
                     "reported_resource_bounds_ok": False if any(r["reported_bound_violations"] for r in records)
-                        else True if records and all(r["reported_usage"]["turns"] is not None
+                        else True if records and all(r["attempt_count"] == r["settled_attempts"]
+                            and r["reported_usage"]["turns"] is not None
                             and r["reported_usage"]["output_bytes"] is not None
                             and (r["bounds"]["usd_limit"] is None or r["reported_usage"]["usd"] is not None)
                             for r in records) else None,
@@ -653,3 +656,6 @@ def human_status(status: dict) -> str:
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]

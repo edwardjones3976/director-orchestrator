@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
@@ -164,9 +166,29 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                 self.assertNotIn("$0", self.posts[-1]["text"])
                 receipts = api.get(f"/v1/primary/tasks/{task_id}/deliveries", headers=headers)
                 self.assertEqual(200, receipts.status_code)
-                self.assertEqual(["DELIVERED", "DELIVERED"], [r["state"] for r in receipts.json()])
-                self.assertIsNotNone(receipts.json()[0]["owner_decision_at"])
-                self.assertEqual("approve", receipts.json()[0]["owner_decision"])
+                rows = receipts.json()
+                self.assertEqual(["DELIVERED", "DELIVERED"], [r["state"] for r in rows])
+                # Identify the approval-bound receipt by its actual displayed
+                # button value and the exact production key, never by row
+                # position: receipts() only orders by created_at.
+                button_value = json.loads(button["value"])
+                approval_key = ("approval:" + button_value["request_digest"] + ":"
+                                 + button_value["projection_digest"])
+                bound = [r for r in rows if r["notification_key"] == approval_key]
+                identities = [(r["notification_key"], r["state"], r["created_at"]) for r in rows]
+                self.assertEqual(1, len(bound),
+                    f"expected exactly one receipt bound to {approval_key!r}; observed {identities!r}")
+                approval_receipt = bound[0]
+                self.assertEqual(task_id, approval_receipt["task_id"])
+                self.assertEqual(button_value["projection_digest"], approval_receipt["projection_digest"])
+                self.assertIsNotNone(approval_receipt["owner_decision_at"], identities)
+                self.assertEqual("approve", approval_receipt["owner_decision"], identities)
+                self.assertEqual("1720000002.000001", approval_receipt["owner_command_id"], identities)
+                terminal = [r for r in rows if r["notification_key"] != approval_key]
+                self.assertEqual(1, len(terminal), identities)
+                self.assertIsNone(terminal[0]["owner_decision"], identities)
+                self.assertIsNone(terminal[0]["owner_decision_at"], identities)
+                self.assertIsNone(terminal[0]["owner_command_id"], identities)
                 self.assertEqual(401, api.get(f"/v1/primary/tasks/{task_id}/deliveries").status_code)
                 self.assertNotIn("payload", receipts.text)
                 # A displayed old request cannot approve a new/current decision.
@@ -498,3 +520,6 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]

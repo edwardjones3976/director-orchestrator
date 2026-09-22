@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
@@ -557,6 +559,95 @@ class CompletionScorecardTests(unittest.TestCase):
             report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
             self.assertEqual(report["checks"][12]["status"], "FAIL")
 
+    def test_pending_recovery_attempt_is_unknown_between_two_known_passes(self):
+        """A permitted transient-recovery attempt must not be silently ignored.
+
+        Twenty fully-reported single-attempt admissions are a genuine PASS.
+        Once one of them begins a second, permitted attempt, that admission's
+        attempt count no longer matches its settled-outcome count, so the
+        aggregate result must fall to UNKNOWN even though its prior, still
+        fully-reported usage remains within bounds. Recording the second
+        outcome (also in bounds) restores PASS. No completion/settlement is
+        ever recorded, proving this is not a settlement gate.
+        """
+        from director_orchestrator.engineering_workload_ledger import EngineeringWorkloadLedger
+        reference = {"reference": "fixture-only", "sha256": "d" * 64}
+        route = {"route_id": "openai-codex:fixture-route", "product_id": "openai-codex", "actor_id": "fixture-actor", "provider_identity": "fixture-provider",
+                 "model_family": "fixture-family", "eligible": True, "roles": ["implementation"],
+                 "enrollment_evidence": reference}
+        manifest = {"authorization": reference, "policy_authorization": reference, "operator": "fixture operator",
+                    "cutover_at": (NOW - timedelta(hours=1)).isoformat(),
+                    "policy": {"kind": "product", "targets": {"openai-codex": 100}},
+                    "history_mode": "prospective", "history_evidence": reference,
+                    "prior_history_unknown": True, "quiescent_cutover_verified": True,
+                    "all_future_assignments_required": True, "routes": [route]}
+        retried_id = "fixture-retried"
+        with tempfile.TemporaryDirectory() as folder, patch.object(sc, "_run_json", side_effect=ValueError("offline")), \
+                patch("director_orchestrator.engineering_workload_ledger._now", return_value=NOW.isoformat()):
+            path = Path(folder) / "admissions.sqlite3"
+            ledger = EngineeringWorkloadLedger(path)
+            ledger.bootstrap(manifest)
+            for number in range(19):
+                assignment_id = f"fixture-{number}"
+                ledger.reserve({"assignment_id": assignment_id, "task_id": f"task-{number}", "scope": "test only",
+                                "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
+                                "route_id": "openai-codex:fixture-route",
+                                "packet_evidence": {"reference": "fixture-only", "sha256": f"{number:064x}"},
+                                "bounds": {"timeout_seconds": 60, "call_limit": 1, "turn_limit": 1,
+                                           "output_bytes_limit": 1000, "usd_limit": 1,
+                                           "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+                ledger.begin_attempt(assignment_id, transport="local_cli")
+                ledger.record_outcome(assignment_id, 1, {"outcome": "succeeded", "evidence": reference,
+                                                          "usage": {"usd": 0.5, "turns": 1, "output_bytes": 500}})
+            ledger.reserve({"assignment_id": retried_id, "task_id": "task-retried", "scope": "test only",
+                            "kind": "implementation", "product_id": "openai-codex", "transport": "local_cli",
+                            "route_id": "openai-codex:fixture-route",
+                            "packet_evidence": {"reference": "fixture-only", "sha256": "f" * 64},
+                            "bounds": {"timeout_seconds": 60, "call_limit": 2, "turn_limit": 6,
+                                       "output_bytes_limit": 1000, "usd_limit": 1,
+                                       "hard_usd_cap_verified": True, "usd_cap_evidence": reference}})
+            ledger.begin_attempt(retried_id, transport="local_cli")
+            ledger.record_outcome(retried_id, 1, {"outcome": "transient", "evidence": reference,
+                                                   "usage": {"usd": 0.5, "turns": 1, "output_bytes": 500}})
+
+            # Phase 1: 20/20 attempts settled, all known and in bounds -> PASS.
+            status = ledger.status()
+            self.assertEqual(status["total_admitted_assignments"], 20)
+            self.assertEqual(sum(r["attempt_count"] for r in status["records"]), 20)
+            self.assertEqual(sum(r["settled_attempts"] for r in status["records"]), 20)
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM completions").fetchone()[0], 0)
+            self.assertTrue(status["current_window_checks"]["reported_resource_bounds_ok"])
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "PASS")
+            self.assertFalse(report["activation_authorized"])
+
+            # Phase 2: a permitted recovery attempt is admitted but not yet
+            # settled -> the pending attempt makes the result UNKNOWN.
+            ledger.begin_attempt(retried_id, transport="local_cli")
+            status = ledger.status()
+            self.assertEqual(sum(r["attempt_count"] for r in status["records"]), 21)
+            self.assertEqual(sum(r["settled_attempts"] for r in status["records"]), 20)
+            self.assertEqual(status["total_admitted_assignments"], 20)
+            self.assertIsNone(status["current_window_checks"]["reported_resource_bounds_ok"])
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "UNKNOWN")
+
+            # Phase 3: recording the recovered outcome (also in bounds) restores
+            # PASS, with no completion/settlement ever recorded.
+            ledger.record_outcome(retried_id, 2, {"outcome": "succeeded", "evidence": reference,
+                                                   "usage": {"usd": 0.25, "turns": 1, "output_bytes": 100}})
+            status = ledger.status()
+            self.assertEqual(sum(r["attempt_count"] for r in status["records"]), 21)
+            self.assertEqual(sum(r["settled_attempts"] for r in status["records"]), 21)
+            self.assertEqual(status["total_admitted_assignments"], 20)
+            self.assertTrue(status["current_window_checks"]["reported_resource_bounds_ok"])
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM completions").fetchone()[0], 0)
+            report = sc.score(SHA, sc.collect(SHA, now=NOW, ledger_path=path), now=NOW)
+            self.assertEqual(report["checks"][12]["status"], "PASS")
+            self.assertFalse(report["activation_authorized"])
+
     def test_ci_uses_existing_oracle_actual_steps_and_exact_sha(self):
         jobs = [{"name": name, "conclusion": "success", "steps": [{"name": "actual test"}]} for name in sc.CI_JOBS]
         def external_query(args):
@@ -657,3 +748,6 @@ if __name__ == "__main__":
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
+# [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
