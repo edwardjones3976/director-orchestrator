@@ -1,8 +1,21 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 # Slack collaboration bus
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
+proactively identify issues while other providers work, document evidence,
+impact, uncertainty, and suggested solutions, then communicate a bounded
+handoff to the responsible provider. Track ownership and resolution evidence;
+do not directly fix an investigated issue or take over the ongoing assignment.
+Use existing approval, safety, budget, and independent-review gates.
+
+See the [team operating charter](team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
+
 
 Slack is the Director's primary human-visible coordination room. Each live task gets one
 Director-owned thread in its configured private project channel. The thread is not only a
@@ -57,3 +70,4 @@ conversation loops.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:38 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->

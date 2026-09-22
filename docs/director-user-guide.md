@@ -1,8 +1,21 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
 # Director-Orchestrator operator guide
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director team members (ChatGPT and Codex) also act as **INVESTIGATOR**:
+proactively identify issues while other providers work, document evidence,
+impact, uncertainty, and suggested solutions, then communicate a bounded
+handoff to the responsible provider. Track ownership and resolution evidence;
+do not directly fix an investigated issue or take over the ongoing assignment.
+Use existing approval, safety, budget, and independent-review gates.
+
+See the [team operating charter](team-operating-charter.md#openaidirector--investigator) for the finding and handoff requirements.
+
 
 For the owner running this system day to day. It covers what to do, what the
 output means, and what to do when something refuses.
@@ -180,3 +193,4 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
