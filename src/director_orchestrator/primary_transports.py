@@ -86,6 +86,7 @@ _RESPONSES_CAPTURE_BUNDLE_OVERHEAD_BYTES = 4_096
 _MAX_RESPONSES_NATIVE_BYTES = _MAX_COMMAND_RESULT_BYTES - _RESPONSES_CAPTURE_BUNDLE_OVERHEAD_BYTES
 _MAX_RESPONSES_HEADER_VALUE_BYTES = 512
 _MAX_ARGUMENT_PROMPT_BYTES = 24_000
+_NATIVE_TERMINAL_STATUSES = frozenset({"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"})
 
 
 _BASE_CHILD_ENVIRONMENT = frozenset(
@@ -1062,7 +1063,7 @@ def normalize_native_provider_envelope(
         # which would otherwise default to SUCCEEDED on the live path.  Record
         # the real terminal state instead of inventing a success.
         status = "FAILED"
-    if status not in {"SUCCEEDED", "FAILED", "OWNER_DECISION_REQUIRED"}:
+    if status not in _NATIVE_TERMINAL_STATUSES:
         raise RuntimeError("native provider returned an unsupported terminal status")
     acceptance = structured.get("acceptance")
     if not isinstance(acceptance, list):
@@ -1172,9 +1173,12 @@ class NativeCommandPacketTransport:
         fields = ("outcome", "status", "artifacts", "checks", "acceptance", "risks",
                   "blockers", "requested_decisions", "side_effects", "usage", "revision_recommended")
         properties = _validators()["result"].schema["properties"]
+        output_properties = {name: properties[name] for name in fields}
+        output_properties["status"] = dict(properties["status"],
+            enum=[value for value in properties["status"]["enum"] if value in _NATIVE_TERMINAL_STATUSES])
         contract = canonical_json_bytes({"type": "object", "additionalProperties": False,
             "required": ["outcome", "status"],
-            "properties": {name: properties[name] for name in fields}})
+            "properties": output_properties})
         instructions = (b"Return one bounded JSON object matching this output JSON Schema. "
                         b"Use the exact enum values and property names; do not invent aliases.\n"
                         + contract + b"\n")

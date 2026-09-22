@@ -1197,6 +1197,8 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
                 "checks": [{"command": "packet-only", "result": "No tools used.", "exit_code": None}],
                 "acceptance": [{"check": "packet-only", "status": "PASS", "evidence": "No tools used."}]})
             for invalid in ({"outcome": "done", "status": "completed"},
+                            {"outcome": "done", "status": "CANCELLED"},
+                            {"outcome": "done", "status": "REVISION_REQUIRED"},
                             {"outcome": "done", "status": "SUCCEEDED",
                              "checks": [{"name": "packet-only", "passed": True}]}):
                 self.assertFalse(validator.is_valid(invalid))
