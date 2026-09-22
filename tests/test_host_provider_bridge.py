@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
@@ -517,7 +518,7 @@ class HostProviderBridgeTests(unittest.TestCase):
                         result_normalizer=normalizer,
                     )
 
-    def test_preflight_refuses_a_carried_deadline_without_bridge_io(self) -> None:
+    def test_preflight_refuses_expired_deadlines_without_bridge_io(self) -> None:
         endpoint = "http://127.0.0.1:18765/v1/provider/dispatch"
         transport = HostBridgePacketTransport(
             "claude",
@@ -552,11 +553,11 @@ class HostProviderBridgeTests(unittest.TestCase):
             return_value=opener,
         ):
             with self.assertRaisesRegex(
-                RuntimeError, "unsupported-host-bridge-deadline"
+                RuntimeError, "timeout is exhausted"
             ):
                 transport.preflight(packet, context=context)
             with self.assertRaisesRegex(
-                RuntimeError, "unsupported-host-bridge-deadline"
+                RuntimeError, "timeout is exhausted"
             ):
                 transport.preflight(packet, context=expired)
         opener.open.assert_not_called()
@@ -785,3 +786,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
