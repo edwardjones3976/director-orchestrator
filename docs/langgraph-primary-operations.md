@@ -1,3 +1,5 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | BEGIN]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
@@ -570,8 +572,9 @@ readiness must cover OpenAI orchestration and at least two other primary provide
 capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
 control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
 different reviewer before the existing exact-plan execution approval. Eligible
-providers satisfy the prospective hard cap; the normal band guides preference,
-then operator-configured comparable cost ranks break ties. Pair selection projects
+providers exclude only zero-target lanes; the retired rolling-twenty hard cap no
+longer blocks admission, and the normal band guides preference, then
+operator-configured comparable cost ranks break ties. Pair selection projects
 research (when requested), production, then review in dependency order so rollover
 can unlock an independent reviewer; these projections never create ledger rows. Missing cost authority
 holds selection. Dispatch rechecks admission atomically; it never substitutes a
@@ -596,8 +599,9 @@ policy while preserving existing rows. Unknown or incompatible schema/history
 fails closed; the v1-only table still requires explicit remediation before any
 provider attempt. Legacy reservations without frozen profile-admission provenance
 require explicit reconciliation before new admissions, preserving their history.
-Mature windows still assess last
-nineteen plus the prospective assignment at target+5 percentage points.
+Mature windows still assess last nineteen plus the prospective assignment
+against the normal ±3-point band as an advisory preference; the owner retired
+the target+5 rolling-twenty hard ceiling on 2026-09-21.
 The approved Engineering profile replaces the former unsustainable core-only
 allocation: OpenAI35/Claude30/Cursor15/Grok10/Antigravity10. The full matrix,
 role boundaries, zero-target rule and preserved-history profile changes are in
@@ -678,3 +682,5 @@ identity cannot authorize successful completion.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 01:12 UTC | END]] -->

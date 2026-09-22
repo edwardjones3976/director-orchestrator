@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -55,9 +56,16 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertIsNone(roster.research)
 
     def test_startup_capacity_uses_only_real_assignments(self):
+        from director_orchestrator.primary_workload import admission_reason
         self.assertIsNone(admission_reason("claude", []))
-        self.assertIsNone(admission_reason("claude", ["claude"] * 5))
-        self.assertEqual(admission_reason("claude", ["claude"] * 8), "workload_assignment_hard_limit")
+        self.assertIsNone(admission_reason("claude", ["claude"] * 8))
+
+    def test_capacity_uses_only_relevant_profile_window(self):
+        from director_orchestrator.primary_workload import admission_reason
+        history = ["openai"] * 10 + ["claude"] * 9
+        self.assertIsNone(admission_reason("claude", history))
+        self.assertIsNone(admission_reason("claude", history[-19:]))
+        self.assertIsNone(admission_reason("claude", history[-15:]))
 
     def test_openai_production_has_distinct_reviewer(self):
         selected = self.select()
@@ -80,9 +88,10 @@ class PrimaryRosterTests(unittest.TestCase):
             self.select(trusted_cost_ranks={})
 
     def test_shared_history_profile_switch_does_not_reset(self):
+        from director_orchestrator.primary_workload import admission_reason
         prior = ["cursor"] * 4
-        self.assertEqual(admission_reason("cursor", prior, allocation_profile="engineering"), "workload_assignment_hard_limit")
-        self.assertEqual(admission_reason("cursor", prior, allocation_profile="public_research"), "workload_assignment_hard_limit")
+        self.assertIsNone(admission_reason("cursor", prior, allocation_profile="engineering"))
+        self.assertIsNone(admission_reason("cursor", prior, allocation_profile="public_research"))
         self.assertEqual(prior, ["cursor"] * 4)
 
     def test_research_is_projected_before_production_and_review(self):
@@ -304,3 +313,4 @@ class SelectableLaneCostRankTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 20:25 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
