@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -170,6 +171,30 @@ class PrimaryGenerationTests(unittest.TestCase):
                 with self.assertRaises(ActivationEvidenceError):
                     require_validation_generation(self.identity)
 
+    def test_deployment_digest_binds_project_execution_pins(self) -> None:
+        baseline = deployment_digest(self.settings)
+        changed = deployment_digest(
+            replace(
+                self.settings,
+                langgraph_primary_project_execution_pinned_commit_sha="a" * 40,
+                langgraph_primary_project_execution_pinned_tree_sha="b" * 40,
+            )
+        )
+        self.assertNotEqual(baseline, changed)
+
+    def test_malformed_project_execution_pins_fail_before_reserve(self) -> None:
+        with self.assertRaises(ActivationEvidenceError):
+            require_generation(
+                replace(
+                    self.settings,
+                    langgraph_primary_project_execution_pinned_commit_sha="a" * 40,
+                    langgraph_primary_project_execution_pinned_tree_sha="",
+                ),
+                self.identity,
+                reserve=True,
+            )
+        self.assertFalse(self.journal.exists())
+
     def test_substituted_journal_generation_marker_is_rejected_without_repair(self):
         require_generation(self.settings, self.identity, reserve=True)
         connection = sqlite3.connect(self.journal)
@@ -185,3 +210,4 @@ class PrimaryGenerationTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

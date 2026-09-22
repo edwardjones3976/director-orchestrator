@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
@@ -1290,8 +1292,13 @@ def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAutho
         raise RuntimeError("Default primary repository remote does not match its allowlist")
     starting_ref = settings.allowed_starting_refs[0]
     starting_sha = git("rev-parse", "--verify", f"{starting_ref}^{{commit}}")
-    pinned_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
-    pinned_tree = settings.langgraph_primary_pinned_tree_sha.strip().lower()
+    try:
+        pinned_commit, pinned_tree = settings.project_execution_authority_pins()
+    except ValueError as exc:
+        raise ValueError(
+            "Default primary immutable commit and tree pins must be supplied "
+            "together as 40-character hexadecimal values"
+        ) from exc
     if bool(pinned_commit) != bool(pinned_tree) or any(
         re.fullmatch(r"[0-9a-f]{40}", item) is None
         for item in (pinned_commit, pinned_tree)
@@ -1357,12 +1364,13 @@ class DefaultDryRunServices:
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
+            execution_commit, execution_tree = settings.project_execution_authority_pins()
             packet_router = DirectorPacketTaskRouter(
                 authority_snapshots=LocalGitAuthoritySnapshotResolver(
                     settings.repository_allowlist[0],
                     settings.repository_snapshot_root,
-                    pinned_commit_sha=settings.langgraph_primary_pinned_commit_sha,
-                    pinned_tree_sha=settings.langgraph_primary_pinned_tree_sha,
+                    pinned_commit_sha=execution_commit,
+                    pinned_tree_sha=execution_tree,
                     max_files=settings.langgraph_primary_snapshot_max_files,
                 ),
                 boundary_adapters={},
@@ -3672,3 +3680,5 @@ class DefaultPrimaryActivation:
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]

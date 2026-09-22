@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
@@ -612,12 +613,26 @@ if ([string]$values["LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA"] -notmatch '^[0-9a-f]{
     throw "Primary repository authority must have exact commit and tree pins."
 }
 
+$executionCommit = if ($values.ContainsKey("LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA")) {
+    [string]$values["LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA"]
+} else { "" }
+$executionTree = if ($values.ContainsKey("LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA")) {
+    [string]$values["LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA"]
+} else { "" }
+if (($executionCommit -or $executionTree) -and (
+    $executionCommit -notmatch '^[0-9a-f]{40}$' -or $executionTree -notmatch '^[0-9a-f]{40}$')) {
+    throw "Project execution repository authority must have exact commit and tree pins together."
+}
+if (-not $executionCommit) {
+    $executionCommit = [string]$values["LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA"]
+    $executionTree = [string]$values["LANGGRAPH_PRIMARY_PINNED_TREE_SHA"]
+}
 $snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]
 & "$PSScriptRoot\windows-primary-snapshot.ps1" -Action Verify -Source $snapshot -Target $snapshot `
     -ExpectedRepository ([string]$values["REPOSITORY_ALLOWLIST"]) `
     -StartingRef ([string]$values["ALLOWED_STARTING_REFS"]) `
-    -ExpectedCommit ([string]$values["LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA"]) `
-    -ExpectedTree ([string]$values["LANGGRAPH_PRIMARY_PINNED_TREE_SHA"])
+    -ExpectedCommit $executionCommit `
+    -ExpectedTree $executionTree
 
 $env:DIRECTOR_ENV_FILE = $environmentPath
 $env:DIRECTOR_COMPOSE_PROJECT_NAME = $ComposeProject
@@ -959,3 +974,4 @@ if ($Action -eq "Rollback") {
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | BEGIN]]
@@ -1425,8 +1426,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         if settings.repository_allowlist
         else "dry-run/preview"
     )
-    pinned_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
-    pinned_tree = settings.langgraph_primary_pinned_tree_sha.strip().lower()
+    pinned_commit, pinned_tree = settings.project_execution_authority_pins()
     pinned_mode = bool(pinned_commit and pinned_tree)
     plan_starting_ref = pinned_commit if pinned_mode else "main"
     plan_worktree = (
@@ -1580,3 +1580,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]

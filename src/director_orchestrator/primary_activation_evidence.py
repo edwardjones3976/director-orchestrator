@@ -1,3 +1,5 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
@@ -19,6 +21,7 @@ import hmac
 import json
 import os
 import re
+import stat
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass
@@ -37,6 +40,11 @@ OWNER_LOCAL_ADOPTION_VERSION = "director-primary-local-evidence-adoption/v1"
 OWNER_LOCAL_ADOPTION_DECISION = "ADOPT_SCOPED_LOCAL_EVIDENCE"
 OWNER_LOCAL_CI_ISSUER = "owner-local-evidence-adoption"
 HOSTED_CI_NOT_EXECUTED = "HOSTED_NOT_EXECUTED"
+_OWNER_LOCAL_ADOPTION_MAX_BYTES = 256 * 1024
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_COUNT = 32
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_FILE_BYTES = 8 * 1024 * 1024
+_OWNER_LOCAL_PINNED_EVIDENCE_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+_ACCEPTANCE_ARTIFACT_MAX_BYTES = 256 * 1024
 _OWNER_LOCAL_ADOPTION_DOMAIN = (
     b"director-primary-local-evidence-adoption/v1\0"
 )
@@ -156,6 +164,101 @@ def _owner_local_adoption_signature(owner_token: str, document: Mapping[str, Any
     ).hexdigest()
 
 
+def _read_regular_file_bounded(
+    path: Path,
+    *,
+    max_bytes: int,
+    error_label: str,
+) -> bytes:
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
+    try:
+        if not path.is_file():
+            raise ActivationEvidenceError(f"{error_label} must be a regular file")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ActivationEvidenceError(f"{error_label} must be a regular file")
+            if info.st_size > max_bytes:
+                raise ActivationEvidenceError(f"{error_label} is oversized")
+            raw = stream.read(max_bytes + 1)
+    except OSError as exc:
+        raise ActivationEvidenceError(f"{error_label} is unreadable") from exc
+    if len(raw) > max_bytes:
+        raise ActivationEvidenceError(f"{error_label} is oversized")
+    if len(raw) != info.st_size:
+        raise ActivationEvidenceError(f"{error_label} changed during read")
+    return raw
+
+
+def _verify_owner_local_pinned_evidence(
+    bundle_root: Path,
+    pinned_evidence: list[object],
+) -> None:
+    if len(pinned_evidence) > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_COUNT:
+        raise ActivationEvidenceError(
+            "owner-local evidence adoption pins exceed the allowed count"
+        )
+    seen_paths: set[str] = set()
+    total_bytes = 0
+    resolved_root = bundle_root.resolve()
+    entries: list[tuple[Path, str, int]] = []
+    for item in pinned_evidence:
+        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        digest = item.get("sha256")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        path_value = item.get("path")
+        if (
+            not isinstance(path_value, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", path_value) is None
+        ):
+            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
+        path_key = path_value.casefold()
+        if path_key in seen_paths:
+            raise ActivationEvidenceError(
+                "owner-local evidence adoption pins contain duplicate paths"
+            )
+        seen_paths.add(path_key)
+        evidence = bundle_root / path_value
+        try:
+            if evidence.resolve().parent != resolved_root:
+                raise ActivationEvidenceError(
+                    "adopted evidence is outside its bundle or oversized"
+                )
+            info = evidence.stat()
+            if not stat.S_ISREG(info.st_mode):
+                raise ActivationEvidenceError("adopted evidence is unavailable")
+            size = info.st_size
+        except OSError as exc:
+            raise ActivationEvidenceError("adopted evidence is unavailable") from exc
+        if size > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_FILE_BYTES:
+            raise ActivationEvidenceError(
+                "adopted evidence is outside its bundle or oversized"
+            )
+        total_bytes += size
+        if total_bytes > _OWNER_LOCAL_PINNED_EVIDENCE_MAX_TOTAL_BYTES:
+            raise ActivationEvidenceError(
+                "adopted evidence bundle exceeds the aggregate byte limit"
+            )
+        entries.append((evidence, digest, size))
+    for evidence, digest, size in entries:
+        raw = _read_regular_file_bounded(
+            evidence,
+            max_bytes=size,
+            error_label="adopted evidence",
+        )
+        observed = hashlib.sha256(raw).hexdigest()
+        if len(raw) != size or not hmac.compare_digest(observed, digest):
+            raise ActivationEvidenceError("adopted evidence bytes changed")
+
+
 def load_pinned_owner_local_adoption(
     path: str | Path,
     *,
@@ -171,12 +274,11 @@ def load_pinned_owner_local_adoption(
     if len(owner_token) < 32:
         raise ActivationEvidenceError("owner-local evidence adoption authority is unavailable")
     source = Path(path)
-    try:
-        raw = source.read_bytes()
-    except OSError as exc:
-        raise ActivationEvidenceError("owner-local evidence adoption is unreadable") from exc
-    if len(raw) > 256 * 1024:
-        raise ActivationEvidenceError("owner-local evidence adoption is oversized")
+    raw = _read_regular_file_bounded(
+        source,
+        max_bytes=_OWNER_LOCAL_ADOPTION_MAX_BYTES,
+        error_label="owner-local evidence adoption",
+    )
     observed_sha256 = hashlib.sha256(raw).hexdigest()
     if not hmac.compare_digest(observed_sha256, expected_sha256.lower()):
         raise ActivationEvidenceError("owner-local evidence adoption pin mismatch")
@@ -232,31 +334,12 @@ def load_pinned_owner_local_adoption(
     failure_cause = document.get("hosted_ci_failure_cause")
     if not isinstance(failure_cause, str) or not failure_cause.strip():
         raise ActivationEvidenceError("hosted CI failure cause is required")
+    if failure_cause != failure_cause.strip():
+        raise ActivationEvidenceError("hosted CI failure cause is noncanonical")
     pinned_evidence = document.get("pinned_evidence")
     if not isinstance(pinned_evidence, list) or not pinned_evidence:
         raise ActivationEvidenceError("owner-local evidence adoption lacks pinned artifacts")
-    for item in pinned_evidence:
-        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
-            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
-        digest = item.get("sha256")
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
-        ):
-            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
-        if not isinstance(item.get("path"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", item["path"]):
-            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
-        evidence = source.parent / item["path"]
-        try:
-            if evidence.resolve().parent != source.parent.resolve() or evidence.stat().st_size > 8 * 1024 * 1024:
-                raise ActivationEvidenceError("adopted evidence is outside its bundle or oversized")
-            with evidence.open("rb") as stream:
-                observed = hashlib.file_digest(stream, "sha256").hexdigest()
-        except OSError as exc:
-            raise ActivationEvidenceError("adopted evidence is unavailable") from exc
-        if not hmac.compare_digest(observed, digest):
-            raise ActivationEvidenceError("adopted evidence bytes changed")
+    _verify_owner_local_pinned_evidence(source.parent, pinned_evidence)
     for name in (
         "security_evidence_digest",
         "independent_review_evidence_digest",
@@ -540,12 +623,11 @@ class ActivationEvidenceStore:
     @staticmethod
     def _load_acceptance_artifact(path: str | Path) -> dict[str, Any]:
         source = Path(path)
-        try:
-            raw = source.read_bytes()
-        except OSError as exc:
-            raise ActivationEvidenceError("canonical acceptance artifact is unreadable") from exc
-        if len(raw) > 256 * 1024:
-            raise ActivationEvidenceError("canonical acceptance artifact is oversized")
+        raw = _read_regular_file_bounded(
+            source,
+            max_bytes=_ACCEPTANCE_ARTIFACT_MAX_BYTES,
+            error_label="canonical acceptance artifact",
+        )
         try:
             artifact = json.loads(raw, object_pairs_hook=_closed_json_object)
         except json.JSONDecodeError as exc:
@@ -664,7 +746,19 @@ class ActivationEvidenceStore:
         facts = artifact.get("facts")
         if not isinstance(facts, dict):
             raise ActivationEvidenceError("canonical acceptance artifact facts are invalid")
+        selected_mode = os.environ.get(
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE", "github-v1"
+        )
         artifact_version = str(artifact.get("version"))
+        if selected_mode == OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
+            if artifact_version != ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION:
+                raise ActivationEvidenceError(
+                    "acceptance artifact version does not match selected mode"
+                )
+        elif artifact_version != ACCEPTANCE_ARTIFACT_VERSION:
+            raise ActivationEvidenceError(
+                "acceptance artifact version does not match selected mode"
+            )
         if artifact_version == ACCEPTANCE_ARTIFACT_OWNER_LOCAL_VERSION:
             self._validate_owner_local_acceptance(identity, facts)
         else:
@@ -1213,3 +1307,6 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:30 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]

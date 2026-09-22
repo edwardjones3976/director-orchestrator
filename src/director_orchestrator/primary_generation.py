@@ -1,3 +1,6 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
@@ -123,6 +126,7 @@ def require_generation(settings, identity, *, reserve=False):
     owner selects the manifest's exact bytes via a separately protected digest.
     """
     try:
+        settings.project_execution_authority_pins()
         local = settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1"
         if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party", "owner-local-evidence-v1"}:
             raise ValueError("generation selection requires signed provider acceptance")
@@ -149,14 +153,20 @@ def require_generation(settings, identity, *, reserve=False):
                 expected_sha256=evidence_digest, owner_token=settings.langgraph_primary_owner_token)
             if adoption["reviewed_source_tree"] != identity.candidate_tree:
                 raise ValueError("adopted review source differs from generation")
+            if len(settings.repository_allowlist) != 1:
+                raise ValueError("generation selection requires exactly one configured repository")
+            if adoption["repository"] != settings.repository_allowlist[0]:
+                raise ValueError("adopted repository differs from configured allowlist")
+            observed_evidence_digest = adoption["adoption_digest"]
         else:
             evidence_path = Path(settings.langgraph_primary_acceptance_registry_path)
             evidence_digest = settings.langgraph_primary_acceptance_registry_sha256
+            observed_evidence_digest = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
         if (manifest["activation"] != asdict(identity)
             or manifest["journal_path"] != settings.langgraph_primary_acceptance_journal_path
             or manifest[evidence_path_field] != str(evidence_path)
             or manifest[evidence_digest_field] != evidence_digest
-            or hashlib.sha256(evidence_path.read_bytes()).hexdigest() != manifest[evidence_digest_field]
+            or observed_evidence_digest != manifest[evidence_digest_field]
             or manifest["provider_bindings_sha256"] != hashlib.sha256(
                 os.environ.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "").encode()).hexdigest()
             or manifest["deployment_configuration_sha256"] != deployment_digest(settings)):
@@ -270,3 +280,7 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
