@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
@@ -169,17 +170,25 @@ def _read_regular_file_bounded(
     max_bytes: int,
     error_label: str,
 ) -> bytes:
-    if max_bytes < 1:
-        raise ValueError("max_bytes must be positive")
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
     try:
-        with path.open("rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        if not path.is_file():
+            raise ActivationEvidenceError(f"{error_label} must be a regular file")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
                 raise ActivationEvidenceError(f"{error_label} must be a regular file")
+            if info.st_size > max_bytes:
+                raise ActivationEvidenceError(f"{error_label} is oversized")
             raw = stream.read(max_bytes + 1)
     except OSError as exc:
         raise ActivationEvidenceError(f"{error_label} is unreadable") from exc
     if len(raw) > max_bytes:
         raise ActivationEvidenceError(f"{error_label} is oversized")
+    if len(raw) != info.st_size:
+        raise ActivationEvidenceError(f"{error_label} changed during read")
     return raw
 
 
@@ -194,7 +203,7 @@ def _verify_owner_local_pinned_evidence(
     seen_paths: set[str] = set()
     total_bytes = 0
     resolved_root = bundle_root.resolve()
-    entries: list[tuple[Path, str]] = []
+    entries: list[tuple[Path, str, int]] = []
     for item in pinned_evidence:
         if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
             raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
@@ -238,15 +247,15 @@ def _verify_owner_local_pinned_evidence(
             raise ActivationEvidenceError(
                 "adopted evidence bundle exceeds the aggregate byte limit"
             )
-        entries.append((evidence, digest))
-    for evidence, digest in entries:
+        entries.append((evidence, digest, size))
+    for evidence, digest, size in entries:
         raw = _read_regular_file_bounded(
             evidence,
-            max_bytes=_OWNER_LOCAL_PINNED_EVIDENCE_MAX_FILE_BYTES,
+            max_bytes=size,
             error_label="adopted evidence",
         )
         observed = hashlib.sha256(raw).hexdigest()
-        if not hmac.compare_digest(observed, digest):
+        if len(raw) != size or not hmac.compare_digest(observed, digest):
             raise ActivationEvidenceError("adopted evidence bytes changed")
 
 
@@ -330,9 +339,6 @@ def load_pinned_owner_local_adoption(
     pinned_evidence = document.get("pinned_evidence")
     if not isinstance(pinned_evidence, list) or not pinned_evidence:
         raise ActivationEvidenceError("owner-local evidence adoption lacks pinned artifacts")
-    for item in pinned_evidence:
-        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
-            raise ActivationEvidenceError("owner-local evidence adoption pins are invalid")
     _verify_owner_local_pinned_evidence(source.parent, pinned_evidence)
     for name in (
         "security_evidence_digest",
@@ -1302,3 +1308,5 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]

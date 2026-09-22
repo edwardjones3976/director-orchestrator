@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
@@ -395,9 +396,15 @@ class LocalActivationEvidenceTests(unittest.TestCase):
                 ),
             ):
                 with self.subTest(label=label):
+                    case_journal = root / f"{label}.sqlite3"
+                    settings = replace(settings, langgraph_primary_acceptance_journal_path=str(case_journal))
+                    manifest["journal_path"] = str(case_journal)
+                    manifest["deployment_configuration_sha256"] = deployment_digest(settings)
+                    source.write_text(json.dumps(manifest))
+                    os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"] = hashlib.sha256(source.read_bytes()).hexdigest()
                     with self.assertRaises(ActivationEvidenceError):
                         require_generation(settings, ident, reserve=True)
-                    self.assertFalse(journal.exists())
+                    self.assertFalse(case_journal.exists())
 
     def test_hosted_ci_failure_cause_rejects_surrounding_whitespace(self) -> None:
         document = {
@@ -425,7 +432,7 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             self.loaded_adoption(path, pin)
 
     def test_adoption_and_receipt_reads_require_regular_files(self) -> None:
-        adoption_dir = Path(self.temporary.name) / "adoption.json"
+        adoption_dir = Path(self.temporary.name) / "adoption-directory"
         adoption_dir.mkdir()
         with self.assertRaisesRegex(ActivationEvidenceError, "regular file"):
             load_pinned_owner_local_adoption(
@@ -442,67 +449,102 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             self.loaded_adoption(path, pin)
 
     def test_owner_local_mode_rejects_valid_legacy_github_artifact(self) -> None:
-        ident = identity()
-        path, pin = self.write_adoption()
-        adoption = self.loaded_adoption(path, pin)
-        facts = owner_local_acceptance_facts(
-            ident,
-            adoption,
-            repository=adoption["repository"],
-            pull_request_number=adoption["pull_request_number"],
-        )
-        github_secrets = {
-            "ci": "ci-authority-secret-that-is-distinct-0001",
-            "independent_review": "review-authority-secret-that-is-distinct-0002",
-            "security": "security-authority-secret-that-is-distinct-0003",
-        }
-        unsigned = {
-            "facts": facts,
-            "facts_digest": canonical_facts_digest(facts),
-            "pull_request_number": adoption["pull_request_number"],
-            "repository": adoption["repository"],
-            "version": "director-primary-acceptance-artifact/v1",
-        }
-        payload = json.dumps(
-            unsigned,
-            ensure_ascii=True,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        from director_orchestrator.primary_activation_evidence import _acceptance_signature
-
-        issuers = {
-            "ci": "github-actions",
-            "independent_review": facts["independent_reviewer"],
-            "security": facts["security_reviewer"],
-        }
-        artifact = {
-            **unsigned,
-            "attestations": {
-                kind: {
-                    "issuer": issuer,
-                    "signature": _acceptance_signature(
-                        kind, issuer, github_secrets[kind], payload
-                    ),
-                }
-                for kind, issuer in issuers.items()
-            },
-        }
-        artifact_path = Path(self.temporary.name) / "legacy-github-artifact.json"
-        artifact_path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+        import tests.test_primary_activation_evidence as github_tests
+        with patch.dict(os.environ, {
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": "github-v1",
+            "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH": "",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": "",
+        }):
+            fixture = github_tests.PrimaryActivationEvidenceTests()
+            fixture.setUp()
+            self.addCleanup(fixture.tearDown)
+            fixture.identity = identity()
+            artifact_path = fixture.acceptance_artifact()
+            fixture.record(ActivationStage.PREFLIGHT)
+            fixture.store.record_acceptance_artifact(fixture.identity, artifact_path)
+            self.assertEqual(len(fixture.store.load()["stages"]), 2)
+            legacy_history = fixture.store.path.read_bytes()
         store = ActivationEvidenceStore(
             Path(self.temporary.name) / "activation.json",
-            acceptance_secrets={**self.secrets, **github_secrets},
+            acceptance_secrets={**self.secrets, **fixture.secrets},
         )
-        store.record(
-            ident,
-            ActivationStage.PREFLIGHT,
-            evidence_digest=canonical_facts_digest({"compose_config_valid": True}),
-            facts={"compose_config_valid": True},
-        )
+        facts = {"compose_config_valid": True}
+        store.record(fixture.identity, ActivationStage.PREFLIGHT,
+            evidence_digest=canonical_facts_digest(facts), facts=facts)
         with self.assertRaisesRegex(ActivationEvidenceError, "selected mode"):
-            store.record_acceptance_artifact(ident, artifact_path)
+            store.record_acceptance_artifact(fixture.identity, artifact_path)
+        store.path.write_bytes(legacy_history)
+        with self.assertRaisesRegex(ActivationEvidenceError, "selected mode"):
+            store.load()
+        self.assertEqual(store.path.read_bytes(), legacy_history)
+
+    def test_aggregate_limit_precedes_any_receipt_read(self) -> None:
+        import director_orchestrator.primary_activation_evidence as evidence_module
+        pins = list(self.adoption_document["pinned_evidence"])
+        for index in range(9):
+            name = f"large-{index}.bin"
+            with (Path(self.temporary.name) / name).open("wb") as stream:
+                stream.truncate(8 * 1024 * 1024)
+            pins.append({"path": name, "sha256": "a" * 64})
+        path, pin = self.write_adoption(document={**self.adoption_document, "pinned_evidence": pins})
+        with patch.object(evidence_module, "_read_regular_file_bounded",
+                wraps=evidence_module._read_regular_file_bounded) as reader:
+            with self.assertRaisesRegex(ActivationEvidenceError, "aggregate"):
+                self.loaded_adoption(path, pin)
+        self.assertEqual(reader.call_count, 1)  # Only the bounded adoption document.
+
+    def test_receipt_growth_cannot_exceed_preflight_aggregate(self) -> None:
+        import director_orchestrator.primary_activation_evidence as evidence_module
+        path, pin = self.write_adoption()
+        read_bounded = evidence_module._read_regular_file_bounded
+        receipt = Path(self.temporary.name) / "local_qa.txt"
+        def grow_before_read(source, **kwargs):
+            if source == receipt:
+                source.write_bytes(source.read_bytes() + b"growth")
+            return read_bounded(source, **kwargs)
+        with patch.object(evidence_module, "_read_regular_file_bounded", side_effect=grow_before_read):
+            with self.assertRaisesRegex(ActivationEvidenceError, "oversized"):
+                self.loaded_adoption(path, pin)
+
+    def test_oversized_adoption_is_rejected_before_reading(self) -> None:
+        path = Path(self.temporary.name) / "adoption.json"
+        with path.open("wb") as stream:
+            stream.truncate(256 * 1024 + 1)
+        with patch("os.fdopen") as opened:
+            # fstat must reject size before a stream read; use the actual open fd.
+            import contextlib
+            real_fdopen = __import__("io").open
+            streams = []
+            @contextlib.contextmanager
+            def capture(fd, mode):
+                with real_fdopen(fd, mode) as stream:
+                    proxy = unittest.mock.Mock(wraps=stream)
+                    streams.append(proxy)
+                    yield proxy
+            opened.side_effect = capture
+            with self.assertRaisesRegex(ActivationEvidenceError, "oversized"):
+                load_pinned_owner_local_adoption(path, expected_sha256="a" * 64, owner_token=self.owner_token)
+            self.assertTrue(streams)
+            streams[0].read.assert_not_called()
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO behavior is exercised in the Linux lane")
+    def test_fifo_adoption_rejects_without_blocking(self) -> None:
+        import subprocess
+        import sys
+        fifo = Path(self.temporary.name) / "fifo.json"
+        os.mkfifo(fifo)
+        code = """import sys
+from director_orchestrator.primary_activation_evidence import ActivationEvidenceError, load_pinned_owner_local_adoption
+try:
+    load_pinned_owner_local_adoption(sys.argv[1], expected_sha256='a'*64, owner_token='fixture-owner-token-00000000000000000')
+except ActivationEvidenceError:
+    sys.exit(0)
+sys.exit(1)
+"""
+        result = subprocess.run([sys.executable, "-c", code, str(fifo)],
+            capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
 
     def test_runtime_rejects_missing_acceptance_before_database_open(self) -> None:
         from director_orchestrator.primary_default import DefaultPrimaryActivation
@@ -604,3 +646,5 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
