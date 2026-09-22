@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
@@ -438,6 +439,14 @@ class LocalActivationEvidenceTests(unittest.TestCase):
         ):
             require_generation(settings, ident, reserve=True)
             resolve_default_primary_authority(settings)
+            with self.assertRaises(ActivationEvidenceError):
+                require_generation(
+                    replace(
+                        settings,
+                        langgraph_primary_project_execution_pinned_tree_sha="f" * 40,
+                    ),
+                    ident,
+                )
 
     def test_require_generation_rejects_repository_allowlist_mismatch(self) -> None:
         from director_orchestrator.primary_generation import deployment_digest, require_generation
@@ -745,3 +754,4 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:24 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]]
@@ -301,12 +302,11 @@ class WorksheetWordingTests(unittest.TestCase):
             inventory,
         )
         self.assertIn(
-            "it is not satisfied by, and not testable against, the script in this"
-            " checkout",
+            "use the control script bound to the reviewed revision",
             inventory,
         )
         self.assertIn(
-            "Check the `-Action` ValidateSet of the script you actually hold", inventory
+            "Older checkouts may have different actions and requirements", inventory
         )
         for name in (
             "DIRECTOR_RUNTIME_IMAGE",
@@ -349,3 +349,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:24 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]] -->
@@ -223,23 +224,11 @@ credentials, and account metadata never enter this document or any commit.
 
 ### Which control version this inventory describes
 
-Two control-script versions are in play, and they differ in what they demand.
-
-The names below are the ones required by the current accepted control script,
-whose latest contribution record is `OpenAI Codex | GPT-6 | 2026-09-06 | 20:37
-UTC`. That version adds `BootstrapDatabaseIdentity`, `SelectGeneration`,
-`StageRuntime`, and `ValidateProviders` to the `-Action` set, refuses to build an
-image for you, and verifies an exact-candidate image and a selected generation
-before it does anything else.
-
-This branch's own checkout still carries the earlier script (latest record
-`OpenAI Codex | GPT-6 | 2026-09-06 | 09:27 UTC`), which has none of those
-actions and builds the image itself. The always-required list and the
-acceptance-mode list below are identical in both versions, so they can be read
-against either. Everything under "Generation, image, and deployment identities"
-comes from the current version only: it is not satisfied by, and not testable
-against, the script in this checkout. Check the `-Action` ValidateSet of the
-script you actually hold before following any of it.
+This inventory describes `scripts/windows-langgraph-primary-control.ps1` in
+this revision. It includes `BootstrapDatabaseIdentity`, `SelectGeneration`,
+`StageRuntime`, and `ValidateProviders`, requires a prepared exact-candidate
+image, and verifies the selected generation. Older checkouts may have different
+actions and requirements; use the control script bound to the reviewed revision.
 
 Always required by the script:
 
@@ -266,8 +255,14 @@ Always required by the script:
   any runtime action. `authority_pins_valid` reading true on a deployment where
   both are empty describes a deployment that has pinned nothing; it is not
   permission to run the control script, activate, or dispatch without pins. The
-  pins are also the snapshot verification input, and in the current control
-  version they must equal the control checkout's own commit and tree
+  service pins must equal the control checkout's own commit and tree
+- When the registered project uses a different repository, set both
+  `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA` and
+  `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA` to its reviewed snapshot.
+  These pins govern snapshot verification and task planning; the service pins
+  still govern the Director image and acceptance evidence. Both project pins
+  must be valid together; leaving both unset reuses the service pins. Generation
+  configuration binds both pairs, so changing either invalidates that generation
 - `REPOSITORY_SNAPSHOT_HOST_PATH`, `REPOSITORY_SNAPSHOT_ROOT`,
   `REPOSITORY_ALLOWLIST`, `ALLOWED_STARTING_REFS`
 
@@ -403,3 +398,4 @@ Those actions remain behind the separately accepted primary activation gates.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | END]] -->
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]] -->

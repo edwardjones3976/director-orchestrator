@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
@@ -125,7 +126,6 @@ from .models import (
     Assignment,
     AssignmentKind,
     AssignmentOutcome,
-    DirectorPlan,
     IntakeAuthentication,
     ProviderName,
     SlackIntake,
@@ -1261,25 +1261,6 @@ def build_automatic_primary_live_dependencies(
     )
 
 
-def _align_plan_to_project_execution_authority(
-    settings: Settings, plan: DirectorPlan
-) -> None:
-    """Bind packet planning to the project snapshot when authority is split."""
-
-    execution_commit, _ = settings.project_execution_authority_pins()
-    service_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
-    if not execution_commit or execution_commit == service_commit:
-        return
-    if plan.prestage is not None:
-        plan.prestage = plan.prestage.model_copy(
-            update={"branch": execution_commit, "base_sha": execution_commit}
-        )
-    plan.assignments = [
-        item.model_copy(update={"starting_ref": execution_commit})
-        for item in plan.assignments
-    ]
-
-
 def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAuthority:
     """Bind the configured clean repository to its exact origin-backed head."""
 
@@ -1477,7 +1458,6 @@ class DefaultDryRunServices:
         # units and the dispatched packet are derived from the same immutable input.
         if record.plan is None:
             record.plan = preview_plan(record.intake.text, self.settings)
-            _align_plan_to_project_execution_authority(self.settings, record.plan)
         record.plan_generation += 1
         if not record.plan.assignments:
             raise RuntimeError("Default primary plan has no packet assignment")
@@ -3701,3 +3681,4 @@ class DefaultPrimaryActivation:
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -1334,6 +1335,68 @@ class DefaultPrimarySplitProjectAuthorityTests(unittest.TestCase):
         authority = resolve_default_primary_authority(self.split_settings())
         self.assertEqual(self.project_commit, authority.starting_sha)
 
+    def test_split_intake_plan_reaches_packet_router_with_project_pins(self) -> None:
+        from director_orchestrator.policy import execution_policy_errors
+
+        settings = self.split_settings()
+        for preplanned in (True, False):
+            with self.subTest(preplanned=preplanned):
+                services = DefaultDryRunServices(settings)
+                record = TaskRecord(
+                    task_id="DIR-SPLIT-PLAN",
+                    status=TaskStatus.QUEUED,
+                    intake=SlackIntake(
+                        source_event_id="event-split-plan",
+                        channel_id="CSPLIT",
+                        thread_ts="1720000000.000003",
+                        user_id="UOWNER",
+                        text="Project: default\nImplement the pinned project change.",
+                    ),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+                )
+                if preplanned:
+                    record.plan = preview_plan(record.intake.text, settings)
+                services.register(record)
+                context = HandlerContext(
+                    task_id=record.task_id,
+                    source_event_id=record.intake.source_event_id,
+                    correlation_id="corr-split-plan",
+                    intake_digest=digest("intake"),
+                    scope_digest=digest("scope"),
+                    authority_snapshot_digest=digest("authority"),
+                    work_packet_digest=None,
+                    idempotency_key_digest=digest("idempotency"),
+                    starting_sha=self.project_commit,
+                    candidate_sha=self.project_commit,
+                    plan_digest=None,
+                    scheduled_producer_id=None,
+                    provider_attempt_digest=None,
+                    provider_dispatch_status="NOT_STARTED",
+                    provider_result_digest=None,
+                    producer_id=None,
+                    reviewer_id=None,
+                    revision_count=0,
+                    budget_limit_units=10,
+                    budget_used_units=0,
+                    effect_key_digest=None,
+                    effect_attempt_digest=None,
+                    writer_owner_id="langgraph",
+                )
+                result = services.plan(context)
+                planned = services._record(record.task_id).plan
+                self.assertTrue(result.work_packet_digest.startswith("sha256:"))
+                self.assertIsNotNone(planned)
+                self.assertIsNotNone(planned.prestage)
+                self.assertEqual(self.project_commit, planned.prestage.base_sha)
+                self.assertEqual(self.project_commit, planned.prestage.branch)
+                self.assertTrue(all(
+                    item.starting_ref == self.project_commit for item in planned.assignments
+                ))
+                self.assertFalse([
+                    error for error in execution_policy_errors(planned, settings)
+                    if "digest" in error
+                ])
+
     def test_service_pins_without_project_execution_reject_foreign_snapshot(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
             resolve_default_primary_authority(
@@ -1342,6 +1405,17 @@ class DefaultPrimarySplitProjectAuthorityTests(unittest.TestCase):
                     langgraph_primary_project_execution_pinned_tree_sha="",
                 )
             )
+
+    def test_split_authority_preserves_repository_tree_and_clean_checks(self) -> None:
+        for updates, message in (
+            ({"repository_allowlist": ("other/project",)}, "remote does not match"),
+            ({"langgraph_primary_project_execution_pinned_tree_sha": self.director_tree}, "tree"),
+        ):
+            with self.subTest(updates=updates), self.assertRaisesRegex(RuntimeError, message):
+                resolve_default_primary_authority(self.split_settings(**updates))
+        (self.project_root / "README.md").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "clean"):
+            resolve_default_primary_authority(self.split_settings())
 
     def test_swapped_project_execution_pins_reject_snapshot(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
@@ -3991,3 +4065,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
