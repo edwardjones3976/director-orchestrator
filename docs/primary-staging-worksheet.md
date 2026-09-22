@@ -1,3 +1,4 @@
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | BEGIN]] -->
@@ -275,6 +276,12 @@ Required by acceptance mode. `LANGGRAPH_PRIMARY_ACCEPTANCE_MODE` defaults to
 
 - `github-v1`: `LANGGRAPH_PRIMARY_ACTIVATION_SECURITY_REVIEWER_ALLOWLIST_JSON`
   and `LANGGRAPH_PRIMARY_ACTIVATION_INDEPENDENT_REVIEWER_ALLOWLIST_JSON`
+- `owner-local-evidence-v1`: `LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH`,
+  `LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256`,
+  `LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH`, and both reviewer allowlists
+  named for `github-v1` above. This mode requires actual signed owner adoption
+  of the local QA, independent review and security evidence; it does not turn
+  failed hosted CI into success.
 - `provider-v2` or explicitly selected `provider-v3-two-party`:
   `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_PATH`,
   `LANGGRAPH_PRIMARY_ACCEPTANCE_REGISTRY_SHA256`,
@@ -394,3 +401,5 @@ Those actions remain behind the separately accepted primary activation gates.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 08:23 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:32 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]] -->
+
+<!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:02 UTC | END]] -->
