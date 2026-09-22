@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 06:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]]
@@ -41,6 +42,7 @@ _OWNER_LOCAL_ADOPTION_DOMAIN = (
 )
 _OWNER_LOCAL_EXTRA_FACT_NAMES = frozenset(
     {
+        "generation_manifest_sha256",
         "hosted_ci_failure_cause",
         "local_qa_evidence_digest",
         "reviewed_source_commit",
@@ -317,6 +319,7 @@ def owner_local_acceptance_facts(
     return {
         "candidate_commit": identity.candidate_commit,
         "candidate_tree": identity.candidate_tree,
+        "generation_manifest_sha256": os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", ""),
         "ci_conclusion": HOSTED_CI_NOT_EXECUTED,
         "ci_evidence_digest": hosted_ci_absence_digest(
             failure_cause=failure_cause,
@@ -738,6 +741,9 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError("owner-local evidence requires explicit mode selection")
         if set(facts) != _OWNER_LOCAL_FACT_NAMES:
             raise ActivationEvidenceError("acceptance artifact facts contract is invalid")
+        generation_pin = os.environ.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", generation_pin) or facts.get("generation_manifest_sha256") != generation_pin:
+            raise ActivationEvidenceError("owner-local acceptance belongs to another or unselected generation")
         if facts.get("ci_conclusion") != HOSTED_CI_NOT_EXECUTED:
             raise ActivationEvidenceError("hosted CI failure was not preserved explicitly")
         run_ids = facts.get("ci_run_ids")
@@ -1206,3 +1212,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:30 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:30 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]

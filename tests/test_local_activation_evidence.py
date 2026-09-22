@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-22 | 06:10 UTC | BEGIN]]
@@ -80,6 +81,7 @@ class LocalActivationEvidenceTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, {
             "LANGGRAPH_PRIMARY_ACCEPTANCE_MODE": "owner-local-evidence-v1",
             "LANGGRAPH_PRIMARY_ACCEPTANCE_JOURNAL_PATH": str(Path(self.temporary.name) / "selected.sqlite3"),
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "7" * 64,
             "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_PATH": str(path),
             "LANGGRAPH_PRIMARY_LOCAL_EVIDENCE_ADOPTION_SHA256": pin,
             "LANGGRAPH_PRIMARY_OWNER_TOKEN": self.owner_token,
@@ -304,6 +306,40 @@ class LocalActivationEvidenceTests(unittest.TestCase):
                 require_generation(settings, ident, reserve=True)
             self.assertEqual(journal.read_bytes(), before)
 
+            artifact = root / "acceptance.json"
+            artifact.write_text(json.dumps(self.local_artifact(ident, self.loaded_adoption(adoption_path, adoption_pin))))
+            store = ActivationEvidenceStore(root / "ignored.json", acceptance_secrets=self.secrets)
+            def record(stage, facts):
+                store.record(ident, stage, evidence_digest=canonical_facts_digest(facts), facts=facts)
+            record(ActivationStage.PREFLIGHT, {"compose_config_valid": True})
+            store.record_acceptance_artifact(ident, artifact)
+            record(ActivationStage.MIGRATED, {"schema_current": True})
+            backup = "sha256:" + "0" * 64
+            record(ActivationStage.BACKED_UP, {"backup_digest": backup})
+            record(ActivationStage.RESTORE_PROVED, {"backup_digest": backup,
+                "required_control_plane_tables": 17, "checkpoint_tables": 4, "schema_evidence_rows": 1})
+            store.require_staged(ident)
+            retained = store.path.read_bytes()
+
+            # Reproduce a new image generation with the old sidecar retained.
+            journal.unlink()
+            manifest["image_id"] = "sha256:" + "a" * 64
+            source.write_text(json.dumps(manifest))
+            new_pin = hashlib.sha256(source.read_bytes()).hexdigest()
+            with patch.dict(os.environ, {"DIRECTOR_RUNTIME_IMAGE_ID": manifest["image_id"],
+                    "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": new_pin}):
+                require_generation(settings, ident, reserve=True)
+                self.assertEqual(require_generation(settings, ident), manifest)
+                for replay in (store, ActivationEvidenceStore(root / "ignored.json",
+                        acceptance_secrets=self.secrets, read_only=True)):
+                    with self.assertRaisesRegex(ActivationEvidenceError, "generation"):
+                        replay.require_staged(ident)
+                for invalid in ("", "not-a-digest"):
+                    with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": invalid}):
+                        with self.assertRaisesRegex(ActivationEvidenceError, "generation"):
+                            store.load()
+            self.assertEqual(store.path.read_bytes(), retained)
+
     def test_runtime_rejects_missing_acceptance_before_database_open(self) -> None:
         from director_orchestrator.primary_default import DefaultPrimaryActivation
         settings = replace(Settings(), langgraph_primary_enabled=True, allow_paid_runs=False,
@@ -402,3 +438,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | END]]
