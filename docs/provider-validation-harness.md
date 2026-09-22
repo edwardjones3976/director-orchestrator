@@ -1,3 +1,4 @@
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]] -->
@@ -10,7 +11,7 @@ The bridge exposes `/v1/provider/validate` only when explicitly configured. Requ
 
 The explicit operator CLI is `python -m director_orchestrator.provider_validation_cli bootstrap` or `validate`. Bootstrap requires DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN, DIRECTOR_PROVIDER_VALIDATION_MANIFEST and DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN. The manifest has exactly generation, candidate, tree, expires_at (Unix seconds, within 24 hours), budget_units and lanes. Generation is the immutable primary generation manifest SHA256; candidate/tree must match its ActivationIdentity. Each lane contains exactly binding (ProviderActivationBinding fields), configuration_digest, cost_units and work_packet. Canary work packets use the exact candidate, VALIDATION identifiers, no tools/effects, max_hops=1 and max_revisions=0.
 
-Validation additionally requires DIRECTOR_PROVIDER_VALIDATION_BRIDGE_URL with HTTPS and the exact validation path. The bridge requires DIRECTOR_PROVIDER_VALIDATION_ENABLED=true, dedicated capture key and owner token (at least 32 characters, distinct from each other and production authentication), and DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON mapping provider names to pinned local account/runtime files. Runtime capture verification also requires DIRECTOR_PROVIDER_VALIDATION_GENERATION, CANDIDATE and TREE plus the dedicated database and capture key. Keep all values in the existing protected secret/configuration mechanism. Never place credentials in this document or Git.
+Validation additionally requires DIRECTOR_PROVIDER_VALIDATION_BRIDGE_URL with HTTPS and the exact validation path. The bridge requires DIRECTOR_PROVIDER_VALIDATION_ENABLED=true, dedicated capture key and owner token (at least 32 characters, distinct from each other and production authentication), and DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON mapping provider names to pinned local account/runtime files. Runtime capture verification requires DIRECTOR_PROVIDER_VALIDATION_CANDIDATE and TREE plus the dedicated database and capture key. When DIRECTOR_PROVIDER_VALIDATION_GENERATION is absent, consumers derive it from LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256; an explicit conflicting value is rejected. Keep all values in the existing protected secret/configuration mechanism. Never place credentials in this document or Git.
 
 A capture authenticates raw native output, normalized result, native session, packet, complete activation binding, candidate/tree, generation, reservation, nonce, validation fence and expiry. The bridge checks its configured executable/account-file hashes and workspace/argv/environment identity before and after execution. The cloned executor checks the dedicated durable validation fence immediately before subprocess dispatch and never consumes production writer leases. The same authenticated capture can support both activation surfaces; recording the normal ordered activation stages remains a separate owner-authorized operation.
 
@@ -51,3 +52,4 @@ launched here.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]] -->

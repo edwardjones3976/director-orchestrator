@@ -471,6 +471,109 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("no provider was invoked", result.stdout)
 
+    def test_run_forwards_validation_profile_and_clears_stale_parent_state(self):
+        keys = [
+            "DIRECTOR_PROVIDER_VALIDATION_ENABLED",
+            "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN",
+            "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY",
+            "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN",
+            "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON",
+            "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE",
+            "DIRECTOR_PROVIDER_VALIDATION_TREE",
+            "DIRECTOR_PROVIDER_VALIDATION_GENERATION",
+            "DIRECTOR_PROVIDER_VALIDATION_TEAM_CONFIG",
+            "DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG",
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
+            "DIRECTOR_HOST_PROVIDER_WORKSPACE",
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            provider = root / "harmless_provider.py"
+            provider.write_text("raise SystemExit(0)\n")
+            argv = [sys.executable, str(provider)]
+            command_map = {lane: argv for lane in SUPPORTED_HOST_LANES}
+            capture = root / "child-environment.json"
+            stub = root / "bridge_python.ps1"
+            stub.write_text(
+                f"""
+$ErrorActionPreference = 'Stop'
+if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orchestrator.host_provider_bridge_server') {{
+  $payload = @{{}}
+  $names = $env:BRIDGE_ENV_CAPTURE_KEYS | ConvertFrom-Json
+  foreach ($name in $names) {{
+    $payload[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+  }}
+  Set-Content -LiteralPath '{capture}' -Value ($payload | ConvertTo-Json -Compress) -Encoding utf8
+  exit 0
+}}
+& $env:REAL_PYTHON @args
+""",
+                encoding="utf-8",
+            )
+            environment = root / "fixture.env"
+            values = {
+                "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "offline-fixture-secret-" + "x" * 32,
+                "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps(command_map),
+                "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE": str(root / "bridge.sqlite3"),
+                "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN": "never-connected",
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "offline_fixture",
+                "DIRECTOR_PROVIDER_VALIDATION_ENABLED": "true",
+                "DIRECTOR_PROVIDER_VALIDATION_POSTGRES_DSN": "postgresql://fixture.invalid/validation",
+                "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": "validation-capture-key-" + "y" * 24,
+                "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN": "validation-owner-token-" + "z" * 24,
+                "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": json.dumps({"openai": ["account.json"]}),
+                "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "f" * 40,
+                "DIRECTOR_PROVIDER_VALIDATION_TREE": "a" * 40,
+                "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "b" * 64,
+            }
+            environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+            parent = dict.fromkeys(keys, "stale-parent-value")
+            parent["DIRECTOR_PROVIDER_VALIDATION_TREE"] = "c" * 40
+            with patch.dict(os.environ, parent, clear=False):
+                result = subprocess.run(
+                    [PWSH, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
+                     "-Action", "Run", "-EnvironmentFile", str(environment), "-Workspace", str(root),
+                     "-Python", str(stub)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env={**os.environ, "REAL_PYTHON": sys.executable, "BRIDGE_ENV_CAPTURE_KEYS": json.dumps(keys)},
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            observed = json.loads(capture.read_text(encoding="utf-8-sig"))
+            for name, expected in values.items():
+                if name in keys:
+                    self.assertEqual(observed.get(name), expected)
+            self.assertEqual(observed["DIRECTOR_HOST_PROVIDER_WORKSPACE"], str(root.resolve()))
+            self.assertIsNone(os.environ.get("DIRECTOR_PROVIDER_VALIDATION_TREE"))
+
+    def test_preflight_rejects_enabled_validation_without_required_profile_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            provider = root / "harmless_provider.py"
+            provider.write_text("raise SystemExit(0)\n")
+            argv = [sys.executable, str(provider)]
+            environment = root / "fixture.env"
+            values = {
+                "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET": "offline-fixture-secret-" + "x" * 32,
+                "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps({"cursor": argv}),
+                "DIRECTOR_HOST_PROVIDER_BRIDGE_STORE": str(root / "bridge.sqlite3"),
+                "DIRECTOR_HOST_PROVIDER_POSTGRES_DSN": "never-connected",
+                "LANGGRAPH_PRIMARY_POSTGRES_SCHEMA": "offline_fixture",
+                "DIRECTOR_PROVIDER_VALIDATION_ENABLED": "true",
+            }
+            environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+            result = subprocess.run(
+                [PWSH, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts/windows-host-provider-bridge.ps1"),
+                 "-Action", "Preflight", "-EnvironmentFile", str(environment), "-Workspace", str(root),
+                 "-Python", sys.executable],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Provider validation is enabled but incomplete", result.stderr)
+
     def test_preflight_preserves_unsupported_and_invalid_command_refusals(self):
         cases = [
             ({"microsoft-365-copilot": None}, "unallowlisted provider"),

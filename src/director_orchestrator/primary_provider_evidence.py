@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:33 UTC | BEGIN]]
@@ -230,8 +231,12 @@ def publish_file(path, *, settings, identity):
         acceptance_secrets=_acceptance_secrets_from_environment(), read_only=True).require_staged(identity)
     require_validation_generation(identity)
     generation = os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
-    if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_GENERATION") != generation:
-        raise ActivationEvidenceError("capture verifier generation differs from staged generation")
+    from .provider_validation import ValidationError, resolved_provider_validation_generation
+    try:
+        if resolved_provider_validation_generation() != generation:
+            raise ActivationEvidenceError("capture verifier generation differs from staged generation")
+    except ValidationError as exc:
+        raise ActivationEvidenceError(str(exc)) from None
     with open(path, "rb") as stream:
         requests = read_requests(stream, settings=settings, identity=identity, generation=generation)
     verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
@@ -250,3 +255,4 @@ def publish_file(path, *, settings, identity):
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]

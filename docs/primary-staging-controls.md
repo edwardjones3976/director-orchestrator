@@ -31,8 +31,10 @@ repository differs from the accepted Director service candidate, keep
 the Director candidate and set
 `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA` and
 `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA` to the clean allowlisted
-project snapshot. Leave both project execution values empty to retain the legacy
-single-repository binding. The image must already exist for
+project snapshot, and set `LANGGRAPH_PRIMARY_SERVICE_REPOSITORY` to the
+owner-local adoption repository when that adoption names the Director service PR
+while `REPOSITORY_ALLOWLIST` names the execution project. Leave both project
+execution values empty to retain the legacy single-repository binding. The image must already exist for
 utility containers, which use `--no-deps --pull never`. The control tool inspects
 the actual content-addressed image ID and rejects an embedded entrypoint. It
 then sets the Compose image to that immutable ID. Candidate labels help identify

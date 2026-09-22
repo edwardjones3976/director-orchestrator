@@ -158,6 +158,26 @@ class PrimaryGenerationTests(unittest.TestCase):
             require_generation(self.settings, self.identity)
         self.assertFalse(self.journal.exists())
 
+    def test_resolved_compose_normalizes_validation_generation_selector(self):
+        import copy
+        image = "sha256:" + "8" * 64
+        document = {"name": "project", "services": {"orchestrator": {
+            "image": image, "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "environment": {"DIRECTOR_RUNTIME_IMAGE_ID": image, "DIRECTOR_RUNTIME_IMAGE": image,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.main:app",
+                "ALLOW_PAID_RUNS": "false", "LANGGRAPH_PRIMARY_ENABLED": "false",
+                "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
+                "LANGGRAPH_PARALLEL_KILL_SWITCH": "true",
+                "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "a" * 64,
+                "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "b" * 64},
+            "volumes": [], "networks": {"default": None}}}, "networks": {"default": {"name": "project_default"}}}
+        without = copy.deepcopy(document)
+        without["services"]["orchestrator"]["environment"].pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION")
+        self.assertEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(without, image))
+        changed = copy.deepcopy(without)
+        changed["services"]["orchestrator"]["environment"]["DIRECTOR_PROVIDER_VALIDATION_MANIFEST"] = "/data/validation.json"
+        self.assertNotEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(changed, image))
+
     def test_validation_manifest_cannot_select_another_candidate_or_generation(self):
         validation = self.root / "validation.json"
         document = dict(generation=os.environ["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"],

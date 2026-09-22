@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
@@ -32,7 +33,7 @@ _MODE_ENVIRONMENTS = {
 }
 _SELF_REFERENCES = {
     "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH", "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
-    "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256",
+    "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256", "DIRECTOR_PROVIDER_VALIDATION_GENERATION",
 }
 
 
@@ -155,8 +156,10 @@ def require_generation(settings, identity, *, reserve=False):
                 raise ValueError("adopted review source differs from generation")
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("generation selection requires exactly one configured repository")
-            if adoption["repository"] != settings.repository_allowlist[0]:
-                raise ValueError("adopted repository differs from configured allowlist")
+            service_repository = settings.langgraph_primary_service_repository.strip()
+            expected_repository = service_repository or settings.repository_allowlist[0]
+            if adoption["repository"] != expected_repository:
+                raise ValueError("adopted repository differs from configured authority")
             observed_evidence_digest = adoption["adoption_digest"]
         else:
             evidence_path = Path(settings.langgraph_primary_acceptance_registry_path)
@@ -284,3 +287,4 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]

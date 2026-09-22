@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
@@ -390,6 +391,11 @@ class Settings:
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA", ""
         ).strip().lower()
+    )
+    langgraph_primary_service_repository: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_SERVICE_REPOSITORY", ""
+        ).strip()
     )
     langgraph_primary_snapshot_max_files: int = field(
         default_factory=lambda: _int("LANGGRAPH_PRIMARY_SNAPSHOT_MAX_FILES", 512)
@@ -1715,6 +1721,10 @@ class Settings:
             re.fullmatch(r"[0-9a-fA-F]{40}", project_commit)
             and re.fullmatch(r"[0-9a-fA-F]{40}", project_tree)
         )
+        service_repository = self.langgraph_primary_service_repository.strip()
+        service_repository_valid = (not service_repository) or bool(
+            re.fullmatch(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", service_repository)
+        )
         snapshot_max_files_valid = (
             isinstance(self.langgraph_primary_snapshot_max_files, int)
             and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
@@ -1743,6 +1753,7 @@ class Settings:
             and single_starting_ref_configured
             and authority_pins_valid
             and project_execution_pins_valid
+            and service_repository_valid
             and snapshot_max_files_valid
         )
         return {
@@ -1770,6 +1781,7 @@ class Settings:
             "single_starting_ref_configured": single_starting_ref_configured,
             "authority_pins_valid": authority_pins_valid,
             "project_execution_pins_valid": project_execution_pins_valid,
+            "service_repository_valid": service_repository_valid,
             "snapshot_max_files_valid": snapshot_max_files_valid,
             "required_providers_valid": required_providers_valid,
             "provider_activation_bindings_configured": (
@@ -1940,6 +1952,15 @@ class Settings:
                 "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA and "
                 "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA must be "
                 "supplied together as 40-character hexadecimal values"
+            )
+        if not readiness["service_repository_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_SERVICE_REPOSITORY must be an exact owner/name identity"
+            )
+        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip()
+        if project_commit and not self.langgraph_primary_service_repository.strip():
+            problems.append(
+                "split project execution requires LANGGRAPH_PRIMARY_SERVICE_REPOSITORY"
             )
         if self.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
             pin = self.langgraph_primary_local_evidence_adoption_sha256
@@ -2474,3 +2495,4 @@ class Settings:
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]

@@ -391,7 +391,6 @@ class LocalActivationEvidenceTests(unittest.TestCase):
         adoption_path, adoption_pin = self.write_adoption(
             document={
                 **self.adoption_document,
-                "repository": "owner/edge-project",
                 "reviewed_source_commit": ident.candidate_commit,
                 "reviewed_source_tree": ident.candidate_tree,
             }
@@ -405,6 +404,7 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             langgraph_primary_acceptance_journal_path=str(journal),
             repository_snapshot_root=str(project_root),
             repository_allowlist=("owner/edge-project",),
+            langgraph_primary_service_repository="owner/repository",
             allowed_starting_refs=("main",),
             langgraph_primary_pinned_commit_sha=ident.candidate_commit,
             langgraph_primary_pinned_tree_sha=ident.candidate_tree,
