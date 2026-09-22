@@ -1,9 +1,12 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
@@ -691,6 +694,84 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertIsNot(qualify([row], "paid"), True)
         self.assertTrue(qualify([run("paid")], "paid"))
 
+    @staticmethod
+    def qualification_row(**changes):
+        row = {"run_id": "canary-1", "source_event_id_sha256": "a" * 64, "task_id": "DIR-LG-AB12",
+               "assignment_ids": ["ASSIGN-1"], "attempt_ids": ["attempt-1"], "effect_ids": ["effect-1"],
+               "provider_route": "claude", "runtime_sha": SHA, "image_id": IMAGE, "configuration_digest": "c" * 64,
+               "duplicate_external_effects": 0, "effect_state": "PROVIDER_EFFECT_RECORDED",
+               "delivery_state": "DELIVERED", "readback_verified": True,
+               "status_receipt_counts": {"tasks_created": 0, "assignments_created": 0,
+                                         "provider_attempts_created": 0, "deduplicated_receipts": 1},
+               "actual_cost_usd": None, "policy_violations": 0}
+        row.update(changes)
+        return row
+
+    def classify(self, row):
+        return sc.evaluate_qualification_record(row, runtime_sha=SHA, image_id=IMAGE, configuration_digest="c" * 64)[0]
+
+    def test_unknown_cost_qualification_is_distinct_from_measured_cost_pass(self):
+        self.assertEqual("QUALIFIED_COST_UNKNOWN", self.classify(self.qualification_row()))
+        self.assertEqual("QUALIFIED_COST_MEASURED", self.classify(self.qualification_row(actual_cost_usd=0.12)))
+        # The older measured-cost criterion is preserved: unknown cost is still not a PASS there.
+        self.assertIsNone(qualify([{**run("paid"), "actual_cost_usd": None}], "paid"))
+        self.assertIsNone(sc.evaluate_run_record({**run("paid"), "actual_cost_usd": None}, mode="paid",
+                                                 runtime_sha=SHA, image_id=IMAGE)[0])
+        self.assertNotIn("PASS", sc.QUALIFICATION_VERDICTS)
+
+    def test_qualification_never_manufactures_missing_links_or_status_receipts(self):
+        for changes in ({"attempt_ids": []}, {"effect_ids": [""]}, {"source_event_id_sha256": None},
+                        {"effect_state": None}, {"status_receipt_counts": {"tasks_created": None}},
+                        {"actual_cost_usd": float("nan")}, {"actual_cost_usd": "0.10"}, {"run_id": ""}):
+            with self.subTest(changes=changes):
+                self.assertEqual("UNKNOWN", self.classify(self.qualification_row(**changes)))
+        incomplete = self.qualification_row()
+        incomplete.pop("status_receipt_counts")
+        self.assertEqual("UNKNOWN", self.classify(incomplete))
+
+    def test_host_probe_defects_are_closed(self):
+        # The Director's host-boundary probe cases against the original candidate.
+        for case, changes in (("infinite_cost", {"actual_cost_usd": float("inf")}),
+                              ("negative_infinite_cost", {"actual_cost_usd": float("-inf")}),
+                              ("empty_route", {"provider_route": ""}),
+                              ("unknown_route", {"provider_route": "not-a-lane"}),
+                              ("alias_route_is_not_canonical", {"provider_route": "external_openai"}),
+                              ("non_string_task", {"task_id": 42}),
+                              ("non_string_route", {"provider_route": ["claude"]}),
+                              ("boolean_evidence_counts", {"duplicate_external_effects": False, "policy_violations": False}),
+                              ("boolean_status_counts", {"status_receipt_counts": {
+                                  "tasks_created": False, "assignments_created": False,
+                                  "provider_attempts_created": False, "deduplicated_receipts": True}}),
+                              ("float_counter", {"duplicate_external_effects": 0.0}),
+                              ("duplicate_lineage", {"attempt_ids": ["attempt-1", "attempt-1"]}),
+                              ("duplicate_effects", {"effect_ids": ["effect-1", "effect-1"]}),
+                              ("malformed_identity", {"assignment_ids": ["assign one"]}),
+                              ("malformed_run_id", {"run_id": "run id"})):
+            with self.subTest(case=case):
+                self.assertEqual("UNKNOWN", self.classify(self.qualification_row(**changes)))
+        self.assertEqual("NOT_QUALIFIED", self.classify(self.qualification_row(effect_state="ZERO_PROVIDER_EFFECT")))
+        self.assertEqual("NOT_QUALIFIED", self.classify(self.qualification_row(effect_state="ZERO_PROVIDER_EFFECT",
+                                                                               actual_cost_usd=0)))
+        self.assertEqual("QUALIFIED_COST_UNKNOWN", self.classify(self.qualification_row(provider_route="openai")))
+        for verdict in ("QUALIFIED_COST_UNKNOWN", "QUALIFIED_COST_MEASURED"):
+            row = self.qualification_row(actual_cost_usd=None if verdict.endswith("UNKNOWN") else 0.5)
+            got, reason = sc.evaluate_qualification_record(row, runtime_sha=SHA, image_id=IMAGE, configuration_digest="c" * 64)
+            self.assertEqual(verdict, got)
+            self.assertIn("asserted links only", reason)
+            self.assertNotIn("verified", reason.replace("authenticated collector correlation", ""))
+
+    def test_qualification_fails_closed_on_ambiguity_duplicates_readback_and_binding(self):
+        for changes in ({"effect_state": "AMBIGUOUS_DELIVERY_EFFECT"}, {"duplicate_external_effects": 1},
+                        {"policy_violations": 1}, {"delivery_state": "ACKNOWLEDGED"}, {"readback_verified": None},
+                        {"runtime_sha": OTHER}, {"configuration_digest": "d" * 64},
+                        {"status_receipt_counts": {"tasks_created": 1, "assignments_created": 0,
+                                                   "provider_attempts_created": 0, "deduplicated_receipts": 1}}):
+            with self.subTest(changes=changes):
+                self.assertEqual("NOT_QUALIFIED", self.classify(self.qualification_row(**changes)))
+        with self.assertRaises(ValueError):
+            sc.evaluate_qualification_record(self.qualification_row(), runtime_sha=SHA, image_id=IMAGE,
+                                             configuration_digest="not-a-digest")
+
     def test_wall_time_not_machine_time_and_strict_cost_ceiling(self):
         for changes in ({"wall_seconds": 65, "owner_pause_seconds": 35}, {"actual_cost_usd": 1},
                         {"machine_seconds": 0}, {"actual_cost_usd": float("nan")},
@@ -744,6 +825,8 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
@@ -751,3 +834,4 @@ if __name__ == "__main__":
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

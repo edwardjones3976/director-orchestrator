@@ -5,6 +5,8 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
+
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]] -->
 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | BEGIN]] -->
@@ -100,3 +102,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 16:04 UTC | END]] -->
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]] -->
+<!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->

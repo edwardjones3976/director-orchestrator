@@ -1,8 +1,11 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]]
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import subprocess
@@ -592,6 +596,90 @@ def evaluate_run_records(records: list[dict[str, Any]], *, mode: str,
     return True, "Measured run facts meet the standard; source authentication remains a separate collector requirement."
 
 
+# Section 4/5 qualification vocabulary. It is deliberately distinct from the
+# check 10/20 PASS criterion above: a canary whose provider returned no cost is
+# recorded as QUALIFIED_COST_UNKNOWN, which never becomes a measured-cost PASS.
+QUALIFICATION_VERDICTS = ("QUALIFIED_COST_MEASURED", "QUALIFIED_COST_UNKNOWN", "NOT_QUALIFIED", "UNKNOWN")
+QUALIFICATION_RECORD_FIELDS = frozenset({
+    "run_id", "source_event_id_sha256", "task_id", "assignment_ids", "attempt_ids", "effect_ids",
+    "provider_route", "runtime_sha", "image_id", "configuration_digest", "duplicate_external_effects",
+    "effect_state", "delivery_state", "readback_verified", "status_receipt_counts", "actual_cost_usd",
+    "policy_violations",
+})
+_STATUS_RECEIPT_KEYS = ("tasks_created", "assignments_created", "provider_attempts_created", "deduplicated_receipts")
+_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
+_ASSERTED = "asserted links only; authenticated collector correlation is a separate requirement"
+
+
+def _counter(value: Any) -> bool:
+    """Exact non-negative integer; booleans and floats are not counters."""
+    return type(value) is int and value >= 0
+
+
+def _unique_identities(values: Any) -> bool:
+    return (isinstance(values, list) and bool(values)
+            and all(isinstance(item, str) and _IDENTITY.fullmatch(item) for item in values)
+            and len(set(values)) == len(values))
+
+
+def evaluate_qualification_record(row: dict[str, Any], *, runtime_sha: str, image_id: str,
+                                  configuration_digest: str) -> tuple[str, str]:
+    """Classify one canary's *asserted* lineage row; never a scorecard PASS.
+
+    The row is untrusted caller input: this validates that the asserted links
+    are complete, well-formed, unique and consistent with the exact revision.
+    It cannot verify that any link is real; authenticated collector correlation
+    remains a separate requirement and no verdict claims it. Missing links stay
+    UNKNOWN. A finite measured cost is required only for
+    QUALIFIED_COST_MEASURED; explicit UNKNOWN cost yields the distinct
+    QUALIFIED_COST_UNKNOWN verdict so the stricter evaluate_run_record
+    criterion is preserved rather than silently satisfied.
+    """
+    from .allocation_profiles import LANES
+    _sha(runtime_sha)
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) or not re.fullmatch(r"[0-9a-f]{64}", configuration_digest):
+        raise ValueError("runtime image ID and configuration digest must be immutable digests")
+    if not isinstance(row, dict) or not QUALIFICATION_RECORD_FIELDS <= row.keys():
+        return "UNKNOWN", "Asserted evidence fields are missing; nothing is inferred."
+    if not isinstance(row["run_id"], str) or not _IDENTITY.fullmatch(row["run_id"]):
+        return "UNKNOWN", "Run identity is missing or malformed."
+    if row["runtime_sha"] != runtime_sha or row["image_id"] != image_id or row["configuration_digest"] != configuration_digest:
+        return "NOT_QUALIFIED", "Evidence is bound to another revision, image or configuration."
+    if not isinstance(row["source_event_id_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", row["source_event_id_sha256"]):
+        return "UNKNOWN", "Source event digest is missing or malformed."
+    if not isinstance(row["task_id"], str) or not _IDENTITY.fullmatch(row["task_id"]):
+        return "UNKNOWN", "Task identity is missing or malformed."
+    if not isinstance(row["provider_route"], str) or row["provider_route"] not in LANES:
+        return "UNKNOWN", "Provider route is not a canonical allocation lane."
+    for key in ("assignment_ids", "attempt_ids", "effect_ids"):
+        if not _unique_identities(row[key]):
+            return "UNKNOWN", f"Lineage link {key} is incomplete, malformed or duplicated; no receipt is manufactured."
+    if row["effect_state"] == "ZERO_PROVIDER_EFFECT":
+        return "NOT_QUALIFIED", "A zero-provider-effect simulation cannot qualify a live provider round trip."
+    if row["effect_state"] != "PROVIDER_EFFECT_RECORDED":
+        return ("NOT_QUALIFIED" if row["effect_state"] == "AMBIGUOUS_DELIVERY_EFFECT" else "UNKNOWN",
+                "Effect state is ambiguous or unknown; an ambiguous paid effect is never repeated.")
+    if not _counter(row["duplicate_external_effects"]) or not _counter(row["policy_violations"]):
+        return "UNKNOWN", "Duplicate-effect and policy-violation counters must be exact non-negative integers."
+    if row["duplicate_external_effects"] != 0 or row["policy_violations"] != 0:
+        return "NOT_QUALIFIED", "Duplicate external effects or policy violations are not zero."
+    if row["delivery_state"] != "DELIVERED" or row["readback_verified"] is not True:
+        return "NOT_QUALIFIED", "Slack delivery lacks verified readback; an acknowledgement alone is insufficient."
+    counts = row["status_receipt_counts"]
+    if not isinstance(counts, dict) or any(counts.get(key) is None for key in _STATUS_RECEIPT_KEYS):
+        return "UNKNOWN", "Status-receipt counts depend on the accepted Issue #230 interface."
+    if not all(_counter(counts[key]) for key in _STATUS_RECEIPT_KEYS):
+        return "UNKNOWN", "Status-receipt counters must be exact non-negative integers."
+    if tuple(counts[key] for key in _STATUS_RECEIPT_KEYS) != (0, 0, 0, 1):
+        return "NOT_QUALIFIED", "A status mention must create zero tasks/assignments/attempts and one deduplicated receipt."
+    cost = row["actual_cost_usd"]
+    if cost is None:
+        return "QUALIFIED_COST_UNKNOWN", f"Asserted lineage is complete ({_ASSERTED}); actual cost is explicitly UNKNOWN, not zero and not a measured-cost pass."
+    if type(cost) not in {int, float} or not math.isfinite(cost) or cost < 0:
+        return "UNKNOWN", "Reported cost is not a finite non-negative number."
+    return "QUALIFIED_COST_MEASURED", f"Asserted lineage is complete ({_ASSERTED}) with a finite provider-reported actual cost."
+
+
 def _file_references(folder: Path | None) -> list[dict[str, str]]:
     if folder is None:
         return []
@@ -683,8 +771,11 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 02:50 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

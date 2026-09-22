@@ -1,9 +1,11 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | BEGIN]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | BEGIN]]
@@ -905,6 +907,11 @@ class PrimaryTaskCoordinator:
     def get_projection(self, task_id: str) -> PrimaryTaskProjection | None:
         return self._store.read_primary_task_projection(task_id)
 
+    def read_qualification_evidence(self, task_id: str) -> dict | None:
+        """Forward one bounded READ ONLY qualification readback; no graph, lease or write."""
+
+        return self._store.read_primary_qualification_evidence(task_id)
+
     def read_command_receipt(
         self, *, task_id: str, operation: str, command_id: str
     ) -> PrimaryCommandReceipt | None:
@@ -1082,6 +1089,7 @@ class PrimaryTaskCoordinator:
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:23 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Sonnet 5 high | 2026-09-21 | 10:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 11:19 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
@@ -1089,3 +1097,4 @@ class PrimaryTaskCoordinator:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

@@ -1,3 +1,10 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
+# Additive: same-process authority, binding and reversed-time negatives only.
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
+# Additive prospective baseline/after collector composition test only.
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
+# Additive status-receipt correlation / zero-work test only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | BEGIN]]
 # Fallback-author correction: concurrent-fixture import race only.
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | BEGIN]]
@@ -223,6 +230,130 @@ class StatusReceiptPostgresTests(unittest.TestCase):
             self.assertEqual(first.json()["created_at"], replay.json()["created_at"])
         self.assert_no_work_side_effects(before)
         self.assertEqual(before["receipts"] + 1, self.counts()["receipts"])
+
+    def test_status_receipt_correlates_through_the_readback_with_a_measured_zero_work_delta(self) -> None:
+        # Prospective zero-work evidence: a before-baseline from the authoritative
+        # tables, one signed status submission plus its replay, then an after-state
+        # read through the opt-in READ ONLY readback. StatusReceiptRecord itself
+        # carries no counters, so the delta is measured here, never inferred.
+        from director_orchestrator.models import QualificationEvidenceReadback
+
+        before = self.counts()
+        with self.open_api() as api:
+            receipt = self.receipt()
+            first = api.post("/v1/status-receipts", headers=self.headers(receipt),
+                             json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, first.status_code, first.text)
+            replay = api.post("/v1/status-receipts", headers=self.headers(receipt),
+                              json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, replay.status_code, replay.text)
+            self.assertTrue(replay.json()["deduplicated"])
+            self.assertEqual(first.json()["receipt_id"], replay.json()["receipt_id"])
+            readback = api.get(f"/v1/tasks/{self.task.task_id}",
+                               headers={"Authorization": f"Bearer {self.settings.shared_secret}"},
+                               params={"include_qualification_evidence": "true"})
+            self.assertEqual(200, readback.status_code, readback.text)
+            evidence = QualificationEvidenceReadback.model_validate(readback.json()["qualification_evidence"])
+            plain = api.get(f"/v1/tasks/{self.task.task_id}",
+                            headers={"Authorization": f"Bearer {self.settings.shared_secret}"})
+        after = self.counts()
+        self.assert_no_work_side_effects(before)
+        # Exactly one durable, deduplicated receipt, bound to this task and source event.
+        self.assertEqual(before["receipts"] + 1, after["receipts"])
+        self.assertEqual([first.json()["receipt_id"]], [row.receipt_id for row in evidence.status_receipts])
+        self.assertEqual([receipt.source_event_id], [row.source_event_id for row in evidence.status_receipts])
+        self.assertEqual(self.task.task_id, evidence.task_id)
+        self.assertEqual(readback.headers["X-Primary-Projection-Digest"], evidence.projection_digest)
+        # Zero new tasks/assignments/attempts, measured from the same authoritative tables.
+        self.assertEqual((before["tasks"], before["assignments"], before["attempts"]),
+                         (after["tasks"], after["assignments"], after["attempts"]))
+        self.assertEqual([], evidence.provider_attempts)
+        self.assertTrue(evidence.complete)
+        # The readback did not touch the ordinary record or its persisted digest.
+        self.assertNotIn("qualification_evidence", plain.json())
+        self.assertEqual(plain.headers["X-Primary-Projection-Digest"], readback.headers["X-Primary-Projection-Digest"])
+
+    def test_prospective_baseline_and_after_readback_prove_zero_work_through_the_collector(self) -> None:
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "offline_slack_trial_collector_status",
+            Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        auth = {"Authorization": f"Bearer {self.settings.shared_secret}"}
+        query = {"include_qualification_evidence": "true"}
+        with self.open_api() as api:
+            before = api.get(f"/v1/tasks/{self.task.task_id}", headers=auth, params=query)
+            self.assertEqual(200, before.status_code, before.text)
+            baseline = before.json()["qualification_evidence"]
+            receipt = self.receipt()
+            first = api.post("/v1/status-receipts", headers=self.headers(receipt), json=receipt.model_dump(mode="json"))
+            self.assertEqual(200, first.status_code, first.text)
+            replay = api.post("/v1/status-receipts", headers=self.headers(receipt), json=receipt.model_dump(mode="json"))
+            self.assertTrue(replay.json()["deduplicated"])
+            after = api.get(f"/v1/tasks/{self.task.task_id}", headers=auth, params=query)
+            self.assertEqual(200, after.status_code, after.text)
+        receipt_id = first.json()["receipt_id"]
+        # Same-process authenticated reads on both sides: the same synthetic
+        # runtime/configuration binding is declared for before and after.
+        runtime = {"container_id": "c", "image_id": "sha256:" + "a" * 64, "runtime_head": "b" * 40,
+                   "started_at": None, "offline_configured": True, "paid_configured": False}
+        binding = collector.revision_binding(runtime, {"ALLOW_PAID_RUNS": "false", "INTAKE_ALLOCATION_PROFILE": "engineering"})
+
+        def run_collector(**options):
+            return collector.summarize(
+                self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+                "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", **options)["qualification_evidence"]
+
+        evidence = run_collector(baseline=baseline, receipt_id=receipt_id,
+                                 baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                 before_binding=binding, after_binding=binding)
+        self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
+        status = evidence["status_receipts"]
+        self.assertTrue(status["baseline"]["proof"], status["baseline"])
+        self.assertEqual((0, 0, 0, 1), (status["tasks_created"], status["assignments_created"],
+                                        status["provider_attempts_created"], status["deduplicated_receipts"]))
+        self.assertEqual([receipt_id], evidence["chain"]["status_receipt_ids"])
+        observed = status["baseline"]["observed_delta"]
+        self.assertLess(observed["baseline_captured_at"], observed["receipt_created_at"])
+        self.assertLessEqual(observed["receipt_created_at"], observed["after_captured_at"])
+        row = {**collector.summarize(
+            self.task.intake.thread_ts, self.task.task_id, after.json(), [], [], True,
+            "UOWNER", "UBOT", dict(after.headers), "CDEFAULT", baseline=baseline, receipt_id=receipt_id,
+            baseline_authority=collector.SAME_PROCESS_AUTHORITY, before_binding=binding, after_binding=binding)}
+        # A caller-supplied file with identical content is only an observed delta.
+        filed = run_collector(baseline=baseline, receipt_id=receipt_id, before_binding=binding, after_binding=binding)
+        self.assertIsNone(filed["status_receipts"]["baseline"]["proof"])
+        self.assertIsNone(filed["status_receipts"]["tasks_created"])
+        self.assertEqual(observed, filed["status_receipts"]["baseline"]["observed_delta"])
+        # Runtime/configuration drift, reversed order and after-only collection are not proof.
+        drifted = collector.revision_binding(runtime, {"ALLOW_PAID_RUNS": "true"})
+        self.assertIsNone(run_collector(baseline=baseline, receipt_id=receipt_id,
+                                        baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                        before_binding=binding, after_binding=drifted)["status_receipts"]["baseline"]["observed_delta"])
+        self.assertIsNone(run_collector(baseline=baseline, receipt_id=receipt_id,
+                                        baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                                        before_binding=collector.revision_binding({**runtime, "runtime_head": "c" * 40}, {}),
+                                        after_binding=binding)["status_receipts"]["baseline"]["observed_delta"])
+        self.assertIsNone(run_collector()["status_receipts"]["tasks_created"])
+        late = run_collector(baseline=after.json()["qualification_evidence"], receipt_id=receipt_id,
+                             baseline_authority=collector.SAME_PROCESS_AUTHORITY,
+                             before_binding=binding, after_binding=binding)
+        self.assertIsNone(late["status_receipts"]["baseline"]["proof"])
+        self.assertIsNone(late["status_receipts"]["baseline"]["observed_delta"])
+        collector.validate_observations({"schema": "director-slack-trial-observations/v1",
+            "observed_at": collector.utc(), "expires_at": collector.utc(), "requested_trials": 1, "observed_trials": 1,
+            "rubric_sha256": None, "collection_runtime_before": {"container_id": "c", "image_id": "sha256:" + "a" * 64,
+                "runtime_head": "b" * 40, "started_at": None, "offline_configured": True, "paid_configured": False},
+            "collection_runtime_after": None, "runtime_collection_binding_stable": None,
+            "runtime_health_at_collection": {"paid_runs_enabled": None, "ambiguous_effect_count": None,
+                "reconciliation_hold_reason": None, "primary_runtime_active": None},
+            "collector_sha256": None, "read_only": True, "slack_writes": 0, "provider_dispatches": 0,
+            "scorecard_mutations": 0, "qualified_run_count": None, "ten_consecutive_runs_verified": False,
+            "native_source_reads": [], "trials": [{**row, "input_rubric_sha256": None,
+                "rubric_evaluation": collector.evaluate_rubric(row, {"declared_at": "2020-01-01T00:00:00+00:00"}, "0" * 64),
+                "source_errors": [], "runtime_collection_binding_stable": None}], "limitations": []})
 
     def test_replay_preserves_original_created_at_with_new_client_timestamp(self) -> None:
         receipt = self.receipt(
@@ -931,3 +1062,7 @@ if __name__ == "__main__":
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:50 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 20:57 UTC | END]]
 # [[Claude | Sonnet 5 | 2026-09-21 | 22:05 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]

@@ -1,5 +1,8 @@
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:01 UTC | BEGIN]]
@@ -13,6 +16,7 @@ import importlib
 import json
 import os
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -28,9 +32,23 @@ from director_orchestrator.langgraph_postgres import _base_control_plane_ddl
 from director_orchestrator.models import IntakeAuthentication, TaskStatus
 from director_orchestrator.primary_default import build_offline_parallel_dispatcher
 from director_orchestrator.primary_slack_delivery import PrimarySlackDelivery
-from director_orchestrator.primary_slack_delivery import render_notification
+from director_orchestrator.primary_slack_delivery import parse_retry_after, render_notification
 from tests import test_primary_default as primary_fixtures
 from tests import test_slack_intake_receipts as slack_fixtures
+
+
+class _AsyncByteStream(httpx.AsyncByteStream):
+    """Synthetic response body driven by an async generator (slow/oversize/truncated)."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        async for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self):
+        await self._chunks.aclose()
 
 
 class PrimarySlackDeliveryTests(unittest.TestCase):
@@ -74,23 +92,63 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
             blocks.append(block)
         return {**message, "text": message["text"].replace("\n", " "), "blocks": blocks}
 
+    @staticmethod
+    def rate_limited(retry_after="7", body=None, raw=None):
+        """Slack's documented 429: ok:false envelope plus Retry-After seconds."""
+        headers = {} if retry_after is None else {"Retry-After": retry_after}
+        if raw is not None:
+            return httpx.Response(429, content=raw, headers=headers)
+        return httpx.Response(429, json={"ok": False, "error": "ratelimited"} if body is None else body,
+                              headers=headers)
+
     def slack(self, request):
         if request.url.path.endswith("auth.test"):
+            if self.mode == "auth_rate_limited":
+                return self.rate_limited()
             return httpx.Response(200, json={"ok": True, "user_id": "UBOT", "bot_id": "BBOT"})
         if request.url.path.endswith("chat.postMessage"):
             payload = json.loads(request.content)
             self.posts.append(payload)
             ts = f"1720000001.{len(self.posts):06d}"
             message = {**payload, "ts": ts, "user": "UBOT"}
-            if self.mode in {"success", "ack_lost_but_posted"}:
+            if self.mode in {"success", "ack_lost_but_posted", "readback_rate_limited"}:
                 self.messages.append(message)
             if self.mode in {"timeout", "ack_lost_but_posted"}:
                 raise httpx.ReadTimeout("synthetic acknowledgement timeout")
             if self.mode == "refused":
                 return httpx.Response(200, json={"ok": False, "error": "missing_scope"})
+            if self.mode == "post_rate_limited":
+                return self.rate_limited()
+            if self.mode == "post_429_without_envelope":
+                return self.rate_limited(body={"error": "unexplained"})
+            if self.mode == "post_429_non_json":
+                return self.rate_limited(retry_after="3601", raw=b"<html>Too Many Requests</html>")
+            if self.mode == "post_429_malformed_json":
+                return self.rate_limited(retry_after="45", raw=b'{"ok": false, "error": "ratelimited"')
+            if self.mode == "post_429_long_delay":
+                return self.rate_limited(retry_after="86400")
+            if self.mode == "post_429_slow_body":
+                # A body that never finishes: only pre-drain classification survives it.
+                async def stalled():
+                    yield b'{"ok": false'
+                    await asyncio.sleep(3600)
+                    yield b"}"
+                return httpx.Response(429, headers={"Retry-After": "9"}, stream=_AsyncByteStream(stalled()))
+            if self.mode == "post_429_oversize_body":
+                async def oversize():
+                    for _ in range(300):
+                        yield b"x" * 1024
+                return httpx.Response(429, headers={"Retry-After": "11"}, stream=_AsyncByteStream(oversize()))
+            if self.mode == "post_429_truncated_body":
+                async def truncated():
+                    yield b'{"ok": fal'
+                    raise httpx.ReadError("synthetic truncated 429 body")
+                return httpx.Response(429, headers={"Retry-After": "13"}, stream=_AsyncByteStream(truncated()))
             return httpx.Response(200, json={"ok": True, "ts": ts, "channel": payload["channel"]})
         if request.url.path.endswith("conversations.replies"):
             self.readbacks.append(request)
+            if self.mode == "readback_rate_limited":
+                return self.rate_limited(retry_after="3")
             return httpx.Response(200, json={"ok": True, "messages": self.messages})
         raise AssertionError("unexpected network route: " + str(request.url))
 
@@ -197,6 +255,47 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
                         "user": {"id": "UOWNER"}, "channel": {"id": "CDEFAULT"},
                         "actions": [{**button, "action_ts": "1720000002.000002"}]}, client)
                     post.assert_not_called()
+
+    def test_relay_redelivery_after_lost_response_preserves_the_delivered_effect(self):
+        # Relay partial-failure replay: the approval post (an external effect)
+        # completed, then the relay's accepted response was lost and n8n
+        # redelivers the same signed Slack event through the API boundary.
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+            with (patch.object(main, "settings", self.settings),
+                  patch.object(main, "primary_default_activation", self.activation),
+                  patch.object(main, "primary_slack_delivery", self.delivery)):
+                api = TestClient(main.app)
+                payload = self.fixture.intake()
+                headers = {"Authorization": "Bearer " + self.settings.shared_secret,
+                    **build_slack_intake_attestation(self.settings.slack_gateway_secret,
+                                                    self.settings.shared_secret, payload)}
+                body = payload.model_dump(mode="json")
+                first = api.post("/v1/intake", headers=headers, json=body)
+                self.assertEqual(202, first.status_code, first.text)
+                task_id = first.json()["task_id"]
+                self.assertEqual(1, self.drain())
+                before = self.delivery.receipts(task_id)
+                self.assertEqual(["DELIVERED"], [row["state"] for row in before])
+                self.assertEqual(1, len(self.posts))
+                # Redelivery (twice, as Slack/n8n may retry) after the effect completed.
+                for _ in range(2):
+                    replay = api.post("/v1/intake", headers=headers, json=body)
+                    self.assertEqual(202, replay.status_code, replay.text)
+                    self.assertEqual(task_id, replay.json()["task_id"])
+                self.assertEqual(0, self.drain())
+                # One task, one delivery row, one post, one readback; identities correlate.
+                self.assertEqual(before, self.delivery.receipts(task_id))
+                self.assertEqual(1, len(self.posts))
+                self.assertEqual(1, len(self.readbacks))
+                self.assertEqual(before[0]["client_msg_id"], self.posts[0]["client_msg_id"])
+                self.assertEqual(before[0]["slack_ts"], self.messages[0]["ts"])
+                self.assertEqual(task_id, before[0]["task_id"])
+                current = api.get(f"/v1/tasks/{task_id}", headers=headers)
+                self.assertEqual(200, current.status_code, current.text)
+                self.assertEqual(task_id, current.json()["task_id"])
+                self.assertEqual("langgraph", current.headers.get("x-task-engine-owner"))
 
     def decision_receipt(self, record, decision="approve", command="fixture-command"):
         projection = self.fixture.coordinator.get_projection(record.task_id)
@@ -409,6 +508,153 @@ class PrimarySlackDeliveryTests(unittest.TestCase):
         self.assertEqual(1, len(self.posts))
         self.assertEqual("REFUSED", self.delivery.receipts(record.task_id)[0]["state"])
 
+    def test_retry_after_header_is_honored_in_full_with_a_conservative_default(self):
+        self.assertEqual(7, parse_retry_after("7"))
+        self.assertEqual(7, parse_retry_after(" 7 "))
+        self.assertEqual(1, parse_retry_after("0"))
+        # Slack's full requested delay, never shortened to a worker-sized ceiling.
+        self.assertEqual(601, parse_retry_after("601"))
+        self.assertEqual(3601, parse_retry_after("3601"))
+        self.assertEqual(86400, parse_retry_after("86400"))
+        self.assertEqual(999999999, parse_retry_after("999999999"))
+        for value in (None, "", "abc", "-5", "1.5", "1234567890", "Wed, 21 Sep 2026 20:00:00 GMT"):
+            with self.subTest(value=value):
+                self.assertEqual(30, parse_retry_after(value))
+
+    def test_rate_limited_post_is_a_definite_refusal_honoring_retry_after_without_repost(self):
+        first = self.intake()
+        second = self.fixture.application.create_intake(
+            self.fixture.intake().model_copy(update={"source_event_id": "fixture-second-event"}),
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+        self.mode = "post_rate_limited"
+        self.assertEqual(0, self.drain())
+        # Exactly one post was attempted; Slack said 429 and did not post it.
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual([], self.readbacks)
+        states = {task.task_id: self.delivery.receipts(task.task_id)[0] for task in (first, second)}
+        self.assertEqual(["PENDING", "REFUSED"], sorted(row["state"] for row in states.values()))
+        refused_id = next(task_id for task_id, row in states.items() if row["state"] == "REFUSED")
+        withheld_id = next(task_id for task_id, row in states.items() if row["state"] == "PENDING")
+        self.assertEqual("slack_rate_limited:retry_after=7", states[refused_id]["last_error"])
+        self.assertIsNone(states[refused_id]["slack_ts"])
+        # The other row was never claimed, so it cannot age into AMBIGUOUS.
+        self.assertTrue(self.delivery.health()["rate_limited"])
+        self.assertEqual(7, self.delivery.last_retry_after_seconds)
+        # Inside the horizon: zero Slack calls, zero claims, even when Slack recovers.
+        self.mode = "success"
+        self.assertEqual(0, self.drain())
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("PENDING", self.delivery.receipts(withheld_id)[0]["state"])
+        # After the horizon: the withheld row posts once; the refused row is never reposted.
+        self.delivery.rate_limited_until = time.monotonic() - 1
+        self.assertEqual(1, self.drain())
+        self.assertEqual(2, len(self.posts))
+        self.assertEqual("REFUSED", self.delivery.receipts(refused_id)[0]["state"])
+        self.assertEqual("DELIVERED", self.delivery.receipts(withheld_id)[0]["state"])
+        self.assertFalse(self.delivery.health()["rate_limited"])
+        with self.assertRaisesRegex(Exception, "cannot be retried or rewound"):
+            with self.fixture.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.fixture.schema}.director_primary_slack_delivery "
+                    "SET state='PENDING' WHERE task_id=%s", (refused_id,))
+
+    def test_429_is_a_definite_refusal_independent_of_its_body_and_never_reposted(self):
+        # Slack's documented rule keys on the status; envelope-less, non-JSON and
+        # malformed-JSON bodies are all definite non-acceptance, never ambiguity.
+        for mode, expected in (("post_429_without_envelope", "slack_rate_limited:retry_after=7"),
+                               ("post_429_non_json", "slack_rate_limited:retry_after=3601"),
+                               ("post_429_malformed_json", "slack_rate_limited:retry_after=45")):
+            with self.subTest(mode=mode):
+                self.posts.clear()
+                record = self.fixture.application.create_intake(
+                    self.fixture.intake().model_copy(update={"source_event_id": "fixture-" + mode}),
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+                self.delivery.rate_limited_until = None
+                self.mode = mode
+                self.assertEqual(0, self.drain())
+                self.assertEqual(1, len(self.posts))
+                receipt = self.delivery.receipts(record.task_id)[0]
+                self.assertEqual("REFUSED", receipt["state"])
+                self.assertEqual(expected, receipt["last_error"])
+                self.assertTrue(self.delivery.health()["rate_limited"])
+                self.mode = "success"
+                self.assertEqual(0, self.drain())  # inside the horizon: no call, no repost
+                self.assertEqual(1, len(self.posts))
+                self.assertEqual("REFUSED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_429_is_classified_before_the_body_so_slow_oversize_or_truncated_bodies_cannot_stall_or_blur_it(self):
+        for mode, expected in (("post_429_slow_body", "slack_rate_limited:retry_after=9"),
+                               ("post_429_oversize_body", "slack_rate_limited:retry_after=11"),
+                               ("post_429_truncated_body", "slack_rate_limited:retry_after=13")):
+            with self.subTest(mode=mode):
+                self.posts.clear()
+                record = self.fixture.application.create_intake(
+                    self.fixture.intake().model_copy(update={"source_event_id": "fixture-" + mode}),
+                    intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+                self.delivery.rate_limited_until = None
+                self.mode = mode
+                started = time.monotonic()
+                self.assertEqual(0, self.drain())
+                self.assertLess(time.monotonic() - started, 5)  # the ten-second body deadline never ran
+                self.assertEqual(1, len(self.posts))
+                receipt = self.delivery.receipts(record.task_id)[0]
+                self.assertEqual("REFUSED", receipt["state"])
+                self.assertEqual(expected, receipt["last_error"])
+                self.assertTrue(self.delivery.health()["rate_limited"])
+                self.mode = "success"
+                self.assertEqual(0, self.drain())
+                self.assertEqual(1, len(self.posts))
+
+    def test_retry_after_longer_than_the_worker_horizon_defers_without_truncation(self):
+        record = self.intake()
+        self.mode = "post_429_long_delay"
+        self.assertEqual(0, self.drain())
+        self.assertEqual(86400, self.delivery.last_retry_after_seconds)
+        self.assertGreater(self.delivery.rate_limited_until, time.monotonic() + 86000)
+        self.assertEqual("slack_rate_limited:retry_after=86400", self.delivery.receipts(record.task_id)[0]["last_error"])
+        second = self.fixture.application.create_intake(
+            self.fixture.intake().model_copy(update={"source_event_id": "fixture-deferred-event"}),
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED)
+        self.mode = "success"
+        for _ in range(3):
+            self.assertEqual(0, self.drain())
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("PENDING", self.delivery.receipts(second.task_id)[0]["state"])
+        self.assertTrue(self.delivery.health()["rate_limited"])
+
+    def test_rate_limited_identity_check_keeps_bounded_attempts_and_claims_nothing(self):
+        record = self.intake()
+        self.mode = "auth_rate_limited"
+        self.assertEqual(0, self.drain())
+        self.assertEqual([], self.posts)
+        self.assertEqual("PENDING", self.delivery.receipts(record.task_id)[0]["state"])
+        self.assertIsNone(self.delivery.bot_user_id)
+        self.assertEqual(0, self.delivery._auth_attempts)
+        self.assertTrue(self.delivery.health()["rate_limited"])
+        self.mode = "success"
+        self.assertEqual(0, self.drain())
+        self.assertEqual([], self.posts)
+        self.delivery.rate_limited_until = time.monotonic() - 1
+        self.assertEqual(1, self.drain())
+        self.assertEqual("DELIVERED", self.delivery.receipts(record.task_id)[0]["state"])
+
+    def test_rate_limited_readback_consumes_one_attempt_and_resolves_later_without_repost(self):
+        record = self.intake()
+        self.mode = "readback_rate_limited"
+        self.assertEqual(1, self.drain())
+        receipt = self.delivery.receipts(record.task_id)[0]
+        self.assertEqual("ACKNOWLEDGED", receipt["state"])
+        self.assertEqual(1, receipt["readback_attempts"])
+        self.assertEqual("slack_rate_limited:retry_after=3", receipt["last_error"])
+        self.assertEqual(1, len(self.readbacks))
+        self.mode = "success"
+        self.drain()
+        self.assertEqual(1, len(self.readbacks))  # horizon: no second read yet
+        self.delivery.rate_limited_until = time.monotonic() - 1
+        self.drain()
+        self.assertEqual(2, len(self.readbacks))
+        self.assertEqual(1, len(self.posts))
+        self.assertEqual("DELIVERED", self.delivery.receipts(record.task_id)[0]["state"])
+
     def test_concurrent_workers_claim_one_attempt_and_database_prevents_rewind(self):
         self.intake()
         self.delivery.enqueue()
@@ -520,6 +766,9 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 23:07 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
+# [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
+# [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
