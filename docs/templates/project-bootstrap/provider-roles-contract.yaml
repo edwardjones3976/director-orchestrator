@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -291,6 +292,7 @@ providers:
     team: "primary"
     standing_role: "chatgpt_codex_director"
     leadership_authority: "owner_appointed_project_director_no_implicit_runtime_activation"
+    investigator_responsibility: "INVESTIGATOR: proactively document emerging defects with evidence, impact, uncertainty, and suggested solutions; hand each finding to the responsible provider and track its disposition. Investigation never authorizes direct remediation, taking over another provider's assignment, paid dispatch, or approval, merge, or deployment."
     # The three canonical identities from docs/team-operating-charter.md and
     # prompts/director-system.md. Coordination, planning, and acceptance are
     # duties nested under these identities; they never replace or blur them,
@@ -391,3 +393,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]]

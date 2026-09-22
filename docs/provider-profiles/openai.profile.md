@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]] -->
@@ -51,7 +52,7 @@
 | --- | --- |
 | Team | primary |
 | Lane class | director_control_plane |
-| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. |
+| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. As INVESTIGATOR the lane also documents emerging defects with evidence, impact, uncertainty, and suggested solutions, hands each finding to the responsible provider, and tracks disposition; investigation never authorizes direct remediation or taking over another provider's assignment. |
 | Charter workload lane | `chatgpt_codex_director_lane` |
 | Strategy key | `openai` |
 | Strategy priority | `director_control_plane_and_authorized_production` |
@@ -335,3 +336,4 @@ Separation of duties:
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-13 | 22:10 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]] -->
