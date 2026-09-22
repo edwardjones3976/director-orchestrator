@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | BEGIN]]
@@ -375,6 +376,19 @@ class Settings:
     langgraph_primary_pinned_tree_sha: str = field(
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PINNED_TREE_SHA", ""
+        ).strip().lower()
+    )
+    # Optional split authority for a registered project repository that differs
+    # from the accepted Director service candidate. Both values are required
+    # together; when unset, repository snapshot checks reuse the service pins.
+    langgraph_primary_project_execution_pinned_commit_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA", ""
+        ).strip().lower()
+    )
+    langgraph_primary_project_execution_pinned_tree_sha: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA", ""
         ).strip().lower()
     )
     langgraph_primary_snapshot_max_files: int = field(
@@ -1695,6 +1709,12 @@ class Settings:
             re.fullmatch(r"[0-9a-fA-F]{40}", pinned_commit)
             and re.fullmatch(r"[0-9a-fA-F]{40}", pinned_tree)
         )
+        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip()
+        project_tree = self.langgraph_primary_project_execution_pinned_tree_sha.strip()
+        project_execution_pins_valid = (not project_commit and not project_tree) or bool(
+            re.fullmatch(r"[0-9a-fA-F]{40}", project_commit)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", project_tree)
+        )
         snapshot_max_files_valid = (
             isinstance(self.langgraph_primary_snapshot_max_files, int)
             and not isinstance(self.langgraph_primary_snapshot_max_files, bool)
@@ -1722,6 +1742,7 @@ class Settings:
             and single_repository_configured
             and single_starting_ref_configured
             and authority_pins_valid
+            and project_execution_pins_valid
             and snapshot_max_files_valid
         )
         return {
@@ -1748,6 +1769,7 @@ class Settings:
             "single_repository_configured": single_repository_configured,
             "single_starting_ref_configured": single_starting_ref_configured,
             "authority_pins_valid": authority_pins_valid,
+            "project_execution_pins_valid": project_execution_pins_valid,
             "snapshot_max_files_valid": snapshot_max_files_valid,
             "required_providers_valid": required_providers_valid,
             "provider_activation_bindings_configured": (
@@ -1768,6 +1790,30 @@ class Settings:
             "primary_runtime_active": False,
             "legacy_new_intake_disabled": False,
         }
+
+    def project_execution_authority_pins(self) -> tuple[str, str]:
+        """Return commit and tree pins for the allowlisted snapshot worktree."""
+
+        service_commit = self.langgraph_primary_pinned_commit_sha.strip().lower()
+        service_tree = self.langgraph_primary_pinned_tree_sha.strip().lower()
+        project_commit = self.langgraph_primary_project_execution_pinned_commit_sha.strip().lower()
+        project_tree = self.langgraph_primary_project_execution_pinned_tree_sha.strip().lower()
+        if bool(project_commit) != bool(project_tree):
+            raise ValueError(
+                "Project execution commit and tree pins must be supplied "
+                "together as 40-character hexadecimal values"
+            )
+        if project_commit:
+            if any(
+                re.fullmatch(r"[0-9a-f]{40}", item) is None
+                for item in (project_commit, project_tree)
+            ):
+                raise ValueError(
+                    "Project execution commit and tree pins must be supplied "
+                    "together as 40-character hexadecimal values"
+                )
+            return project_commit, project_tree
+        return service_commit, service_tree
 
     def validate_langgraph_primary_configuration(self) -> None:
         """Reject incomplete primary activation before opening PostgreSQL."""
@@ -1888,6 +1934,12 @@ class Settings:
                 "LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA and "
                 "LANGGRAPH_PRIMARY_PINNED_TREE_SHA must be supplied together "
                 "as 40-character hexadecimal values"
+            )
+        if not readiness["project_execution_pins_valid"]:
+            problems.append(
+                "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA and "
+                "LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA must be "
+                "supplied together as 40-character hexadecimal values"
             )
         if self.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
             pin = self.langgraph_primary_local_evidence_adoption_sha256
@@ -2421,3 +2473,4 @@ class Settings:
 # [[Claude Code | Claude Fable 5.1 | 2026-09-19 | 19:30 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

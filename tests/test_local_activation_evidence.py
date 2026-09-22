@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from dataclasses import asdict, replace
@@ -343,6 +345,100 @@ class LocalActivationEvidenceTests(unittest.TestCase):
                             store.load()
             self.assertEqual(store.path.read_bytes(), retained)
 
+    def test_split_service_and_project_authority_pass_generation_and_snapshot(self) -> None:
+        from director_orchestrator.primary_default import resolve_default_primary_authority
+        from director_orchestrator.primary_generation import deployment_digest, require_generation
+
+        root = Path(self.temporary.name)
+        project_root = root / "edge-project"
+        project_root.mkdir()
+        subprocess.run(("git", "init", "-b", "main"), cwd=project_root, check=True, capture_output=True)
+        subprocess.run(
+            ("git", "config", "user.email", "split@example.test"),
+            cwd=project_root,
+            check=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "Split Seam"),
+            cwd=project_root,
+            check=True,
+        )
+        (project_root / "README.md").write_text("edge\n", encoding="utf-8")
+        subprocess.run(("git", "add", "README.md"), cwd=project_root, check=True)
+        subprocess.run(("git", "commit", "-m", "edge"), cwd=project_root, check=True)
+        subprocess.run(
+            (
+                "git",
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/owner/edge-project.git",
+            ),
+            cwd=project_root,
+            check=True,
+        )
+        project_commit = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=project_root, text=True
+        ).strip()
+        project_tree = subprocess.check_output(
+            ("git", "rev-parse", "HEAD^{tree}"), cwd=project_root, text=True
+        ).strip()
+        ident = identity(
+            candidate_commit=self.adoption_document["reviewed_source_commit"],
+            candidate_tree=self.adoption_document["reviewed_source_tree"],
+        )
+        adoption_path, adoption_pin = self.write_adoption(
+            document={
+                **self.adoption_document,
+                "repository": "owner/edge-project",
+                "reviewed_source_commit": ident.candidate_commit,
+                "reviewed_source_tree": ident.candidate_tree,
+            }
+        )
+        journal = root / "split.sqlite3"
+        base = dict(
+            langgraph_primary_acceptance_mode="owner-local-evidence-v1",
+            langgraph_primary_owner_token=self.owner_token,
+            langgraph_primary_local_evidence_adoption_path=str(adoption_path),
+            langgraph_primary_local_evidence_adoption_sha256=adoption_pin,
+            langgraph_primary_acceptance_journal_path=str(journal),
+            repository_snapshot_root=str(project_root),
+            repository_allowlist=("owner/edge-project",),
+            allowed_starting_refs=("main",),
+            langgraph_primary_pinned_commit_sha=ident.candidate_commit,
+            langgraph_primary_pinned_tree_sha=ident.candidate_tree,
+            langgraph_primary_project_execution_pinned_commit_sha=project_commit,
+            langgraph_primary_project_execution_pinned_tree_sha=project_tree,
+        )
+        settings = replace(Settings(), **base)
+        manifest = dict(
+            version="director-primary-generation/owner-local-evidence-v1",
+            activation=asdict(ident),
+            journal_path=str(journal),
+            owner_adoption_path=str(adoption_path),
+            owner_adoption_sha256=adoption_pin,
+            provider_bindings_sha256=hashlib.sha256(b"{}").hexdigest(),
+            deployment_configuration_sha256=deployment_digest(settings),
+            image_id="sha256:" + "8" * 64,
+            resolved_compose_sha256="9" * 64,
+        )
+        source = root / "split-generation.json"
+        source.write_text(json.dumps(manifest))
+        env = {
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_PATH": str(source),
+            "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest(),
+            "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON": "{}",
+            "DIRECTOR_RUNTIME_IMAGE_ID": manifest["image_id"],
+            "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": manifest["resolved_compose_sha256"],
+        }
+        with patch("director_orchestrator.primary_generation.GENERATION_DATA_ROOT", root), patch.dict(
+            os.environ, env
+        ):
+            require_generation(settings, ident, reserve=True)
+            resolve_default_primary_authority(settings)
+
     def test_require_generation_rejects_repository_allowlist_mismatch(self) -> None:
         from director_orchestrator.primary_generation import deployment_digest, require_generation
 
@@ -648,3 +744,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

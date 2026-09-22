@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
@@ -124,6 +125,7 @@ from .models import (
     Assignment,
     AssignmentKind,
     AssignmentOutcome,
+    DirectorPlan,
     IntakeAuthentication,
     ProviderName,
     SlackIntake,
@@ -1259,6 +1261,25 @@ def build_automatic_primary_live_dependencies(
     )
 
 
+def _align_plan_to_project_execution_authority(
+    settings: Settings, plan: DirectorPlan
+) -> None:
+    """Bind packet planning to the project snapshot when authority is split."""
+
+    execution_commit, _ = settings.project_execution_authority_pins()
+    service_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
+    if not execution_commit or execution_commit == service_commit:
+        return
+    if plan.prestage is not None:
+        plan.prestage = plan.prestage.model_copy(
+            update={"branch": execution_commit, "base_sha": execution_commit}
+        )
+    plan.assignments = [
+        item.model_copy(update={"starting_ref": execution_commit})
+        for item in plan.assignments
+    ]
+
+
 def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAuthority:
     """Bind the configured clean repository to its exact origin-backed head."""
 
@@ -1290,8 +1311,13 @@ def resolve_default_primary_authority(settings: Settings) -> DefaultPrimaryAutho
         raise RuntimeError("Default primary repository remote does not match its allowlist")
     starting_ref = settings.allowed_starting_refs[0]
     starting_sha = git("rev-parse", "--verify", f"{starting_ref}^{{commit}}")
-    pinned_commit = settings.langgraph_primary_pinned_commit_sha.strip().lower()
-    pinned_tree = settings.langgraph_primary_pinned_tree_sha.strip().lower()
+    try:
+        pinned_commit, pinned_tree = settings.project_execution_authority_pins()
+    except ValueError as exc:
+        raise ValueError(
+            "Default primary immutable commit and tree pins must be supplied "
+            "together as 40-character hexadecimal values"
+        ) from exc
     if bool(pinned_commit) != bool(pinned_tree) or any(
         re.fullmatch(r"[0-9a-f]{40}", item) is None
         for item in (pinned_commit, pinned_tree)
@@ -1357,12 +1383,13 @@ class DefaultDryRunServices:
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
+            execution_commit, execution_tree = settings.project_execution_authority_pins()
             packet_router = DirectorPacketTaskRouter(
                 authority_snapshots=LocalGitAuthoritySnapshotResolver(
                     settings.repository_allowlist[0],
                     settings.repository_snapshot_root,
-                    pinned_commit_sha=settings.langgraph_primary_pinned_commit_sha,
-                    pinned_tree_sha=settings.langgraph_primary_pinned_tree_sha,
+                    pinned_commit_sha=execution_commit,
+                    pinned_tree_sha=execution_tree,
                     max_files=settings.langgraph_primary_snapshot_max_files,
                 ),
                 boundary_adapters={},
@@ -1450,6 +1477,7 @@ class DefaultDryRunServices:
         # units and the dispatched packet are derived from the same immutable input.
         if record.plan is None:
             record.plan = preview_plan(record.intake.text, self.settings)
+            _align_plan_to_project_execution_authority(self.settings, record.plan)
         record.plan_generation += 1
         if not record.plan.assignments:
             raise RuntimeError("Default primary plan has no packet assignment")
@@ -3672,3 +3700,4 @@ class DefaultPrimaryActivation:
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -1264,6 +1265,91 @@ class DefaultPrimaryPinnedAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "computed tree"):
             resolve_default_primary_authority(
                 self.settings(langgraph_primary_pinned_tree_sha="e" * 40)
+            )
+
+
+class DefaultPrimarySplitProjectAuthorityTests(unittest.TestCase):
+    @staticmethod
+    def _init_repo(path: Path, remote: str) -> None:
+        subprocess.run(("git", "init", "-b", "main"), cwd=path, check=True, capture_output=True)
+        subprocess.run(
+            ("git", "config", "user.email", "split-authority@example.test"),
+            cwd=path,
+            check=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "Split Authority Test"),
+            cwd=path,
+            check=True,
+        )
+        (path / "README.md").write_text(f"{remote}\n", encoding="utf-8")
+        subprocess.run(("git", "add", "README.md"), cwd=path, check=True)
+        subprocess.run(("git", "commit", "-m", "init"), cwd=path, check=True)
+        subprocess.run(
+            ("git", "remote", "add", "origin", f"https://github.com/{remote}.git"),
+            cwd=path,
+            check=True,
+        )
+
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        base = Path(self.temporary_directory.name)
+        self.director_root = base / "director"
+        self.project_root = base / "project"
+        self.director_root.mkdir()
+        self.project_root.mkdir()
+        self._init_repo(self.director_root, "owner/director")
+        self._init_repo(self.project_root, "owner/edge-project")
+        (self.project_root / "edge.txt").write_text("edge\n", encoding="utf-8")
+        subprocess.run(("git", "add", "edge.txt"), cwd=self.project_root, check=True)
+        subprocess.run(("git", "commit", "-m", "edge"), cwd=self.project_root, check=True)
+        self.director_commit = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.director_root, text=True
+        ).strip()
+        self.director_tree = subprocess.check_output(
+            ("git", "rev-parse", "HEAD^{tree}"), cwd=self.director_root, text=True
+        ).strip()
+        self.project_commit = subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.project_root, text=True
+        ).strip()
+        self.project_tree = subprocess.check_output(
+            ("git", "rev-parse", "HEAD^{tree}"), cwd=self.project_root, text=True
+        ).strip()
+
+    def split_settings(self, **updates) -> Settings:
+        values = {
+            "repository_snapshot_root": str(self.project_root),
+            "repository_allowlist": ("owner/edge-project",),
+            "allowed_starting_refs": ("main",),
+            "langgraph_primary_pinned_commit_sha": self.director_commit,
+            "langgraph_primary_pinned_tree_sha": self.director_tree,
+            "langgraph_primary_project_execution_pinned_commit_sha": self.project_commit,
+            "langgraph_primary_project_execution_pinned_tree_sha": self.project_tree,
+        }
+        values.update(updates)
+        return replace(Settings(), **values)
+
+    def test_split_project_execution_authority_accepts_edge_snapshot(self) -> None:
+        authority = resolve_default_primary_authority(self.split_settings())
+        self.assertEqual(self.project_commit, authority.starting_sha)
+
+    def test_service_pins_without_project_execution_reject_foreign_snapshot(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
+            resolve_default_primary_authority(
+                self.split_settings(
+                    langgraph_primary_project_execution_pinned_commit_sha="",
+                    langgraph_primary_project_execution_pinned_tree_sha="",
+                )
+            )
+
+    def test_swapped_project_execution_pins_reject_snapshot(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HEAD and starting ref"):
+            resolve_default_primary_authority(
+                self.split_settings(
+                    langgraph_primary_project_execution_pinned_commit_sha=self.director_commit,
+                    langgraph_primary_project_execution_pinned_tree_sha=self.director_tree,
+                )
             )
 
 
@@ -3904,3 +3990,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

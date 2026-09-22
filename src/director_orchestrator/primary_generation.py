@@ -1,3 +1,4 @@
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]]
@@ -125,6 +126,7 @@ def require_generation(settings, identity, *, reserve=False):
     owner selects the manifest's exact bytes via a separately protected digest.
     """
     try:
+        settings.project_execution_authority_pins()
         local = settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1"
         if settings.langgraph_primary_acceptance_mode not in {"provider-v2", "provider-v3-two-party", "owner-local-evidence-v1"}:
             raise ValueError("generation selection requires signed provider acceptance")
@@ -281,3 +283,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]

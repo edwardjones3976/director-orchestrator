@@ -1,3 +1,4 @@
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
@@ -24,7 +25,14 @@ Use the same Compose project/environment as the deployment, with
 `--build-arg DIRECTOR_CANDIDATE_COMMIT=<exact-commit>` and
 `--build-arg DIRECTOR_CANDIDATE_TREE=<exact-tree>` on `docker compose build
 orchestrator`. These label values must match the control checkout and configured
-candidate pins. Building is not acceptance. The image must already exist for
+candidate pins. Building is not acceptance. When the registered project
+repository differs from the accepted Director service candidate, keep
+`LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and `LANGGRAPH_PRIMARY_PINNED_TREE_SHA` on
+the Director candidate and set
+`LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_COMMIT_SHA` and
+`LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_TREE_SHA` to the clean allowlisted
+project snapshot. Leave both project execution values empty to retain the legacy
+single-repository binding. The image must already exist for
 utility containers, which use `--no-deps --pull never`. The control tool inspects
 the actual content-addressed image ID and rejects an embedded entrypoint. It
 then sets the Compose image to that immutable ID. Candidate labels help identify
@@ -264,3 +272,4 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 13:26 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->

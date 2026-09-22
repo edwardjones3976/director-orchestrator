@@ -1,3 +1,4 @@
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:40 UTC | BEGIN]] -->
@@ -386,6 +387,10 @@ their mere presence:
   `-SourceRemoteName` selects one explicitly; creation requires that remote to
   be an exact GitHub URL for the allowlisted repository and requires its live
   starting-ref head to equal the pinned commit before creating the target.
+  Snapshot verification uses `LANGGRAPH_PRIMARY_PROJECT_EXECUTION_PINNED_*`
+  when both are set; otherwise it reuses `LANGGRAPH_PRIMARY_PINNED_*` for the
+  allowlisted repository worktree while service acceptance keeps the Director
+  candidate pins.
 - `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
@@ -739,3 +744,4 @@ identity cannot authorize successful completion.
 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->
+<!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
