@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -134,6 +135,7 @@ from director_orchestrator.primary_default import (
     build_primary_packet_result_resolver,
     build_typed_external_effect_grant,
     resolve_default_primary_authority,
+    small_pre_authorization_lapsed,
     small_producer_result_refusal,
     small_review_bounds,
     typed_external_effect_grant_kinds,
@@ -613,6 +615,9 @@ class StandingGrantExerciseTests(unittest.TestCase):
             "capable": (self.application(), True),
             "no_ledger": (self.application(None), False),
             "no_compact_lane": (self.application(lanes=frozenset()), False),
+            # A small task needs a producer and an independent reviewer.
+            "one_compact_lane": (self.application(lanes=frozenset({"claude"})), False),
+            "one_family": (self.application(lanes=frozenset({"grok", "grok-bot"})), False),
             "paid_off": (self.application(
                 dispatcher=False,
                 langgraph_primary_offline_simulation_enabled=False,
@@ -632,6 +637,62 @@ class StandingGrantExerciseTests(unittest.TestCase):
         latched = self.application()
         latched._delegation_tripped = True
         self.assertFalse(latched.pre_execution_capable())
+
+    def test_an_in_flight_replay_never_exercises_the_grant(self):
+        """A retry that finds the claim before its projection keeps the button."""
+
+        application = self.application()
+        requests = []
+
+        class Stop(Exception):
+            pass
+
+        def create_intake(request):
+            requests.append(request)
+            raise Stop
+
+        application.coordinator = SimpleNamespace(
+            claim_authenticated_intake=lambda **_: ("DIR-LG-INFLIGHT", False),
+            get_projection=lambda task_id: None,
+            create_intake=create_intake,
+        )
+        application.services = SimpleNamespace(
+            _live_composition=False, register=lambda *_, **__: None,
+            discard=lambda *_: None)
+        record = self.record()
+        with patch.object(application, "_exercise_standing_grant",
+                          side_effect=AssertionError("grant exercised")), \
+                self.assertRaises(Stop):
+            application.create_intake(
+                record.intake,
+                intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                authenticated_replay_identity=("a" * 64, "b" * 64),
+            )
+        [request] = requests
+        self.assertEqual("DIR-LG-INFLIGHT", request.task_id)
+        self.assertTrue(request.execution_approval_required)
+        self.assertEqual([], self.audit())
+
+    def test_a_pre_authorized_task_that_no_longer_qualifies_is_refused(self):
+        record = self.record()
+        other = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        lapsed = partial(small_pre_authorization_lapsed, ledger=self.ledger)
+        # Still in the class: its bounds apply, nothing is refused.
+        self.assertFalse(lapsed(record, self.settings, compact_view_lanes=SMALL_LANES))
+        # Restarted under a stricter reviewer cap, or with a full-packet lane.
+        stricter = replace(self.settings, small_task_review_max_tokens=0)
+        self.assertTrue(lapsed(record, stricter, compact_view_lanes=SMALL_LANES))
+        self.assertTrue(lapsed(record, self.settings, compact_view_lanes={"claude"}))
+        # A task the grant never pre-authorized is unaffected, and so is every
+        # task when no ledger is wired.
+        self.assertFalse(lapsed(other, stricter, compact_view_lanes=SMALL_LANES))
+        self.assertFalse(small_pre_authorization_lapsed(
+            record, stricter, None, compact_view_lanes=SMALL_LANES))
+        # An unreadable ledger refuses.
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=OSError("ledger unavailable")):
+            self.assertTrue(lapsed(other, stricter, compact_view_lanes=SMALL_LANES))
 
     def test_a_paid_off_deployment_never_exercises_a_grant(self):
         application = self.application(
@@ -5028,3 +5089,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]

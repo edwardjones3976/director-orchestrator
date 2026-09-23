@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
@@ -1585,12 +1586,18 @@ def sends_compact_provider_view(transport: object) -> bool:
     capable only when this holds. Every other transport, including the cursor,
     github-copilot, openai (native Codex) and antigravity bridge lanes, is
     treated as posting the full packet or a different document.
+
+    A native CLI lane also has to refuse a result whose reported usage exceeds
+    the admitted attempt, or the reviewer's token cap is advisory. Only native
+    Claude does that for every reply (send() above); native Grok does it for a
+    Responses-shaped reply only, and native Cursor and GitHub Copilot never,
+    so those lanes stay outside the class although they send the compact view.
     """
 
     if isinstance(transport, OpenAIResponsesPacketTransport):
         return True
     if isinstance(transport, NativeCommandPacketTransport):
-        return transport.payload_mode == "work-packet"
+        return transport.payload_mode == "work-packet" and transport.provider_id == "claude"
     if isinstance(transport, HostBridgePacketTransport):
         return transport.outbound_payload_builder is compact_provider_view
     return False
@@ -1883,3 +1890,4 @@ def provider_lane_detail(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]

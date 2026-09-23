@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -426,7 +427,10 @@ _READ_VERB = re.compile(
     r"(?:summari[sz]e|explain|describe|review|list|compare|answer|analy[sz]e)\b",
     re.I,
 )
-_PROJECT_LINE = re.compile(r"\A\s*project\s*:[^\n]*\n", re.I)
+# The Slack gateway prefixes every work order with its command word, and the
+# slash command's work order uses Project:, Outcome: and Constraints: labels.
+_GATEWAY_COMMAND = re.compile(r"\A\s*/?director\b", re.I)
+_WORK_ORDER_LABEL = re.compile(r"\b(project|outcome|constraints)\s*:", re.I)
 # Terms that keep an otherwise read-shaped request out of the class: shell
 # syntax and commands, dotfiles, home, parent and absolute paths, secret-like words and
 # environment-variable names, and any outward, mutating or tier-0-adjacent verb.
@@ -449,11 +453,23 @@ _OUTSIDE_READ_ONLY = re.compile(
 
 
 def _read_only_request(text: str) -> bool:
-    """Whether every sentence opens with a read verb and no outside term appears."""
+    """Whether every sentence opens with a read verb and no outside term appears.
 
-    body = _PROJECT_LINE.sub("", text, count=1)
-    sentences = [part.strip() for part in re.split(r"[.!?]+(?:\s+|\Z)|\n+", body)
-                 if part.strip()]
+    The gateway's command word and the work-order labels are envelope, not
+    request. Only a leading Project value, to the end of its line, is left out
+    of the sentence test; every Outcome and Constraints sentence, and any later
+    Project value, must open with a read verb like any other. The outside-term
+    and write-scope scans read everything after the command word.
+    """
+
+    body = _GATEWAY_COMMAND.sub("", text, count=1)
+    parts = _WORK_ORDER_LABEL.split(body)
+    request = [parts[0]]
+    for index, (label, value) in enumerate(zip(parts[1::2], parts[2::2])):
+        leading = index == 0 and label.lower() == "project" and not parts[0].strip()
+        request.append(value.partition("\n")[2] if leading else value)
+    sentences = [part.strip() for chunk in request
+                 for part in re.split(r"[.!?]+(?:\s+|\Z)|\n+", chunk) if part.strip()]
     return (
         bool(sentences)
         and all(_READ_VERB.match(part) for part in sentences)
@@ -1751,3 +1767,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]

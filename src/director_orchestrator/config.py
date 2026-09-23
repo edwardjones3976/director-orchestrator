@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -1141,8 +1142,9 @@ class Settings:
 
         This reports configuration and resolves nothing itself. The payload
         says whether the phase-4S pre-execution path is armed, which needs a
-        primary application able to pre-authorize a task (an audit ledger, a
-        compact-view lane, an executing deployment), so an operator does not
+        primary application able to pre-authorize a task (an audit ledger, two
+        compact-view lanes from different provider families, an executing
+        deployment), so an operator does not
         have to infer it. Grant contents are never reported: /health
         returns readiness booleans and never secret or allowlist values, and a
         grant names real repositories and providers.
@@ -2552,3 +2554,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]

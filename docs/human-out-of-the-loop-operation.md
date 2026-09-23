@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
@@ -238,7 +239,9 @@ intake and the producer's task are each a read-shaped request, meaning every
 sentence opens with a read verb (summarize, explain, describe, review, list,
 compare, answer, analyse) and no shell syntax, dotfile, home, parent or
 absolute path, secret-like word or variable name, write-shaped word, or outward
-or mutating verb appears; and the frozen plan total is at most $1 and within the task
+or mutating verb appears (the gateway's `DIRECTOR` command word and a leading
+`Project:` value are not sentences, while every `Outcome:` and `Constraints:`
+sentence is); and the frozen plan total is at most $1 and within the task
 budget, with the reviewer inside its own cap.
 Model or plan output can only remove eligibility. Every plan, assignment, and
 intake model forbids extra fields, so nothing a model writes can assert it.
@@ -257,7 +260,9 @@ lowercase `owner/name`, its branch, and both of its provider lanes; the grant is
 not exhausted; no `delegation_trip` record exists for its `grant_id` and no task
 it pre-authorized must write one (see Trips); both lanes send the compact view;
 and the intake is a Slack-gateway-attested message from the configured owner in the
-configured channel that is not a replay. A bearer intake never evaluates a
+configured channel that is not a replay. Only the request that created the
+intake claim evaluates a grant; a retry that finds the claim before its task
+exists keeps the button. A bearer intake never evaluates a
 grant. Any other case stops for the button exactly as before.
 
 **What is evaluated, and when.** At the decision point no candidate change and
@@ -306,14 +311,20 @@ compact view of the work packet: its commit, digest, and file count, plus only
 the snapshot entries under owned paths or named in the objective. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
 full packet or a closed directive, so a task using any of them is outside the
-class and keeps the button. The Director keeps the full packet and rebinds
+class and keeps the button. Native Cursor and GitHub Copilot, and native Grok,
+are outside the class as well although they send the compact view: their
+transports do not refuse every result whose reported usage exceeds the admitted
+attempt, so the reviewer's token cap would only be advisory there. The Director keeps the full packet and rebinds
 every result to it by digest. The compact view a small task's reviewer is sent
 is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
 also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
 `SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000). The producer's packet states the
 outcome size that fits, and a producer result whose review would exceed 16 KB is
 refused when it is accepted, before it is recorded and before any reviewer
-work. A result refused there still spent the producer's attempt.
+work. A result refused there still spent the producer's attempt. A
+pre-authorized task that no longer qualifies when it is dispatched, for example
+after a restart under a lower reviewer cap or different lanes, is refused
+rather than run without the class's bounds; that failure trips the grant.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -524,3 +535,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->

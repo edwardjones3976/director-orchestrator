@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -1200,6 +1201,44 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
                 self.assertTrue(self.eligible(self.record(text=f"Project: demo\n{text}")))
                 self.assertTrue(self.eligible(self.with_assignments({"task": text}, {})))
 
+    def gateway_record(self, text: str) -> TaskRecord:
+        """The intake and preview plan exactly as the Slack gateway produces them."""
+
+        record = self.record(text=text)
+        record.plan = preview_plan(text, self.settings)
+        return record
+
+    def test_the_slack_gateway_envelope_is_not_part_of_the_request(self) -> None:
+        """slack_bot.py sends ``DIRECTOR\n{text}``; the slash command adds labels."""
+
+        for text in (
+            "DIRECTOR\nProject: demo\nSummarize README.md for the owner.",
+            "DIRECTOR\nProject: demo Outcome: Summarize README.md for the owner.",
+            "DIRECTOR\nProject: demo Outcome: Summarize README.md. "
+            "Constraints: List only its headings.",
+            "DIRECTOR Summarize README.md for the owner.",
+        ):
+            with self.subTest(gateway=text):
+                self.assertTrue(self.eligible(self.gateway_record(text)))
+        for text in (
+            # Every Outcome and Constraints sentence is still held to the rule.
+            "DIRECTOR\nProject: demo Outcome: test",
+            "DIRECTOR\nProject: demo Outcome: Summarize README.md. Constraints: none.",
+            # Only a leading Project value is envelope.
+            "DIRECTOR\nSummarize README.md.\nProject: rewrite the history",
+            "DIRECTOR\nProject: demo\nProject: rewrite the history",
+            # A command word alone is not a request.
+            "DIRECTOR",
+            "DIRECTOR\nProject: demo",
+        ):
+            with self.subTest(outside=text):
+                self.assertFalse(self.eligible(self.gateway_record(text)))
+        for line, intakes in self.TIER_ZERO_CORPUS.items():
+            for text in intakes:
+                with self.subTest(tier_zero=line, intake=text):
+                    self.assertFalse(self.eligible(self.gateway_record(
+                        f"DIRECTOR\nProject: demo Outcome: {text}")))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1219,3 +1258,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]

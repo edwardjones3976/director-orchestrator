@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
@@ -84,6 +85,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -770,6 +772,51 @@ def _compact_view_lanes(live_dependencies: Any) -> frozenset[str]:
             for item in (adapter, *dict(attempt.get(lane, {})).values())
         )
     )
+
+
+def _independent_lane_pair(lanes: Collection[str]) -> bool:
+    """Whether two of these lanes belong to different provider families."""
+
+    for first, second in itertools.combinations(sorted(lanes), 2):
+        try:
+            if not share_provider_family(first, second):
+                return True
+        except UnknownContactError:
+            continue
+    return False
+
+
+def small_pre_authorization_lapsed(
+    record: TaskRecord, settings: Settings, ledger: Any, *,
+    compact_view_lanes: Collection[str],
+) -> bool:
+    """Whether a task a standing grant pre-authorized no longer qualifies.
+
+    Its graph was persisted without the execution button. If a restart under
+    stricter settings or different lanes takes it out of the class, every bound
+    tied to the class (the reviewer's byte and token caps, the producer's
+    result cap) would silently lapse, so its dispatch is refused instead. Only
+    a task outside the class reads the audit ledger, and an unreadable ledger
+    refuses.
+    """
+
+    if ledger is None or small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return False
+    agent = f"director-langgraph:{record.task_id}"
+    try:
+        after = None
+        while True:
+            # ponytail: full-chain read per dispatch of a task outside the class while a ledger is wired; index PRE_AUTHORIZED by task if history grows
+            page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
+            if any(item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                   and item.acting_agent == agent for item in page):
+                return True
+            if len(page) < 1_000:
+                return False
+            after = page[-1].digest
+    except Exception:
+        return True
 
 
 def small_review_bounds(
@@ -2457,14 +2504,15 @@ class DefaultPrimaryApplication:
     def pre_execution_capable(self) -> bool:
         """Whether this process could pre-authorize any task, for /health.
 
-        A wired audit ledger not latched attended, at least one compact-view
-        lane, and a deployment that executes. A per-grant delegation_trip is
-        not reflected: it is visible only in the audit ledger.
+        A wired audit ledger not latched attended, two compact-view lanes from
+        different provider families (a small task needs a producer and an
+        independent reviewer), and a deployment that executes. A per-grant
+        delegation_trip is not reflected: it is visible only in the audit ledger.
         """
 
         return (self._delegation_ledger is not None
                 and not self._delegation_tripped
-                and bool(self._compact_view_lanes)
+                and _independent_lane_pair(self._compact_view_lanes)
                 and self._executes())
 
     def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
@@ -2751,7 +2799,10 @@ class DefaultPrimaryApplication:
                         raise RuntimeError("replayed primary intake disappeared")
                     return self._record_from_projection(repaired)
             record.task_id = task_id
-            granted = self._exercise_standing_grant(
+            # Only the request that created the claim evaluates a grant. A
+            # retry that finds the claim but no projection yet (one in flight,
+            # or a first attempt that stopped) keeps the button.
+            granted = created and self._exercise_standing_grant(
                 record, attested=self._attested_owner_intake(record)
             )
             request = self._request(record, execution_approval_required=not granted)
@@ -3449,6 +3500,12 @@ class DefaultPrimaryActivation:
                         services._packet_router.planned_work_packet(record, assignment),
                     )
                     packet_digest = document_digest(packet)
+                    if small_pre_authorization_lapsed(
+                            record, settings, delegation_ledger,
+                            compact_view_lanes=compact_view_lanes):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            "small_task_pre_authorization_lapsed")
                     review_refusal, review_token_cap = small_review_bounds(
                         record, settings, assignment, packet,
                         compact_view_lanes=compact_view_lanes)
@@ -4309,3 +4366,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]

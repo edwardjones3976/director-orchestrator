@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -214,6 +215,18 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 # class, so its reviewer is never measured on a view it was not sent.
                 self.assertIs(compact, sends_compact_provider_view(transports[provider]))
 
+    def test_only_native_lanes_that_enforce_the_attempt_cap_join_the_small_class(self):
+        """Every native lane is sent the compact view; only Claude refuses every
+        result whose reported usage exceeds the admitted attempt."""
+
+        with TemporaryDirectory() as directory:
+            for provider in ("claude", "grok", "cursor", "github-copilot"):
+                with self.subTest(provider=provider):
+                    transport = NativeCommandPacketTransport(
+                        provider, (f"{provider}.exe", "--print"), cwd=directory)
+                    self.assertEqual("work-packet", transport.payload_mode)
+                    self.assertIs(provider == "claude", sends_compact_provider_view(transport))
+
     def test_compact_view_lanes_admits_only_lanes_whose_every_adapter_is_compact(self):
         """The production composition used at intake and at dispatch alike."""
 
@@ -409,3 +422,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
