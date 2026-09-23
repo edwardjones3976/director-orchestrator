@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]] -->
@@ -58,7 +59,7 @@ silently dropping one is exactly how items 6 and 10 went missing.
 ## The tier check runs first
 
 `classify()` is evaluated **before** any term, and fails closed. Tier 1 is the
-closed three-class list in the governing document; anything not literally in it
+closed four-class list in the governing document; anything not literally in it
 is tier 0 and can never run autonomously, however many terms pass. A grant that
 names an unlisted class does not create one.
 
@@ -152,3 +153,4 @@ gap to `Activate`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->

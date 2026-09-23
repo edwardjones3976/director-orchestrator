@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
@@ -67,6 +68,7 @@ class TierTests(unittest.TestCase):
             "eligible_merge_non_protected_branch": ("eligible merge", "non-protected branch"),
             "mark_pull_request_ready_for_review": ("marking a pull request ready for review",),
             "post_to_own_designated_slack_channel": ("designated slack channel",),
+            "execute_small_read_only_task": ("executing a small read-only task",),
         }
         self.assertEqual(set(encodes), set(TIER_ONE_CLASSES))
 
@@ -141,7 +143,11 @@ class GoverningDocumentTests(unittest.TestCase):
             for entry in was:
                 self.assertIn(entry, now, f'{heading} lost: {entry}')
             if heading == "### Tier 1":
-                self.assertEqual(len(now), len(was), 'tier 1 must stay closed')
+                # Closed at exactly the owner-signed addition, and nothing else.
+                self.assertEqual(now, was + [
+                    "- Executing a small read-only task that "
+                    "`policy.small_read_only_eligible()` admits."
+                ])
 
     def test_the_predicate_document_defers_to_the_governing_one(self):
         text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
@@ -417,3 +423,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

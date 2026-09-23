@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
@@ -103,6 +104,8 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
                 "Executing an eligible merge of a pull request into a non-protected branch.",
                 "Marking a pull request ready for review.",
                 "Posting to the project's own designated Slack channel.",
+                "Executing a small read-only task that "
+                "`policy.small_read_only_eligible()` admits.",
             ],
         )
         # Scope the remaining checks to the delegable acts themselves. The prose
@@ -124,6 +127,20 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "into a protected branch",
         ):
             self.assertNotIn(forbidden, delegable)
+
+    def test_small_read_only_class_is_bounded_and_owner_signed(self) -> None:
+        standing = self.section("Standing grant for small read-only tasks")
+        for required in (
+            "PRE_AUTHORIZED",
+            "explicit sign-off",
+            "never skips or relaxes",
+            "new grant_id",
+            "TRUSTED_PROVIDER_COST_RANKS",
+            "`policy.small_read_only_eligible()`",
+            "can only remove eligibility",
+            "not a replay",
+        ):
+            self.assertIn(required, standing)
 
     def test_evidence_bar_is_conjunctive_and_complete(self) -> None:
         bar = self.section("The evidence bar")
@@ -447,3 +464,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

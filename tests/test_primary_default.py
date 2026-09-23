@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
@@ -57,10 +58,20 @@ import unittest
 from unittest.mock import patch
 import uuid
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from director_orchestrator.config import Settings
+from director_orchestrator.delegation import GRANT_SCHEMA_VERSION, Tier1Class
+from director_orchestrator.delegation_ledger import (
+    AUDIT_SCHEMA_VERSION,
+    DelegationAuditRecord,
+    GateResult,
+    GateStatus,
+    RecordedOutcome,
+)
+from director_orchestrator.store import TaskStore
 from director_orchestrator.langgraph_postgres import open_postgres_control_plane
 from director_orchestrator.langgraph_primary import (
     ApprovalDecision,
@@ -209,6 +220,300 @@ class SmallReviewBoundsTests(unittest.TestCase):
             "done", text="Project: default\nCreate a bounded implementation plan."
         )
         self.assertEqual((None, None), self.bounds(ineligible))
+
+
+class _MemoryAuditAnchor:
+    """Test double only: production must supply a durable, separately protected anchor."""
+
+    def __init__(self):
+        self.head = (0, "0" * 64)
+
+    def read_head(self):
+        return self.head
+
+    def compare_and_set(self, expected, updated):
+        if self.head != expected:
+            raise RuntimeError("anchor changed")
+        self.head = updated
+
+
+class _UnreadableAuditAnchor(_MemoryAuditAnchor):
+    def read_head(self):
+        raise OSError("anchor unavailable")
+
+
+SMALL_GRANT = {
+    "schema_version": GRANT_SCHEMA_VERSION,
+    "grant_id": "grant-small-1",
+    "repository": "owner/director-orchestrator",
+    "branch_pattern": "main",
+    "classes": ["execute_small_read_only_task"],
+    "providers": ["claude", "cursor"],
+    "expires_at": "2099-01-01T00:00:00+00:00",
+    "max_exercises": 5,
+    "revoked": False,
+}
+SMALL_TEXT = "Project: default\nSummarize README.md for the owner."
+TERM_ORDER = [
+    "authorization", "gates", "bounds", "verification",
+    "independence", "safe_stopping", "scope",
+]
+
+
+def small_grant(**changes) -> str:
+    return json.dumps({**SMALL_GRANT, **changes})
+
+
+def audit_ledger(directory: str) -> TaskStore:
+    return TaskStore(
+        str(Path(directory) / f"audit-{uuid.uuid4().hex}.sqlite3"),
+        delegation_audit_anchor=_MemoryAuditAnchor(),
+    )
+
+
+def gate_statuses(entry) -> dict:
+    return {item.gate: item.status for item in entry.gate_results}
+
+
+class StandingGrantExerciseTests(unittest.TestCase):
+    """The tier-1 class execute_small_read_only_task, evaluated before execution."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = directory.name
+        self.settings = replace(
+            Settings(),
+            app_env="default-test",
+            allow_paid_runs=False,
+            project_allowlist=("default",),
+            repository_allowlist=("owner/director-orchestrator",),
+            allowed_starting_refs=("main",),
+            slack_owner_user_id="UOWNER",
+            slack_channel_id="CDIRECTOR",
+            delegation_enabled=True,
+            delegation_suspended=False,
+            delegation_grant_json=small_grant(),
+        )
+        self.ledger = audit_ledger(self.directory)
+        self.sequence = 0
+
+    def application(self, ledger="default", *, dispatcher=True, **changes):
+        return DefaultPrimaryApplication(
+            replace(self.settings, **changes),
+            None,
+            None,
+            DefaultPrimaryAuthority(SHA, digest("authority")),
+            parallel_dispatcher=(lambda reservation: None) if dispatcher else None,
+            delegation_ledger=self.ledger if ledger == "default" else ledger,
+        )
+
+    def record(self, text=SMALL_TEXT, *, user="UOWNER", channel="CDIRECTOR",
+               authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED):
+        self.sequence += 1
+        record = TaskRecord(
+            task_id=f"DIR-LG-GRANT{self.sequence:04d}",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id=f"event-grant-{self.sequence}",
+                channel_id=channel,
+                thread_ts="1720000000.000001",
+                user_id=user,
+                text=text,
+            ),
+            intake_authentication=authentication,
+        )
+        record.plan = preview_plan(text, self.settings)
+        return record
+
+    @staticmethod
+    def exercise(application, record) -> bool:
+        return application._exercise_standing_grant(
+            record, attested=application._attested_owner_intake(record)
+        )
+
+    def audit(self, ledger=None):
+        return (ledger or self.ledger).delegation_audit_records(limit=1_000)
+
+    def test_eligible_owner_task_is_pre_authorized_with_one_audit_record(self):
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, entry.outcome)
+        self.assertIs(Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK, entry.decision_class)
+        self.assertEqual("grant-small-1", entry.grant_id)
+        self.assertEqual((), entry.verdicts)
+        self.assertEqual(TERM_ORDER, [item.gate for item in entry.gate_results])
+        self.assertTrue(all(item.status is GateStatus.PASS for item in entry.gate_results))
+        self.assertEqual(SHA, entry.candidate_sha)
+        self.assertTrue(entry.acting_agent.endswith(record.task_id))
+
+    def test_no_live_configured_grant_for_the_class_writes_nothing(self):
+        cases = {
+            "absent": {"delegation_grant_json": ""},
+            "malformed": {"delegation_grant_json": "{not json"},
+            "disabled": {"delegation_enabled": False},
+            "suspended": {"delegation_suspended": True},
+            "other_class": {"delegation_grant_json": small_grant(
+                classes=["mark_pull_request_ready_for_review"])},
+        }
+        for name, changes in cases.items():
+            with self.subTest(case=name):
+                self.assertFalse(self.exercise(self.application(**changes), self.record()))
+        self.assertEqual([], self.audit())
+
+    def test_expired_revoked_or_exhausted_grant_is_refused_and_audited(self):
+        for name, grant in {
+            "expired": small_grant(expires_at="2000-01-01T00:00:00+00:00"),
+            "revoked": small_grant(revoked=True),
+        }.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                application = self.application(ledger, delegation_grant_json=grant)
+                self.assertFalse(self.exercise(application, self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+        application = self.application(delegation_grant_json=small_grant(max_exercises=1))
+        self.assertTrue(self.exercise(application, self.record()))
+        self.assertFalse(self.exercise(application, self.record()))
+        first, second = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, first.outcome)
+        self.assertIs(RecordedOutcome.REFUSED, second.outcome)
+        self.assertIs(GateStatus.FAIL, gate_statuses(second)["authorization"])
+
+    def test_non_owner_foreign_channel_or_unattested_intake_is_refused(self):
+        application = self.application()
+        for name, record in {
+            "non_owner": self.record(user="UOTHER"),
+            "foreign_channel": self.record(channel="COTHER"),
+            "bearer": self.record(authentication=IntakeAuthentication.BEARER_DRY_RUN),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(application._attested_owner_intake(record))
+                self.assertFalse(self.exercise(application, record))
+        self.assertFalse(application._exercise_standing_grant(self.record(), attested=False))
+        entries = self.audit()
+        self.assertEqual(4, len(entries))
+        for entry in entries:
+            self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+            self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+    def test_an_ineligible_task_is_refused_and_audited(self):
+        record = self.record("Project: default\nCreate a bounded implementation plan.")
+        self.assertFalse(self.exercise(self.application(), record))
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+        self.assertIs(GateStatus.FAIL, gate_statuses(entry)["gates"])
+        self.assertIs(GateStatus.PASS, gate_statuses(entry)["authorization"])
+
+    def test_an_absent_or_unreadable_ledger_latches_attended(self):
+        application = self.application(ledger=None)
+        self.assertFalse(self.exercise(application, self.record()))
+        application._delegation_ledger = self.ledger
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([], self.audit())
+
+        unreadable = TaskStore(
+            str(Path(self.directory) / "unreadable.sqlite3"),
+            delegation_audit_anchor=_UnreadableAuditAnchor(),
+        )
+        application = self.application(unreadable)
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertTrue(application._delegation_tripped)
+
+    def test_a_recorded_trip_suspends_only_that_grant_id(self):
+        now = datetime.now(timezone.utc)
+        self.ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=RecordedOutcome.REFUSED,
+            grant_id="grant-small-1",
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-EARLIER",
+            verdicts=(),
+            gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+            recorded_at=now,
+        ))
+        self.assertFalse(self.exercise(self.application(), self.record()))
+        self.assertIs(GateStatus.FAIL, gate_statuses(self.audit()[-1])["authorization"])
+        # Only an explicit owner action, a new grant_id, clears it.
+        renewed = self.application(delegation_grant_json=small_grant(grant_id="grant-small-2"))
+        self.assertTrue(self.exercise(renewed, self.record()))
+
+    def test_a_paid_off_deployment_never_exercises_a_grant(self):
+        application = self.application(
+            dispatcher=False,
+            langgraph_primary_offline_simulation_enabled=False,
+            langgraph_primary_live_provider_dispatch_enabled=False,
+        )
+        self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([], self.audit())
+
+    def test_a_granted_task_that_does_not_succeed_trips_its_grant(self):
+        def coordinator(required, classification):
+            return SimpleNamespace(
+                _runtime=SimpleNamespace(
+                    compact_state=lambda task_id: {"execution_approval_required": required}),
+                get_projection=lambda task_id: SimpleNamespace(
+                    projection={"terminal_classification": classification}),
+            )
+
+        application = self.application()
+        for required, classification in ((True, "FAILED"), (False, "SUCCEEDED"), (False, None)):
+            application.coordinator = coordinator(required, classification)
+            application._trip_failed_exercise("DIR-LG-UNTRIPPED")
+        self.assertEqual([], self.audit())
+        self.assertFalse(application._delegation_tripped)
+
+        application.coordinator = coordinator(False, "FAILED")
+        application._trip_failed_exercise("DIR-LG-FAILED")
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+        self.assertEqual(["delegation_trip"], [item.gate for item in entry.gate_results])
+        self.assertTrue(entry.acting_agent.endswith("DIR-LG-FAILED"))
+        self.assertTrue(application._delegation_tripped)
+        self.assertFalse(self.exercise(application, self.record()))
+        # The durable record holds a fresh process too.
+        self.assertFalse(self.exercise(self.application(), self.record()))
+
+    def test_main_intake_schedules_recover_only_via_callback(self):
+        import importlib
+        from fastapi import BackgroundTasks
+
+        main = importlib.import_module("director_orchestrator.main")
+        seen = {}
+
+        class FakeApplication:
+            def create_intake(self, payload, *, intake_authentication,
+                              authenticated_replay_identity, on_dispatch_ready):
+                seen["authentication"] = intake_authentication
+                on_dispatch_ready("DIR-LG-1")
+                return "created"
+
+            def recover(self, task_id):
+                raise AssertionError("recover runs only as a scheduled background task")
+
+        application = FakeApplication()
+        background = BackgroundTasks()
+        payload = SlackIntake(
+            source_event_id="event-main", channel_id="CDIRECTOR",
+            thread_ts="1720000000.000001", user_id="UOWNER", text=SMALL_TEXT,
+        )
+        with patch.object(main, "primary_default_activation",
+                          SimpleNamespace(application=application)), \
+             patch.object(main, "settings", replace(
+                 main.settings, langgraph_primary_new_intake_enabled=True,
+                 allow_paid_runs=False)):
+            self.assertEqual("created", main.intake(
+                payload, background, intake_issued_at=None, intake_nonce=None,
+                intake_signature=None))
+        self.assertIs(IntakeAuthentication.BEARER_DRY_RUN, seen["authentication"])
+        [task] = background.tasks
+        self.assertEqual(application.recover, task.func)
+        self.assertEqual(("DIR-LG-1",), task.args)
 
 
 class ProviderAttemptRosterTests(unittest.TestCase):
@@ -1910,7 +2215,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             )
         )
 
-    def use_parallel_graph_completion_services(self, dispatcher):
+    def use_parallel_graph_completion_services(self, dispatcher, *, delegation_ledger=None):
         settings = replace(
             self.settings, langgraph_primary_offline_simulation_enabled=True
         )
@@ -1931,11 +2236,147 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             services,
             DefaultPrimaryAuthority(SHA, digest("authority")),
             parallel_dispatcher=dispatcher,
+            delegation_ledger=delegation_ledger,
         )
         self.settings = settings
         self.services = services
         self.coordinator = coordinator
         self.application = application
+
+    def use_standing_grant(self, dispatcher):
+        """Owner UOWNER in CDEFAULT, and a live grant for the small class."""
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        ledger = audit_ledger(directory.name)
+        self.settings = replace(
+            self.settings,
+            slack_owner_user_id="UOWNER",
+            slack_channel_id="CDEFAULT",
+            delegation_enabled=True,
+            delegation_grant_json=small_grant(),
+        )
+        self.use_parallel_graph_completion_services(dispatcher, delegation_ledger=ledger)
+        return ledger
+
+    def attested_intake(self, event, *, text=SMALL_TEXT, on_dispatch_ready=None):
+        identity = (
+            hashlib.sha256(f"nonce-{event}".encode()).hexdigest(),
+            hashlib.sha256(f"payload-{event}".encode()).hexdigest(),
+        )
+        return self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": event, "text": text}),
+            intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+            authenticated_replay_identity=identity,
+            on_dispatch_ready=on_dispatch_ready,
+        )
+
+    @staticmethod
+    def succeeding(dispatched):
+        def dispatch(reservation):
+            dispatched.append(reservation.sequence)
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.SUCCEEDED,
+                digest(f"granted-result-{reservation.task_id}-{reservation.sequence}"),
+                "provider_result_authenticated",
+            )
+        return dispatch
+
+    def test_standing_grant_skips_execution_approval_and_audits(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+
+        record = self.attested_intake("granted-small")
+
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection.get("pending_approval"))
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual("SUCCEEDED", projection.projection["terminal_classification"])
+        self.assertEqual(TaskStatus.DONE, record.status)
+        self.assertIn("exact_sha_review", projection.projection["visited_nodes"])
+        self.assertIn("ci_security_completion", projection.projection["visited_nodes"])
+        self.assertIs(
+            False,
+            self.coordinator._runtime.compact_state(record.task_id)[
+                "execution_approval_required"],
+        )
+        [entry] = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, entry.outcome)
+        self.assertTrue(entry.acting_agent.endswith(record.task_id))
+
+    def test_ineligible_task_under_live_grant_still_prompts(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+        ready: list[str] = []
+
+        record = self.attested_intake(
+            "ineligible-small",
+            text="Project: default\nCreate a bounded implementation plan.",
+            on_dispatch_ready=ready.append,
+        )
+
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
+        self.assertEqual([], ready)
+        self.assertEqual([], dispatched)
+        [entry] = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+
+    def test_granted_intake_hands_dispatch_to_the_callback(self):
+        dispatched: list[int] = []
+        self.use_standing_grant(self.succeeding(dispatched))
+        ready: list[str] = []
+
+        record = self.attested_intake("callback-small", on_dispatch_ready=ready.append)
+
+        self.assertEqual([record.task_id], ready)
+        self.assertEqual([], dispatched)
+        projection = self.coordinator.get_projection(record.task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection.get("pending_approval"))
+        self.assertNotEqual("NOT_STARTED", projection.projection["provider_dispatch_status"])
+        recovered = self.application.recover(record.task_id)
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual(TaskStatus.DONE, recovered.status)
+
+    def test_replayed_attested_intake_does_not_exercise_twice(self):
+        dispatched: list[int] = []
+        ledger = self.use_standing_grant(self.succeeding(dispatched))
+
+        first = self.attested_intake("replayed-small")
+        second = self.attested_intake("replayed-small")
+
+        self.assertEqual(first.task_id, second.task_id)
+        self.assertEqual([1, 2], sorted(dispatched))
+        self.assertEqual(1, len(ledger.delegation_audit_records(limit=10)))
+
+    def test_failed_granted_task_trips_the_grant(self):
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed"
+            )
+
+        ledger = self.use_standing_grant(dispatch)
+
+        failed = self.attested_intake("tripped-small-1")
+        projection = self.coordinator.get_projection(failed.task_id)
+        assert projection is not None
+        self.assertNotIn(
+            projection.projection["terminal_classification"], (None, "SUCCEEDED")
+        )
+        entries = ledger.delegation_audit_records(limit=10)
+        self.assertEqual(
+            [RecordedOutcome.PRE_AUTHORIZED, RecordedOutcome.REFUSED],
+            [item.outcome for item in entries],
+        )
+        self.assertEqual(["delegation_trip"], [item.gate for item in entries[1].gate_results])
+
+        after = self.attested_intake("tripped-small-2")
+        projection = self.coordinator.get_projection(after.task_id)
+        assert projection is not None
+        self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
 
     def same_lane_review_plan(self):
         """A plan whose review barrier reuses the first-wave producer's lane."""
@@ -4236,3 +4677,4 @@ if __name__ == "__main__":
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

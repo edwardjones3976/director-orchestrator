@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
@@ -91,6 +92,7 @@ import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -127,6 +129,16 @@ from .langgraph_primary import (
     _context as _handler_context_from_state,
 )
 from .approvals import StaleApproval
+from .contact_families import UnknownContactError, share_provider_family
+from .delegation import DelegationConfigurationError, Tier1Class, parse_grant
+from .delegation_ledger import (
+    AUDIT_SCHEMA_VERSION,
+    DelegationAuditRecord,
+    GateResult,
+    GateStatus,
+    RecordedOutcome,
+)
+from .hotl_execution import TERMS, ProposedAction, TermEvidence, decide
 from .models import (
     AntigravityDirective,
     AntigravityFixtureLane,
@@ -149,6 +161,7 @@ from .packet_transports import (
 )
 from .policy import (
     SMALL_TASK_REVIEW_MAX_PACKET_BYTES,
+    canonical_repository,
     preview_plan,
     small_read_only_eligible,
     _canonical_prestage_record,
@@ -2026,6 +2039,7 @@ class DefaultPrimaryApplication:
         parallel_dispatcher: (
             Callable[[ParallelReservation], ParallelDispatchOutcome] | None
         ) = None,
+        delegation_ledger: Any = None,
     ) -> None:
         self.settings = settings
         self.coordinator = coordinator
@@ -2035,6 +2049,14 @@ class DefaultPrimaryApplication:
         # configuration and verified repository authority before any dispatch.
         self.effect_grant = build_typed_external_effect_grant(settings, authority)
         self._parallel_dispatcher = parallel_dispatcher
+        # A TaskStore carrying a separately protected DelegationAuditAnchor.
+        # None, the production default while no anchor exists, holds every
+        # standing-grant exercise, so the execution button is unchanged.
+        self._delegation_ledger = delegation_ledger
+        # Set on any unreadable or unwritable ledger and on every trip; it
+        # holds for the life of this process.
+        self._delegation_tripped = False
+        self._delegation_lock = threading.Lock()
 
     def _parallel_policy(self) -> ParallelDispatchPolicy:
         """Return the bounded Default policy used for every durable wave."""
@@ -2135,9 +2157,229 @@ class DefaultPrimaryApplication:
                 aggregate=aggregate,
                 candidate_sha=self.authority.starting_sha,
             )
+            self._trip_failed_exercise(record.task_id)
         return aggregate
 
-    def _request(self, record: TaskRecord) -> PrimaryRequest:
+    def _attested_owner_intake(self, record: TaskRecord) -> bool:
+        """A Slack-gateway-attested message from the configured owner and channel."""
+
+        settings = self.settings
+        return (
+            record.intake_authentication is IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+            and bool(settings.slack_owner_user_id)
+            and record.intake.user_id == settings.slack_owner_user_id
+            and bool(settings.slack_channel_id)
+            and record.intake.channel_id == settings.slack_channel_id
+        )
+
+    def _standing_grant_terms(
+        self, record: TaskRecord, grant, *, attested: bool, tripped: bool,
+        exercised: int, now: datetime,
+    ) -> dict[str, bool]:
+        """Every H(a) term but `audit`, evaluated before execution.
+
+        No candidate change and no verdict exists yet, so evidence-bar items
+        1-5 are left to the task's own exact-SHA review and CI/security graph
+        gates, which this class never skips. Items 6-10 and structural
+        independence are what can be read here.
+        """
+
+        names = tuple(term for term in TERMS if term != "audit")
+        plan = record.plan
+        if plan is None or len(plan.assignments) < 2:
+            return dict.fromkeys(names, False)
+        settings = self.settings
+        ordered = sorted(plan.assignments, key=lambda item: item.sequence)
+        producer, reviewer = ordered[0], ordered[-1]
+        lanes = [_assignment_provider_lane(item) for item in ordered]
+        prestage = plan.prestage
+        try:
+            covered = prestage is not None and grant.covers(
+                Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                repository=canonical_repository(prestage.repository),
+                branch=DirectorPacketTaskRouter._authority_base_ref(producer),
+            )
+        except ValueError:
+            covered = False
+        try:
+            independent = (
+                len(ordered) == 2
+                and reviewer.kind is AssignmentKind.INDEPENDENT_REVIEW
+                and lanes[0] != lanes[1]
+                and not share_provider_family(lanes[0], lanes[1])
+            )
+        except UnknownContactError:
+            independent = False
+        values = {
+            "authorization": (
+                grant.live_at(now)
+                and not tripped
+                and exercised < grant.max_exercises
+                and covered
+                and attested
+                and set(lanes) <= grant.providers
+            ),
+            "gates": small_read_only_eligible(record, settings),
+            "bounds": (
+                plan.max_hops <= settings.max_agent_hops
+                and plan.max_revisions <= settings.max_revisions
+            ),
+            "verification": (
+                _SHA40.fullmatch(self.authority.starting_sha) is not None
+                and self.authority.authority_snapshot_digest.startswith("sha256:")
+            ),
+            "independence": independent,
+            "safe_stopping": settings.provider_timeout_seconds >= 1,
+            "scope": (
+                prestage is not None
+                and bool(prestage.owned_paths)
+                and not any(item.allow_draft_pr for item in ordered)
+            ),
+        }
+        return {term: bool(values[term]) for term in names}
+
+    def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
+        """Whether a live standing grant pre-authorizes executing this task.
+
+        Only the tier-1 class `execute_small_read_only_task` is considered, and
+        only for a task `policy.small_read_only_eligible()` admits. An audit
+        record is written before execution: `PRE_AUTHORIZED` when every term
+        holds, `REFUSED` otherwise. Anything unexpected stays attended.
+        """
+
+        try:
+            return self._decide_standing_grant(record, attested=attested)
+        except Exception:
+            return False
+
+    def _decide_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
+        settings = self.settings
+        decision_class = Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+        if (not settings.delegation_enabled or settings.delegation_suspended
+                or record.workload_selection_hold_reasons):
+            return False
+        try:
+            grant = parse_grant(settings.delegation_grant_json)
+        except DelegationConfigurationError:
+            return False
+        if grant is None or decision_class not in grant.classes:
+            return False
+        # Mirrors resume_approval: a paid-off deployment cannot execute.
+        if (self._parallel_dispatcher is None
+                and not settings.langgraph_primary_offline_simulation_enabled
+                and not settings.langgraph_primary_live_provider_dispatch_enabled):
+            return False
+        with self._delegation_lock:
+            ledger = self._delegation_ledger
+            if self._delegation_tripped or ledger is None:
+                self._delegation_tripped = True
+                return False
+            try:
+                history, after = [], None
+                while True:
+                    page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
+                    history.extend(page)
+                    if len(page) < 1_000:
+                        break
+                    after = page[-1].digest
+            except Exception:
+                self._delegation_tripped = True
+                return False
+            mine = [item for item in history if item.grant_id == grant.grant_id]
+            tripped = any(
+                item.outcome is RecordedOutcome.REFUSED
+                and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+                for item in mine
+            )
+            # ponytail: process lock only; cross-process count-then-append can exceed max_exercises by concurrent writers
+            exercised = sum(item.outcome is RecordedOutcome.PRE_AUTHORIZED for item in mine)
+            now = datetime.now(timezone.utc)
+            terms = self._standing_grant_terms(
+                record, grant, attested=attested, tripped=tripped,
+                exercised=exercised, now=now,
+            )
+            granted = all(terms.values())
+            sha = self.authority.starting_sha
+            try:
+                ledger.append_delegation_audit_record(DelegationAuditRecord(
+                    schema_version=AUDIT_SCHEMA_VERSION,
+                    outcome=(
+                        RecordedOutcome.PRE_AUTHORIZED if granted else RecordedOutcome.REFUSED
+                    ),
+                    grant_id=grant.grant_id,
+                    grant_snapshot=settings.delegation_grant_json,
+                    decision_class=decision_class,
+                    candidate_sha=sha if _SHA40.fullmatch(sha) else None,
+                    acting_agent=f"director-langgraph:{record.task_id}",
+                    verdicts=(),
+                    gate_results=tuple(
+                        GateResult(term, GateStatus.PASS if passed else GateStatus.FAIL, now)
+                        for term, passed in terms.items()
+                    ),
+                    recorded_at=now,
+                ))
+            except Exception:
+                self._delegation_tripped = True
+                return False
+        if not granted:
+            return False
+        action = ProposedAction(
+            decision_class.value,
+            canonical_repository(record.plan.prestage.repository),
+            settings.app_env,
+            sha,
+            "director-langgraph",
+        )
+        evidence = {term: TermEvidence(True) for term in terms}
+        evidence["audit"] = TermEvidence(True)
+        return decide(action, evidence, now=now).autonomous
+
+    def _trip_failed_exercise(self, task_id: str) -> None:
+        """A granted task that did not succeed suspends its grant.
+
+        Stricter than the document's trip list on purpose: any terminal
+        classification other than SUCCEEDED trips. The durable record holds that
+        grant_id until the owner writes a new one; the latch holds this process.
+        """
+
+        try:
+            state = self.coordinator._runtime.compact_state(task_id)
+            if state.get("execution_approval_required") is not False:
+                return
+            projection = self.coordinator.get_projection(task_id)
+            if projection is not None and projection.projection.get(
+                "terminal_classification"
+            ) in (None, "SUCCEEDED"):
+                return
+        except Exception:
+            pass
+        with self._delegation_lock:
+            self._delegation_tripped = True
+            ledger = self._delegation_ledger
+            try:
+                grant = parse_grant(self.settings.delegation_grant_json)
+                if ledger is None or grant is None:
+                    return
+                now = datetime.now(timezone.utc)
+                sha = self.authority.starting_sha
+                ledger.append_delegation_audit_record(DelegationAuditRecord(
+                    schema_version=AUDIT_SCHEMA_VERSION,
+                    outcome=RecordedOutcome.REFUSED,
+                    grant_id=grant.grant_id,
+                    grant_snapshot=self.settings.delegation_grant_json,
+                    decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                    candidate_sha=sha if _SHA40.fullmatch(sha) else None,
+                    acting_agent=f"director-langgraph:{task_id}",
+                    verdicts=(),
+                    gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+                    recorded_at=now,
+                ))
+            except Exception:
+                return
+
+    def _request(
+        self, record: TaskRecord, *, execution_approval_required: bool = True
+    ) -> PrimaryRequest:
         task_id = record.task_id
         intake = record.intake
         if record.plan is None or not record.plan.assignments:
@@ -2202,7 +2444,7 @@ class DefaultPrimaryApplication:
             budget_limit_units=task_units,
             provider_cost_units=provider_units,
             effect_cost_units=effect_units,
-            execution_approval_required=True,
+            execution_approval_required=execution_approval_required,
             external_effect_required=effect_units > 0,
             effect_key_digest=(
                 _digest(
@@ -2260,6 +2502,7 @@ class DefaultPrimaryApplication:
         *,
         intake_authentication: IntakeAuthentication,
         authenticated_replay_identity: tuple[str, str] | None = None,
+        on_dispatch_ready: Callable[[str], None] | None = None,
     ) -> TaskRecord:
         task_id = "DIR-LG-" + secrets.token_hex(5).upper()
         record = TaskRecord(
@@ -2281,6 +2524,9 @@ class DefaultPrimaryApplication:
                 record.workload_selection_hold_reasons = ["primary_roster_" + str(hold)]
 
         request = self._request(record)
+        # Only an authenticated, non-replayed intake can reach a standing grant;
+        # a bearer intake never evaluates one.
+        granted = False
         if authenticated_replay_identity is not None:
             claimed_task_id, created = self.coordinator.claim_authenticated_intake(
                 nonce_digest="sha256:" + authenticated_replay_identity[0],
@@ -2299,13 +2545,25 @@ class DefaultPrimaryApplication:
                         raise RuntimeError("replayed primary intake disappeared")
                     return self._record_from_projection(repaired)
             record.task_id = task_id
-            request = self._request(record)
+            granted = self._exercise_standing_grant(
+                record, attested=self._attested_owner_intake(record)
+            )
+            request = self._request(record, execution_approval_required=not granted)
         self.services.register(record, effect_grant=(
             None if self.effect_grant is None else self.effect_grant.as_dict()))
         try:
             projection = self.coordinator.create_intake(request)
             planned = self._record_from_projection(projection)
             self._ensure_parallel_lifecycle(planned)
+            # Same guard as recover(): a terminal graph, or one that never
+            # claimed its provider dispatch, is never driven.
+            if (granted
+                    and projection.projection.get("terminal_classification") is None
+                    and projection.projection.get("provider_dispatch_status") != "NOT_STARTED"):
+                if on_dispatch_ready is not None:
+                    on_dispatch_ready(planned.task_id)
+                else:
+                    self._drive_parallel_lifecycle(planned)
             refreshed = self.coordinator.get_projection(planned.task_id)
             if refreshed is None:
                 raise RuntimeError("primary parallel registration lost its projection")
@@ -2561,6 +2819,7 @@ class DefaultPrimaryActivation:
         effect_mutation: EffectMutation | None = None,
         effect_readback: EffectReadback | None = None,
         effect_gateways: ExactEffectGatewayRegistry | None = None,
+        delegation_ledger: Any = None,
     ) -> None:
         self.settings = settings
         self.handle: PostgresCheckpointHandle | None = None
@@ -3553,6 +3812,7 @@ class DefaultPrimaryActivation:
             services,
             authority,
             parallel_dispatcher=parallel_dispatcher,
+            delegation_ledger=delegation_ledger,
         )
 
     @property
@@ -3833,3 +4093,4 @@ class DefaultPrimaryActivation:
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

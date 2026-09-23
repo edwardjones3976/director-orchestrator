@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | BEGIN]]
@@ -77,6 +78,9 @@ class Tier1Class(StrEnum):
     MERGE_UNPROTECTED_BRANCH = "merge_pull_request_into_non_protected_branch"
     MARK_PULL_REQUEST_READY = "mark_pull_request_ready_for_review"
     POST_TO_DESIGNATED_CHANNEL = "post_to_project_designated_slack_channel"
+    # Pre-execution only: starting one task policy.small_read_only_eligible()
+    # admits. It never authorizes a merge, publication or any other effect.
+    EXECUTE_SMALL_READ_ONLY_TASK = "execute_small_read_only_task"
 
 
 class DelegationConfigurationError(ValueError):
@@ -322,3 +326,4 @@ def delegation_readiness(
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 16:10 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

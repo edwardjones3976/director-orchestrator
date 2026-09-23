@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
@@ -72,6 +73,7 @@ class GrantSchemaTests(unittest.TestCase):
                 "merge_pull_request_into_non_protected_branch",
                 "mark_pull_request_ready_for_review",
                 "post_to_project_designated_slack_channel",
+                "execute_small_read_only_task",
             },
             {item.value for item in Tier1Class},
         )
@@ -355,3 +357,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

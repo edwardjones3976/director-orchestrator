@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
@@ -61,6 +62,7 @@ absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
 - Executing an eligible merge of a pull request into a non-protected branch.
 - Marking a pull request ready for review.
 - Posting to the project's own designated Slack channel.
+- Executing a small read-only task that `policy.small_read_only_eligible()` admits.
 
 Tier 1 is exhaustive and every entry names a specific act. There is no
 residual or catch-all delegable class, and none may be added by describing a
@@ -170,6 +172,73 @@ commit, each verdict with its provider and run identifier, every gate result
 consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
 before the action, not after it.
 
+## Standing grant for small read-only tasks
+
+The tier-1 class `execute_small_read_only_task` lets a live grant start one
+small read-only task without the per-task execution button. It is the only
+pre-execution class: it authorizes starting that task and nothing else, never a
+merge, a publication, or any other effect.
+
+**Eligibility.** `policy.small_read_only_eligible()` alone decides membership,
+deterministically, from the owner's intake text, the frozen plan, and
+configuration. A task is eligible only when no deterministic approval reason
+matches the intake or any generated plan string; the plan is low risk and
+carries no approval requirement, approval reason, or debate; the intake carries
+no public research query or required capability; the plan has exactly one
+producer and one independent reviewer from another provider family; neither
+assignment requires approval, opens a draft pull request, carries a public
+query or a closed directive, or runs on the Perplexity, Firecrawl, or Gemini
+lane; the producer is not implementation work; and the frozen plan total is at
+most $1 and within the task budget, with the reviewer inside its own cap. Model
+or plan output can only remove eligibility. Every plan, assignment, and intake
+model forbids extra fields, so nothing a model writes can assert it.
+
+**Exercise.** The execution button is skipped only when all of these hold at
+intake: `DELEGATION_ENABLED` is true and `DELEGATION_SUSPENDED` is false; a live
+grant, unexpired and unrevoked, names this class, the task's repository as a
+lowercase `owner/name`, its branch, and both of its provider lanes; the grant is
+not exhausted; no `delegation_trip` record exists for its `grant_id`; and the
+intake is a Slack-gateway-attested message from the configured owner in the
+configured channel that is not a replay. A bearer intake never evaluates a
+grant. Any other case stops for the button exactly as before.
+
+**What is evaluated, and when.** At the decision point no candidate change and
+no verdict exists yet, so evidence-bar items 1-5 cannot hold. Items 6-10, plus
+structural independence (two distinct lanes from different provider families),
+are evaluated before execution through the `hotl_execution` predicate. Items 1-5
+are carried by the task's own unchanged graph gates, `exact_sha_review` and
+`ci_security_completion`, which this class never skips or relaxes.
+
+**Audit.** A `PRE_AUTHORIZED` record is written before execution. It names the
+grant, carries its snapshot and the exact starting commit, lists every
+evaluated term as `PASS`, and holds no verdict. A refusal writes a `REFUSED`
+record naming the failed terms. `PRE_AUTHORIZED` is valid only for this class,
+and this class can never record `DELEGATED` or `WOULD_DELEGATE`.
+
+**Trips.** An unreadable or unwritable audit ledger latches the process to
+attended operation. A granted task whose terminal classification is anything
+other than `SUCCEEDED` writes a `delegation_trip` record, which suspends that
+grant. Clearing it takes an explicit owner action, a new grant_id.
+
+**Bounded provider traffic.** Providers receive a compact view of the work
+packet: its commit, digest, and file count, plus only the snapshot entries
+under owned paths or named in the objective. The Director keeps the full packet
+and rebinds every result to it by digest. The reviewer of a small task receives
+at most 16 KB and is capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
+`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000).
+
+**Prerequisites.** The frozen plan total must be at most $1, for example by
+setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
+budget splits above that. The ledger also needs a durable, separately protected
+audit anchor. With no production anchor, every exercise holds and the button is
+unchanged. Roster selection ranks lanes through the existing
+`TRUSTED_PROVIDER_COST_RANKS`; a small-task deployment is expected to rank
+grok < openai < claude, e.g. `{"grok":1,"openai":2,"claude":3}`; this change
+does not set it.
+
+Adding this class was a tier-0 act; it takes effect only with the owner's
+explicit sign-off on the pull request that adds it.
+
 ## Relationship to the existing rules
 
 - **AGENTS.md rule 3 is unchanged.** No agent merges its own pull request.
@@ -252,6 +321,7 @@ its predecessor is accepted, and acceptance of one grants nothing to the next.
 | 3 | Shadow mode: record `would_delegate` and `would_stop` over a bounded set of decisions, changing nothing. | No |
 | 4 | Enable tier-1 merge only, one repository, owner observing. | Yes |
 | 5 | Broaden tier-1 classes only after a clean shadow record and a clean live record. | Yes |
+| 4S | The pre-execution class `execute_small_read_only_task` only, one repository, live grant, owner-signed PR. | Yes |
 
 ## The evaluated form
 
@@ -351,3 +421,4 @@ These are stated plainly because a framework that hides them is worse than none.
 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
