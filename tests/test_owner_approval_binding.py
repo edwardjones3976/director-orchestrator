@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | BEGIN]]
@@ -1820,7 +1821,10 @@ class FailedPredispatchRetryTests(unittest.TestCase):
         self.assertNotIn("Traceback", logs)
         self.assertIn("ValidationError", logs)
         self.assertIn("StaleApproval", logs)
-        self.assertTrue(any("BLOCKED" in item for item in responses))
+        # PR #259 replaced the misleading "BLOCKED / Approval was not recorded"
+        # reply: a failed response may follow a decision that was recorded.
+        self.assertTrue(any("APPROVAL RESPONSE UNCONFIRMED" in item for item in responses))
+        self.assertFalse(any("Approval was not recorded" in item for item in responses))
         client.chat_postMessage.assert_called_once()
         post.assert_not_called()
 
@@ -3897,3 +3901,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 14:41 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 17:28 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 04:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]]
