@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
@@ -8,8 +9,18 @@ name: CI
 # default. When the repository variable DIRECTOR_CI_RUNNER is "self-hosted",
 # every job runs on the owner's registered runners (labels: self-hosted + OS +
 # director) under the SAME job and check names, so the acceptance contracts
-# that pin this workflow path and these check names keep working. Pull requests
-# from forks never run on the owner's host: they always get a hosted runner.
+# that pin this workflow path and these check names keep working.
+#
+# Security boundary: repository configuration, not this file. A pull request
+# can edit ci.yml, so no condition here can keep candidate code off the owner's
+# runners. The fork condition in each runs-on is defense in depth only. What
+# keeps untrusted code off these runners is configuration a pull request cannot
+# change: the repository is private, and its Actions setting
+# run_workflows_from_fork_pull_requests is false, so fork pull requests run no
+# workflow at all (verified 2026-09-23). Only accounts with write access can push
+# the branches that run here. Do not enable fork pull request workflows, or make
+# the repository public, while DIRECTOR_CI_RUNNER is "self-hosted".
+#
 # Steps that only a hosted image needs are guarded with
 # runner.environment == 'github-hosted'; their self-hosted replacements with
 # runner.environment == 'self-hosted'.
@@ -411,3 +422,4 @@ jobs:
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | END]]
