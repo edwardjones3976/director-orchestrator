@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
@@ -34,6 +36,7 @@ import urllib.error
 import urllib.request
 from contextlib import closing
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -561,6 +564,46 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 
+def _enforce_native_result_attempt_limits(
+    result: Mapping[str, Any], *, context: ProviderAdapterContext
+) -> dict[str, Any]:
+    """Retain actual usage while refusing a result beyond its admitted attempt."""
+    normalized = dict(result)
+    usage = result.get("usage")
+    if not isinstance(usage, Mapping):
+        return normalized
+    tokens = getattr(context, "total_token_limit", None)
+    actual_tokens = usage.get("total_tokens")
+    counts = (usage.get("input_tokens"), usage.get("output_tokens"))
+    if all(type(value) is int and value >= 0 for value in counts):
+        # Claude reports separate counts without a total. Compare the genuine
+        # counts without adding a synthetic field to the retained usage record.
+        actual_tokens = max(
+            sum(counts), actual_tokens if type(actual_tokens) is int else 0
+        )
+    budget = getattr(context, "budget_usd", None)
+    actual_cost = usage.get("cost_usd")
+    over_tokens = (
+        type(tokens) is int and type(actual_tokens) is int and actual_tokens > tokens
+    )
+    over_cost = False
+    if budget is not None and actual_cost is not None:
+        if isinstance(actual_cost, bool) or not isinstance(actual_cost, (int, float, Decimal)):
+            raise RuntimeError("provider result reported cost is malformed")
+        cost = Decimal(str(actual_cost))
+        if not cost.is_finite():
+            raise RuntimeError("provider result reported cost is malformed")
+        over_cost = cost > Decimal(str(budget))
+    if over_tokens or over_cost:
+        blockers = result.get("blockers")
+        if not isinstance(blockers, list):
+            raise RuntimeError("provider result blockers are malformed")
+        reason = "Provider usage exceeds the admitted attempt limit"
+        normalized["status"] = "FAILED"
+        normalized["blockers"] = list(blockers) + ([] if reason in blockers else [reason])
+    return normalized
+
+
 class HostBridgePacketTransport:
     """Linux-side one-request client with signed packet and writer bindings."""
 
@@ -580,9 +623,14 @@ class HostBridgePacketTransport:
     ) -> None:
         if provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
-        # Redaction and local normalization are one decision: a lane that is not
-        # shown the work packet cannot have its result bound by the host either.
-        if (outbound_payload_builder is None) != (result_normalizer is None):
+        # A redacted lane still requires both halves of its closed boundary.
+        # Claude/Grok can also return native envelopes after seeing the full
+        # packet; normalize those replies without changing the outbound bytes.
+        native_full_packet = (
+            provider in {"claude", "grok"} and outbound_payload_builder is None
+        )
+        if ((outbound_payload_builder is None) != (result_normalizer is None)
+                and not native_full_packet):
             raise ValueError(
                 "host bridge redaction requires both a payload builder and a "
                 "result normalizer"
@@ -739,11 +787,13 @@ class HostBridgePacketTransport:
             raise RuntimeError("host provider bridge result is malformed")
         if self.result_normalizer is None:
             return decoded
-        # The host only ever saw the redacted document, so it cannot bind the
-        # result. Normalization runs here, against the original work packet.
+        # Bind native output against the original work packet, including when
+        # the host was only allowed to see a redacted document.
         normalized = self.result_normalizer(packet, decoded)
         if not isinstance(normalized, Mapping):
             raise RuntimeError("host provider bridge normalization is malformed")
+        if self.provider in {"claude", "grok"}:
+            return _enforce_native_result_attempt_limits(normalized, context=context)
         return dict(normalized)
 
 
@@ -784,3 +834,5 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]

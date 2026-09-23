@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
@@ -960,7 +961,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         for provider in ("claude", "grok", "github-copilot"):
             with self.subTest(provider=provider):
                 self.assertIsNone(transports[provider].outbound_payload_builder)
-                self.assertIsNone(transports[provider].result_normalizer)
+                if provider in {"claude", "grok"}:
+                    self.assertIsNotNone(transports[provider].result_normalizer)
+                else:
+                    self.assertIsNone(transports[provider].result_normalizer)
 
     def test_bridge_configuration_without_signed_challenge_is_not_callable(self):
         with TemporaryDirectory() as directory, patch(
@@ -1363,3 +1367,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
