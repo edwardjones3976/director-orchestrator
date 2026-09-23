@@ -5,6 +5,7 @@ when_to_use: "Any request like: run the tests, run the full unit suite, run the 
 argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 ---
 
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:11 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
 
@@ -51,6 +52,7 @@ These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than ski
 - `tests/test_primary_effect_gateways.py`
 - `tests/test_primary_effects.py`
 - `tests/test_primary_provider_evidence.py`
+- `tests/test_primary_scorecard_evidence.py`
 - `tests/test_primary_staging_controls.py`
 - `tests/test_provider_validation.py`
 - `tests/test_primary_workload.py`
@@ -106,3 +108,4 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:11 UTC | END]] -->

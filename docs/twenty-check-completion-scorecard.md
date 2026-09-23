@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
@@ -28,26 +29,26 @@ whether any operation is permitted. The report always says
 
 | # | Required outcome | Evidence needed |
 |---|---|---|
-| 01 | Correct project route and channel | Director 8080, Director n8n 5678, permitted Slack channel, correlated route |
+| 01 | Correct project route and channel | Selected deployment's loopback Director and n8n ports, --channel, correlated route |
 | 02 | One active Slack gateway | All containers and host listeners using the same app identity |
-| 03 | Correct active intake | Actual 4xx refusal, 5xx after reservation and transport ambiguity tests |
-| 04 | Status really delivered | Scheduled execution correlated with fresh Slack readback |
+| 03 | Correct active intake | 4xx refusal drill and 5xx-after-reservation drill (shares the relay's transport-ambiguity branch) |
+| 04 | Status really delivered | Saved successful director-status execution correlated with Slack readback |
 | 05 | Primary owns intake | Database-derived ownership, disabled legacy intake, positive fencing generation |
-| 06 | Durable restart | Same task/checkpoint restored after restart without redispatch |
-| 07 | Reconciliation clear | Fresh generation-bound consistency proof for durable projections, batches, assignments and unresolved effects; this collector is not yet implemented. Health can establish a blocker only. |
-| 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision |
-| 09 | Durable final reply | One final result plus duplicate-input and ambiguous-post recovery evidence |
-| 10 | Ten offline Slack runs | Ten consecutive actual-owner events, independent correctness and measured time, zero operational provider calls |
-| 11 | Actual team products | Codex, actual Grok Bot and Gemini/Antigravity transports verified as those products |
-| 12 | Fresh activation captures | Correct surface, identity, binding digest, stage and expiry verified natively |
+| 06 | Durable restart | Approval task resumed across the current process start without redispatch |
+| 07 | Reconciliation clear | In-image read-only consistency command bound to the running generation |
+| 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision; owner command receipt digest-bound |
+| 09 | Durable final reply | duplicate-input and ambiguous-post drills plus one final result |
+| 10 | Ten offline Slack runs | Ten --trial threads evaluated in-process; offline from task evidence |
+| 11 | Every runtime lane used is its real product | Every lane the paid run actually used is attested as its real product (OpenAI/Codex Responses, xAI Grok, Claude) with no substitution (amended by owner decision 2026-09-23; Grok Bot and Antigravity team mode are follow-ups) |
+| 12 | Fresh activation captures | Unexpired verified captures bound to provider_bindings_sha256 |
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
-| 14 | Bounded execution | Attempts, cancellation deadline and token/output limits on all selected routes |
-| 15 | Monetary control and usage | Enrolled daily cap, reservations and correlated actual charges |
-| 16 | Executed exact-head CI | All six required jobs completed successfully with actual steps |
-| 17 | Independent ACCEPT | One materially non-author identity, original evidence, exact candidate |
+| 14 | Bounded execution | Workload-ledger window: bounds set and USD hard cap verified |
+| 15 | Monetary control and usage | Enrolled signed daily cap and holds, usage-monitor accounting, settled request-correlated meter rows |
+| 16 | Executed exact-head CI | Executed exact-head jobs on hosted or registered self-hosted runners; else a signed local-replica receipt (amended by owner decision 2026-09-23) |
+| 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
-| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, wall time <60s, actual charges <$1 |
+| 20 | Real paid result | Actual-owner Slack input, independent correctness, one reply, wall time <60s, actual charges <$1 from settled meter rows correlated by request id |
 
 ## Run it
 
@@ -59,27 +60,192 @@ python scripts/director-scorecard.py --candidate-sha <full-40-character-sha> --e
 ```
 
 The default is offline. It produces `completion-scorecard.json` and
-`completion-scorecard.md`, with UNKNOWN for facts it has not observed. Add
-`--live` to read the explicitly named Director container,
-`http://127.0.0.1:8080/health`, deployment topology and known host gateway processes.
-For topology checks 01 and 02, also supply `--gateway <exact-running-container-name>`.
-The name must match the intended gateway in the complete running-container inventory;
-the collector never substitutes a predecessor or the first matching process. It
-records the selected container ID and immutable image ID with both observations.
-Omitting this option leaves topology UNKNOWN. The Python API accepts `gateway=`;
-its existing `topology=False` option still disables topology collection.
-Add `--github` with `--live` to query the
-candidate's CI through the existing authenticated GitHub CLI. There are no
-provider calls, Slack writes, retries, deployments or imported credentials.
-With `--live --ledger <journal-path>`, it also reopens the actual assignment
-journal read-only. A missing path stays UNKNOWN and is not created.
-Add `--security-scan <native-scan-UUID>` to verify that exact scan through the
-installed native Security index and original sealed artifacts.
+`completion-scorecard.md`, with UNKNOWN for facts it has not observed (0/20).
+
+A full live collection names every source explicitly:
+
+```powershell
+python scripts/director-scorecard.py --candidate-sha <sha> --output-dir <report-folder> `
+  --live --deployment edge-engine-director --channel <C…> --gateway <gateway-container-name> `
+  --github --ledger <journal-path> --security-scan <scan-uuid> `
+  --drill-thread refusal-4xx=<thread-ts> --drill-thread reserved-5xx=<thread-ts> `
+  --drill-thread duplicate-input=<thread-ts> --drill-thread ambiguous-post=<thread-ts> `
+  --approval-task DIR-LG-<task> `
+  --trial <thread-ts> (ten times) --rubric <structural-rubric.json> `
+  --paid-thread <thread-ts> --paid-rubric <paid-rubric.json> `
+  [--ci-replica-receipt <signed-receipt.json>]
+```
+
+`--live` requires `--deployment <compose project>`. There is no default stack:
+without `--deployment` nothing is inspected and check 19 reads UNKNOWN. The
+expected Slack channel comes only from `--channel`; no channel ID is committed
+to the repository, and a deployment whose configured channel differs is not
+read at all. Every other collector flag requires `--live`;
+`--ci-replica-receipt` also requires `--github`, `--rubric` requires `--trial`
+and `--paid-rubric` requires `--paid-thread`. A missing selection leaves its
+checks UNKNOWN. The Python API accepts the same selections as keyword
+arguments of `collect()`; its `topology=False` option still disables topology
+collection.
+
+There are no provider calls, Slack writes, retries, deployments or imported
+credentials. Slack and Director reads are bounded GETs through the offline trial
+collector's `Collector`, using credentials read in memory from the selected
+Director container.
 
 The candidate SHA and observed runtime image/commit are separate. A merged
 candidate's CI cannot prove a different running image passed that CI. Runtime
-facts are tied to the inspected image's immutable ID and commit label, and the
-inspected service must publish the exact localhost Director port.
+facts are tied to the inspected image's immutable ID and commit label.
+
+### Deployment profile
+
+`--deployment` names a Compose project such as `edge-engine-director`. The
+Director is the one running container carrying the labels
+`com.docker.compose.project=<project>` and
+`com.docker.compose.service=orchestrator`; zero or several matches stay
+UNKNOWN. The inspected container must be running, carry the
+`org.director.candidate.commit` label and an immutable image ID, and publish
+`8080/tcp` on exactly one `127.0.0.1` binding. Its host port (for example
+18082) becomes the health and API base; `APP_ENV` (default `local`) is the
+environment `/health` must report. n8n and its database are the project's
+`n8n` and `n8n-db` services, found the same way, and every `docker exec` targets
+a container ID, never a name.
+
+### Per-check sources
+
+- 01, 02: Docker running inventory for `--gateway`, the gateway's channel and
+  relay, the published n8n intake version and the n8n upstream `/health`. 01 is
+  UNKNOWN without `--channel`, FAIL when the gateway belongs to another Compose
+  project, and UNKNOWN when the gateway has no Compose labels.
+- 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
+  `GET /v1/slack-thread-bindings` and the task readback (see below).
+- 04: the newest saved successful scheduled `Director Status` execution in the
+  last 72 hours, read in a read-only n8n database transaction, correlated with
+  the Slack readback of the message it posted to `--channel`.
+- 05, 19: the Director's `/health`.
+- 06, 08: the `--approval-task` readback, its deliveries and its Slack thread.
+- 07, 17, 15 (budget and meter rows): the in-image `consistency` command.
+- 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`.
+- 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
+- 13, 14: the workload journal from `--ledger`.
+- 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
+- 16: GitHub check runs at the exact head, or `--ci-replica-receipt`.
+- 18: the native Security index for `--security-scan`.
+- 20: the `--paid-thread` readback, `--paid-rubric` and settled meter rows.
+
+### Drill-thread kinds
+
+Each `--drill-thread KIND=THREAD_TS` names one owner message the operator
+posted to exercise one path. A drill that was not exercised stays UNKNOWN.
+
+| Kind | PASS | FAIL | UNKNOWN |
+|---|---|---|---|
+| `refusal-4xx` | complete thread, one owner input, a `DIRECTOR — BLOCKED` reply, no receipt, binding 404 | a bound task (200) or ambiguous binding (409), or any receipt | otherwise |
+| `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised) |
+| `duplicate-input` | one owner input, two or more receipts naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
+| `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
+
+Check 03 combines `refusal-4xx` and `reserved-5xx`; check 09 combines
+`duplicate-input` and `ambiguous-post`. Any FAIL fails the check, both PASS
+passes it, anything else (including a kind that was not supplied) is UNKNOWN.
+The relay's transport-failure handling shares the n8n ambiguity branch with a
+5xx (see [n8n operations](n8n-operations.md)), so the `reserved-5xx` drill also
+evidences the transport-ambiguity path. The drill procedures themselves are
+operator actions and are not automated here.
+
+### In-image commands
+
+```text
+python -m director_orchestrator.primary_generation consistency [--task DIR-LG-… (up to twelve)]
+python -m director_orchestrator.primary_generation activation-captures
+```
+
+The scorecard runs both through `docker exec <Director container ID>` with a
+45-second bound. Each first verifies the running generation exactly as
+`verify` does (`require_generation`, never reserving) and prints one JSON
+document. They never call `require_runtime_off`: they run beside an active
+runtime and write nothing.
+
+- `consistency` opens one `REPEATABLE READ`, `READ ONLY` transaction with
+  `default_transaction_read_only` set and counts unresolved reconciliation
+  claims, ambiguous assignments, tasks requiring reconciliation, terminal
+  tasks with open assignments or effects, projection/batch plan-digest
+  conflicts, projections ahead of the intake fence, and in-flight work (open
+  effect reservations, active assignments, live writer claims, batches pending
+  projection binding). For each `--task` it adds the spend rows with their
+  settled usage and request correlation, and the enrolled budget rows with the
+  day's held amount. In `owner-local-evidence-v1` mode it also returns the
+  pinned adoption's repository, pull request, author, reviewers, reviewed
+  source and adoption digest. Check 07 fails on any unresolved, ambiguous or
+  conflicting count, is UNKNOWN unless the snapshot names the running
+  generation pin and intake fence, and is UNKNOWN while work is in flight.
+- `activation-captures` reads the activation store through a load-only view and
+  the validation store through its read-only capture reader. For every lane it
+  reports the binding digest and, per surface, the latest stage, evidence
+  digest, expiry and whether the capture verifier accepts it, plus the product
+  that produced the verified runtime-adapter capture. These are not part of
+  `/health`, which stays readiness booleans only.
+
+Against an image built before these commands existed, `docker exec` exits
+non-zero and the dependent checks read UNKNOWN.
+
+### Paid answer rubric format
+
+`--paid-rubric` is a JSON file of at most 2 MiB with exactly these keys:
+
+```json
+{"schema": "director-paid-answer-rubric/v1", "rubric_id": "lowercase-id",
+ "declared_at": "2026-09-23T07:00:00+00:00", "expected_answer_substrings": ["one to five non-empty strings"]}
+```
+
+The owner's paid Slack input must carry `rubric-sha256:<sha256 of the file's
+bytes>`, `declared_at` must not follow the input, the task must be `DONE` with
+exactly one final reply, and every substring must appear in that reply.
+
+### Local-replica receipt format
+
+When no required job executed at the exact head, `--ci-replica-receipt` may
+supply an owner-signed receipt:
+
+```text
+{"document":{"schema":"director-ci-local-replica/v1","repository":"edwardjones3976/director-orchestrator",
+  "candidate_sha":<40 hex>,"base_sha":<40 hex>,"produced_at":<timezone-aware ISO time, not in the future>,
+  "lanes":[{"lane":"windows-postgres-lane"|"ubuntu-replica","head_tests_run":<int > 0>,"base_tests_run":<int > 0>,
+    "head_failures":[<unique test ids, each at most 512 characters, at most 10000>],"base_failures":[...],
+    "command_sha256":<64 hex>} x exactly these two lanes]},
+ "signature":<128 hex Ed25519 signature over
+   json.dumps(document, sort_keys=True, separators=(",",":"), ensure_ascii=True, allow_nan=False)>}
+```
+
+The verification key is the 64-hex raw public key at
+`~/.director-scorecard/ci-replica-signer.ed25519.pub`, which must be a regular
+file, not a link; there is no option to name another key. The signer must be
+owner-held and never an author of the candidate's pull request. The receipt
+passes when neither lane's head failures include a test absent from its base
+failures, fails on any such new failure, and stays UNKNOWN when the key is
+missing or the receipt is malformed, unsigned or signed by another key. It is
+bound to its own `candidate_sha`, so a receipt for another candidate is
+UNKNOWN. An executed job that did not succeed fails check 16 regardless of any
+receipt. Hosted billing stubs (zero steps) never count; an executed job with a
+required name counts the same on hosted and registered self-hosted runners.
+
+### Status execution retention
+
+`n8n/workflows/director-status.json` saves successful executions so check 04
+can correlate the posted message (owner decision D13). The workflow file alone
+changes nothing on a running n8n: re-import it. The instance must prune saved
+executions with `EXECUTIONS_DATA_PRUNE=true` and `EXECUTIONS_DATA_MAX_AGE=72`;
+the scorecard looks back only 72 hours. Saved data contains the watched health
+booleans and the Slack post response, never credentials.
+
+### Execution-binding limits
+
+No producer records which image or process executed a task. Check 10 binds a
+run record to the running image only when the container was created before the
+task was, and check 06 requires the current process start to fall between the
+task's creation and its terminal delivery. A later container recreation, such
+as an activation that force-recreates the Director, therefore makes those
+checks UNKNOWN until the runs are repeated. The writer generation does not
+prove a restart, because the same owner token renews a live lease.
 
 ## Evidence and limits
 
@@ -98,30 +264,26 @@ trusts the named local host and service; its in-process marker is not a security
 sandbox against arbitrary Python code, and it does not attest an uncompromised
 host or validate image-label supply-chain provenance.
 
-The first collectors cover 01, 02, 05, 13, 16, 18 and 19. Check 07 can establish
-FAIL from a reported historical hold, hold reason or ambiguous effect, including
-when other health fields are missing. Zero health counters cannot prove that the
-underlying records agree: absent a generation-bound authoritative consistency
-collector, check 07 stays UNKNOWN. Worker readiness is separate in 19.
-The collectors can establish FAIL for 12 when
-the running activation verifier rejects readiness. A true activation flag does
-not expose native capture identity/expiry and therefore cannot PASS 12. CI
-reuses `state_witness.gh_checks_green`, including its actual-step and required-job
-checks. Its temporary ledger is diagnostic and does not imply that production
-merge/approval composition has injected the Witness Ledger.
+Health counters alone can only fail 07 and 12: a reported historical hold, hold
+reason or ambiguous effect fails 07 even when other health fields are missing,
+and a false `combined_live_ready` fails 12. Zero counters and a true readiness
+flag prove nothing; 07 and 12 pass only from the in-image commands. Worker
+readiness is separate in 19. CI reuses `state_witness.gh_checks_green`,
+including its actual-step and required-job checks. Its temporary ledger is
+diagnostic and does not imply that production merge/approval composition has
+injected the Witness Ledger.
 
-Check 01 observes localhost port bindings, the gateway's permitted channel and
+Check 01 observes localhost port bindings, the gateway's channel and
 n8n relay configuration, and reads the actual published intake version through
 the native workflow-history table in a read-only database transaction. It requires
 the supported webhook-to-request connection and the exact static Director intake
-URL before performing a health request to that URL's upstream from Director n8n.
-A healthy generic alias cannot pass for a workflow pointing elsewhere. Missing
-version history or an unsupported/dynamic workflow cannot pass. It never operates
-the Edge Engine instance. This
-is configuration/routing evidence; behavioral intake and final delivery remain
-separate checks. Collection reads environments in memory but emits only selected
-booleans/counts and the public upstream environment name, never tokens or the
-full environment.
+URL before performing a health request to that URL's upstream from the
+deployment's n8n. A healthy generic alias cannot pass for a workflow pointing
+elsewhere. Missing version history or an unsupported/dynamic workflow cannot
+pass. This is configuration/routing evidence; behavioral intake and final
+delivery remain separate checks. Collection reads environments in memory but
+emits only selected booleans/counts and the public upstream environment name,
+never tokens, channel IDs or the full environment.
 
 Check 02 inventories all running Docker containers, not only Compose labels,
 and compares app-token fingerprints in memory. It distinguishes the gateway
@@ -164,15 +326,27 @@ Imported historical attestations do not count as authenticated proof.
 Before twenty prospective admissions exist, UNKNOWN honestly describes the
 incomplete window. This observation does not authorize the journal's policy,
 authenticate declared provider identities or confer dispatch/production credit.
+Check 14 uses the same complete window: it passes when every admission
+declares positive timeout, call, turn and output bounds and a verified hard USD
+cap, and fails when any admission lacks a USD limit or a verified hard cap.
 
-The other checks intentionally remain UNKNOWN until their source verifiers are
-connected. A deployed workflow file cannot establish its failure-after-reservation
-behavior, and a saved Slack-readback summary cannot authenticate itself. Each displayed row
-names the next proof needed. The reusable run-fact validator enforces count,
-unique IDs, actual owner origin, runtime/image binding, correct mode, wall time,
-owner-pause arithmetic, final-message count, ambiguity, zero offline calls and
-the basis of actual cost. It does not authenticate those facts, and the CLI does
-not award points for a user-authored run JSON file.
+Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
+paid task's collected attempts and fails when any lane is not one of the real
+products above or its verified capture names another product; a missing product
+counts as a substitution. 20 builds its run record from task-level evidence:
+the mode is paid only when the readback records at least one provider attempt,
+never from the runtime's paid switch, and actual cost is the sum of settled
+usage rows whose metering evidence carries request and response IDs, correlated
+by attempt digest to every attempt the task made. Check 15 fails when an
+enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
+provider exceeds its daily budget, and passes only when the paid task's budget
+rows, the usage-monitor accounting and a settled cost are all present.
+Usage-monitor accounting covers only its configured providers; the signed
+budget rows carry the enforced cap. The reusable run-fact validator enforces
+count, unique IDs, actual owner origin, runtime/image binding, correct mode,
+wall time, owner-pause arithmetic, final-message count, ambiguity, zero offline
+calls and the basis of actual cost. The CLI does not award points for a
+user-authored run JSON file.
 
 An estimate or reservation is not actual cost. Unknown cost is not zero.
 Machine time excluding an owner pause is shown separately and cannot substitute
@@ -190,8 +364,11 @@ wall-time, origin, image, cost, ambiguity and zero-call requirements.
 A zero-call-verified offline run maps to `actual_cost_usd: 0` with
 `cost_basis: simulation_zero_calls`; incomplete operational-attempt authority
 stays null. The recorder retains a non-qualifying row and stops further appends.
-Saved receipts do not become scored observations, and the in-process check-10
-collector remains a separate work order.
+Saved receipts do not become scored observations. Check 10 loads the same
+collector in-process for the ten `--trial` threads and scores them with
+`evaluate_run_records(mode="offline")`; offline means the task's own evidence
+(offline-double outcomes, zero exposed and recorded provider attempts and a
+simulation-labelled final reply), not the runtime's current mode switch.
 
 ## Qualification verdicts with explicit UNKNOWN cost
 
@@ -224,16 +401,22 @@ stay `UNKNOWN`. No verdict from this function contributes points.
 
 ```powershell
 $env:PYTHONPATH = 'src'
-python -m unittest tests.test_completion_scorecard -v
+python -m unittest tests.test_completion_scorecard tests.test_primary_scorecard_evidence.ScorecardEvidenceUnitTests -v
+.\scripts\windows-postgres-test-lane.ps1 -Action Test -TestNames tests.test_primary_scorecard_evidence.ScorecardEvidencePostgresTests
 ```
 
-Tests cover stale/future evidence, forged self-claims, candidate/image mismatch,
-missing fields, real CI steps versus empty billing stubs, UNKNOWN cost, incorrect
-cost basis, simulations presented as paid runs, duplicate results, measured wall
-time, unlabelled duplicate gateways, wrong project routes, unavailable host
-visibility, altered native seals and incomplete changed-path coverage. Native
-SQLite fixtures verify read-only evidence consumption. No live provider or
-Postgres lane is needed.
+Every collector has a positive case, a negative control and an UNKNOWN case for
+a missing or unavailable source, and one test supplies every selection while
+every source fails to show that collection never raises and never emits a
+credential, channel or owner identity. Tests also cover stale/future evidence,
+forged self-claims, candidate/image mismatch, missing fields, executed steps
+versus billing stubs, UNKNOWN cost, incorrect cost basis, simulations presented
+as paid runs, duplicate results, measured wall time, unlabelled duplicate
+gateways, wrong project routes, unavailable host visibility, altered native
+seals and incomplete changed-path coverage. The read-only consistency counts
+and settlement rows run against the disposable PostgreSQL lane
+(`ScorecardEvidencePostgresTests`); no live provider, Slack or deployment is
+touched.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]] -->
@@ -246,3 +429,4 @@ Postgres lane is needed.
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]] -->

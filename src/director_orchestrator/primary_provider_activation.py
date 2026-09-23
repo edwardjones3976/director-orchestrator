@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:00 UTC | BEGIN]]
@@ -186,6 +187,32 @@ class PrimaryProviderActivationService:
             "combined_live_ready": app_live and adapter_live,
         }
 
+    def capture_attestations(self) -> dict:
+        """Per-lane latest capture facts for the read-only operator command; digests and expiry only, never binding contents or secrets; not part of /health."""
+
+        from .provider_validation import binding_digest
+
+        lanes = {}
+        for provider_id, registry in self._registries.items():
+            surfaces = {}
+            for surface in ProviderActivationSurface:
+                records = self._store.load(registry.binding, surface)
+                if not records:
+                    surfaces[surface.value] = None
+                    continue
+                latest = records[-1]
+                surfaces[surface.value] = {
+                    "stage": latest.stage.value,
+                    "evidence_digest": latest.evidence_digest,
+                    "expires_at": latest.expires_at.isoformat(),
+                    "capture_verified": latest.stage is ProviderActivationStage.LIVE_OK
+                    and self._capture_verifier is not None
+                    and bool(self._capture_verifier.verify(
+                        registry.binding, latest.evidence_digest, expires_at=latest.expires_at)),
+                }
+            lanes[provider_id] = {"binding_digest": binding_digest(registry.binding), "surfaces": surfaces}
+        return lanes
+
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:12 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
@@ -193,3 +220,4 @@ class PrimaryProviderActivationService:
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]

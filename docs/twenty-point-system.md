@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | BEGIN]] -->
@@ -74,14 +75,17 @@ environment and `PYTHONPATH=src`:
 ```powershell
 $env:PYTHONPATH = 'src'
 python scripts/engineering-workload.py --db <existing-journal.sqlite3> --human status
-python scripts/director-scorecard.py --candidate-sha <full-commit-sha> --live --gateway <exact-running-container-name> --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
+python scripts/director-scorecard.py --candidate-sha <full-commit-sha> --live --deployment <compose-project> --channel <slack-channel-id> --gateway <exact-running-container-name> --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
 ```
 
 Reading an absent journal reports unknown history; it does not create or reset a
 database. Follow the ledger document for enrollment and bounded admission, and the
-scorecard document for supported authoritative collectors. Both tools preserve
+scorecard document for supported authoritative collectors. `--live` inspects only the
+selected Compose `--deployment`; there is no default stack, and the Slack channel
+comes only from `--channel`. Both tools preserve
 existing policy, security, exact-candidate and spending gates.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:05 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 22:36 UTC | END]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | END]] -->

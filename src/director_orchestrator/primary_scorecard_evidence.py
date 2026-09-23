@@ -1,0 +1,184 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
+"""Read-only, generation-bound evidence reports for the completion scorecard.
+
+Invoked only through ``python -m director_orchestrator.primary_generation
+consistency|activation-captures`` inside the running image, after the
+generation manifest and bindings are verified. Every read happens in a read-only
+transaction or through a load-only store; nothing is written, dispatched or
+signed, and the output carries counts, digests and expiry, never secrets.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+import json
+import os
+import time
+from types import SimpleNamespace
+
+_PIN = "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"
+_ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", "independent_reviewer",
+                    "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
+_COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
+               "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
+               "projection_batch_digest_conflicts", "projections_ahead_of_fence", "open_effect_reservations",
+               "active_assignments", "live_writer_claims", "batches_pending_projection_binding")
+
+_COUNTS = """WITH a AS (SELECT fencing_generation FROM {s}.director_primary_intake_authority WHERE singleton),
+ p AS (SELECT task_id, intake_fencing_generation, projection->>'terminal_classification' tc,
+              projection->>'parallel_plan_digest' pd FROM {s}.director_primary_task_projection)
+SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencing_generation,
+ (SELECT count(*) FROM p) AS graph_task_count,
+ (SELECT count(DISTINCT r.claim_key) FROM {s}.director_primary_reconciliation_event r
+    LEFT JOIN {s}.director_primary_terminal_evidence t USING (claim_key) WHERE t.claim_key IS NULL) AS unresolved_reconciliation,
+ (SELECT count(*) FROM {s}.director_primary_parallel_assignment WHERE status='AMBIGUOUS') AS ambiguous_assignments,
+ (SELECT count(*) FROM p WHERE tc='RECONCILIATION_REQUIRED') AS tasks_requiring_reconciliation,
+ (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
+    WHERE p.tc IS NOT NULL AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS')) AS terminal_tasks_open_assignments,
+ (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
+    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
+    WHERE t.claim_key IS NULL AND p.tc IS NOT NULL) AS terminal_tasks_open_effects,
+ (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
+    WHERE p.pd IS NOT NULL AND p.pd<>b.plan_digest) AS projection_batch_digest_conflicts,
+ (SELECT count(*) FROM p WHERE p.intake_fencing_generation>(SELECT fencing_generation FROM a)) AS projections_ahead_of_fence,
+ (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
+    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
+    WHERE t.claim_key IS NULL AND p.tc IS NULL) AS open_effect_reservations,
+ (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
+    WHERE p.tc IS NULL AND x.status IN ('PENDING','ACTIVE')) AS active_assignments,
+ (SELECT count(*) FROM {s}.director_primary_task_writer WHERE lease_expires_at>now()) AS live_writer_claims,
+ (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
+    WHERE p.pd IS NULL) AS batches_pending_projection_binding"""
+
+_SPEND = """SELECT s.task_id,s.attempt_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
+ s.reserved_microusd,u.actual_microusd,
+ coalesce(length(u.document->'metering_evidence'->>'request_id'),0)>0
+ AND coalesce(length(u.document->'metering_evidence'->>'response_id'),0)>0
+ AND u.document->'metering_evidence'->>'cost_basis'='signed-tariff-metered-not-invoice' AS request_correlated
+FROM {s}.director_primary_provider_spend s LEFT JOIN {s}.director_primary_provider_usage u USING (attempt_digest)
+WHERE s.task_id = ANY(%(tasks)s) ORDER BY s.task_id,s.attempt_digest LIMIT 600"""
+
+_BUDGETS = """SELECT b.document->>'task_id' AS task_id, b.document->>'project_id' AS project_id,
+ b.document->>'day' AS day, (b.document->>'daily_limit_microusd')::bigint AS daily_limit_microusd,
+ (SELECT coalesce(sum(GREATEST(s2.reserved_microusd,coalesce(u2.actual_microusd,0))),0)
+    FROM {s}.director_primary_provider_spend s2 LEFT JOIN {s}.director_primary_provider_usage u2 USING (attempt_digest)
+    WHERE s2.project_id=b.document->>'project_id' AND s2.budget_day::text=b.document->>'day') AS day_held_microusd
+FROM {s}.director_primary_provider_budget b WHERE b.document->>'task_id' = ANY(%(tasks)s) LIMIT 100"""
+
+
+def _plain(value):
+    """JSON-safe scalar: integral numerics stay ints, times become ISO text."""
+    if isinstance(value, Decimal):
+        if value != value.to_integral_value():
+            raise ValueError("non-integral monetary amount")
+        return int(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _row(row):
+    return {key: _plain(value) for key, value in row.items()}
+
+
+def consistency_report(settings, identity, *, tasks=()) -> dict:
+    """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
+    import psycopg
+    from psycopg.rows import dict_row
+    from .langgraph_postgres import _require_schema
+
+    schema = _require_schema(settings.langgraph_primary_postgres_schema)
+    tasks = list(tasks)
+    adoption = None
+    if settings.langgraph_primary_acceptance_mode == "owner-local-evidence-v1":
+        from .primary_activation_evidence import load_pinned_owner_local_adoption
+        loaded = load_pinned_owner_local_adoption(settings.langgraph_primary_local_evidence_adoption_path,
+            expected_sha256=settings.langgraph_primary_local_evidence_adoption_sha256,
+            owner_token=settings.langgraph_primary_owner_token)
+        adoption = {key: loaded[key] for key in _ADOPTION_FIELDS}
+    connection = psycopg.connect(settings.langgraph_primary_postgres_dsn, connect_timeout=10, row_factory=dict_row,
+        options="-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=5000")
+    try:
+        connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        connection.read_only = True
+        per_task = {}
+        with connection.transaction():
+            counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
+            if tasks:
+                present = connection.execute(
+                    "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage,"
+                    " to_regclass(%s) IS NOT NULL AS budget",
+                    [f"{schema}.director_primary_provider_{name}" for name in ("spend", "usage", "budget")]).fetchone()
+                usage_tables = all(present.values())
+                spend, budgets = [], []
+                if usage_tables:
+                    spend = [_row(r) for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall()]
+                    budgets = [_row(r) for r in connection.execute(_BUDGETS.format(s=schema), {"tasks": tasks}).fetchall()]
+                for task_id in tasks:
+                    per_task[task_id] = {"usage_tables_present": usage_tables,
+                                         "spend": [r for r in spend if r["task_id"] == task_id],
+                                         "budgets": [r for r in budgets if r["task_id"] == task_id]}
+    finally:
+        connection.close()
+    return {"version": "director-primary-consistency/v1",
+            "generation": {"manifest_sha256": os.environ[_PIN],
+                           "acceptance_mode": settings.langgraph_primary_acceptance_mode,
+                           "candidate_commit": identity.candidate_commit,
+                           "candidate_tree": identity.candidate_tree, "adoption": adoption},
+            "captured_at": _plain(counts["captured_at"]),
+            "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
+            "counts": {key: int(counts[key]) for key in _COUNT_KEYS},
+            "tasks": per_task}
+
+
+def _capture_product(provider, output: bytes):
+    """Name the real product that produced a verified native capture, or None."""
+    try:
+        native = json.loads(output)
+    except ValueError:
+        native = None  # Codex CLI output is JSONL, not one document.
+    if provider == "openai":
+        return "openai-responses" if isinstance(native, dict) and native.get("object") == "response" else "openai-codex"
+    if provider == "grok":
+        if isinstance(native, dict) and native.get("object") == "response" and str(native.get("model")).startswith("grok"):
+            return "xai-grok-responses"
+        return "xai-grok-cli" if isinstance(native, dict) else None
+    if provider == "claude":
+        return "anthropic-claude" if isinstance(native, dict) and native.get("type") == "result" else None
+    return None
+
+
+def activation_capture_report(settings, identity, manifest) -> dict:
+    """Latest per-lane capture digests and expiry through a load-only store."""
+    from .langgraph_postgres import open_provider_activation_store
+    from .primary_activation_evidence import ActivationEvidenceError
+    from .primary_provider_activation import PrimaryProviderActivationService
+    from .primary_provider_evidence import _BoundedCaptureReader
+    from .provider_validation import capture_verifier_from_environment
+
+    verifier = capture_verifier_from_environment(candidate=identity.candidate_commit,
+        tree=identity.candidate_tree, require_enabled=False)
+    if verifier is None:
+        raise ActivationEvidenceError("authenticated capture verification is unavailable")
+    verifier.store = _BoundedCaptureReader(verifier.store.dsn)
+    with open_provider_activation_store(settings.langgraph_primary_postgres_dsn,
+            schema=identity.postgres_schema, accepted_storage_identity=identity.database_identity,
+            accepted_instance_id=identity.database_instance_id,
+            allow_insecure_local_transport=settings.langgraph_primary_allow_insecure_local_postgres,
+            deadline=time.monotonic() + 60) as store:
+        # Only load is exposed, so this service cannot append by construction.
+        service = PrimaryProviderActivationService(store=SimpleNamespace(load=store.load),
+            bindings=settings.primary_provider_activation_bindings(),
+            required_providers=settings.langgraph_primary_required_providers, capture_verifier=verifier)
+        lanes = service.capture_attestations()
+    for provider, lane in lanes.items():
+        surface = lane["surfaces"].get("runtime_adapter")
+        product = None
+        if surface is not None and surface["capture_verified"] is True:
+            row = verifier.store.load_capture(surface["evidence_digest"])
+            product = _capture_product(provider, bytes(row[2])) if row is not None else None
+        lane["product"] = product
+    return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
+            "provider_bindings_sha256": manifest["provider_bindings_sha256"],
+            "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes}
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
