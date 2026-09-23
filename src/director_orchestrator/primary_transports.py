@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:25 UTC | BEGIN]]
@@ -914,14 +915,26 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def grok_terminal_success(native: Mapping[str, Any]) -> bool:
-    """Whether a grok envelope is terminally successful within its one turn.
+    """Whether a Grok CLI or Responses envelope is terminally successful.
 
     ``stopReason`` must be exactly ``end_turn`` -- a truncated ``max_tokens``
     run or an errored stop does not qualify -- and ``num_turns`` must be
     exactly one, because the lane's command requests ``--max-turns 1`` and the
-    canary packet pins ``max_hops=1``.
+    canary packet pins ``max_hops=1``. Responses uses its own terminal fields;
+    no CLI turn or stop marker is synthesized for an API reply.
     """
 
+    if native.get("object") == "response":
+        if "max_output_tokens" in native:
+            cap = native["max_output_tokens"]
+            usage = native.get("usage")
+            if (type(cap) is not int or cap < 1 or not isinstance(usage, Mapping)
+                    or type(usage.get("output_tokens")) is not int
+                    or usage["output_tokens"] > cap):
+                return False
+        return (native.get("status") == "completed"
+                and native.get("error") is None
+                and native.get("incomplete_details") is None)
     turns = native.get("num_turns")
     return (
         native.get("stopReason") == "end_turn"
@@ -929,6 +942,60 @@ def grok_terminal_success(native: Mapping[str, Any]) -> bool:
         and not isinstance(turns, bool)
         and turns == 1
     )
+
+
+def _canonical_grok_responses(native: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract genuine Responses output and usage without adopting model bindings."""
+
+    if any(not isinstance(native.get(key), str) or not native[key].strip()
+           for key in ("id", "model")):
+        raise RuntimeError("Grok Responses result lacks its request id or model")
+    output = native.get("output")
+    if not isinstance(output, list):
+        raise RuntimeError("Grok Responses output is malformed")
+    chunks: list[str] = []
+    for item in output:
+        if not isinstance(item, Mapping):
+            raise RuntimeError("Grok Responses output is malformed")
+        if item.get("type") == "reasoning" and item.get("status") in {None, "completed"}:
+            continue
+        if (item.get("type") != "message" or item.get("role") != "assistant"
+                or item.get("status") not in {"completed", "incomplete", "in_progress"}
+                or (grok_terminal_success(native) and item.get("status") != "completed")
+                or not isinstance(item.get("content"), list)):
+            raise RuntimeError("Grok Responses contains unexpected or unfinished output")
+        for content in item["content"]:
+            if (not isinstance(content, Mapping) or content.get("type") != "output_text"
+                    or not isinstance(content.get("text"), str)):
+                raise RuntimeError("Grok Responses text is malformed or refused")
+            chunks.append(content["text"])
+    text = "".join(chunks)
+    if not text.strip():
+        raise RuntimeError("Grok Responses result lacks output text")
+    usage = native.get("usage")
+    counts = ("input_tokens", "output_tokens", "total_tokens")
+    if (not isinstance(usage, Mapping)
+            or any(type(usage.get(key)) is not int or usage[key] < 0 for key in counts)
+            or usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]):
+        raise RuntimeError("Grok Responses usage is missing or inconsistent")
+    for details, key, ceiling in (("output_tokens_details", "reasoning_tokens", "output_tokens"),
+                                  ("input_tokens_details", "cached_tokens", "input_tokens")):
+        if details in usage:
+            detail = usage[details]
+            if (not isinstance(detail, Mapping) or type(detail.get(key)) is not int
+                    or not 0 <= detail[key] <= usage[ceiling]):
+                raise RuntimeError("Grok Responses detailed usage is inconsistent")
+    # Reasoning is already included in output_tokens; never add it again.
+    projected = {key: usage[key] for key in counts}
+    projected["model"] = native["model"]
+    projected["cost_usd"] = None
+    ticks = usage.get("cost_in_usd_ticks")
+    if ticks is not None:
+        if type(ticks) is not int or ticks < 0:
+            raise RuntimeError("Grok Responses reported cost is malformed")
+        projected["cost_usd"] = ticks / 10_000_000_000
+    return {**native, "structured_output": _structured_native_output({"result": text}),
+            "usage": projected}
 
 
 def _canonical_grok_native(native: Mapping[str, Any]) -> dict[str, Any]:
@@ -948,6 +1015,8 @@ def _canonical_grok_native(native: Mapping[str, Any]) -> dict[str, Any]:
     exception, which is what the lifecycle expects from a real failed run.
     """
 
+    if native.get("object") == "response":
+        return _canonical_grok_responses(native)
     envelope = dict(native)
     session = envelope.get("sessionId")
     if "session_id" not in envelope and isinstance(session, str) and session:
@@ -1031,7 +1100,8 @@ def normalize_native_provider_envelope(
     if provider_id == "grok":
         native = _canonical_grok_native(native)
     structured = _structured_native_output(native)
-    run_reference = next(
+    responses = provider_id == "grok" and native.get("object") == "response"
+    run_reference = native["id"] if responses else next(
         (
             native.get(name)
             for name in ("session_id", "run_id", "request_id", "id")
@@ -1229,7 +1299,20 @@ class NativeCommandPacketTransport:
         if completed.returncode != 0:
             raise RuntimeError("native provider command outcome is ambiguous")
         work = json.loads(work_packet_json)
-        result = self._normalize(work, self._native_payload(completed.stdout))
+        native = self._native_payload(completed.stdout)
+        result = self._normalize(work, native)
+        if self.provider_id == "grok" and native.get("object") == "response":
+            usage = result["usage"]
+            tokens = getattr(context, "total_token_limit", None)
+            budget = getattr(context, "budget_usd", None)
+            if ((type(tokens) is int and usage["total_tokens"] > tokens)
+                    or (budget is not None and usage.get("cost_usd") is not None
+                        and usage["cost_usd"] > budget)):
+                # Retain the provider's real usage and raw capture even when its
+                # reported usage exceeds the admitted attempt, not merely the
+                # larger multi-attempt assignment budget in the work packet.
+                result["status"] = "FAILED"
+                result["blockers"].append("Grok Responses usage exceeds the admitted attempt limit")
         observer = getattr(context, "execution_observer", None)
         if observer is not None:
             observer(self.provider_id, completed.stdout, result)
@@ -1670,3 +1753,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
