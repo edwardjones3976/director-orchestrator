@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
 # OpenAI continuation repairs attribution only here; prior material from
 # Copilot branch head 510251c66a78251bd242e8f773a03c51bf65f99b is preserved.
@@ -41,11 +42,13 @@ from director_orchestrator.models import (
 from director_orchestrator.policy import (
     ANTIGRAVITY_CONSUMER_ACCEPTANCE,
     ANTIGRAVITY_CONSUMER_TASK,
+    SMALL_READ_ONLY_TASK_MAX_USD,
     antigravity_assignment_errors,
     deterministic_approval_reasons,
     enforce_plan,
     execution_policy_errors,
     preview_plan,
+    small_read_only_eligible,
 )
 from director_orchestrator.store import TaskStore
 
@@ -988,6 +991,94 @@ class StoreTests(unittest.TestCase):
             )
 
 
+class SmallReadOnlyEligibilityTests(unittest.TestCase):
+    """policy.small_read_only_eligible is the only authority for the small class."""
+
+    TEXT = "Project: demo\nSummarize README.md for the owner."
+
+    def setUp(self) -> None:
+        self.settings = replace(Settings(), repository_allowlist=("example/demo",))
+
+    def record(self, *, text: str | None = None, **plan_updates) -> TaskRecord:
+        record = TaskRecord(
+            task_id="DIR-SMALL",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="evt-small",
+                channel_id="C123",
+                thread_ts="123.45",
+                user_id="U123",
+                text=text or self.TEXT,
+            ),
+        )
+        record.plan = preview_plan(self.TEXT, self.settings).model_copy(update=plan_updates)
+        return record
+
+    def with_assignments(self, *updates) -> TaskRecord:
+        record = self.record()
+        assignments = [
+            item.model_copy(update=update)
+            for item, update in zip(record.plan.assignments, updates)
+        ]
+        record.plan = record.plan.model_copy(update={"assignments": assignments})
+        return record
+
+    def eligible(self, record: TaskRecord, settings: Settings | None = None) -> bool:
+        return small_read_only_eligible(record, settings or self.settings)
+
+    def test_the_preview_plan_for_a_small_read_only_task_is_eligible(self) -> None:
+        self.assertTrue(self.eligible(self.record()))
+        self.assertTrue(self.eligible(self.with_assignments(
+            {"estimated_cost_usd": 0.5}, {"estimated_cost_usd": 0.5})))
+        self.assertEqual(1.0, SMALL_READ_ONLY_TASK_MAX_USD)
+
+    def test_every_plan_or_intake_condition_can_only_remove_eligibility(self) -> None:
+        third = self.record().plan.assignments[1].model_copy(update={"sequence": 3, "depends_on": [2]})
+        cases = {
+            "approval_reasons": self.record(approval_reasons=["owner review"]),
+            "approval_required": self.record(approval_required=True),
+            "medium_risk": self.record(risk_level=RiskLevel.MEDIUM),
+            "gated_intake_with_a_clean_plan": self.record(
+                text="Project: demo\nSummarize README.md, then deploy to production."),
+            "implementation_task_typed_general": self.with_assignments(
+                {"task": "Implement a code fix", "kind": AssignmentKind.GENERAL}, {}),
+            "draft_pull_request": self.with_assignments({"allow_draft_pr": True}, {}),
+            "requires_approval": self.with_assignments({"requires_approval": True}, {}),
+            "three_assignments": self.record(
+                assignments=[*self.record().plan.assignments, third]),
+            "same_family_reviewer": self.with_assignments({}, {"agent": ProviderName.CLAUDE}),
+            "total_over_one_dollar": self.with_assignments(
+                {"estimated_cost_usd": 0.6}, {"estimated_cost_usd": 0.41}),
+            "reviewer_over_its_cap": self.with_assignments(
+                {"estimated_cost_usd": 0.1}, {"estimated_cost_usd": 0.51}),
+            "public_research_intake": self.record().model_copy(update={
+                "intake": self.record().intake.model_copy(
+                    update={"primary_public_research_query": "public sources"})}),
+        }
+        for name, record in cases.items():
+            with self.subTest(case=name):
+                self.assertFalse(self.eligible(record))
+        self.assertFalse(self.eligible(
+            self.record(), replace(self.settings, small_task_review_max_tokens=0)))
+        self.assertFalse(self.eligible(
+            self.with_assignments({"estimated_cost_usd": 0.1}, {"estimated_cost_usd": 0.1}),
+            replace(self.settings, max_task_budget_usd=0.15)))
+
+    def test_model_output_cannot_carry_eligibility(self) -> None:
+        from pydantic import ValidationError
+
+        record = self.record()
+        plan = record.plan.model_dump(mode="json")
+        with self.assertRaises(ValidationError):
+            DirectorPlan.model_validate({**plan, "small_read_only_eligible": True})
+        assignment = plan["assignments"][0]
+        with self.assertRaises(ValidationError):
+            Assignment.model_validate({**assignment, "small_read_only_eligible": True})
+        with self.assertRaises(ValidationError):
+            SlackIntake.model_validate(
+                {**record.intake.model_dump(mode="json"), "small_read_only_eligible": True})
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[Claude | Claude Opus 5 | 2026-08-25 | 01:07 UTC | END]]
@@ -1003,3 +1094,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

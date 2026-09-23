@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
@@ -26,8 +27,17 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from director_orchestrator.models import AntigravityDirective, AntigravityFixtureLane
-from director_orchestrator.packet_routing import antigravity_directive_objective
+from director_orchestrator.packet_contracts import (
+    build_replay_run,
+    canonical_json_bytes,
+    document_digest,
+)
+from director_orchestrator.packet_routing import (
+    antigravity_directive_objective,
+    compact_provider_view,
+)
 from director_orchestrator.primary_transports import (
+    _normalize_host_native_result,
     antigravity_closed_payload,
     normalize_native_provider_envelope,
 )
@@ -459,6 +469,96 @@ class HostProviderBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(HostProviderBridgeError, "origin work-packet digest"):
             malformed.validate(SECRET, now=bindings["timestamp"])
 
+    def test_claude_bridge_posts_compact_view_bound_to_the_full_packet(self) -> None:
+        work = json.loads(
+            (Path(__file__).resolve().parents[1] / "docs" / "schemas"
+             / "model-work-packet-v1.example.json").read_text(encoding="utf-8")
+        )
+        entry = work["authority_snapshot"][0]
+        work["authority_snapshot"] = [
+            dict(entry, path=f"src/module_{index:04d}.py") for index in range(1_500)
+        ]
+        full = canonical_json_bytes(work)
+        native = {
+            "type": "result", "subtype": "success", "is_error": False,
+            "session_id": "claude-bridge-session",
+            "result": '{"outcome":"done","status":"SUCCEEDED"}',
+        }
+        body = json.dumps(native, separators=(",", ":")).encode()
+        captured: dict[str, object] = {}
+
+        def open_request(request, timeout=None):
+            captured["data"] = request.data
+            captured["headers"] = dict(request.headers)
+            return self._bridge_response(
+                body,
+                request.headers["X-director-bridge-nonce"],
+                request.headers["X-director-idempotency-digest"],
+            )
+
+        opener = MagicMock()
+        opener.open.side_effect = open_request
+        transport = HostBridgePacketTransport(
+            "claude",
+            self.ANTIGRAVITY_ENDPOINT,
+            SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+            outbound_payload_builder=compact_provider_view,
+            result_normalizer=partial(_normalize_host_native_result, "claude"),
+        )
+        with patch(
+            "director_orchestrator.host_provider_bridge.urllib.request.build_opener",
+            return_value=opener,
+        ):
+            result = transport.send(
+                full, context=SimpleNamespace(timeout_seconds=30, fencing_generation=7)
+            )
+
+        # The host sees exactly the compact view, never the inventory.
+        view = compact_provider_view(work)
+        self.assertEqual(canonical_json_bytes(view), captured["data"])
+        self.assertNotIn(b'"authority_snapshot":', captured["data"])
+        headers = captured["headers"]
+        self.assertEqual(_digest(captured["data"]), headers["X-director-packet-digest"])
+        # The signed origin binding is the full packet's digest, which the view
+        # itself also names.
+        self.assertEqual(_digest(full), headers["X-director-work-packet-digest"])
+        self.assertEqual(
+            document_digest(work), "sha256:" + headers["X-director-work-packet-digest"]
+        )
+        self.assertEqual(document_digest(work), view["work_packet_digest"])
+
+        bindings = dict(
+            timestamp=int(headers["X-director-bridge-timestamp"]),
+            nonce=headers["X-director-bridge-nonce"],
+            provider="claude",
+            task_id=headers["X-director-task"],
+            assignment_id=headers["X-director-assignment"],
+            idempotency_digest=headers["X-director-idempotency-digest"],
+            writer_generation=7,
+            packet_digest=headers["X-director-packet-digest"],
+            writer_owner_token_digest=headers["X-director-writer-owner-token-digest"],
+            work_packet_digest=headers["X-director-work-packet-digest"],
+        )
+        accepted = BridgeRequest(
+            **bindings,
+            signature=headers["Authorization"].removeprefix("Director-HMAC "),
+            packet=captured["data"],
+        )
+        accepted.validate(SECRET, now=bindings["timestamp"])
+        for forged in ("", "a" * 64):
+            with self.subTest(work_packet_digest=forged):
+                with self.assertRaisesRegex(HostProviderBridgeError, "authentication failed"):
+                    replace(accepted, work_packet_digest=forged).validate(
+                        SECRET, now=bindings["timestamp"]
+                    )
+
+        # The normalized result binds to the full packet, not to the view.
+        self.assertEqual("claude", result["provider"])
+        self.assertEqual("claude-bridge-session", result["run_reference"])
+        self.assertEqual(work["authority_snapshot_digest"], result["authority_snapshot_digest"])
+        build_replay_run(work, result)
+
     def test_unredacted_bridge_lanes_are_byte_identical(self) -> None:
         # Other lanes keep the work packet and the pre-existing signature payload.
         work = {
@@ -787,3 +887,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

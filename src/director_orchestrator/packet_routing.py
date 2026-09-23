@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
@@ -52,6 +53,59 @@ def antigravity_directive_objective(directive: AntigravityDirective) -> str:
         + f"variant_count={int(directive.variant_count)}; "
         + f"max_lines_per_artifact={int(directive.max_lines_per_artifact)}."
     )
+
+
+COMPACT_PROVIDER_VIEW_SCHEMA = "director-compact-work-view/v1"
+_COMPACT_VIEW_FIELDS = (
+    "task_id", "assignment_id", "idempotency_key", "project", "repository",
+    "starting_ref", "authority_base_ref", "objective", "non_goals",
+    "authority_snapshot_digest", "dependencies", "constraints",
+    "prohibited_actions", "allowed_tools", "allowed_external_effects",
+    "acceptance_checks", "owned_paths", "prohibited_paths",
+    "evidence_requirements", "approval_requirements", "limits", "correlation",
+)
+_MAX_COMPACT_AUTHORITY_ENTRIES = 64
+
+
+def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    """What a model is shown. The Director keeps the full packet, including the
+    snapshot inventory, and binds it by digest. Results are always rebound to
+    the full packet.
+
+    The inventory is replaced by its commit, digest and size plus only the
+    entries under an owned path or named verbatim in the objective, and never
+    one under a prohibited path. Partial documents are tolerated so every
+    transport can call this on whatever packet bytes it was handed.
+    """
+
+    snapshot = list(work.get("authority_snapshot") or ())
+    owned = [str(path).rstrip("/") for path in work.get("owned_paths") or ()]
+    prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
+    named = {
+        token.strip("`'\"()[]{}<>,;:!?").rstrip(".")
+        for token in str(work.get("objective", "")).split()
+    }
+
+    def under(path: str, roots: list[str]) -> bool:
+        return any(path == root or path.startswith(root + "/") for root in roots)
+
+    entries = [
+        dict(entry)
+        for entry in snapshot
+        if (under(entry["path"], owned) or entry["path"] in named)
+        and not under(entry["path"], prohibited)
+    ][:_MAX_COMPACT_AUTHORITY_ENTRIES]
+    view: dict[str, Any] = {"schema_version": COMPACT_PROVIDER_VIEW_SCHEMA}
+    view.update({key: work[key] for key in _COMPACT_VIEW_FIELDS if key in work})
+    view["authority"] = {
+        "commit": work.get("starting_ref"),
+        "digest": work.get("authority_snapshot_digest"),
+        "file_count": len(snapshot),
+        "entries": entries,
+    }
+    # Equal to ProviderAdapterContext.work_packet_digest for the same packet.
+    view["work_packet_digest"] = document_digest(work)
+    return view
 
 
 class AuthoritySnapshotResolver(Protocol):
@@ -534,3 +588,4 @@ class DirectorPacketTaskRouter:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

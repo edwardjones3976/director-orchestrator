@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
@@ -35,15 +36,21 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.packet_contracts import document_digest, load_json_document
+from director_orchestrator.packet_contracts import (
+    canonical_json_bytes,
+    document_digest,
+    load_json_document,
+)
 from director_orchestrator.packet_results import (
     DirectorPacketResultConsumer,
     PacketResultConsumptionError,
 )
 from director_orchestrator.packet_routing import (
+    COMPACT_PROVIDER_VIEW_SCHEMA,
     DirectorPacketTaskRouter,
     PacketRoutingError,
     antigravity_directive_objective,
+    compact_provider_view,
 )
 from director_orchestrator.policy import preview_plan
 
@@ -728,6 +735,106 @@ class PacketResultConsumerTests(unittest.TestCase):
             )
 
 
+def _entry(path: str) -> dict[str, str]:
+    return {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": BLOB_SHA}
+
+
+class RepositoryInventorySnapshots:
+    """The shape of the one real run: 1,505 blob entries for a README task."""
+
+    def resolve(self, record, assignment):
+        return [_entry("README.md")] + [
+            _entry(f"src/director_orchestrator/module_{index:04d}.py")
+            for index in range(1_504)
+        ]
+
+
+class CompactProviderViewTests(unittest.TestCase):
+    TEXT = "Project: demo\nSummarize README.md for the owner."
+
+    def setUp(self) -> None:
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        self.record = TaskRecord(
+            task_id="DIR-COMPACT",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="evt-compact",
+                channel_id="C123",
+                thread_ts="123.45",
+                user_id="U123",
+                text=self.TEXT,
+            ),
+        )
+        self.record.plan = preview_plan(self.TEXT, settings)
+        router = DirectorPacketTaskRouter(
+            authority_snapshots=RepositoryInventorySnapshots(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-packet-runtime",
+            writer_secret="local-test-secret",
+            timeout_seconds=120,
+        )
+        producer = min(self.record.plan.assignments, key=lambda item: item.sequence)
+        self.packet = router.planned_work_packet(self.record, producer)
+        self.view = compact_provider_view(self.packet)
+
+    def test_small_task_view_is_bounded_and_omits_the_inventory(self) -> None:
+        self.assertGreater(len(canonical_json_bytes(self.packet)), 200_000)
+        self.assertLess(len(canonical_json_bytes(self.view)), 20_000)
+        self.assertNotIn("authority_snapshot", self.view)
+        self.assertEqual(
+            {
+                "commit": self.packet["starting_ref"],
+                "digest": self.packet["authority_snapshot_digest"],
+                "file_count": 1_505,
+                "entries": [_entry("README.md")],
+            },
+            self.view["authority"],
+        )
+
+    def test_view_is_bound_to_the_full_packet_by_digest_and_identity(self) -> None:
+        self.assertEqual(COMPACT_PROVIDER_VIEW_SCHEMA, self.view["schema_version"])
+        self.assertEqual(document_digest(self.packet), self.view["work_packet_digest"])
+        for field in (
+            "task_id",
+            "assignment_id",
+            "idempotency_key",
+            "starting_ref",
+            "authority_snapshot_digest",
+            "correlation",
+            "limits",
+            "owned_paths",
+            "prohibited_paths",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(self.packet[field], self.view[field])
+
+    def test_entries_follow_owned_paths_and_never_prohibited_paths(self) -> None:
+        view = compact_provider_view(
+            {
+                "objective": "Review the package.",
+                "owned_paths": ["src/pkg"],
+                "prohibited_paths": ["src/pkg/secret.py"],
+                "authority_snapshot": [
+                    _entry("src/pkg/a.py"),
+                    _entry("src/pkg/secret.py"),
+                    _entry("src/pkgx/b.py"),
+                ],
+            }
+        )
+        self.assertEqual([_entry("src/pkg/a.py")], view["authority"]["entries"])
+        self.assertEqual(3, view["authority"]["file_count"])
+
+    def test_entries_are_capped(self) -> None:
+        view = compact_provider_view(
+            {
+                "owned_paths": ["src/"],
+                "authority_snapshot": [_entry(f"src/m{index}.py") for index in range(100)],
+            }
+        )
+        self.assertEqual(64, len(view["authority"]["entries"]))
+        self.assertEqual(100, view["authority"]["file_count"])
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
@@ -738,3 +845,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

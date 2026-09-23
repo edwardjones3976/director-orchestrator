@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # Codex QA aligned the existing reconciliation test double with the occupied() interface.
@@ -118,6 +119,7 @@ from director_orchestrator.primary_default import (
     build_primary_packet_result_resolver,
     build_typed_external_effect_grant,
     resolve_default_primary_authority,
+    small_review_bounds,
     typed_external_effect_grant_kinds,
 )
 
@@ -143,6 +145,70 @@ def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
         writer_secret="default-primary-test-writer-secret",
         timeout_seconds=settings.provider_timeout_seconds,
     )
+
+
+class SmallReviewBoundsTests(unittest.TestCase):
+    """The reviewer of an eligible small read-only task is capped deterministically."""
+
+    SMALL = "Project: default\nSummarize README.md for the owner."
+
+    def setUp(self) -> None:
+        self.settings = replace(
+            Settings(), repository_allowlist=("owner/director-orchestrator",)
+        )
+        self.router = packet_router(self.settings)
+
+    def record(self, result: str, *, text: str = SMALL) -> TaskRecord:
+        record = TaskRecord(
+            task_id="DIR-LG-SMALLREVIEW",
+            status=TaskStatus.RUNNING,
+            intake=SlackIntake(
+                source_event_id="event-small-review",
+                channel_id="CDEFAULT",
+                thread_ts="1720000000.000001",
+                user_id="UOWNER",
+                text=text,
+            ),
+        )
+        record.plan = preview_plan(text, self.settings)
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        record.assignment_outcomes.append(
+            AssignmentOutcome(
+                assignment_sequence=producer.sequence,
+                provider=producer.agent,
+                run_id="run-1",
+                result=result,
+                review_summary="accepted producer evidence",
+            )
+        )
+        return record
+
+    def bounds(self, record: TaskRecord, *, reviewer: bool = True):
+        pick = max if reviewer else min
+        assignment = pick(record.plan.assignments, key=lambda item: item.sequence)
+        packet = self.router.planned_work_packet(record, assignment)
+        return small_review_bounds(record, self.settings, assignment, packet)
+
+    def test_an_oversized_review_packet_is_refused(self):
+        self.assertEqual(
+            ("small_task_review_packet_over_cap", 40_000),
+            self.bounds(self.record("x" * 20_000)),
+        )
+
+    def test_a_small_review_carries_the_configured_token_cap(self):
+        self.assertEqual((None, 40_000), self.bounds(self.record("done")))
+        capped = replace(self.settings, small_task_review_max_tokens=1_234)
+        record = self.record("done")
+        review = max(record.plan.assignments, key=lambda item: item.sequence)
+        packet = self.router.planned_work_packet(record, review)
+        self.assertEqual((None, 1_234), small_review_bounds(record, capped, review, packet))
+
+    def test_the_producer_and_ineligible_tasks_are_not_bounded(self):
+        self.assertEqual((None, None), self.bounds(self.record("done"), reviewer=False))
+        ineligible = self.record(
+            "done", text="Project: default\nCreate a bounded implementation plan."
+        )
+        self.assertEqual((None, None), self.bounds(ineligible))
 
 
 class ProviderAttemptRosterTests(unittest.TestCase):
@@ -4169,3 +4235,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

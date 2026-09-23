@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
@@ -140,13 +141,18 @@ from .models import (
     TaskRecord,
     TaskStatus,
 )
-from .packet_contracts import document_digest, validate_packet
-from .packet_routing import DirectorPacketTaskRouter
+from .packet_contracts import canonical_json_bytes, document_digest, validate_packet
+from .packet_routing import DirectorPacketTaskRouter, compact_provider_view
 from .packet_transports import (
     LocalGitAuthoritySnapshotResolver,
     canonical_github_remote_repository,
 )
-from .policy import preview_plan, _canonical_prestage_record
+from .policy import (
+    SMALL_TASK_REVIEW_MAX_PACKET_BYTES,
+    preview_plan,
+    small_read_only_eligible,
+    _canonical_prestage_record,
+)
 from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_effects import (
     DeterministicExternalEffectExecutor,
@@ -723,6 +729,26 @@ def _live_assignment_attempt_budget(
     if configured:
         return float(configured[_assignment_provider_lane(assignment)])
     return float(amount) / 3.0
+
+
+def small_review_bounds(
+    record: TaskRecord, settings: Settings, assignment: Assignment, packet: Mapping[str, Any],
+) -> tuple[str | None, int | None]:
+    """(refusal reason, token cap) for the reviewer of an eligible small read-only
+    task; (None, None) for every other assignment.
+
+    The reviewer is sent the compact view of its packet: the objective,
+    acceptance checks, the producer's result embedded as a predecessor
+    constraint and the evidence digests. Over the byte cap it is refused before
+    any budget, admission or artifact work. The token cap only ever narrows.
+    """
+
+    if (assignment.kind is not AssignmentKind.INDEPENDENT_REVIEW
+            or not small_read_only_eligible(record, settings)):
+        return None, None
+    if len(canonical_json_bytes(compact_provider_view(packet))) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES:
+        return "small_task_review_packet_over_cap", settings.small_task_review_max_tokens
+    return None, settings.small_task_review_max_tokens
 
 
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
@@ -2954,6 +2980,11 @@ class DefaultPrimaryActivation:
                         services._packet_router.planned_work_packet(record, assignment),
                     )
                     packet_digest = document_digest(packet)
+                    review_refusal, review_token_cap = small_review_bounds(
+                        record, settings, assignment, packet)
+                    if review_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None, review_refusal)
                     # A live lane needs a trusted positive per-lane and
                     # per-attempt limit bounded by the configured task budget
                     # before any attempt reservation or paid provider call.
@@ -3263,7 +3294,13 @@ class DefaultPrimaryActivation:
                                 ),
                                 timeout_seconds=attempt_timeout_seconds,
                                 budget_usd=attempt_budget_usd,
-                                total_token_limit=attempt.total_token_limit,
+                                # A small task's reviewer cap only narrows.
+                                total_token_limit=(
+                                    attempt.total_token_limit
+                                    if review_token_cap is None
+                                    else min(attempt.total_token_limit or review_token_cap,
+                                             review_token_cap)
+                                ),
                                 max_hops=int(limits["max_hops"]),
                                 max_revisions=int(limits["max_revisions"]),
                                 allowed_tools=tuple(packet["allowed_tools"]),
@@ -3795,3 +3832,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

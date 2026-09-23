@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
@@ -25,7 +26,10 @@ from director_orchestrator.packet_contracts import (
     canonical_json_bytes,
     document_digest,
 )
-from director_orchestrator.packet_routing import antigravity_directive_objective
+from director_orchestrator.packet_routing import (
+    antigravity_directive_objective,
+    compact_provider_view,
+)
 from director_orchestrator.primary_transports import (
     NativeCommandPacketTransport,
     antigravity_closed_payload,
@@ -151,8 +155,13 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                     # The 40 output tokens already include 25 reasoning tokens.
                     self.assertEqual(140, result["usage"]["total_tokens"])
                     self.assertEqual(0.0005, result["usage"]["cost_usd"])
-                self.assertEqual(canonical_json_bytes(work_packet()), sent["data"])
-                self.assertNotIn("X-director-work-packet-digest", sent["headers"])
+                # The bridge posts the compact view, signed with the full
+                # packet's digest; the result above still binds to the packet.
+                self.assertEqual(
+                    canonical_json_bytes(compact_provider_view(work_packet())), sent["data"])
+                self.assertEqual(
+                    hashlib.sha256(canonical_json_bytes(work_packet())).hexdigest(),
+                    sent["headers"]["X-director-work-packet-digest"])
 
     def test_existing_canonical_packets_are_preserved_without_rebinding(self):
         work = work_packet()
@@ -328,3 +337,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

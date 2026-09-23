@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
@@ -268,6 +269,10 @@ class Settings:
     delegation_enabled: bool = _bool("DELEGATION_ENABLED", False)
     delegation_suspended: bool = _bool("DELEGATION_SUSPENDED", False)
     delegation_grant_json: str = os.getenv("DELEGATION_GRANT_JSON", "")
+    # Deterministic ceilings for the independent reviewer of a small read-only
+    # task (policy.small_read_only_eligible). They only ever narrow a review.
+    small_task_review_max_usd: float = _positive_float("SMALL_TASK_REVIEW_MAX_USD", 0.50)
+    small_task_review_max_tokens: int = _int("SMALL_TASK_REVIEW_MAX_TOKENS", 40_000)
     max_agent_hops: int = _int("MAX_AGENT_HOPS", 6)
     max_revisions: int = _int("MAX_REVISIONS", 2)
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
@@ -2537,3 +2542,4 @@ class Settings:
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

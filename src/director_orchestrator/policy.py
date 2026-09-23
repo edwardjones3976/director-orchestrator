@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -36,6 +37,7 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 from __future__ import annotations
 
+import math
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -58,6 +60,7 @@ from .models import (
     PlanPrestageRecord,
     ProviderName,
     RiskLevel,
+    TaskRecord,
     WorkloadEnforcementRecord,
 )
 from .workload_policy import (
@@ -391,6 +394,86 @@ def trusted_work_kind(assignment: Assignment) -> WorkKind:
     """Return the single deterministic workload classification used at every gate."""
 
     return _work_kind(assignment)
+
+
+#: Ceiling on a small read-only task's whole frozen plan, producer plus reviewer.
+SMALL_READ_ONLY_TASK_MAX_USD = 1.0
+#: Ceiling on the compact provider view a small task's reviewer is sent.
+SMALL_TASK_REVIEW_MAX_PACKET_BYTES = 16_384
+_SMALL_TASK_EXCLUDED_AGENTS = frozenset(
+    {ProviderName.PERPLEXITY, ProviderName.FIRECRAWL, ProviderName.GEMINI}
+)
+
+
+def small_read_only_eligible(record: TaskRecord, settings: Settings) -> bool:
+    """Whether a task is a member of the tier-1 class ``execute_small_read_only_task``.
+
+    This is the only authority for that membership, and it is deterministic. It
+    reads the owner's intake text, the frozen plan and deployment settings, and
+    nothing a provider returned. Fields a model or planner writes can only make
+    a task ineligible: every condition below is one a plan can fail, never one
+    it can assert, and every model involved (``DirectorPlan``, ``Assignment``,
+    ``SlackIntake``) is ``extra="forbid"``, so no field can carry eligibility.
+
+    Eligible means: no deterministic approval reason in the intake or in any
+    generated plan string, no external effect or draft pull request, exactly
+    one non-implementation producer and one independent reviewer from another
+    provider family, and a frozen plan total within the small-task ceiling.
+    """
+
+    plan = record.plan
+    if (
+        plan is None
+        or plan.prestage is None
+        or not plan.prestage.owned_paths
+        or plan.approval_required
+        or plan.approval_reasons
+        or plan.risk_level is not RiskLevel.LOW
+        or plan.debate is not None
+        or deterministic_approval_reasons(record.intake.text)
+        or any(
+            deterministic_approval_reasons(part)
+            for part in _generated_plan_gate_strings(plan)
+        )
+        or record.intake.primary_public_research_query is not None
+        or record.intake.primary_required_capabilities
+        or len(plan.assignments) != 2
+    ):
+        return False
+    producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+    if (
+        producer.depends_on != []
+        or reviewer.kind is not AssignmentKind.INDEPENDENT_REVIEW
+        or reviewer.depends_on != [producer.sequence]
+        or producer.kind is not AssignmentKind.GENERAL
+        or trusted_work_kind(producer) is WorkKind.IMPLEMENTATION
+        or trusted_work_kind(reviewer) is not WorkKind.REVIEW
+        or producer.agent == reviewer.agent
+    ):
+        return False
+    for item in (producer, reviewer):
+        if (
+            item.requires_approval
+            or item.allow_draft_pr
+            or item.public_research_query is not None
+            or item.antigravity_directive is not None
+            or item.agent in _SMALL_TASK_EXCLUDED_AGENTS
+        ):
+            return False
+    try:
+        if share_provider_family(producer.agent, reviewer.agent):
+            return False
+    except UnknownContactError:
+        return False
+    costs = [float(item.estimated_cost_usd) for item in (producer, reviewer)]
+    if any(not math.isfinite(cost) or cost < 0 for cost in costs):
+        return False
+    return (
+        math.fsum(costs)
+        <= min(SMALL_READ_ONLY_TASK_MAX_USD, settings.max_task_budget_usd)
+        and costs[1] <= settings.small_task_review_max_usd
+        and settings.small_task_review_max_tokens >= 1
+    )
 
 
 _WORK_SIZE_RANK = {
@@ -1581,3 +1664,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
