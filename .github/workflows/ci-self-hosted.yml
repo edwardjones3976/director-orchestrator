@@ -1,0 +1,295 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:38 UTC | BEGIN]]
+# Self-hosted mirror of ci.yml.
+#
+# Owner decision 2026-09-23: GitHub-hosted Actions are refused for billing, so
+# CI also runs on the owner's registered self-hosted runners
+# (labels: self-hosted + OS + director). ci.yml is intentionally unchanged, so
+# hosted CI resumes as-is once billing is restored.
+#
+# Every deviation from ci.yml is deliberate and commented. The runners share
+# one host, so each run uses its own Postgres container/port and its own
+# compose project name. Nothing here touches the live Director stacks.
+name: CI (self-hosted)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "agent/**"
+      - "codex/**"
+      - "claude/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-self-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contribution-attribution:
+    name: Contribution attribution (self-hosted)
+    runs-on: [self-hosted, Linux, director]
+    env:
+      PYTHONPATH: src
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Self-hosted Linux has no bare `python`; ubuntu-latest does.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate changed files and submission envelope
+        run: >-
+          python scripts/check_contribution_tags.py
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --github-event "$GITHUB_EVENT_PATH"
+
+  python:
+    name: Python 3.12 (self-hosted ${{ matrix.os }})
+    runs-on: [self-hosted, "${{ matrix.os }}", director]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [Linux, Windows]
+    env:
+      PYTHONPATH: src
+      # Windows: per-process long-path support (no global git config change).
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell scripts
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File): $($_.Message)" }
+              exit 1
+            }
+          }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # ubuntu-latest and windows-latest ship Node.js; the n8n status-code
+      # tests need it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # ubuntu-latest ships PowerShell 7; the self-hosted WSL runner has no
+      # passwordless sudo, so install a pinned, hash-verified release into the
+      # tool cache instead.
+      - name: Provide PowerShell 7 (Linux, pinned, no sudo)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=7.6.6
+          sha=ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc
+          dest="${RUNNER_TOOL_CACHE}/pwsh/${version}"
+          if [ ! -x "$dest/pwsh" ]; then
+            tmp="$(mktemp -d)"
+            curl -fsSL -o "$tmp/pwsh.tgz" "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
+            echo "${sha}  $tmp/pwsh.tgz" | sha256sum -c -
+            mkdir -p "$dest"
+            tar -xzf "$tmp/pwsh.tgz" -C "$dest"
+            chmod +x "$dest/pwsh"
+            rm -rf "$tmp"
+          fi
+          echo "$dest" >> "$GITHUB_PATH"
+      # Same image digest as ci.yml, but a per-run container and a
+      # Docker-assigned loopback port, because runs share the host.
+      # `pg_isready -h 127.0.0.1` inside the container succeeds only once the
+      # real server listens on TCP; the entrypoint's init server is
+      # socket-only. postgresql-client is not apt-installed (no sudo). The
+      # tests use the container's tools through
+      # LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER.
+      - name: Start disposable PostgreSQL (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="director-ci-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-linux"
+          docker run --detach --rm \
+            --name "$container" \
+            --publish 127.0.0.1::5432 \
+            --env POSTGRES_HOST_AUTH_METHOD=trust \
+            --env POSTGRES_USER=director_ci \
+            --env POSTGRES_DB=director_test \
+            postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
+          for attempt in $(seq 1 60); do
+            if docker exec "$container" pg_isready -h 127.0.0.1 -U director_ci -d director_test >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "Disposable PostgreSQL did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          port="$(docker port "$container" 5432/tcp | head -n 1 | sed 's/.*://')"
+          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:${port}/director_test?sslmode=disable" >> "$GITHUB_ENV"
+          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$container" >> "$GITHUB_ENV"
+      # windows-latest installs PostgreSQL with choco, which needs admin. The
+      # self-hosted runner reuses the repo's Docker-based test lane instead,
+      # with the same pinned image.
+      - name: Start disposable PostgreSQL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $port = 56000 + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-win"
+          & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$name" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DIRECTOR_CI_PG_LANE=$name|$port" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - run: python -m pip check
+      # WSL appends Windows directories to PATH; ubuntu-latest has none, so
+      # drop them for the test process.
+      - name: python -m unittest discover -s tests -v
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
+        run: |
+          PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
+          export PATH
+          python -m unittest discover -s tests -v
+      - name: python -m unittest discover -s tests -v
+        if: runner.os == 'Windows'
+        env:
+          SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
+        run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q src scripts tests
+      - run: python -m json.tool n8n/workflows/director-intake.json
+      - run: python -m json.tool docs/oracle-review-artifact.example.json
+      - name: Stop disposable PostgreSQL (Linux)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [ -n "${LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER:-}" ]; then
+            docker rm --force "$LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER" >/dev/null 2>&1 || true
+          fi
+      - name: Stop disposable PostgreSQL (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:DIRECTOR_CI_PG_LANE) {
+            $name, $port = $env:DIRECTOR_CI_PG_LANE -split '\|', 2
+            & ./scripts/windows-postgres-test-lane.ps1 -Action Stop -ContainerName $name -HostPort ([int]$port)
+          }
+
+  containers:
+    name: Compose and container build (self-hosted)
+    # Docker Compose is reliable on the Windows host; the image name is per-run
+    # so the build never retags a live stack's image.
+    runs-on: [self-hosted, Windows, director]
+    env:
+      DIRECTOR_ENV_FILE: .env.example
+      DIRECTOR_COMPOSE_PROJECT_NAME: director-ci-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --env-file .env.example config --quiet
+      - name: Validate isolated Project Uppercut profile
+        env:
+          DIRECTOR_ENV_FILE: .env.uppercut.example
+          DIRECTOR_COMPOSE_PROJECT_NAME: project-uppercut-director-ci-${{ github.run_id }}
+        run: docker compose --env-file .env.uppercut.example config --quiet
+      - name: Validate isolated Edge Oracle profile
+        env:
+          DIRECTOR_ENV_FILE: .env.edge-oracle.example
+          DIRECTOR_COMPOSE_PROJECT_NAME: edge-oracle-director-ci-${{ github.run_id }}
+        run: docker compose --env-file .env.edge-oracle.example config --quiet
+      - run: docker compose --env-file .env.example build orchestrator
+      - name: Remove the per-run CI image
+        if: always()
+        shell: pwsh
+        run: |
+          & docker image rm --force "director-ci-$($env:GITHUB_RUN_ID)-orchestrator" 2>$null | Out-Null
+          exit 0
+
+  secret-hygiene:
+    name: Secret hygiene (self-hosted)
+    runs-on: [self-hosted, Linux, director]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert no secret-bearing files are committed
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        run: |
+          set -euo pipefail
+          forbidden='(^|/)(\.env(\..+)?|[^/]+\.(db|sqlite3))$|(^|/)\.venv/'
+          allowed='(^|/)\.env(\.[^/]+)?\.example$'
+
+          candidates=$(git ls-files)
+          if [ -n "$BASE_SHA" ]; then
+            added=$(git log --diff-filter=A --name-only --pretty=format: "$BASE_SHA..HEAD")
+            candidates=$(printf '%s\n%s\n' "$candidates" "$added")
+          fi
+
+          offenders=$(printf '%s\n' "$candidates" | sed '/^$/d' | sort -u \
+            | grep -E "$forbidden" | grep -vE "$allowed" || true)
+
+          if [ -n "$offenders" ]; then
+            echo "::error::Secret-bearing or generated files are committed:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "No secret-bearing files are committed."
+      - name: Reject credential-shaped committed content
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='gh[oprsu]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{30,}|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
+          matches=$(git grep -l -E "$pattern" -- ':!.github/workflows/ci.yml' ':!.github/workflows/ci-self-hosted.yml' || true)
+          if [ -n "$matches" ]; then
+            echo "::error::Credential-shaped content found in committed files."
+            printf '%s\n' "$matches"
+            exit 1
+          fi
+          echo "No credential-shaped content was found."
+
+  recovery-probe:
+    name: Cross-process recovery probe (self-hosted)
+    runs-on: [self-hosted, Linux, director]
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Recover persisted work without redispatch
+        shell: bash
+        run: |
+          database="${RUNNER_TEMP}/director-recovery-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+          python scripts/recovery_probe.py resume --database "$database"
+          substituted_database="${RUNNER_TEMP}/director-recovery-substituted-ci.sqlite3"
+          python scripts/recovery_probe.py seed --database "$substituted_database"
+          python scripts/recovery_probe.py resume-substituted-identity --database "$substituted_database"
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:38 UTC | END]]
