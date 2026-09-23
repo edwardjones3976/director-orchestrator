@@ -1,7 +1,29 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | BEGIN]]
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 name: CI
+
+# Runner routing (owner decision 2026-09-23). GitHub-hosted runners are the
+# default. When the repository variable DIRECTOR_CI_RUNNER is "self-hosted",
+# every job runs on the owner's registered runners (labels: self-hosted + OS +
+# director) under the SAME job and check names, so the acceptance contracts
+# that pin this workflow path and these check names keep working.
+#
+# Security boundary: repository configuration, not this file. A pull request
+# can edit ci.yml, so no condition here can keep candidate code off the owner's
+# runners. The fork condition in each runs-on is defense in depth only. What
+# keeps untrusted code off these runners is configuration a pull request cannot
+# change: the repository is private, and its Actions setting
+# run_workflows_from_fork_pull_requests is false, so fork pull requests run no
+# workflow at all (verified 2026-09-23). Only accounts with write access can push
+# the branches that run here. Do not enable fork pull request workflows, or make
+# the repository public, while DIRECTOR_CI_RUNNER is "self-hosted".
+#
+# Steps that only a hosted image needs are guarded with
+# runner.environment == 'github-hosted'; their self-hosted replacements with
+# runner.environment == 'self-hosted'.
 
 on:
   pull_request:
@@ -14,10 +36,16 @@ on:
 permissions:
   contents: read
 
+# The self-hosted pool is one runner per OS, so a superseded pull request run is
+# cancelled instead of queued. Push runs get a unique group and never cancel.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   contribution-attribution:
     name: Contribution attribution
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     env:
       PYTHONPATH: src
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -26,6 +54,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Self-hosted Linux has no bare `python`; ubuntu-latest does.
+      - uses: actions/setup-python@v5
+        if: runner.environment == 'self-hosted'
+        with:
+          python-version: "3.12"
       - name: Validate changed files and submission envelope
         run: >-
           python scripts/check_contribution_tags.py
@@ -35,14 +68,25 @@ jobs:
 
   # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | BEGIN]]
   python:
+    # matrix.os stays the hosted label on self-hosted runners too: it is part of
+    # the pinned check name.
     name: Python 3.12 (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.self_hosted) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            self_hosted: '["self-hosted","Linux","director"]'
+          - os: windows-latest
+            self_hosted: '["self-hosted","Windows","director"]'
     env:
       PYTHONPATH: src
+      # Windows: per-process long-path support (no global git config change).
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: "true"
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell scripts
@@ -62,12 +106,63 @@ jobs:
               exit 1
             }
           }
+      # On self-hosted Windows, setup-python's installer writes HKLM, which
+      # needs admin; the Windows step below uses the host interpreter instead.
       - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted' || runner.os == 'Linux'
         with:
           python-version: "3.12"
           cache: pip
+      # Self-hosted: install requirements into a job-local venv, never into the
+      # shared tool-cache or host interpreter. RUNNER_TEMP is emptied per job.
+      - name: Provide job-local Python 3.12 venv (self-hosted Linux)
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv --clear "$RUNNER_TEMP/ci-py312"
+          echo "$RUNNER_TEMP/ci-py312/bin" >> "$GITHUB_PATH"
+      # The explicit path avoids the WindowsApps aliases, which the runner
+      # cannot stat.
+      - name: Provide job-local Python 3.12 venv (self-hosted Windows)
+        if: runner.environment == 'self-hosted' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = Join-Path $env:LOCALAPPDATA 'Python\pythoncore-3.12-64\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw "Host CPython 3.12 not found at $python" }
+          $venv = Join-Path $env:RUNNER_TEMP 'ci-py312'
+          & $python -m venv --clear $venv
+          if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
+          Join-Path $venv 'Scripts' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # Hosted images ship Node.js; the n8n status-code tests need it.
+      - uses: actions/setup-node@v4
+        if: runner.environment == 'self-hosted'
+        with:
+          node-version: "20"
+      # Hosted Ubuntu ships PowerShell 7; the self-hosted WSL runner has no
+      # passwordless sudo, so install a pinned, hash-verified release into the
+      # tool cache instead.
+      - name: Provide PowerShell 7 (self-hosted Linux, pinned, no sudo)
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=7.6.6
+          sha=ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc
+          dest="${RUNNER_TOOL_CACHE}/pwsh/${version}"
+          if [ ! -x "$dest/pwsh" ]; then
+            tmp="$(mktemp -d)"
+            curl -fsSL -o "$tmp/pwsh.tgz" "https://github.com/PowerShell/PowerShell/releases/download/v${version}/powershell-${version}-linux-x64.tar.gz"
+            echo "${sha}  $tmp/pwsh.tgz" | sha256sum -c -
+            mkdir -p "$dest"
+            tar -xzf "$tmp/pwsh.tgz" -C "$dest"
+            chmod +x "$dest/pwsh"
+            rm -rf "$tmp"
+          fi
+          echo "$dest" >> "$GITHUB_PATH"
       - name: Start disposable PostgreSQL (Linux)
-        if: runner.os == 'Linux'
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -94,7 +189,7 @@ jobs:
           echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:55433/director_test?sslmode=disable" >> "$GITHUB_ENV"
           echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$container" >> "$GITHUB_ENV"
       - name: Start disposable PostgreSQL (Windows)
-        if: runner.os == 'Windows'
+        if: runner.environment == 'github-hosted' && runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -120,23 +215,75 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "DIRECTOR_PRIMARY_CI_PGDATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      # AGENTS.md "Postgres-backed unit tests": on the owner's Docker Desktop
+      # host the test database comes ONLY from scripts/windows-postgres-test-lane.ps1
+      # (pinned image, labeled container, refuses ports it does not own). Both
+      # self-hosted runners share that host, so each run gets its own container
+      # name and port. The ports sit below 49152: Windows reserves blocks of its
+      # dynamic range (49152+) for Hyper-V/WSL at boot, and a publish into a
+      # reserved block is refused. The tests use the container's own client
+      # tools through LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER (no sudo, so no
+      # apt-installed postgresql-client). Linux runs the lane under the pinned
+      # pwsh; Windows under Windows PowerShell 5.1, which the lane supports.
+      - name: Start disposable PostgreSQL (self-hosted Linux, test lane)
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $port = 47000 + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-linux"
+          & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$name" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DIRECTOR_CI_PG_LANE=$name|$port" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Start disposable PostgreSQL (self-hosted Windows, test lane)
+        if: runner.environment == 'self-hosted' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $port = 48000 + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-windows"
+          & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$name" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DIRECTOR_CI_PG_LANE=$name|$port" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m pip check
       - run: python -m unittest discover -s tests -v
+        if: runner.environment == 'github-hosted' || runner.os == 'Windows'
         env:
           SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
+      # WSL appends Windows directories to PATH; hosted Ubuntu has none, so
+      # drop them for the test process. The WSL host's `docker` is a shim to
+      # the Windows docker.exe, and WSL forwards to Windows processes only the
+      # environment variables named in WSLENV (/p translates a path). Forward
+      # the ones the compose-rendering test sets, so compose sees them.
+      - name: python -m unittest discover -s tests -v
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+        shell: bash
+        env:
+          SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
+          WSLENV: DIRECTOR_ENV_FILE/p:DIRECTOR_RUNTIME_IMAGE:DIRECTOR_RUNTIME_IMAGE_ID:DIRECTOR_COMPOSE_PROJECT_NAME:DIRECTOR_ASGI_APP:ALLOW_PAID_RUNS:LANGGRAPH_PRIMARY_ENABLED:LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED:LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED:LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED:LANGGRAPH_PARALLEL_KILL_SWITCH
+        run: |
+          PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
+          export PATH
+          python -m unittest discover -s tests -v
       - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
       - run: python -m json.tool docs/oracle-review-artifact.example.json
       - name: Stop disposable PostgreSQL (Linux)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.environment == 'github-hosted' && runner.os == 'Linux'
         shell: bash
         run: |
           if [ -n "${LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER:-}" ]; then
             docker rm --force "$LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER" >/dev/null 2>&1 || true
           fi
       - name: Stop disposable PostgreSQL (Windows)
-        if: always() && runner.os == 'Windows'
+        if: always() && runner.environment == 'github-hosted' && runner.os == 'Windows'
         shell: powershell
         run: |
           if ($env:DIRECTOR_PRIMARY_CI_PGDATA) {
@@ -145,15 +292,41 @@ jobs:
               & $pgCtl.Source -D $env:DIRECTOR_PRIMARY_CI_PGDATA -m fast -w stop
             }
           }
+      - name: Stop disposable PostgreSQL (self-hosted Linux, test lane)
+        if: always() && runner.environment == 'self-hosted' && runner.os == 'Linux'
+        shell: pwsh
+        run: |
+          if ($env:DIRECTOR_CI_PG_LANE) {
+            $name, $port = $env:DIRECTOR_CI_PG_LANE -split '\|', 2
+            & ./scripts/windows-postgres-test-lane.ps1 -Action Stop -ContainerName $name -HostPort ([int]$port)
+          }
+      - name: Stop disposable PostgreSQL (self-hosted Windows, test lane)
+        if: always() && runner.environment == 'self-hosted' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if ($env:DIRECTOR_CI_PG_LANE) {
+            $name, $port = $env:DIRECTOR_CI_PG_LANE -split '\|', 2
+            & ./scripts/windows-postgres-test-lane.ps1 -Action Stop -ContainerName $name -HostPort ([int]$port)
+          }
   # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:15 UTC | END]]
 
   containers:
     name: Compose and container build
-    runs-on: ubuntu-latest
+    # Self-hosted: Docker Compose is reliable on the Windows host, not through
+    # the WSL docker.exe shim.
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Windows","director"]') || 'ubuntu-latest' }}
     env:
       DIRECTOR_ENV_FILE: .env.example
     steps:
       - uses: actions/checkout@v4
+      # The owner's host runs live Director stacks; a per-run project name keeps
+      # the build from retagging any stack's image.
+      - name: Use a per-run compose project (self-hosted)
+        if: runner.environment == 'self-hosted'
+        shell: powershell
+        run: |
+          "DIRECTOR_COMPOSE_PROJECT_NAME=director-ci-$($env:GITHUB_RUN_ID)" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: docker compose --env-file .env.example config --quiet
       - name: Validate isolated Project Uppercut profile
         env:
@@ -166,10 +339,16 @@ jobs:
           DIRECTOR_COMPOSE_PROJECT_NAME: edge-oracle-director-ci
         run: docker compose --env-file .env.edge-oracle.example config --quiet
       - run: docker compose --env-file .env.example build orchestrator
+      - name: Remove the per-run image (self-hosted)
+        if: always() && runner.environment == 'self-hosted'
+        shell: powershell
+        run: |
+          & docker image rm --force "director-ci-$($env:GITHUB_RUN_ID)-orchestrator" 2>$null | Out-Null
+          exit 0
 
   secret-hygiene:
     name: Secret hygiene
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -212,7 +391,7 @@ jobs:
 
   recovery-probe:
     name: Cross-process recovery probe
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     env:
       PYTHONPATH: src
     steps:
@@ -221,6 +400,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Provide job-local Python 3.12 venv (self-hosted)
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv --clear "$RUNNER_TEMP/ci-py312"
+          echo "$RUNNER_TEMP/ci-py312/bin" >> "$GITHUB_PATH"
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Recover persisted work without redispatch
         shell: bash
@@ -235,3 +421,5 @@ jobs:
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[Codex | GPT-5.6 | 2026-08-24 | 11:22 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 11:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 15:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:08 UTC | END]]
