@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -1135,7 +1136,7 @@ def rubric_fixture():
     return rubric, collector_module.digest(collector_module.encode(rubric))
 
 
-def structural_trial():
+def structural_trial(**final):
     rubric, sha = rubric_fixture()
     task, deliveries, messages, headers = sample()
     task["status"] = "DONE"
@@ -1143,6 +1144,7 @@ def structural_trial():
     text = "audit trial rubric-sha256:" + sha
     task["intake"]["text"] = messages[0]["text"] = text
     messages[-1]["text"] += "\nActual USD cost: not recorded"
+    messages[-1].update(final)
     row = collector_module.summarize(THREAD, TASK_ID, task, deliveries, messages, True,
         OWNER, BOT, headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"])
     row.update(input_rubric_sha256=sha, source_errors=[], runtime_collection_binding_stable=True)
@@ -1320,6 +1322,16 @@ class TaskLookupAndRubricTests(unittest.TestCase):
             row["terminal_messages"][0][field] = False
             self.assertFalse(collector_module.evaluate_rubric(row, rubric, sha)["passed"])
 
+    def test_edited_or_subtyped_terminal_reply_fails_the_rubric(self):
+        # Slack keeps the ts of an edited reply but returns its new text: the label may have been added later.
+        rubric, sha = rubric_fixture()
+        for change in ({"edited": {"user": BOT, "ts": "1789999999.000100"}}, {"subtype": "message_changed"}):
+            with self.subTest(change=change):
+                row = structural_trial(**change)
+                self.assertEqual([(m["simulation_label_present"], m["actual_cost_not_recorded_present"])
+                                  for m in row["terminal_messages"]], [(False, False)])
+                self.assertFalse(collector_module.evaluate_rubric(row, rubric, sha)["passed"])
+
     def test_late_rubric_and_missing_original_digest_fail_predeclaration(self):
         rubric, sha = rubric_fixture()
         rubric["declared_at"] = "2099-01-01T00:00:00+00:00"
@@ -1421,3 +1433,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]

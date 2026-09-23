@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | BEGIN]]
@@ -1579,6 +1580,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         wrong = self.world()
         wrong.tasks["DIR-LG-7A02"]["status"] = "FAILED"
         self.assertEqual(wrong.state("10"), "FAIL")
+        # An edited terminal reply keeps its ts but not the text it was posted with.
+        edited = self.world()
+        final = next(m for m in edited.threads[ts(2000)] if m.get("ts") == ts(2030))
+        final["edited"] = {"user": BOT, "ts": ts(2090)}
+        self.assertNotEqual(edited.state("10"), "PASS")
         missing = self.world()
         missing.failing.add(missing.trials[3])
         self.assertEqual(missing.state("10"), "UNKNOWN")
@@ -1962,3 +1968,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]

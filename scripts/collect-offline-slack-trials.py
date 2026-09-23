@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -1044,9 +1045,13 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "projection_digest": headers.get("x-primary-projection-digest"),
         "slack_thread_complete_at_read": complete, "observed_final_message_count": len(finals),
         "terminal_reply_count": len(finals) if complete else None,
+        # Slack keeps an edited message's ts but returns its new text, so an edited or
+        # subtyped terminal reply cannot show the label or cost text it was posted with.
         "terminal_messages": [{"ts": m["ts"], "client_msg_id": m.get("client_msg_id"),
-            "body_sha256": digest(encode(m)), "simulation_label_present": LABEL in raw(m),
-            "actual_cost_not_recorded_present": "Actual USD cost: not recorded" in raw(m)} for m in finals],
+            "body_sha256": digest(encode(m)),
+            "simulation_label_present": unedited(m) and LABEL in raw(m),
+            "actual_cost_not_recorded_present": unedited(m) and "Actual USD cost: not recorded" in raw(m)}
+            for m in finals],
         "final_receipt_matches_native_message": correlated,
         "delivery_receipt_list_complete": rows_bound and len(rows) < 100,
         "delivery_receipts": safe_receipts, "owner_pause_seconds": pause, "machine_seconds": machine,
@@ -1094,6 +1099,11 @@ def load_rubric(path):
     if declared.tzinfo is None:
         raise ValueError("Rubric declaration must have a timezone")
     return value, digest(raw)
+
+
+def unedited(message):
+    """A Slack message as originally posted: no edit metadata and no subtype."""
+    return "edited" not in message and not message.get("subtype")
 
 
 def evaluate_rubric(row, rubric, rubric_digest):
@@ -1272,3 +1282,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]

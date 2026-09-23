@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]] -->
@@ -135,7 +136,9 @@ a container ID, never a name.
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
-  trial to the last.
+  trial to the last. A trial whose terminal reply Slack reports as edited, or
+  with any subtype, shows neither the simulation label nor the cost text, so it
+  is neither offline nor rubric-correct.
 - 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
@@ -517,3 +520,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->

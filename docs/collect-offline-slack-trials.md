@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]] -->
@@ -32,6 +33,8 @@ before trial 2. It requires:
   `SIMULATION — NO PROVIDER INTERACTION`, the label in `primary_default.py`.
 - Every outcome has a 64-hex `provider_result_digest`.
 - Terminal text contains that simulation label and `Actual USD cost: not recorded`.
+  A terminal reply Slack reports as edited, or with any subtype, never counts as
+  containing either: Slack keeps its original timestamp but returns the new text.
 
 The collector accepts only this contract; a file cannot weaken its requirements.
 Compute its **file-byte SHA256** and include
@@ -320,3 +323,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
