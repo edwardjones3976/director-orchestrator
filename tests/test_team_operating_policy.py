@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | BEGIN]]
@@ -584,6 +585,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "acceptance_review",
             "review_handoff",
             "milestone_reporting",
+            "investigator",
         ])
         profiles = self.directive["allocation_profiles"]
         self.assertEqual(profiles["weights"]["engineering"], [40,25,15,10,10,0,0,0])
@@ -2196,3 +2198,4 @@ class AssignmentBoundaryTests(unittest.TestCase):
 # [[Claude Code | Claude Fable 5.1 | 2026-09-20 | 03:40 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
