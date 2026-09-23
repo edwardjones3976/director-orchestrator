@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | BEGIN]]
@@ -1381,6 +1382,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         receipted_5xx.threads[ts(200)].append({"ts": ts(202), "thread_ts": ts(200), "user": BOT,
                                                "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(receipted_5xx.state("03"), "UNKNOWN")
+        edited_refusal = self.world()
+        edited_refusal.threads[ts(100)][1]["edited"] = {"user": BOT, "ts": ts(190)}
+        self.assertEqual(edited_refusal.state("03"), "UNKNOWN")
         unreserved = self.world()
         unreserved.bindings[ts(200)] = (404, None)
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
@@ -1438,6 +1442,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         incomplete = self.world()
         incomplete.failing.add(STATUS_TS)
         self.assertEqual(incomplete.state("04"), "UNKNOWN")
+        edited = self.world()
+        edited.threads[STATUS_TS][0]["edited"] = {"user": BOT, "ts": ts(90)}
+        self.assertEqual(edited.state("04"), "UNKNOWN")
         # The execution started at 09:59:00; a container created after it was not the poster.
         recreated = self.world()
         recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:59:30Z"
@@ -1560,6 +1567,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         unexercised = self.world()
         unexercised.threads[ts(300)].pop()
         self.assertEqual(unexercised.state("09"), "UNKNOWN")
+        duplicated = self.world()
+        duplicated.tasks["DIR-LG-A0"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
+        self.assertEqual(duplicated.state("09"), "FAIL")
+        edited_final = self.world()
+        final = next(m for m in edited_final.threads[ts(400)] if m.get("ts") == ts(430))
+        final["edited"] = {"user": BOT, "ts": ts(490)}
+        self.assertEqual(edited_final.state("09"), "UNKNOWN")
 
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
@@ -1880,7 +1894,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited = self.world()
         final = next(m for m in edited.threads[ts(20000)] if m.get("ts") == ts(20030))
         final["edited"] = {"user": BOT, "ts": ts(20090)}
-        self.assertEqual(edited.state("20"), "FAIL")
+        self.assertEqual(edited.state("20"), "UNKNOWN")
+        edited_receipt = self.world()
+        edited_receipt.threads[ts(20000)][1]["edited"] = {"user": BOT, "ts": ts(20090)}
+        self.assertEqual(edited_receipt.state("20"), "UNKNOWN")
         simulated = self.world()
         simulated.add(task_entry(PAID_TASK, 20000, text=simulated.paid_text))
         self.assertEqual(simulated.state("20"), "FAIL")
@@ -1969,3 +1986,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]

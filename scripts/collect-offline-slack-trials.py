@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
@@ -208,6 +209,15 @@ class Collector:
             return list(messages.values()), False, "replies_incomplete_or_unavailable"
 
 
+def unedited(message):
+    """A Slack message as originally posted: no edit metadata and no subtype.
+
+    Slack keeps an edited message's ts but returns its new text, so every Slack
+    text read as evidence (collector and completion scorecard) goes through this.
+    """
+    return "edited" not in message and not message.get("subtype")
+
+
 def task_from_accepted(thread, messages, complete, bot):
     if not complete:
         raise ValueError("Task lookup requires complete thread readback")
@@ -215,8 +225,11 @@ def task_from_accepted(thread, messages, complete, bot):
     # the retained legacy wording. Either binds a task ID the same way, and any
     # duplicate or mixed-wording match within the thread stays ambiguous.
     pattern = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
-    matches = [match.group(1) for message in messages
-        if message.get("user") == bot and message.get("thread_ts") == thread
+    replies = [message for message in messages if message.get("user") == bot and message.get("thread_ts") == thread]
+    # The bot never edits its replies; an edited one may have gained or lost a receipt.
+    if not all(unedited(message) for message in replies):
+        raise ValueError("Edited or subtyped bot reply in the thread")
+    matches = [match.group(1) for message in replies
         for match in pattern.finditer(html.unescape(str(message.get("text", ""))))]
     if len(matches) != 1:
         raise ValueError("Exactly one native task receipt required")
@@ -1101,11 +1114,6 @@ def load_rubric(path):
     return value, digest(raw)
 
 
-def unedited(message):
-    """A Slack message as originally posted: no edit metadata and no subtype."""
-    return "edited" not in message and not message.get("subtype")
-
-
 def evaluate_rubric(row, rubric, rubric_digest):
     """Recomputable structural checks; a file timestamp is not dispatch proof."""
     messages = row.get("terminal_messages") or []
@@ -1283,3 +1291,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]

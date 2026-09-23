@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | BEGIN]] -->
@@ -124,11 +125,15 @@ a container ID, never a name.
   UNKNOWN without `--channel`, FAIL when the gateway belongs to another Compose
   project, and UNKNOWN when the gateway has no Compose labels.
 - 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
-  `GET /v1/slack-thread-bindings` and the task readback (see below).
+  `GET /v1/slack-thread-bindings` and the task readback (see below). A drill
+  whose thread holds a bot reply Slack reports as edited or with a subtype
+  cannot pass: the bot never edits, so its receipts and `BLOCKED` text are no
+  longer what was posted.
 - 04: the newest saved successful scheduled `Director Status` execution in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
-  started before the running Director container was created is UNKNOWN.
+  started before the running Director container was created is UNKNOWN, and so
+  is a posted message Slack reports as edited or with a subtype.
 - 05, 19: the Director's `/health`.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
@@ -157,7 +162,7 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 | `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, no receipt, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise |
 | `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
 | `duplicate-input` | one owner input, two or more receipts naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
-| `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
+| `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one thread task, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, several thread tasks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
 
 Check 03 combines `refusal-4xx`, `reserved-5xx` and `transport-failure`; check
 09 combines `duplicate-input` and `ambiguous-post`. Any FAIL fails the check,
@@ -241,9 +246,11 @@ non-zero and the dependent checks read UNKNOWN.
 The owner's paid Slack input must carry `rubric-sha256:<sha256 of the file's
 bytes>`, `declared_at` must not follow the input, the task must be `DONE` with
 exactly one final reply, and every substring must appear in that reply. A
-final reply Slack reports as edited, or with any subtype, is graded incorrect:
-Slack keeps its original timestamp, which the wall time uses, but returns the
-new text.
+paid thread with any bot reply Slack reports as edited, or with any subtype,
+is UNKNOWN (the task receipt lookup refuses it), and such a final reply is
+never graded correct: Slack keeps its original timestamp, which the wall time
+uses, but returns the new text. Every Slack text read as evidence goes through
+the collector's one `unedited` rule.
 
 ### Local-replica receipt format
 
@@ -521,3 +528,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | END]] -->

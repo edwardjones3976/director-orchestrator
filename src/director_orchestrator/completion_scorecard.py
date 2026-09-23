@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | BEGIN]]
@@ -527,14 +528,17 @@ class _SlackThreads:
 _RECEIPT = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
 
 
-def _thread_counts(t: _SlackThreads, thread: str, messages: list[dict[str, Any]]) -> tuple[int, list[str], int]:
+def _thread_counts(t: _SlackThreads, thread: str,
+                   messages: list[dict[str, Any]]) -> tuple[int, list[str], int, int]:
     owner_inputs = sum(1 for m in messages if m.get("user") == t.owner and not m.get("bot_id") and not m.get("subtype")
                        and (m.get("ts") == thread or m.get("thread_ts") == thread))
-    bot = [html.unescape(str(m.get("text", ""))) for m in messages
-           if m.get("user") == t.bot and m.get("thread_ts") == thread]
+    replies = [m for m in messages if m.get("user") == t.bot and m.get("thread_ts") == thread]
+    bot = [html.unescape(str(m.get("text", ""))) for m in replies]
     receipts = [match.group(1) for text in bot for match in _RECEIPT.finditer(text)]
     blocked = sum(1 for text in bot if "DIRECTOR — BLOCKED" in text)
-    return owner_inputs, receipts, blocked
+    # The bot never edits its replies: an edited or subtyped one no longer shows what was posted.
+    altered = sum(1 for m in replies if not t.m.unedited(m))
+    return owner_inputs, receipts, blocked, altered
 
 
 def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> dict[str, Any]:
@@ -803,6 +807,9 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             source, facts, at, **binding)
     messages, complete, _ = t.replies(ts)
     posted = [m for m in messages if m.get("ts") == ts]
+    if any(not t.m.unedited(m) for m in posted):
+        return _observation("04", None, "The message at the execution's posted timestamp was edited or has a subtype, "
+                            "so its text is not what the execution posted.", source, facts, at, **binding)
     status = [m for m in posted if m.get("bot_id") and html.unescape(str(m.get("text", ""))).startswith("*STATUS —")]
     if complete and len(posted) == 1 and len(status) == 1:
         return _observation("04", True, "A saved successful scheduled execution's Slack post was read back as the bot's "
@@ -815,10 +822,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
 
 def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
-    owner_inputs, receipts, blocked = _thread_counts(t, thread, messages)
+    owner_inputs, receipts, blocked, altered = _thread_counts(t, thread, messages)
     bound = t.binding(thread)
     status = 404 if bound is None else 409 if bound == "AMBIGUOUS" else 200
     facts: dict[str, Any] = {"owner_inputs": owner_inputs, "blocked": blocked, "receipts": len(receipts),
+                             "altered_bot_replies": altered,
                              "binding_status": status, "thread_tasks": None}
     snapshot = _task_facts(t, thread, bound, (messages, complete, None)) if status == 200 and kind != "refusal-4xx" else None
     readback = (snapshot or {}).get("readback")
@@ -860,13 +868,14 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
         terminal = [r for r in readback["slack_deliveries"] if r.get("notification_key") == "terminal"] if readback else []
         row = terminal[0] if len(terminal) == 1 else {}
         facts.update(terminal_rows=len(terminal), terminal_state=row.get("state"))
-        if (replies or 0) > 1 or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2):
+        if ((replies or 0) > 1 or (tasks is not None and tasks > 1)
+                or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
             verdict = False
-        elif (status == 200 and row.get("state") == "DELIVERED" and row.get("acknowledged_at") is None
+        elif (status == 200 and tasks == 1 and row.get("state") == "DELIVERED" and row.get("acknowledged_at") is None
               and row.get("delivered_at") and row.get("slack_ts") and replies == 1
               and snapshot["row"].get("final_receipt_matches_native_message") is True):
             verdict = True
-    if verdict is True and not current:
+    if verdict is True and (not current or altered):
         verdict = None
     facts["verdict"] = verdict
     return verdict, facts
@@ -1102,7 +1111,10 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
 def _paid_facts(t: _SlackThreads, thread: str) -> dict[str, Any]:
     replies = t.replies(thread)
     task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
-    return _task_facts(t, thread, task_id, replies)
+    facts = _task_facts(t, thread, task_id, replies)
+    finals = {m.get("ts") for m in facts["row"].get("terminal_messages") or []}
+    facts["finals_unedited"] = all(t.m.unedited(m) for m in replies[0] if m.get("ts") in finals)
+    return facts
 
 
 def _load_paid_rubric(path: Path) -> tuple[dict[str, Any], str]:
@@ -1134,7 +1146,7 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
         return False
     final = [m for m in paid["messages"] if m.get("ts") == finals[0]["ts"]]
     # Slack keeps an edited message's ts but returns its new text: grade only the unedited reply.
-    if len(final) != 1 or "edited" in final[0] or final[0].get("subtype"):
+    if len(final) != 1 or paid.get("finals_unedited") is not True:
         return False
     text = html.unescape(str(final[0].get("text", "")))
     return all(item in text for item in rubric["expected_answer_substrings"])
@@ -1945,3 +1957,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
