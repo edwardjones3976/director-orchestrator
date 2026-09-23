@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | BEGIN]]
 """In-image read-only scorecard evidence: capture attestations and consistency."""
 from __future__ import annotations
@@ -58,15 +59,34 @@ def advance(store, provider_binding, surface, through=ProviderActivationStage.LI
 
 class ScorecardEvidenceUnitTests(unittest.TestCase):
     def test_capture_product_names_only_real_products(self):
-        cases = (("openai", b'{"object":"response","id":"resp_1"}', "openai-responses"),
+        codex = (b'{"type":"thread.started","thread_id":"t-1"}\n{"type":"turn.started"}\n'
+                 b'{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}\n{"type":"turn.completed"}')
+        cases = (("openai", b'{"object":"response","id":"resp_1","model":"gpt-5.6"}', "openai-responses"),
+                 ("openai", b'{"object":"response","id":"resp_1","model":"o4-mini"}', "openai-responses"),
+                 # Substitutions: another vendor's model, or no model, on the OpenAI Responses route.
+                 ("openai", b'{"object":"response","id":"resp_1","model":"grok-4"}', None),
+                 ("openai", b'{"object":"response","id":"resp_1"}', None),
+                 ("openai", codex, "openai-codex"),
                  ("openai", b'{"type":"thread.started"}\n{"type":"turn.completed"}', "openai-codex"),
-                 ("openai", b'{"type":"message"}', "openai-codex"),
+                 ("openai", b'{"type":"thread.started"}\n{"type":"message"}\n{"type":"turn.completed"}', None),
+                 ("openai", b'{"type":"turn.completed"}', None),
+                 ("openai", b'{"type":"message"}', None),
+                 ("openai", b'{"type":"result","result":"ok"}', None),
                  ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-responses"),
-                 ("grok", b'{"object":"response","model":"gpt-5"}', "xai-grok-cli"),
-                 ("grok", b'{"result":"done"}', "xai-grok-cli"),
+                 ("grok", b'{"object":"response","model":"gpt-5"}', None),
+                 ("grok", b'{"object":"response"}', None),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"sessionId":"s-1"}', "xai-grok-cli"),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"xai/grok-4"}', "xai-grok-cli"),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"gpt-5"}', None),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":"1"}', None),
+                 ("grok", b'{"result":"done"}', None),
+                 ("grok", b'{"type":"result","subtype":"success"}', None),
                  ("grok", b'[1, 2]', None),
                  ("grok", b'not json', None),
                  ("claude", b'{"type":"result","result":"ok"}', "anthropic-claude"),
+                 ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}', "anthropic-claude"),
+                 ("claude", b'{"type":"result","modelUsage":{"gpt-5":{}}}', None),
+                 ("claude", b'{"type":"result","modelUsage":{}}', None),
                  ("claude", b'{"type":"assistant"}', None),
                  ("claude", b'{"type":"result"}\n{"type":"result"}', None),
                  ("cursor", b'{"type":"result"}', None))
@@ -94,6 +114,7 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
             self.assertEqual(surface["stage"], "LIVE_OK")
             self.assertTrue(surface["capture_verified"])
             self.assertEqual(surface["expires_at"], (NOW + timedelta(hours=1)).isoformat())
+            self.assertEqual(surface["observed_at"], (NOW + timedelta(seconds=len(ProviderActivationStage))).isoformat())
             self.assertEqual(len(surface["evidence_digest"]), 64)
         self.assertFalse(lanes["claude"]["surfaces"]["app"]["capture_verified"])
         self.assertIsNone(lanes["claude"]["surfaces"]["runtime_adapter"])
@@ -262,6 +283,70 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.assertEqual(conflicted["projection_batch_digest_conflicts"], 1)
         self.assertEqual(conflicted["batches_pending_projection_binding"], 0)
 
+    def plan(self, task_id, terminal, assignments):
+        """A batch bound to the projection, its assignments, and the projection's terminal classification."""
+        digest = "sha256:" + "3" * 64
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_parallel_batch"
+                "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
+                " VALUES (%s, %s, 'default-director-owner', 1, 4)", (task_id, digest))
+            for sequence, (assignment_id, status, dependencies) in enumerate(assignments, 1):
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"
+                    " provider_id, deployment_id, dependencies, write_surfaces, retry_limit, status)"
+                    " VALUES (%s, %s, %s, 'claude', 'fixture', %s::jsonb, '[]'::jsonb, 3, %s)",
+                    (task_id, assignment_id, sequence, json.dumps(dependencies), status))
+            self.classify(connection, task_id, terminal, digest)
+
+    def classify(self, connection, task_id, terminal, digest=None):
+        projection = "jsonb_set(projection, '{terminal_classification}', to_jsonb(%s::text))"
+        values = [terminal]
+        if digest is not None:
+            projection = f"jsonb_set({projection}, '{{parallel_plan_digest}}', to_jsonb(%s::text))"
+            values.append(digest)
+        connection.execute(
+            f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+            f" projection = {projection} WHERE task_id = %s", (*values, task_id))
+
+    def test_blocked_dependents_and_owner_holds_are_not_open_terminal_work(self):
+        task_id = self.intake()
+        # A failed prerequisite leaves its dependency chain PENDING in storage; the aggregator projects it BLOCKED.
+        self.plan(task_id, "FAILED", [("a1", "FAILED", []), ("a2", "PENDING", ["a1"]), ("a3", "PENDING", ["a2"]),
+                                      ("a4", "PENDING", [])])
+        counts = self.report()["counts"]
+        # Only a4, which nothing blocks, is open work on a terminal task.
+        self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (1, 0))
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"DELETE FROM {self.schema}.director_primary_parallel_assignment"
+                               " WHERE task_id = %s AND assignment_id = 'a4'", (task_id,))
+        self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
+        # OWNER_DECISION_REQUIRED is a resumable approval hold: in flight, never terminal residue.
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, task_id, "OWNER_DECISION_REQUIRED")
+        counts = self.report()["counts"]
+        self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (0, 2))
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, task_id, "DONE")
+        self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
+
+    def test_approval_command_receipts_leave_only_a_command_digest(self):
+        task_id = self.intake()
+        with self.handle.pool.connection() as connection:
+            for operation, command in (("approval_resume", "owner-command-1"), ("cancel", "owner-command-2")):
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_command_receipt(task_id, operation, command_id,"
+                    " command_digest, resulting_projection_digest, resulting_projection_version,"
+                    " writer_fencing_generation) VALUES (%s, %s, %s, %s, %s, 2, 1)",
+                    (task_id, operation, command, "sha256:" + "6" * 64, "sha256:" + "7" * 64))
+        receipts = self.report(tasks=[task_id])["tasks"][task_id]["approval_receipts"]
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["command_id_sha256"], hashlib.sha256(b"owner-command-1").hexdigest())
+        self.assertEqual((receipts[0]["command_digest"], receipts[0]["resulting_projection_digest"]),
+                         ("sha256:" + "6" * 64, "sha256:" + "7" * 64))
+        self.assertNotIn("owner-command-1", json.dumps(receipts))
+        datetime.fromisoformat(receipts[0]["recorded_at"])
+
     def test_task_settlement_rows(self):
         task_id = self.intake()
         budget = {"task_id": task_id, "project_id": "fixture-project", "day": "2026-09-12",
@@ -282,7 +367,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 " observed_tokens) VALUES (%s, %s::jsonb, 300000, 100)",
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
-        self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": []})
+        self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
+                                             "approval_receipts": []})
         rows = {row["attempt_digest"]: row for row in entry[task_id]["spend"]}
         self.assertEqual(len(rows), 2)
         self.assertEqual((rows["sha256:" + "a" * 64]["actual_microusd"], rows["sha256:" + "a" * 64]["request_correlated"]),
@@ -299,3 +385,4 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | END]]

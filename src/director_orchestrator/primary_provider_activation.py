@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-05 | 22:57 UTC | BEGIN]]
@@ -204,6 +205,7 @@ class PrimaryProviderActivationService:
                 surfaces[surface.value] = {
                     "stage": latest.stage.value,
                     "evidence_digest": latest.evidence_digest,
+                    "observed_at": latest.observed_at.isoformat(),
                     "expires_at": latest.expires_at.isoformat(),
                     "capture_verified": latest.stage is ProviderActivationStage.LIVE_OK
                     and self._capture_verifier is not None
@@ -221,3 +223,4 @@ class PrimaryProviderActivationService:
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]

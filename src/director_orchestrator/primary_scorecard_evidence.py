@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 """Read-only, generation-bound evidence reports for the completion scorecard.
 
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import json
 import os
+import re
 import time
 from types import SimpleNamespace
 
@@ -24,9 +26,22 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "projection_batch_digest_conflicts", "projections_ahead_of_fence", "open_effect_reservations",
                "active_assignments", "live_writer_claims", "batches_pending_projection_binding")
 
-_COUNTS = """WITH a AS (SELECT fencing_generation FROM {s}.director_primary_intake_authority WHERE singleton),
+# A task is settled when terminal and not OWNER_DECISION_REQUIRED, which is a
+# resumable approval hold and counts as in flight. A PENDING assignment behind a
+# FAILED or owner-held prerequisite is the aggregator's BLOCKED projection
+# (primary_parallel), stored as PENDING; it is not an open assignment.
+_COUNTS = """WITH RECURSIVE a AS (SELECT fencing_generation FROM {s}.director_primary_intake_authority WHERE singleton),
  p AS (SELECT task_id, intake_fencing_generation, projection->>'terminal_classification' tc,
-              projection->>'parallel_plan_digest' pd FROM {s}.director_primary_task_projection)
+              coalesce(projection->>'terminal_classification' <> 'OWNER_DECISION_REQUIRED', false) settled,
+              projection->>'parallel_plan_digest' pd FROM {s}.director_primary_task_projection),
+ blocked(task_id, assignment_id) AS (
+   SELECT x.task_id, x.assignment_id FROM {s}.director_primary_parallel_assignment x
+     JOIN {s}.director_primary_parallel_assignment d ON d.task_id=x.task_id AND x.dependencies ? d.assignment_id
+     WHERE x.status='PENDING' AND d.status IN ('FAILED','OWNER_DECISION_REQUIRED')
+   UNION
+   SELECT x.task_id, x.assignment_id FROM {s}.director_primary_parallel_assignment x
+     JOIN blocked b ON b.task_id=x.task_id AND x.dependencies ? b.assignment_id
+     WHERE x.status='PENDING')
 SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencing_generation,
  (SELECT count(*) FROM p) AS graph_task_count,
  (SELECT count(DISTINCT r.claim_key) FROM {s}.director_primary_reconciliation_event r
@@ -34,18 +49,19 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM {s}.director_primary_parallel_assignment WHERE status='AMBIGUOUS') AS ambiguous_assignments,
  (SELECT count(*) FROM p WHERE tc='RECONCILIATION_REQUIRED') AS tasks_requiring_reconciliation,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
-    WHERE p.tc IS NOT NULL AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS')) AS terminal_tasks_open_assignments,
+    WHERE p.settled AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS') AND NOT EXISTS
+      (SELECT 1 FROM blocked b WHERE b.task_id=x.task_id AND b.assignment_id=x.assignment_id)) AS terminal_tasks_open_assignments,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
-    WHERE t.claim_key IS NULL AND p.tc IS NOT NULL) AS terminal_tasks_open_effects,
+    WHERE t.claim_key IS NULL AND p.settled) AS terminal_tasks_open_effects,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NOT NULL AND p.pd<>b.plan_digest) AS projection_batch_digest_conflicts,
  (SELECT count(*) FROM p WHERE p.intake_fencing_generation>(SELECT fencing_generation FROM a)) AS projections_ahead_of_fence,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
-    WHERE t.claim_key IS NULL AND p.tc IS NULL) AS open_effect_reservations,
+    WHERE t.claim_key IS NULL AND NOT p.settled) AS open_effect_reservations,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
-    WHERE p.tc IS NULL AND x.status IN ('PENDING','ACTIVE')) AS active_assignments,
+    WHERE NOT p.settled AND x.status IN ('PENDING','ACTIVE')) AS active_assignments,
  (SELECT count(*) FROM {s}.director_primary_task_writer WHERE lease_expires_at>now()) AS live_writer_claims,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NULL) AS batches_pending_projection_binding"""
@@ -64,6 +80,11 @@ _BUDGETS = """SELECT b.document->>'task_id' AS task_id, b.document->>'project_id
     FROM {s}.director_primary_provider_spend s2 LEFT JOIN {s}.director_primary_provider_usage u2 USING (attempt_digest)
     WHERE s2.project_id=b.document->>'project_id' AND s2.budget_day::text=b.document->>'day') AS day_held_microusd
 FROM {s}.director_primary_provider_budget b WHERE b.document->>'task_id' = ANY(%(tasks)s) LIMIT 100"""
+
+# Check 08 re-reads the approval command receipts; the command ID leaves only as a digest.
+_RECEIPTS = """SELECT task_id, encode(sha256(convert_to(command_id,'UTF8')),'hex') AS command_id_sha256,
+ command_digest, resulting_projection_digest, recorded_at FROM {s}.director_primary_command_receipt
+WHERE task_id = ANY(%(tasks)s) AND operation='approval_resume' ORDER BY task_id, recorded_at LIMIT 100"""
 
 
 def _plain(value):
@@ -114,10 +135,13 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 if usage_tables:
                     spend = [_row(r) for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall()]
                     budgets = [_row(r) for r in connection.execute(_BUDGETS.format(s=schema), {"tasks": tasks}).fetchall()]
+                receipts = [_row(r) for r in connection.execute(_RECEIPTS.format(s=schema), {"tasks": tasks}).fetchall()]
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables,
                                          "spend": [r for r in spend if r["task_id"] == task_id],
-                                         "budgets": [r for r in budgets if r["task_id"] == task_id]}
+                                         "budgets": [r for r in budgets if r["task_id"] == task_id],
+                                         "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
+                                                               for r in receipts if r["task_id"] == task_id]}
     finally:
         connection.close()
     return {"version": "director-primary-consistency/v1",
@@ -131,20 +155,50 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
             "tasks": per_task}
 
 
+_OPENAI_MODEL = re.compile(r"(?:gpt-|o[0-9]|codex|chatgpt-)")
+_CODEX_EVENTS = frozenset({"thread.started", "turn.started", "item.started", "item.updated", "item.completed",
+                           "turn.completed"})
+
+
+def _codex_stream(output: bytes) -> bool:
+    """A native Codex CLI JSONL turn: only its event types, from thread.started to turn.completed."""
+    try:
+        events = [json.loads(line) for line in output.splitlines() if line.strip()]
+    except ValueError:
+        return False
+    return (bool(events) and all(isinstance(event, dict) and event.get("type") in _CODEX_EVENTS for event in events)
+            and events[0]["type"] == "thread.started" and events[-1]["type"] == "turn.completed")
+
+
 def _capture_product(provider, output: bytes):
-    """Name the real product that produced a verified native capture, or None."""
+    """Name the real product that produced a verified native capture, or None.
+
+    The product comes from the capture's own dialect and model, never from the
+    lane name: a Responses envelope naming another vendor's model is a
+    substitution, and None is what check 11 counts as one.
+    """
     try:
         native = json.loads(output)
     except ValueError:
         native = None  # Codex CLI output is JSONL, not one document.
+    envelope = native if isinstance(native, dict) else {}
+    model = envelope.get("model")
     if provider == "openai":
-        return "openai-responses" if isinstance(native, dict) and native.get("object") == "response" else "openai-codex"
+        if envelope.get("object") == "response":
+            return "openai-responses" if isinstance(model, str) and _OPENAI_MODEL.match(model) else None
+        return "openai-codex" if _codex_stream(output) else None
     if provider == "grok":
-        if isinstance(native, dict) and native.get("object") == "response" and str(native.get("model")).startswith("grok"):
-            return "xai-grok-responses"
-        return "xai-grok-cli" if isinstance(native, dict) else None
+        if envelope.get("object") == "response":
+            return "xai-grok-responses" if isinstance(model, str) and model.startswith("grok") else None
+        # The grok CLI dialect grok_terminal_success accepts: stopReason and an integer num_turns.
+        cli = "stopReason" in envelope and type(envelope.get("num_turns")) is int
+        return "xai-grok-cli" if cli and (model is None or "grok" in str(model).lower()) else None
     if provider == "claude":
-        return "anthropic-claude" if isinstance(native, dict) and native.get("type") == "result" else None
+        usage = envelope.get("modelUsage")
+        if envelope.get("type") != "result" or (usage is not None and (
+                not isinstance(usage, dict) or not usage or any(not str(key).startswith("claude") for key in usage))):
+            return None
+        return "anthropic-claude"
     return None
 
 
@@ -182,3 +236,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes}
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
@@ -23,6 +24,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -159,13 +161,20 @@ def consistency_fixture():
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture()},
             "captured_at": "2026-09-12T09:59:59+00:00", "intake_fencing_generation": 83, "counts": counts,
-            "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget]},
-                      APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": []}}}
+            "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
+                                  "approval_receipts": []},
+                      APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
+                                      "approval_receipts": [approval_receipt()]}}}
+
+
+def approval_receipt(recorded_at=None):
+    return {"command_id_sha256": hashlib.sha256(b"owner-command-1").hexdigest(), "command_digest": "sha256:" + "6" * 64,
+            "resulting_projection_digest": "sha256:" + "7" * 64, "recorded_at": recorded_at or iso(1789210000 + 30010)}
 
 
 def captures_fixture():
-    surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "expires_at": "2026-09-12T12:00:00+00:00",
-               "capture_verified": True}
+    surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
+               "expires_at": "2026-09-12T12:00:00+00:00", "capture_verified": True}
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
             "observed_at": "2026-09-12T09:59:59+00:00",
@@ -248,12 +257,14 @@ class World:
         self.failing, self.slack_down = set(), False
         self.threads[STATUS_TS] = [{"ts": STATUS_TS, "user": BOT, "bot_id": "BBOT123",
                                     "text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}]
-        for offset in (100, 200):
+        self.history_extra = []
+        for offset in (100, 150, 200):
             self.threads[ts(offset)] = [
                 {"ts": ts(offset), "user": OWNER, "client_msg_id": f"drill-{offset}", "text": f"<@{BOT}> drill"},
                 {"ts": ts(offset + 1), "thread_ts": ts(offset), "user": BOT,
                  "text": "*DIRECTOR — BLOCKED*\nThe Director did not accept the request."}]
         self.bindings[ts(100)] = (404, None)
+        self.bindings[ts(150)] = (404, None)
         self.add(task_entry("DIR-LG-5E", 200), thread=False)
         self.bindings[ts(200)] = (200, "DIR-LG-5E")
         duplicate = self.add(task_entry("DIR-LG-D0", 300))
@@ -329,9 +340,16 @@ class World:
                 raise AssertionError("Slack read used the wrong credential")
             if url.path == "/api/auth.test":
                 return httpx.Response(200, json={"ok": True, "user_id": BOT, "bot_id": "BBOT123"})
-            thread = url.params["ts"]
             if url.params["channel"] != CHANNEL_FIXTURE:
                 raise AssertionError("another channel was read")
+            if url.path == "/api/conversations.history":
+                if "history" in self.failing:
+                    raise httpx.ConnectError("fixture transport failure", request=request)
+                low, high = Decimal(url.params["oldest"]), Decimal(url.params["latest"])
+                top = [message for key, messages in self.threads.items() for message in messages if message["ts"] == key]
+                return httpx.Response(200, json={"ok": True, "has_more": False, "messages": [
+                    message for message in top + self.history_extra if low <= Decimal(message["ts"]) <= high]})
+            thread = url.params["ts"]
             if thread in self.failing:
                 raise httpx.ConnectError("fixture transport failure", request=request)
             if thread not in self.threads:
@@ -364,7 +382,7 @@ class World:
         if not only_deployment:
             selected.update(channel=CHANNEL_FIXTURE, approval_task=APPROVAL_TASK, trials=list(self.trials),
                             rubric_path=self.rubric_path, paid_thread=ts(20000), paid_rubric_path=self.paid_rubric_path,
-                            drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200),
+                            drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200), "transport-failure": ts(150),
                                            "duplicate-input": ts(300), "ambiguous-post": ts(400)})
         selected.update(options)
         response = Mock()
@@ -517,15 +535,19 @@ def ledger_fixture(path, first_bounds=None):
     return ledger
 
 
-def gh_runs(jobs_by_run):
+def gh_runs(jobs_by_run, paths=None, compare=None):
+    """Runs come newest first; every run is ci.yml unless ``paths`` names another workflow."""
     def query(args, timeout=15):
         if args[0] != "gh":
             raise ValueError("offline")
+        if "/compare/" in args[2]:
+            return {"status": (compare or {}).get(args[2].split("/compare/")[1], "ahead")}
         if "/jobs?" in args[-1]:
             return {"jobs": jobs_by_run[int(args[-1].split("/runs/")[1].split("/")[0])]}
         if "head_sha=" + SHA not in args[-1]:
             raise AssertionError("CI query is not bound to the exact head")
-        return {"workflow_runs": [{"id": run_id} for run_id in jobs_by_run]}
+        return {"workflow_runs": [{"id": run_id, "path": (paths or {}).get(run_id, sc.CI_WORKFLOW)}
+                                  for run_id in jobs_by_run]}
     return query
 
 
@@ -534,10 +556,10 @@ def ci_jobs(steps=True, failed=()):
              "steps": [{"name": "run"}] if steps else []} for name in sc.CI_JOBS]
 
 
-def replica_receipt(key, candidate=SHA, head_failures=("tests.test_fixture.T.test_known",)):
+def replica_receipt(key, candidate=SHA, head_failures=("tests.test_fixture.T.test_known",), head_tests_run=3000):
     document = {"schema": "director-ci-local-replica/v1", "repository": sc.REPOSITORY, "candidate_sha": candidate,
                 "base_sha": OTHER, "produced_at": (NOW - timedelta(hours=1)).isoformat(),
-                "lanes": [{"lane": lane, "head_tests_run": 3000, "base_tests_run": 2990,
+                "lanes": [{"lane": lane, "head_tests_run": head_tests_run, "base_tests_run": 2990,
                            "head_failures": list(head_failures), "base_failures": ["tests.test_fixture.T.test_known"],
                            "command_sha256": "f" * 64} for lane in ("windows-postgres-lane", "ubuntu-replica")]}
     signed = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode()
@@ -1064,7 +1086,7 @@ class CompletionScorecardTests(unittest.TestCase):
             if "/jobs?" in args[-1]:
                 return {"jobs": jobs}
             self.assertIn("head_sha=" + SHA, args[-1])
-            return {"workflow_runs": [{"id": 123}]}
+            return {"workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
         with patch.object(sc, "_run_json", side_effect=external_query):
             observations = sc.collect(SHA, now=NOW, github=True)
             self.assertEqual(sc.score(SHA, observations, now=NOW)["checks"][15]["status"], "PASS")
@@ -1076,7 +1098,7 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
-            return {"jobs": []} if "/jobs?" in args[-1] else {"workflow_runs": [{"id": 1}]}
+            return {"jobs": []} if "/jobs?" in args[-1] else {"workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]}
         with patch.object(sc, "_run_json", side_effect=external_query):
             self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
 
@@ -1354,6 +1376,20 @@ class ScorecardCollectorTests(unittest.TestCase):
         unreserved = self.world()
         unreserved.bindings[ts(200)] = (404, None)
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
+        # The transport failure is its own path: a reserved task (200, one task) passes, a conflict fails.
+        reserved_transport = self.world()
+        reserved_transport.bindings[ts(150)] = (200, "DIR-LG-5E")
+        self.assertEqual(reserved_transport.state("03"), "PASS")
+        conflicting_transport = self.world()
+        conflicting_transport.bindings[ts(150)] = (409, None)
+        self.assertEqual(conflicting_transport.state("03"), "FAIL")
+        answered = self.world()
+        answered.threads[ts(150)].append({"ts": ts(152), "thread_ts": ts(150), "user": BOT,
+                                          "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
+        self.assertEqual(answered.state("03"), "UNKNOWN")
+        report = self.world().report(drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200)})
+        self.assertEqual(row(report, "03")["status"], "UNKNOWN")
+        self.assertIn("transport-failure", row(report, "03")["explanation"])
         report = self.world().report(drill_threads={"refusal-4xx": ts(100)})
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("reserved-5xx", row(report, "03")["explanation"])
@@ -1420,6 +1456,19 @@ class ScorecardCollectorTests(unittest.TestCase):
         unscoped = self.world()
         unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
         self.assertEqual(unscoped.state("08"), "UNKNOWN")
+        # The decision must match a control-plane approval_resume receipt, re-read, not only the delivery row.
+        unreceipted = self.world()
+        unreceipted.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = []
+        self.assertEqual(unreceipted.state("08"), "UNKNOWN")
+        retimed = self.world()
+        retimed.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = [approval_receipt(iso(1789210000 + 30011))]
+        self.assertEqual(retimed.state("08"), "UNKNOWN")
+        other_command = self.world()
+        other_command.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["command_id_sha256"] = "0" * 64
+        self.assertEqual(other_command.state("08"), "UNKNOWN")
+        no_snapshot = self.world()
+        no_snapshot.consistency = None
+        self.assertEqual([row(no_snapshot.report(), key)["status"] for key in ("06", "08")], ["PASS", "UNKNOWN"])
         late_start = self.world()
         late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T10:30:00Z"
         self.assertEqual(late_start.state("06"), "UNKNOWN")
@@ -1495,6 +1544,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         missing = self.world()
         missing.failing.add(missing.trials[3])
         self.assertEqual(missing.state("10"), "UNKNOWN")
+        # Ten passing threads are not enough: they must be consecutive owner posts.
+        skipped = self.world()
+        skipped.history_extra.append({"ts": ts(1500), "user": OWNER, "text": "DIRECTOR another trial"})
+        report = skipped.report()
+        self.assertEqual(row(report, "10")["status"], "UNKNOWN")
+        self.assertIn("consecutive", row(report, "10")["explanation"])
+        shared_file = self.world()
+        shared_file.history_extra.append({"ts": ts(1500), "user": OWNER, "subtype": "file_share", "text": "DIRECTOR x"})
+        self.assertEqual(shared_file.state("10"), "UNKNOWN")
+        chatter_from_bot = self.world()
+        chatter_from_bot.history_extra.append({"ts": ts(1500), "user": BOT, "bot_id": "BBOT123", "text": "status"})
+        self.assertEqual(chatter_from_bot.state("10"), "PASS")
+        no_history = self.world()
+        no_history.failing.add("history")
+        self.assertEqual(no_history.state("10"), "UNKNOWN")
 
     def test_real_products_11(self):
         self.assertEqual(self.world().state("11"), "PASS")
@@ -1506,6 +1570,34 @@ class ScorecardCollectorTests(unittest.TestCase):
                 case.captures["lanes"][lane]["product"] = product
             with self.subTest(lane=lane):
                 self.assertEqual(case.state("11"), "FAIL")
+        def openai_lane(product, transport):
+            case = self.world()
+            readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
+            case.tasks[PAID_TASK]["qualification_evidence"] = json.loads(
+                readback.replace('"claude"', '"openai"').replace('"native-command"', f'"{transport}"'))
+            case.captures["lanes"]["openai"]["product"] = product
+            return case.state("11")
+        # The OpenAI capture must be the product the attempts' transport actually used.
+        self.assertEqual(openai_lane("openai-codex", "native-command"), "PASS")
+        self.assertEqual(openai_lane("openai-responses", "native-command"), "FAIL")
+        self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
+        self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
+        # Captures must be the ones that gated the paid attempts, under the running bindings.
+        minted_later = self.world()
+        minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = "2026-09-12T10:00:10+00:00"
+        self.assertEqual(minted_later.state("11"), "UNKNOWN")
+        expired_during = self.world()
+        expired_during.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["expires_at"] = "2026-09-12T10:00:20+00:00"
+        self.assertEqual(expired_during.state("11"), "UNKNOWN")
+        undated = self.world()
+        del undated.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"]
+        self.assertEqual(undated.state("11"), "UNKNOWN")
+        recreated = self.world()
+        recreated.rows[0]["Created"] = "2026-09-12T10:30:00Z"
+        self.assertEqual(recreated.state("11"), "UNKNOWN")
+        rebound = self.world()
+        rebound.captures["provider_bindings_sha256"] = "0" * 64
+        self.assertEqual(rebound.state("11"), "UNKNOWN")
         report = self.world().report(paid_thread=None, paid_rubric_path=None)
         self.assertEqual(row(report, "11")["status"], "UNKNOWN")
         unavailable = self.world()
@@ -1583,13 +1675,24 @@ class ScorecardCollectorTests(unittest.TestCase):
         unmonitored = self.world()
         del unmonitored.payload["usage_monitor"]
         self.assertEqual(unmonitored.state("15"), "UNKNOWN")
+        # reported_cost_usd sums known costs only: attempts with unknown, unreserved cost are not zero.
+        unpriced = self.world()
+        unpriced.payload["usage_monitor"]["daily_accounting"]["grok"].update(
+            request_count=3, cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None)
+        report = unpriced.report()
+        self.assertEqual(row(report, "15")["status"], "UNKNOWN")
+        self.assertIn("grok", row(report, "15")["explanation"])
+        idle = self.world()
+        idle.payload["usage_monitor"]["daily_accounting"]["grok"].update(
+            request_count=0, cost_visibility_complete=False, reported_cost_usd=0.0, reserved_cost_usd=None)
+        self.assertEqual(idle.state("15"), "PASS")
         self.assertEqual(self.world().state("15", paid_thread=None, paid_rubric_path=None), "UNKNOWN")
         unavailable = self.world()
         unavailable.consistency = None
         self.assertEqual(unavailable.state("15"), "UNKNOWN")
 
-    def ci_report(self, jobs_by_run, **options):
-        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run)):
+    def ci_report(self, jobs_by_run, paths=None, **options):
+        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths)):
             return sc.score(SHA, sc.collect(SHA, now=NOW, github=True, **options), now=NOW)
 
     def test_ci_self_hosted_16(self):
@@ -1609,6 +1712,13 @@ class ScorecardCollectorTests(unittest.TestCase):
                                         ci_replica_receipt=receipt)
         self.assertEqual(row(failed, "16")["status"], "FAIL")
         self.assertEqual(row(self.ci_report({1: ci_jobs(steps=False)}), "16")["status"], "FAIL")
+        # A same-named executed job of another workflow never stands in for a stubbed ci.yml job.
+        impostor = self.ci_report({2: ci_jobs(steps=False), 1: ci_jobs()}, paths={1: ".github/workflows/pr-added.yml"})
+        self.assertEqual(row(impostor, "16")["status"], "FAIL")
+        self.assertNotIn("Secret hygiene", row(impostor, "16")["evidence"][0]["facts"]["jobs"])
+        failing_other = self.ci_report({2: ci_jobs(), 1: ci_jobs(failed=("Secret hygiene",))},
+                                       paths={1: ".github/workflows/recovery-soak.yml"})
+        self.assertEqual(row(failing_other, "16")["status"], "FAIL")
         with patch.object(sc, "_run_json", side_effect=ValueError("gh unavailable")):
             report = sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)
         self.assertEqual(row(report, "16")["status"], "UNKNOWN")
@@ -1620,11 +1730,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             public = Path(folder) / "signer.pub"
             public.write_text(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex() + "\n", encoding="ascii")
-            def verdict(document, key_path=public):
+            def verdict(document, key_path=public, compare=None):
                 receipt = Path(folder) / "receipt.json"
                 receipt.write_text(json.dumps(document))
                 with patch.object(sc, "CI_REPLICA_KEY", key_path), \
-                        patch.object(sc, "_run_json", side_effect=gh_runs({1: ci_jobs(steps=False)})):
+                        patch.object(sc, "_run_json", side_effect=gh_runs({1: ci_jobs(steps=False)}, compare=compare)):
                     observed = sc.collect(SHA, now=NOW, github=True, ci_replica_receipt=receipt)
                 return row(sc.score(SHA, observed, now=NOW), "16")
             passed = verdict(replica_receipt(key))
@@ -1648,6 +1758,23 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertEqual(verdict(resign(key, future))["status"], "UNKNOWN")
             self.assertEqual(verdict(replica_receipt(key), key_path=Path(folder) / "missing.pub")["status"], "UNKNOWN")
             self.assertEqual(verdict(replica_receipt(key, candidate=OTHER))["status"], "UNKNOWN")
+            self.assertEqual(verdict(replica_receipt(key, head_tests_run=12))["status"], "UNKNOWN")
+            for status in ({f"{OTHER}...{SHA}": "diverged"}, {f"{OTHER}...{SHA}": "identical"},
+                           {f"{OTHER}...main": "diverged"}):
+                with self.subTest(status=status):
+                    self.assertEqual(verdict(replica_receipt(key), compare=status)["status"], "UNKNOWN")
+            # Some required jobs executed: the receipt cannot cover the ones that did not.
+            receipt = Path(folder) / "partial.json"
+            receipt.write_text(json.dumps(replica_receipt(key)))
+            partial = [dict(job, steps=[]) if index % 2 else job for index, job in enumerate(ci_jobs())]
+            with patch.object(sc, "CI_REPLICA_KEY", public):
+                report = self.ci_report({1: partial}, ci_replica_receipt=receipt)
+            self.assertEqual(row(report, "16")["status"], "FAIL")
+            # Another workflow's executed same-named jobs are not executed ci.yml jobs: the receipt applies.
+            with patch.object(sc, "CI_REPLICA_KEY", public):
+                report = self.ci_report({2: ci_jobs(steps=False), 1: ci_jobs()}, paths={1: ".github/workflows/pr-added.yml"},
+                                        ci_replica_receipt=receipt)
+            self.assertEqual(row(report, "16")["status"], "PASS")
 
     def test_adopted_acceptance_17(self):
         self.assertEqual(self.world().state("17"), "PASS")
@@ -1766,3 +1893,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | END]]

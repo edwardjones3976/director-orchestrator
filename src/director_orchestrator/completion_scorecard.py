@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]]
@@ -54,7 +55,7 @@ _CHANNEL = re.compile(r"C[A-Z0-9]{8,20}")
 _TASK = re.compile(r"DIR-LG-[A-F0-9]{1,32}")
 _TS = re.compile(r"\d{10,}\.\d{1,6}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
-DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "duplicate-input", "ambiguous-post")
+DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "transport-failure", "duplicate-input", "ambiguous-post")
 # Owner decision 2026-09-23: every runtime lane actually used must be its real product.
 REAL_PRODUCTS = {"openai": {"openai-responses", "openai-codex"},
                  "grok": {"xai-grok-responses", "xai-grok-cli"},
@@ -471,19 +472,38 @@ class _SlackThreads:
     def deliveries(self, task_id: str):
         return self.reads.get(self.api + "/v1/primary/tasks/" + task_id + "/deliveries")[0]
 
-    def binding(self, thread: str) -> str | None:
-        """200 -> task ID, 404 -> None, 409 -> "AMBIGUOUS"; anything else is unavailable."""
+    def _get(self, url: str, params: dict[str, str], token: str) -> tuple[int, bytes]:
         if time.monotonic() >= self.reads.deadline:
             raise ValueError("collection deadline reached")
-        with self.client.stream("GET", self.api + "/v1/slack-thread-bindings",
-                                params={"channel_id": self.channel, "thread_ts": thread},
-                                headers={"Authorization": "Bearer " + self.env["ORCHESTRATOR_SHARED_SECRET"]}) as response:
+        with self.client.stream("GET", url, params=params, headers={"Authorization": "Bearer " + token}) as response:
             body = bytearray()
             for chunk in response.iter_bytes(8192):
                 body.extend(chunk)
                 if len(body) > MAX_BYTES:
-                    raise ValueError("binding response exceeds its bound")
-            status = response.status_code
+                    raise ValueError("response exceeds its bound")
+            return response.status_code, bytes(body)
+
+    def history(self, oldest: str, latest: str) -> list[dict[str, Any]]:
+        """Top-level --channel messages between two timestamps, inclusive; at most five pages."""
+        messages, cursor = [], None
+        for _ in range(5):
+            params = {"channel": self.channel, "oldest": oldest, "latest": latest, "inclusive": "true", "limit": "200"}
+            if cursor:
+                params["cursor"] = cursor
+            status, body = self._get(self.m.SLACK + "conversations.history", params, self.env["SLACK_BOT_TOKEN"])
+            page = json.loads(body) if status == 200 else None
+            if not isinstance(page, dict) or page.get("ok") is not True or not isinstance(page.get("messages"), list):
+                raise ValueError("channel history unavailable")
+            messages.extend(page["messages"])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor")
+            if not page.get("has_more") and not cursor:
+                return messages
+        raise ValueError("channel history exceeds its bound")
+
+    def binding(self, thread: str) -> str | None:
+        """200 -> task ID, 404 -> None, 409 -> "AMBIGUOUS"; anything else is unavailable."""
+        status, body = self._get(self.api + "/v1/slack-thread-bindings",
+                                 {"channel_id": self.channel, "thread_ts": thread}, self.env["ORCHESTRATOR_SHARED_SECRET"])
         if status == 404:
             return None
         if status == 409:
@@ -639,16 +659,53 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
         obs11 = _observation("11", None, "Requires the paid thread's collected readback with provider attempts and the "
                              "in-image activation captures.", _CAPTURES_SOURCE, {}, at, **binding)
     else:
-        used = sorted({str(event["provider_id"]) for event in latest.values()})
-        lanes = captures.get("lanes") if isinstance(captures.get("lanes"), dict) else {}
-        products = {lane: (lanes.get(lane) if isinstance(lanes.get(lane), dict) else {}).get("product") for lane in used}
-        substituted = [lane for lane in used if lane not in REAL_PRODUCTS or products[lane] not in REAL_PRODUCTS[lane]]
-        obs11 = _observation("11", not substituted,
-                             ("Lanes used without an attested real product: " + ", ".join(substituted) + "."
-                              if substituted else "Every lane the paid run used is attested as its real product by a "
-                              "verified validation-store capture."),
-                             _CAPTURES_SOURCE, {"lanes_used": used, "products": products}, at, **binding)
+        obs11 = _product_observation(at, runtime, captures, paid)
     return [obs12, obs11]
+
+
+def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: dict) -> Observation:
+    """11: the captures that attest each lane are the ones that gated the paid run's attempts."""
+    binding = runtime.binding
+    attempts = paid["readback"]["provider_attempts"]
+    used = sorted({str(event["provider_id"]) for event in paid["latest"].values()})
+    lanes = captures.get("lanes") if isinstance(captures.get("lanes"), dict) else {}
+    products, transports, unbound = {}, {}, []
+    for lane in used:
+        value = lanes.get(lane) if isinstance(lanes.get(lane), dict) else {}
+        products[lane] = value.get("product")
+        times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
+        transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
+        surface = (value.get("surfaces") or {}).get("runtime_adapter")
+        # A capture minted after the attempt, or expired before it ended, did not gate it.
+        if (not isinstance(surface, dict) or not times or not surface.get("observed_at")
+                or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])):
+            unbound.append(lane)
+    facts = {"lanes_used": used, "products": products, "transports": transports}
+    raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
+    if (runtime.created_at > _when(paid["readback"]["task_created_at"]) or raw is None
+            or captures.get("generation_manifest_sha256") != runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+            or captures.get("provider_bindings_sha256") != hashlib.sha256(raw.encode()).hexdigest()):
+        return _observation("11", None, "The paid task predates the running container, or the captures are not bound to "
+                            "its generation and provider bindings; they cannot attest that run.",
+                            _CAPTURES_SOURCE, facts, at, **binding)
+
+    def attested(lane: str) -> bool:
+        if lane not in REAL_PRODUCTS or products[lane] not in REAL_PRODUCTS[lane]:
+            return False
+        # The OpenAI lane has two real products; the capture must be the one the attempts' transport used.
+        return lane != "openai" or {"openai-responses" if transport == "responses-api" else "openai-codex"
+                                    for transport in transports[lane]} == {products[lane]}
+
+    substituted = [lane for lane in used if not attested(lane)]
+    if substituted:
+        return _observation("11", False, "Lanes used without an attested real product: " + ", ".join(substituted) + ".",
+                            _CAPTURES_SOURCE, facts, at, **binding)
+    if unbound:
+        return _observation("11", None, "No capture observed before and unexpired through the paid attempts of: "
+                            + ", ".join(unbound) + ".", _CAPTURES_SOURCE, facts, at, **binding)
+    return _observation("11", True, "Every lane the paid run used is attested as its real product by a verified "
+                        "validation-store capture that was current when its attempts ran, under the running "
+                        "generation and provider bindings.", _CAPTURES_SOURCE, facts, at, **binding)
 
 
 def _acceptance_observation(at: datetime, candidate_sha: str, consistency: dict | None) -> Observation:
@@ -766,6 +823,14 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str) -> tuple[bool | Non
             verdict = False
         elif status == 200 and complete and owner_inputs == 1 and blocked >= 1 and tasks == 1:
             verdict = True
+    elif kind == "transport-failure":
+        # No status reached the gateway: the task may or may not exist, but never twice.
+        # A receipt means the relay answered 202, so the failure was not exercised.
+        if status == 409 or (tasks is not None and tasks > 1):
+            verdict = False
+        elif (complete and owner_inputs == 1 and blocked >= 1 and not receipts
+              and (status == 404 or (status == 200 and tasks == 1))):
+            verdict = True
     elif kind == "duplicate-input":
         if status == 409 or len(set(receipts)) > 1 or (tasks or 0) > 1 or (replies or 0) > 1:
             verdict = False
@@ -797,9 +862,9 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
             verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
     result = []
     for check, kinds, proven in (
-            ("03", ("refusal-4xx", "reserved-5xx"),
-             "The 4xx refusal created no task or receipt and the 5xx after reservation kept exactly one task "
-             "(the relay's transport-ambiguity branch is the same path)."),
+            ("03", ("refusal-4xx", "reserved-5xx", "transport-failure"),
+             "The 4xx refusal created no task or receipt, the 5xx after reservation kept exactly one task, and the "
+             "relay transport failure was reported BLOCKED with no receipt and at most one task."),
             ("09", ("duplicate-input", "ambiguous-post"),
              "Duplicate input kept one task and one final reply; the ambiguous post was recovered by readback "
              "to exactly one delivered final reply.")):
@@ -819,7 +884,8 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     return result
 
 
-def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str) -> list[Observation]:
+def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str,
+                           consistency: dict | None) -> list[Observation]:
     binding = runtime.binding
     task, _ = t.task(task_id)
     thread = ((task or {}).get("intake") or {}).get("thread_ts")
@@ -860,6 +926,9 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     approvals = [r for r in readback["slack_deliveries"]
                  if t.m.notification_key_family(r.get("notification_key")) == "approval"]
     messages, complete = snapshot["messages"], snapshot["complete"]
+    entry = ((consistency or {}).get("tasks") or {}).get(task_id)
+    receipts = entry.get("approval_receipts") if isinstance(entry, dict) else None
+    receipts = receipts if isinstance(receipts, list) else []
     failures, gaps = [], 0
     for delivery in approvals:
         slack_ts = delivery.get("slack_ts")
@@ -872,11 +941,17 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         if complete and prompt and any(m.get("user") != t.bot for m in prompt):
             failures.append("prompt message is from another user")
         native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot]
+        command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
+        # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
+        receipted = decided is not None and any(
+            isinstance(receipt, dict) and receipt.get("command_id_sha256") == command
+            and isinstance(receipt.get("recorded_at"), str) and _when(receipt["recorded_at"]) == decided
+            for receipt in receipts)
         if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
                 and Decimal(slack_ts) <= Decimal(str(decided.timestamp()))
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
-                and len(native) == 1):
+                and len(native) == 1 and receipted):
             gaps += 1
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
@@ -885,7 +960,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
-                                         "a digest-bound owner command receipt for this task's projection.")
+                                         "an approval_resume command receipt re-read from the control plane whose command "
+                                         "and time match the digest-bound decision. The gateway authenticates the owner.")
     else:
         passed08, explanation08 = None, "No complete, digest-bound owner approval was observed for this task."
     return [obs06, _observation("08", passed08, explanation08, _SLACK_SOURCE, facts08, at, **binding)]
@@ -964,7 +1040,22 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
         markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
         row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
         records.append(_run_record(runtime, snapshot, t.m.evaluate_rubric(row, rubric, digest)["passed"], t.m.LABEL))
-    return _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
+    observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
+    if observed.passed is not True:
+        return observed
+    # Consecutive: the ten threads are the only top-level owner posts between the first and the last.
+    # Only what the gateway itself ignores is excluded, so any post it could forward counts.
+    ordered = sorted(trials, key=Decimal)
+    posts = {str(m.get("ts")) for m in t.history(ordered[0], ordered[-1])
+             if m.get("user") == t.owner and not m.get("bot_id")
+             and m.get("subtype") not in ("bot_message", "message_changed", "message_deleted")}
+    if posts != set(trials):
+        return _observation("10", None, f"The ten trials are not consecutive: {len(posts - set(trials))} other top-level "
+                            "owner post(s) fall between them, or a trial is not a top-level owner post.",
+                            _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
+    return _observation("10", True, observed.explanation + " The ten are the only top-level owner posts in the "
+                        "channel between the first and the last, so they are consecutive.",
+                        _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
 
 
 def _paid_facts(t: _SlackThreads, thread: str) -> dict[str, Any]:
@@ -1033,6 +1124,7 @@ def _paid_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] | No
 def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] | None,
                           consistency: dict | None, cost: float | None) -> Observation:
     over: list[str] = []
+    unpriced: list[str] = []
     accounting = (runtime.health.get("usage_monitor") or {}).get("daily_accounting")
     monitored = isinstance(accounting, dict) and bool(accounting)
     if monitored:
@@ -1040,8 +1132,13 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             budget = value.get("daily_budget_usd")
             if type(budget) in (int, float):
                 used = max(value.get("reported_cost_usd") or 0, value.get("reserved_cost_usd") or 0)
+                requests = value.get("request_count")
                 if used > budget:
                     over.append("usage monitor " + str(provider))
+                elif (value.get("cost_visibility_complete") is not True and value.get("reserved_cost_usd") is None
+                      and not (type(requests) is int and requests == 0)):
+                    # reported_cost_usd sums known costs only; unknown cost is not zero.
+                    unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:
         entry = (consistency.get("tasks") or {}).get(paid["task_id"])
@@ -1053,10 +1150,14 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             if row["day_held_microusd"] > row["daily_limit_microusd"]:
                 over.append("enrolled daily budget")
     facts = {"usage_monitor_providers": sorted(accounting) if monitored else None, "over_cap": over,
+             "unknown_cost_providers": unpriced,
              "enrolled_budget_rows": len(budgets) if isinstance(budgets, list) else None, "settled_actual_cost_usd": cost}
     source = "Director /health usage_monitor and " + _CONSISTENCY_SOURCE
     if over:
         return _observation("15", False, "A daily monetary cap is exceeded: " + ", ".join(over) + ".", source, facts, at, **runtime.binding)
+    if unpriced:
+        return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
+                            + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
     if monitored and isinstance(budgets, list) and budgets and cost is not None:
         return _observation("15", True, "Enrolled signed daily caps hold, usage-monitor accounting is within budget and the "
                             "paid task's actual charges are settled request-correlated meter rows.", source, facts, at, **runtime.binding)
@@ -1110,13 +1211,6 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             except _SOURCE_ERRORS:
                 unknown(("03", "09"), "Drill threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
-                if approval_task is None:
-                    unknown(("06", "08"), "No --approval-task was supplied.", _SLACK_SOURCE)
-                else:
-                    put(_approval_observations(at, runtime, t, approval_task))
-            except _SOURCE_ERRORS:
-                unknown(("06", "08"), "The approval task could not be read; no retry was made.", _SLACK_SOURCE)
-            try:
                 put([_trial_observation(at, runtime, t, trials, rubric_path)])
             except _SOURCE_ERRORS:
                 unknown(("10",), "The offline trial threads could not be read; no retry was made.", _SLACK_SOURCE)
@@ -1143,6 +1237,14 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
 
         consistency = in_image("consistency", *[part for task_id in task_ids for part in ("--task", task_id)])
         captures = in_image("activation-captures")
+        if t is not None:
+            try:
+                if approval_task is None:
+                    unknown(("06", "08"), "No --approval-task was supplied.", _SLACK_SOURCE)
+                else:
+                    put(_approval_observations(at, runtime, t, approval_task, consistency))
+            except _SOURCE_ERRORS:
+                unknown(("06", "08"), "The approval task could not be read; no retry was made.", _SLACK_SOURCE)
         try:
             put([_reconciliation_observation(at, runtime, consistency)])
         except _SOURCE_ERRORS:
@@ -1272,18 +1374,29 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
 CI_JOBS = ("Contribution attribution", "Python 3.12 (ubuntu-latest)",
            "Python 3.12 (windows-latest)", "Compose and container build",
            "Secret hygiene", "Cross-process recovery probe")
+# The only workflow whose jobs can fill CI_JOBS. Fixed here, never taken from the
+# candidate: ci.yml itself routes to hosted or registered self-hosted runners.
+CI_WORKFLOW = ".github/workflows/ci.yml"
 _REPLICA_LANES = ("ubuntu-replica", "windows-postgres-lane")
 _REPLICA_LANE_KEYS = {"lane", "head_tests_run", "base_tests_run", "head_failures", "base_failures", "command_sha256"}
 
 
 def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | None = None) -> Observation:
+    paths: dict[Any, Any] = {}
+
     def executed(args: list[str]) -> Any:
-        # Zero-step jobs are billing stubs. Dropping them lets an executed job of
-        # the same name, hosted or registered self-hosted, count equally.
+        # Zero-step jobs are billing stubs and are dropped, so an older executed
+        # ci.yml job of the same name (hosted or self-hosted) can stand. A job of
+        # any other workflow is renamed by its workflow path: it can still fail
+        # 16, but it can never stand in for a required ci.yml job.
         value = _run_json(["gh", *args])
-        if "/jobs?" in args[-1]:
-            value = {**value, "jobs": [job for job in value["jobs"] if job.get("steps")]}
-        return value
+        if "/jobs?" not in args[-1]:
+            paths.update((run["id"], run.get("path")) for run in value["workflow_runs"])
+            return value
+        path = paths.get(int(args[-1].split("/runs/")[1].split("/")[0]))
+        jobs = [job if path == CI_WORKFLOW else {**job, "name": f"{path}: {job.get('name')}"}
+                for job in value["jobs"] if job.get("steps")]
+        return {**value, "jobs": jobs}
 
     # Reuse the project's oracle rather than invent a second CI truth predicate.
     with tempfile.TemporaryDirectory(prefix="director-scorecard-") as folder:
@@ -1293,8 +1406,8 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
     source = f"https://github.com/{REPOSITORY}/commit/{candidate_sha}/checks"
     jobs = row.observed.get("jobs") if isinstance(row.observed, dict) else None
     if row.status == WitnessStatus.MATCH:
-        return _observation("16", True, "Existing Witness Ledger CI oracle: every required job executed steps at this exact "
-                            "head, on hosted or registered self-hosted runners, and concluded success.",
+        return _observation("16", True, "Existing Witness Ledger CI oracle: every required ci.yml job executed steps at this "
+                            "exact head, on hosted or registered self-hosted runners, and concluded success.",
                             source, row.observed, at, candidate_sha=candidate_sha)
     if not isinstance(jobs, dict):
         return _observation("16", None, "GitHub CI could not be verified; no retry was made.", source, {}, at,
@@ -1302,7 +1415,8 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
     if any(job.get("conclusion") != "success" for job in jobs.values()):
         return _observation("16", False, "An executed job at this exact head did not conclude success.",
                             source, row.observed, at, candidate_sha=candidate_sha)
-    if not set(CI_JOBS) <= set(jobs) and replica_receipt is not None:
+    if not set(CI_JOBS) & set(jobs) and replica_receipt is not None:
+        # Owner amendment: the receipt stands in only when no required job executed.
         return _ci_replica_observation(replica_receipt, candidate_sha, at)
     return _observation("16", False, "Required jobs did not execute at this exact head; billing stubs and missing jobs do not pass.",
                         source, row.observed, at, candidate_sha=candidate_sha)
@@ -1367,16 +1481,36 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
         raise ValueError("replica receipt is future dated")
     lanes = {lane["lane"]: lane for lane in document["lanes"]}
     new = {name: sorted(set(lane["head_failures"]) - set(lane["base_failures"])) for name, lane in lanes.items()}
+    base, candidate = document["base_sha"], document["candidate_sha"]
+    # The diff means something only against a main commit the candidate descends
+    # from, and only when the head lane ran at least the base lane's tests.
+    base_on_main = (_compare_status(base, candidate) == "ahead"
+                    and _compare_status(base, "main") in ("ahead", "identical"))
     facts = {"receipt_sha256": hashlib.sha256(raw).hexdigest(),
-             "signer_key_sha256": hashlib.sha256(bytes.fromhex(key_hex)).hexdigest(), "base_sha": document["base_sha"],
-             "lanes": {name: {"head_tests_run": lanes[name]["head_tests_run"], "new_failure_count": len(new[name])}
-                       for name in sorted(lanes)}}
+             "signer_key_sha256": hashlib.sha256(bytes.fromhex(key_hex)).hexdigest(), "base_sha": base,
+             "base_is_main_ancestor_of_candidate": base_on_main,
+             "lanes": {name: {"head_tests_run": lanes[name]["head_tests_run"], "base_tests_run": lanes[name]["base_tests_run"],
+                              "new_failure_count": len(new[name])} for name in sorted(lanes)}}
+    if not base_on_main:
+        return _observation("16", None, "The replica's base_sha is not a main commit that the candidate descends from.",
+                            str(source.resolve()), facts, at, candidate_sha=candidate)
+    short = [name for name in sorted(lanes) if lanes[name]["head_tests_run"] < lanes[name]["base_tests_run"]]
+    if short:
+        return _observation("16", None, "The replica's head lane ran fewer tests than its base on: " + ", ".join(short) + ".",
+                            str(source.resolve()), facts, at, candidate_sha=candidate)
     regressed = [name for name in sorted(new) if new[name]]
     return _observation("16", not regressed,
                         ("The owner-signed local replica shows new failures against the base on: " + ", ".join(regressed) + "."
-                         if regressed else "No executed exact-head jobs; the owner-signed Windows Postgres and Ubuntu "
-                         "replica receipt shows no failure beyond the base's failure set."),
-                        str(source.resolve()), facts, at, candidate_sha=document["candidate_sha"])
+                         if regressed else "No required job executed at this exact head; the owner-signed Windows Postgres "
+                         "and Ubuntu replica receipt, diffed against a main ancestor, shows no failure beyond the base's "
+                         "failure set."),
+                        str(source.resolve()), facts, at, candidate_sha=candidate)
+
+
+def _compare_status(base: str, head: str) -> str:
+    """GitHub's ahead/behind/identical/diverged status of head against base (GET only)."""
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/compare/{base}...{head}", "--jq", "{status: .status}"])
+    return value["status"] if isinstance(value, dict) and isinstance(value.get("status"), str) else ""
 
 
 def _workload_observation(path: Path, at: datetime) -> list[Observation]:
@@ -1763,3 +1897,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
@@ -31,20 +32,20 @@ whether any operation is permitted. The report always says
 |---|---|---|
 | 01 | Correct project route and channel | Selected deployment's loopback Director and n8n ports, --channel, correlated route |
 | 02 | One active Slack gateway | All containers and host listeners using the same app identity |
-| 03 | Correct active intake | 4xx refusal drill and 5xx-after-reservation drill (shares the relay's transport-ambiguity branch) |
+| 03 | Correct active intake | Separate 4xx refusal, 5xx-after-reservation and relay transport-failure drills |
 | 04 | Status really delivered | Saved successful director-status execution correlated with Slack readback |
 | 05 | Primary owns intake | Database-derived ownership, disabled legacy intake, positive fencing generation |
 | 06 | Durable restart | Approval task resumed across the current process start without redispatch |
 | 07 | Reconciliation clear | In-image read-only consistency command bound to the running generation |
-| 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision; owner command receipt digest-bound |
+| 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision; the owner's approval command receipt re-read and matched |
 | 09 | Durable final reply | duplicate-input and ambiguous-post drills plus one final result |
-| 10 | Ten offline Slack runs | Ten --trial threads evaluated in-process; offline from task evidence |
+| 10 | Ten offline Slack runs | Ten consecutive actual-owner --trial threads (the only top-level owner posts from the first to the last), independent correctness and measured time, zero operational provider calls from task evidence |
 | 11 | Every runtime lane used is its real product | Every lane the paid run actually used is attested as its real product (OpenAI/Codex Responses, xAI Grok, Claude) with no substitution (amended by owner decision 2026-09-23; Grok Bot and Antigravity team mode are follow-ups) |
 | 12 | Fresh activation captures | Unexpired verified captures bound to provider_bindings_sha256 |
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
 | 14 | Bounded execution | Workload-ledger window: bounds set and USD hard cap verified |
 | 15 | Monetary control and usage | Enrolled signed daily cap and holds, usage-monitor accounting, settled request-correlated meter rows |
-| 16 | Executed exact-head CI | Executed exact-head jobs on hosted or registered self-hosted runners; else a signed local-replica receipt (amended by owner decision 2026-09-23) |
+| 16 | Executed exact-head CI | The six `ci.yml` jobs executed at the exact head on hosted or registered self-hosted runners; only when none executed, a signed local-replica receipt against a main ancestor (amended by owner decision 2026-09-23) |
 | 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
@@ -69,9 +70,10 @@ python scripts/director-scorecard.py --candidate-sha <sha> --output-dir <report-
   --live --deployment edge-engine-director --channel <C…> --gateway <gateway-container-name> `
   --github --ledger <journal-path> --security-scan <scan-uuid> `
   --drill-thread refusal-4xx=<thread-ts> --drill-thread reserved-5xx=<thread-ts> `
+  --drill-thread transport-failure=<thread-ts> `
   --drill-thread duplicate-input=<thread-ts> --drill-thread ambiguous-post=<thread-ts> `
   --approval-task DIR-LG-<task> `
-  --trial <thread-ts> (ten times) --rubric <structural-rubric.json> `
+  --trial <thread-ts> (ten consecutive owner posts) --rubric <structural-rubric.json> `
   --paid-thread <thread-ts> --paid-rubric <paid-rubric.json> `
   [--ci-replica-receipt <signed-receipt.json>]
 ```
@@ -89,8 +91,9 @@ collection.
 
 There are no provider calls, Slack writes, retries, deployments or imported
 credentials. Slack and Director reads are bounded GETs through the offline trial
-collector's `Collector`, using credentials read in memory from the selected
-Director container.
+collector's `Collector`, plus the thread-binding reads and one paginated
+`conversations.history` read of `--channel` under the same deadline and byte
+bound, using credentials read in memory from the selected Director container.
 
 The candidate SHA and observed runtime image/commit are separate. A merged
 candidate's CI cannot prove a different running image passed that CI. Runtime
@@ -122,13 +125,16 @@ a container ID, never a name.
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`.
 - 05, 19: the Director's `/health`.
-- 06, 08: the `--approval-task` readback, its deliveries and its Slack thread.
+- 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
+  08 also the task's `approval_resume` command receipts from `consistency`.
 - 07, 17, 15 (budget and meter rows): the in-image `consistency` command.
-- 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`.
+- 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
+  then one bounded `conversations.history` read of `--channel` from the first
+  trial to the last.
 - 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
-- 16: GitHub check runs at the exact head, or `--ci-replica-receipt`.
+- 16: GitHub `ci.yml` runs and jobs at the exact head, or `--ci-replica-receipt`.
 - 18: the native Security index for `--security-scan`.
 - 20: the `--paid-thread` readback, `--paid-rubric` and settled meter rows.
 
@@ -141,15 +147,20 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 |---|---|---|---|
 | `refusal-4xx` | complete thread, one owner input, a `DIRECTOR — BLOCKED` reply, no receipt, binding 404 | a bound task (200) or ambiguous binding (409), or any receipt | otherwise |
 | `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised) |
+| `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
 | `duplicate-input` | one owner input, two or more receipts naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
 | `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
 
-Check 03 combines `refusal-4xx` and `reserved-5xx`; check 09 combines
-`duplicate-input` and `ambiguous-post`. Any FAIL fails the check, both PASS
-passes it, anything else (including a kind that was not supplied) is UNKNOWN.
-The relay's transport-failure handling shares the n8n ambiguity branch with a
-5xx (see [n8n operations](n8n-operations.md)), so the `reserved-5xx` drill also
-evidences the transport-ambiguity path. The drill procedures themselves are
+Check 03 combines `refusal-4xx`, `reserved-5xx` and `transport-failure`; check
+09 combines `duplicate-input` and `ambiguous-post`. Any FAIL fails the check,
+all PASS passes it, anything else (including a kind that was not supplied) is
+UNKNOWN. A transport failure (the relay pointed at a closed port, step 7b of
+[n8n operations](n8n-operations.md)) reaches the same n8n ambiguity branch as a
+5xx but usually without a reservation, so it reads binding 404, which
+`reserved-5xx` cannot score; it is therefore its own drill. Observable outcomes
+overlap between kinds (a 4xx refusal and a transport failure both read 404 and
+`BLOCKED`), so each kind names a distinct operator-labelled thread and the
+scorecard scores the observable outcome. The drill procedures themselves are
 operator actions and are not automated here.
 
 ### In-image commands
@@ -173,16 +184,30 @@ runtime and write nothing.
   effect reservations, active assignments, live writer claims, batches pending
   projection binding). For each `--task` it adds the spend rows with their
   settled usage and request correlation, and the enrolled budget rows with the
-  day's held amount. In `owner-local-evidence-v1` mode it also returns the
-  pinned adoption's repository, pull request, author, reviewers, reviewed
-  source and adoption digest. Check 07 fails on any unresolved, ambiguous or
+  day's held amount, and its `approval_resume` command receipts (SHA-256 of
+  the command ID, command and resulting projection digests, recorded time). In
+  `owner-local-evidence-v1` mode it also returns the pinned adoption's
+  repository, pull request, author, reviewers, reviewed source and adoption
+  digest. A task is terminal here when its terminal classification is set and
+  is not `OWNER_DECISION_REQUIRED`: that is a resumable approval hold, so its
+  open assignments and effects count as in flight. A `PENDING` assignment whose
+  prerequisites include a `FAILED` or owner-held assignment, directly or
+  through another such assignment, is the aggregator's `BLOCKED` projection and
+  is not counted as open. Check 07 fails on any unresolved, ambiguous or
   conflicting count, is UNKNOWN unless the snapshot names the running
   generation pin and intake fence, and is UNKNOWN while work is in flight.
 - `activation-captures` reads the activation store through a load-only view and
   the validation store through its read-only capture reader. For every lane it
   reports the binding digest and, per surface, the latest stage, evidence
-  digest, expiry and whether the capture verifier accepts it, plus the product
-  that produced the verified runtime-adapter capture. These are not part of
+  digest, observation time, expiry and whether the capture verifier accepts it,
+  plus the product that produced the verified runtime-adapter capture. The
+  product comes from the capture's own dialect and model: an OpenAI Responses
+  envelope needs an OpenAI model (`gpt-`, `o<digit>`, `codex`, `chatgpt-`), a
+  Codex capture needs a native Codex JSONL turn, a Grok Responses envelope a
+  `grok` model, a Grok CLI envelope `stopReason` with an integer `num_turns`
+  (and a Grok model when it names one),
+  and a Claude result envelope `claude` models in any `modelUsage`. Anything
+  else has no product. These are not part of
   `/health`, which stays readiness booleans only.
 
 Against an image built before these commands existed, `docker exec` exits
@@ -219,29 +244,49 @@ supply an owner-signed receipt:
 The verification key is the 64-hex raw public key at
 `~/.director-scorecard/ci-replica-signer.ed25519.pub`, which must be a regular
 file, not a link; there is no option to name another key. The signer must be
-owner-held and never an author of the candidate's pull request. The receipt
-passes when neither lane's head failures include a test absent from its base
-failures, fails on any such new failure, and stays UNKNOWN when the key is
-missing or the receipt is malformed, unsigned or signed by another key. It is
-bound to its own `candidate_sha`, so a receipt for another candidate is
-UNKNOWN. An executed job that did not succeed fails check 16 regardless of any
+owner-held and never an author of the candidate's pull request. `base_sha`
+must be a commit on `main` that the candidate descends from (GitHub compare:
+`base...candidate` is `ahead` and `base...main` is `ahead` or `identical`), and
+every lane's `head_tests_run` must be at least its `base_tests_run`; otherwise
+the receipt is UNKNOWN. The receipt passes when neither lane's head failures
+include a test absent from its base failures, fails on any such new failure,
+and stays UNKNOWN when the key is missing or the receipt is malformed, unsigned
+or signed by another key. It is bound to its own `candidate_sha`, so a receipt
+for another candidate is UNKNOWN. A receipt is considered only when none of
+the six required jobs executed; when some executed and others did not, check 16
+fails. An executed job that did not succeed fails check 16 regardless of any
 receipt. Hosted billing stubs (zero steps) never count; an executed job with a
-required name counts the same on hosted and registered self-hosted runners.
+required name counts the same on hosted and registered self-hosted runners, but
+only from a `.github/workflows/ci.yml` run. That path is fixed in the
+scorecard, not read from the candidate. A same-named job of any other workflow,
+including one the candidate adds, can fail check 16 but never fills a required
+job. The contents of `ci.yml` at the candidate are still the candidate's, so a
+change to that file is left to review (17) and the Security scan (18).
 
 ### Status execution retention
 
 `n8n/workflows/director-status.json` saves successful executions so check 04
-can correlate the posted message (owner decision D13). The workflow file alone
-changes nothing on a running n8n: re-import it. The instance must prune saved
-executions with `EXECUTIONS_DATA_PRUNE=true` and `EXECUTIONS_DATA_MAX_AGE=72`;
-the scorecard looks back only 72 hours. Saved data contains the watched health
-booleans and the Slack post response, never credentials.
+can correlate the posted message (default D13 of the owner-approved
+2026-09-23 completion plan: save successful `director-status` executions and
+prune them after 72 hours). The workflow file alone changes nothing on a
+running n8n: re-import it. Every five-minute run is saved, not only runs that
+post. Each saved execution keeps the full `Read Health` response (the
+Director's `/health` body, which carries readiness booleans and counts but no
+secrets, plus its response headers), the diff node's output and, when it
+posted, the Slack post response. It carries no credentials.
+
+The 72-hour pruning is an operator action and is not in this repository's
+`docker-compose.yml`: set `EXECUTIONS_DATA_PRUNE=true` and
+`EXECUTIONS_DATA_MAX_AGE=72` on the n8n service. Those settings apply to every
+workflow on that instance, the intake relay included. Without them n8n keeps
+saved executions for its own default age. The scorecard reads only the last
+72 hours either way.
 
 ### Execution-binding limits
 
-No producer records which image or process executed a task. Check 10 binds a
-run record to the running image only when the container was created before the
-task was, and check 06 requires the current process start to fall between the
+No producer records which image or process executed a task. Checks 10, 11 and
+20 bind a run to the running image only when the container was created before
+the task was, and check 06 requires the current process start to fall between the
 task's creation and its terminal delivery. A later container recreation, such
 as an activation that force-recreates the Director, therefore makes those
 checks UNKNOWN until the runs are repeated. The writer generation does not
@@ -333,14 +378,22 @@ cap, and fails when any admission lacks a USD limit or a verified hard cap.
 Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
 products above or its verified capture names another product; a missing product
-counts as a substitution. 20 builds its run record from task-level evidence:
+counts as a substitution. On the OpenAI lane the product must also match the
+attempts' transport: `responses-api` needs `openai-responses` and any other
+transport `openai-codex`. 11 is UNKNOWN when the running container was created
+after the paid task, the captures are not bound to the running generation pin
+and provider bindings, or a lane's runtime-adapter capture was observed after
+its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
 the mode is paid only when the readback records at least one provider attempt,
 never from the runtime's paid switch, and actual cost is the sum of settled
 usage rows whose metering evidence carries request and response IDs, correlated
 by attempt digest to every attempt the task made. Check 15 fails when an
 enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
 provider exceeds its daily budget, and passes only when the paid task's budget
-rows, the usage-monitor accounting and a settled cost are all present.
+rows, the usage-monitor accounting and a settled cost are all present. It is
+UNKNOWN when a budgeted usage-monitor provider has attempts today (a
+`request_count` that is not exactly zero), incomplete cost visibility and no
+reserved cost, because `reported_cost_usd` sums known costs only.
 Usage-monitor accounting covers only its configured providers; the signed
 budget rows carry the enforced cap. The reusable run-fact validator enforces
 count, unique IDs, actual owner origin, runtime/image binding, correct mode,
@@ -368,7 +421,13 @@ Saved receipts do not become scored observations. Check 10 loads the same
 collector in-process for the ten `--trial` threads and scores them with
 `evaluate_run_records(mode="offline")`; offline means the task's own evidence
 (offline-double outcomes, zero exposed and recorded provider attempts and a
-simulation-labelled final reply), not the runtime's current mode switch.
+simulation-labelled final reply), not the runtime's current mode switch. The
+ten must also be consecutive: one bounded `conversations.history` read of
+`--channel` from the first trial to the last must show no other top-level owner
+post the gateway could forward (only bot posts and `bot_message`,
+`message_changed` and `message_deleted` subtypes are ignored). Otherwise 10 is
+UNKNOWN. Replies inside other threads are not read. Check 10 is FAIL, not
+UNKNOWN, when a selected run fails the standard.
 
 ## Qualification verdicts with explicit UNKNOWN cost
 
@@ -430,3 +489,4 @@ touched.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]] -->

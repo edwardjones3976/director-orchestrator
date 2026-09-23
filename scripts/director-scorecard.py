@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:57 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
@@ -26,9 +27,10 @@ def main() -> int:
     parser.add_argument("--ledger", type=Path, help="Reopen the actual workload journal read-only; requires --live")
     parser.add_argument("--security-scan", help="Verify this scan ID through the native Security workbench index; requires --live")
     parser.add_argument("--drill-thread", action="append", default=[], metavar="KIND=THREAD_TS",
-                        help="Drill thread for checks 03/09: refusal-4xx, reserved-5xx, duplicate-input or ambiguous-post; repeat per kind")
+                        help="Drill thread for checks 03/09: refusal-4xx, reserved-5xx, transport-failure, duplicate-input or "
+                             "ambiguous-post; repeat per kind")
     parser.add_argument("--approval-task", help="DIR-LG task that resumed after approval across a restart (checks 06/08)")
-    parser.add_argument("--trial", action="append", default=[], metavar="THREAD_TS", help="Offline trial thread for check 10; repeat ten times")
+    parser.add_argument("--trial", action="append", default=[], metavar="THREAD_TS", help="Offline trial thread for check 10; repeat for ten consecutive owner posts")
     parser.add_argument("--rubric", type=Path, help="Structural rubric the ten --trial inputs committed to")
     parser.add_argument("--paid-thread", metavar="THREAD_TS", help="The real paid Slack run for checks 11, 15 and 20")
     parser.add_argument("--paid-rubric", type=Path, help="Paid answer rubric the --paid-thread input committed to")
@@ -74,3 +76,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 12:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]
