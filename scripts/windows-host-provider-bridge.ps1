@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | BEGIN]]
@@ -45,6 +46,25 @@ function Get-BridgeRuntimeManifest {
     })
     [Array]::Sort($lines, [StringComparer]::Ordinal)
     return ,$lines
+}
+
+function Get-CleanBridgeSource {
+    # Installed bytes must be one commit's bytes, like the control script's
+    # clean-checkout rule: the runtime paths (Get-BridgeRuntimeManifest's set)
+    # may hold no modified, untracked or ignored file except bytecode caches.
+    param([string]$Root)
+    $dirty = @(& git -C $Root status --porcelain --ignored --untracked-files=all -- `
+        src/director_orchestrator docs/schemas docs/provider-profiles prompts scripts/windows-host-provider-bridge.ps1 |
+        Where-Object { $_ -notmatch '(^|/)__pycache__/' })
+    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
+        throw "Install requires a clean checkout of the bridge runtime files."
+    }
+    $commit = [string](@(& git -C $Root rev-parse --verify 'HEAD^{commit}') | Select-Object -Last 1)
+    $tree = [string](@(& git -C $Root rev-parse --verify 'HEAD^{tree}') | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $commit -cnotmatch '^[0-9a-f]{40}$' -or $tree -cnotmatch '^[0-9a-f]{40}$') {
+        throw "The bridge source commit/tree cannot be frozen."
+    }
+    return @($commit, $tree)
 }
 
 function Install-BridgeRuntime {
@@ -122,6 +142,15 @@ if ($missing.Count -gt 0) {
 $pinnedEnvironmentFile = [string]$values["DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"]
 if ($pinnedEnvironmentFile -and -not (Test-Path -LiteralPath $pinnedEnvironmentFile -PathType Leaf)) {
     throw "The pinned process environment file is unavailable."
+}
+# A pinned bridge forwards only the lane credentials this profile names, with
+# this profile's values; Python drops every other inherited lane credential.
+$laneAuthNames = @("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")
+$profileAuthNames = @(([string]$values["DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"]).Split(",", [StringSplitOptions]::RemoveEmptyEntries))
+foreach ($name in $profileAuthNames) {
+    if ($name -cnotin $laneAuthNames -or [string]::IsNullOrWhiteSpace([string]$values[$name])) {
+        throw "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES names an unknown lane credential or one this profile does not set."
+    }
 }
 foreach ($otherSecret in @(
     "ORCHESTRATOR_SHARED_SECRET", "SLACK_GATEWAY_SECRET",
@@ -228,7 +257,13 @@ if ($Action -eq "Install") {
     if (-not $pinnedEnvironmentFile) {
         throw "Install requires DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE in the bridge profile."
     }
-    $destination = Install-BridgeRuntime -SourceRoot (Split-Path -Parent $PSScriptRoot) -InstallRoot $InstallRoot
+    $sourceRoot = Split-Path -Parent $PSScriptRoot
+    $source = Get-CleanBridgeSource -Root $sourceRoot
+    $destination = Install-BridgeRuntime -SourceRoot $sourceRoot -InstallRoot $InstallRoot
+    # Provenance sits beside, never inside, the content-addressed copy.
+    [IO.File]::WriteAllText("$destination.source.json", ([ordered]@{
+        version = "director-bridge-runtime-source/v1"; commit = $source[0]; tree = $source[1]
+    } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
     # The app-execution alias, not [Environment]::ProcessPath: the packaged path is ACL-restricted.
     $powerShell = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
     & $powerShell -NoLogo -NoProfile -NonInteractive -File (Join-Path $destination "scripts\windows-host-provider-bridge.ps1") `
@@ -240,7 +275,7 @@ if ($Action -eq "Install") {
         -WorkspacePath $workspacePath -PythonPath $pythonPath -PowerShell $powerShell
     # The adapter path is part of production_configuration_digest, so generations
     # must pin the digests the installed copy printed above.
-    Write-Host "Bridge runtime $(Split-Path -Leaf $destination) was installed and task '$TaskName' was registered; it was NOT started."
+    Write-Host "Bridge runtime $(Split-Path -Leaf $destination) from commit $($source[0]) was installed and task '$TaskName' was registered; it was NOT started."
     return
 }
 
@@ -248,14 +283,14 @@ $optional = @(
     "DIRECTOR_HOST_PROVIDER_WORKSPACE", "DIRECTOR_HOST_PROVIDER_BIND",
     "DIRECTOR_HOST_PROVIDER_PORT", "DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS",
     "DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE", "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE",
-    "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"
-) + $validationNames
+    "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"
+) + $validationNames + $profileAuthNames
 $original = @{}
 foreach ($name in ($required + $optional + @("PYTHONPATH") | Select-Object -Unique)) {
     $original[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
-# A stale parent value must never select validation or a pinned environment.
-foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE")) {
+# A stale parent value must never select validation, a pinned environment or a forwarded credential.
+foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES")) {
     [Environment]::SetEnvironmentVariable($name, $null, "Process")
 }
 foreach ($name in $required + $optional) {
@@ -288,3 +323,4 @@ finally {
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

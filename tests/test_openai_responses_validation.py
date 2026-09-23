@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | BEGIN]]
@@ -449,6 +450,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         generation_hex = "c" * 64
         tree_hex = "e" * 40
         store = MagicMock()
+        store.expected_configuration_digest.return_value = config_digest
         reservation = "b" * 64
         admission = {
             "reservation": reservation,
@@ -564,6 +566,7 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         }
         admission.update(admission_overrides or {})
         store = MagicMock()
+        store.expected_configuration_digest.return_value = route.configuration_digest
         store.admit.return_value = admission
         store.settle.return_value = "evidence_digest_xyz"
         service = ValidationBridgeService(
@@ -586,6 +589,20 @@ class ResponsesBridgeExecutionTests(unittest.TestCase):
         transport.send.assert_not_called()
         store.settle.assert_not_called()
         store.fail.assert_called_once_with(admission["reservation"], remaining_seconds=ANY)
+
+    def test_registered_digest_drift_refuses_before_admission(self):
+        transport, route, admission, store, service = self._mocked_responses_bridge()
+        store.expected_configuration_digest.return_value = "f" * 64
+        with self.assertRaisesRegex(ValidationError, "digest drift"):
+            service._run_openai_responses(
+                ValidationRequest(generation=admission["generation"], provider="openai"),
+                service.owner_token)
+        # Read-only comparison under the shared deadline; nothing is admitted or reserved.
+        store.expected_configuration_digest.assert_called_once_with(
+            admission["generation"], "openai", remaining_seconds=ANY)
+        store.admit.assert_not_called()
+        store.fail.assert_not_called()
+        transport.send.assert_not_called()
 
     def test_expired_whole_operation_deadline_never_reaches_http_or_settlement(self):
         transport, route, admission, store, service = self._mocked_responses_bridge()
@@ -671,3 +688,4 @@ if __name__ == "__main__":
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 08:56 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

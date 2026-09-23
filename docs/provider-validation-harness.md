@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]] -->
@@ -9,7 +10,7 @@
 
 This package is a validation foundation, disabled by default. Software wiring is implemented; host qualification and real authenticated runs remain required. It makes owner-signed LIVE_OK status alone insufficient. No live provider was called and no production database or host configuration was changed during implementation.
 
-The bridge exposes `/v1/provider/validate` only when explicitly configured. Requests select only a registered generation and provider; commands, accounts, packet contents, costs and namespaces come from the immutable owner-provisioned generation and existing bridge configuration. Postgres admission serializes budgets and allows only one attempt per generation/provider. Ambiguous attempts retain their reservation and cannot be replayed. The dedicated schema is `director_provider_validation_v1`; checkpoint namespace is `director-provider-validation/v1`. Constructor and evidence reads never bootstrap tables. The bridge recomputes the native configuration pin and compares it with the generation's registered lane digest through a read-only lookup before admission, so a drifted executable, account, workspace or adapter creates no attempt row and consumes neither budget nor the lane's single attempt. The post-admission and post-execution checks remain.
+The bridge exposes `/v1/provider/validate` only when explicitly configured. Requests select only a registered generation and provider; commands, accounts, packet contents, costs and namespaces come from the immutable owner-provisioned generation and existing bridge configuration. Postgres admission serializes budgets and allows only one attempt per generation/provider. Ambiguous attempts retain their reservation and cannot be replayed. The dedicated schema is `director_provider_validation_v1`; checkpoint namespace is `director-provider-validation/v1`. Constructor and evidence reads never bootstrap tables. Before admission the bridge compares each lane's current configuration pin with the generation's registered lane digest through a read-only lookup: the native production pin (executable, account, workspace and adapter), the OpenAI Responses route digest (bounded by that lane's shared deadline), and the Antigravity team fingerprint. Drift on any lane therefore creates no attempt row and consumes neither budget nor the lane's single attempt. The post-admission and post-execution checks remain.
 
 `GET /v1/provider/configuration-digest` returns the per-lane configuration digests the bridge would bind, plus whether a pinned process environment is active. It requires the validation owner token as a bearer credential (compared in constant time) and returns digests only: no paths, tokens or values.
 
@@ -59,3 +60,4 @@ launched here.
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

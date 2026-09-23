@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
@@ -35,10 +36,13 @@ from .host_provider_bridge import (
     bridge_challenge_signature,
     dispatch_bridge_request,
     _digest,
+    _LANE_AUTH_ENV,
     _SAFE_OS_ENV,
 )
 
 PROCESS_ENVIRONMENT_VERSION = "director-native-process-environment/v1"
+# Set only by the launcher: the lane credentials it copied from the bridge profile.
+PROFILE_AUTH_NAMES = "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"
 
 
 def _required(name: str) -> str:
@@ -66,12 +70,14 @@ def _commands() -> dict[str, tuple[str, ...]]:
 
 
 def _apply_pinned_process_environment() -> bool:
-    """Replace the shell-dependent process names with an owner-pinned set.
+    """Pin every process name that child processes and the digest read.
 
-    Only _SAFE_OS_ENV names reach child processes and
-    production_configuration_digest from the launching shell, so pinning them
-    before any digest or provider run makes the digest shell-independent.
-    Nothing from the file is echoed on refusal.
+    Provider children and production_configuration_digest read only
+    _SAFE_OS_ENV and _LANE_AUTH_ENV names. The safe names come from the pinned
+    file. A lane credential survives only when the launcher copied it from the
+    bridge profile and listed it in PROFILE_AUTH_NAMES; every other inherited
+    credential is dropped, so neither the digest nor a provider's billing route
+    depends on the launching shell. Nothing from the file is echoed on refusal.
     """
     source = os.environ.get("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "").strip()
     if not source:
@@ -96,9 +102,16 @@ def _apply_pinned_process_environment() -> bool:
         directories += [pinned[name] for name in ("TEMP", "TMP", "SYSTEMROOT", "USERPROFILE")]
         if not all(Path(directory).is_dir() for directory in directories):
             raise ValueError("pinned environment directory is unavailable")
+        lane_auth = frozenset().union(*_LANE_AUTH_ENV.values())
+        from_profile = {name for name in os.environ.get(PROFILE_AUTH_NAMES, "").split(",") if name}
+        if not from_profile <= lane_auth:
+            raise ValueError("unknown profile credential name")
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise RuntimeError("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE is invalid") from None
-    preserved = {key: value for key, value in os.environ.items() if key.upper() not in _SAFE_OS_ENV}
+    preserved = {
+        key: value for key, value in os.environ.items()
+        if key.upper() not in _SAFE_OS_ENV and (key.upper() not in lane_auth or key in from_profile)
+    }
     os.environ.clear()
     os.environ.update(preserved)
     os.environ.update(pinned)
@@ -390,3 +403,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
@@ -396,15 +397,36 @@ their mere presence:
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
   `-Action CheckEnvironment` prints the per-lane production configuration
-  digests and makes no provider call. When the profile sets
-  `DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE`, the bridge replaces its
-  shell-dependent process variables with that pinned file before any digest or
-  provider run, so the digests no longer depend on the launching shell.
-  `-Action Install -InstallRoot <dir>` copies the bridge runtime into a
-  content-addressed directory, runs `CheckEnvironment` from the copy and
-  registers a restart-on-failure Scheduled Task without starting it. Install is
-  persistent host configuration and needs owner approval. Generations must pin
-  the digests printed by the installed copy.
+  digests and makes no provider call. Provider children and those digests read
+  only ten operating-system names (`SYSTEMROOT`, `WINDIR`, `PATH`, `PATHEXT`,
+  `TEMP`, `TMP`, `COMSPEC`, `LOCALAPPDATA`, `APPDATA`, `USERPROFILE`) and the
+  lane credentials (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GH_TOKEN`,
+  `GITHUB_TOKEN`). When the profile sets
+  `DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE`, the bridge, before any
+  digest or provider run, replaces the ten names with the pinned file's values
+  and drops every inherited lane credential. A lane credential then reaches a
+  provider only when the bridge profile sets it and names it in
+  `DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES` (comma-separated, no spaces); the
+  launcher copies that value from the profile and refuses an unknown or unset
+  name. With a pin, the digests depend on the pinned file and the profile, not
+  on the launching shell. Without a pin, the launching shell's values are used.
+  The pinned file is a UTF-8 JSON object of at most 64 KiB at an absolute path
+  with exactly two keys: `version`, equal to
+  `director-native-process-environment/v1`, and `environment`, an object with
+  exactly the ten names above. Every value is a non-empty string without CR, LF
+  or NUL, and every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT` and
+  `USERPROFILE` directories must exist. Any other file refuses startup without
+  echoing its content.
+  `-Action Install -InstallRoot <dir>` requires the pinned file and a clean
+  checkout: the runtime paths it copies (`src/director_orchestrator`,
+  `docs/schemas`, `docs/provider-profiles`, `prompts` and the launcher) may hold
+  no modified, untracked or ignored file other than bytecode caches. It copies
+  the bridge runtime into a content-addressed directory, records the source
+  commit and tree beside it in `<digest>.source.json`, runs `CheckEnvironment`
+  from the copy and registers a restart-on-failure Scheduled Task without
+  starting it. Install is persistent host configuration and needs owner
+  approval. Generations must pin the digests printed by the installed copy.
 - `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
   `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`,
   `ActivateOffline`, and `Rollback` operations. Every invocation requires the exact environment-file path,
@@ -571,19 +593,33 @@ accounts, signing credentials, deployment authority, or a fallback acceptance mo
 
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
-activation, graph ownership, and zero ambiguous effects. It recreates the Slack
-gateway from the verified candidate image and reads back the running gateway's
-image ID before it records `ACTIVATED`. `ActivateOffline` needs the same
+activation, graph ownership, and zero ambiguous effects. It creates the Slack
+gateway stopped from the verified candidate image, reads back the created
+gateway's image ID, records `ACTIVATED`, and only then starts n8n and the
+gateway, so a failed readback or evidence write unwinds with Slack and n8n
+intake still closed. `ActivateOffline` needs the same
 acceptance, migration and restore evidence but not provider readiness: it turns
 offline simulation on and paid runs and live dispatch off, requires the paid-off
 intake projection with the live runtime inactive, and records no `ACTIVATED`
-stage, so a later paid `Activate` can still use the evidence chain. Rollback
-stops Slack and the orchestrator, waits for the writer lease to expire, refuses
-when ambiguous effects exist, performs the fenced generation change back to
-legacy, and preserves the primary database. It then restores the orchestrator
-and gateway images recorded before the first candidate recreate (by `StageRuntime`,
-or by activation when no staging ran) and reads both back. A missing record
-refuses rollback before anything stops.
+stage. A later paid `Activate` can reuse that evidence chain only while the
+legacy SQLite task ID/status inventory is unchanged: it binds the inventory
+again and refuses any difference as immutable. Legacy tasks stay live under
+primary (startup and periodic recovery of queued, planning, running and
+reviewing legacy tasks, legacy approvals and callbacks), so a legacy status
+change during offline operation means paid activation needs a new generation.
+Rollback stops Slack and the orchestrator, waits for the writer lease to expire,
+refuses when ambiguous effects exist, performs the fenced generation change back
+to legacy, and preserves the primary database. It then recreates the
+orchestrator on the image recorded before the first candidate recreate (by
+`StageRuntime`, or by activation when no staging ran) in
+`<profile>.prior-images.<generation>.<image>.json`, reads its image ID back and
+waits for health, creates the gateway stopped on the recorded gateway image and
+reads it back, and only then starts n8n and the gateway. If a readback or health
+check fails after the compare-and-swap, it stops and proves Slack, n8n and API
+intake closed again before it reports the failure. An invalid record refuses
+rollback before anything stops. With no record, the fenced return to legacy
+still runs on the candidate image with paid runs and primary off, and the tool
+reports that no image was restored.
 
 The control tool persists `/data/langgraph-primary-activation-evidence.json` as
 an atomic versioned state machine. Its identity binds the exact Director
@@ -766,3 +802,4 @@ identity cannot authorize successful completion.
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

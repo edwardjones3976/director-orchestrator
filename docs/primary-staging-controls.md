@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
@@ -171,11 +172,16 @@ provider doubles are selected. `PrepareOfflineHandoff` satisfies that
 inventory prerequisite without being live activation. `ActivateOffline` runs
 the same stop, inventory and `require-ready` steps, then selects the normal
 application with offline simulation on and paid runs and live dispatch off. It
-does not require provider readiness and records no `ACTIVATED` stage. Rollback
-selects the normal application after its existing fenced proof and restores the
-orchestrator and gateway images recorded beside the profile before the first
-candidate recreate (`<profile>.prior-images.<generation>.<image>.json`, written
-once and never overwritten).
+does not require provider readiness and records no `ACTIVATED` stage; a later
+paid `Activate` on the same generation passes only while the legacy inventory
+is unchanged. Rollback selects the normal application after its existing fenced
+proof and restores the orchestrator and gateway images recorded beside the
+profile before the first candidate recreate
+(`<profile>.prior-images.<generation>.<image>.json`, written once and never
+overwritten), reading each back before n8n and Slack start. A failed readback
+or health check closes all intake again. An invalid record refuses before
+anything stops; with no record the return to legacy runs on the candidate image
+and reports that no image was restored.
 
 `ValidateProviders` requires the verified staged container and freshly checked
 generation/acceptance/restore evidence. It checks the validation manifest's
@@ -285,3 +291,4 @@ qualified native evidence; this document grants no adoption or activation.
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

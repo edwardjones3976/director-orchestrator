@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
 """Dedicated synthetic canary through the actual pinned SSH engineering worker."""
 from __future__ import annotations
@@ -54,6 +55,8 @@ class TeamValidationRoute:
             prepared=prepared,authorized_commands=[])
 
     def run(self,service,request,owner_token):
+        service.refuse_configuration_drift(request,self.configuration_digest(),
+            "team validation binding or generation mismatch")
         admission=service.store.admit(request,owner_token)
         worker=None
         try:
@@ -142,3 +145,4 @@ def team_route_from_environment():
     return TeamValidationRoute(grant=grant,owner_secret=owner,worker_secret=worker_key,
         worker_factory=factory,configuration_digest=fingerprint)
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

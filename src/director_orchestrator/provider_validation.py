@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -376,10 +377,13 @@ class PostgresValidationStore:
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
                         packet=raw,owner_digest=row[2])
 
-    def expected_configuration_digest(self, generation: str, provider: str) -> str | None:
-        """Read-only lookup so a drifted native pin is refused before any attempt row exists."""
-        with self._connect_bounded() as db:
+    def expected_configuration_digest(self, generation: str, provider: str, *,
+                                      remaining_seconds=None) -> str | None:
+        """Read-only lookup so a drifted lane pin is refused before any attempt row exists."""
+        with self._connect_bounded(remaining_seconds) as db:
             db.execute("SET TRANSACTION READ ONLY")
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
             row = db.execute(f"SELECT configuration FROM {SCHEMA}.generations WHERE generation=%s",
                              (generation,)).fetchone()
         # Index the jsonb in Python: configuration->%s is ambiguous for an untyped parameter.
@@ -747,13 +751,9 @@ class ValidationBridgeService:
             return self.team_route.run(self,request,owner_token)
         if request.provider == "openai" and self.openai_responses_route is not None:
             return self._run_openai_responses(request, owner_token)
-        # A drifted native pin is refused before admission, so it creates no
-        # attempt row and burns neither budget nor the one-attempt lane slot.
         pin=production_configuration_digest(self.production,request.provider,
                                            account_files=self.account_files.get(request.provider,()))
-        expected=self.store.expected_configuration_digest(request.generation,request.provider)
-        if expected is not None and pin!=expected:
-            raise ValidationError("production executable/account/workspace/adapter binding drift")
+        self.refuse_configuration_drift(request,pin,"production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
@@ -796,6 +796,19 @@ class ValidationBridgeService:
             except Exception:
                 pass
             raise
+
+    def refuse_configuration_drift(self, request: ValidationRequest, pin: str, message: str, *,
+                                   remaining_seconds=None) -> None:
+        """Refuse a drifted lane pin before admission on every lane.
+
+        The comparison uses a read-only lookup, so drift creates no attempt row
+        and burns neither budget nor the one-attempt lane slot. Each lane keeps
+        its post-admission and post-execution checks.
+        """
+        expected=self.store.expected_configuration_digest(request.generation,request.provider,
+                                                          remaining_seconds=remaining_seconds)
+        if expected is not None and pin!=expected:
+            raise ValidationError(message)
 
     def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
         """Explicit Responses API validation; never falls back to native Codex.
@@ -846,6 +859,9 @@ class ValidationBridgeService:
                 raise ValidationError("Responses validation cleanup allowance is exhausted")
             return rem
 
+        self.refuse_configuration_drift(request, route.configuration_digest,
+                                        "Responses validation configuration digest drift",
+                                        remaining_seconds=remaining_seconds)
         admission = self.store.admit(request, owner_token, preserve_canary_identity=True,
                                      remaining_seconds=remaining_seconds)
         raw_captures: list[bytes] = []
@@ -1053,3 +1069,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

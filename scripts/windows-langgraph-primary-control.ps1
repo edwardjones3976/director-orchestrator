@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
@@ -184,8 +185,9 @@ function Get-ServiceImageId {
 }
 
 function Assert-ServiceImage {
-    param([string]$Service, [string]$Expected)
-    if ((Get-ServiceImageId -Service $Service -Running) -cne $Expected) {
+    # -Created reads back a container created with --no-start, before it can serve.
+    param([string]$Service, [string]$Expected, [switch]$Created)
+    if ((Get-ServiceImageId -Service $Service -Running:(-not $Created)) -cne $Expected) {
         throw "Running $Service image differs from its expected content identity."
     }
 }
@@ -1048,16 +1050,20 @@ if ($Action -in @("Activate", "ActivateOffline")) {
             (-not $offline -and -not [bool]$primary.provider_activation.combined_live_ready) -or
             ($offline -and [bool]$primary.primary_runtime_active) -or
             [int]$primary.ambiguous_effect_count -ne 0) { throw "Primary activation ownership/provider/reconciliation proof failed." }
-        # Intake reopens only on the verified gateway image.
-        Invoke-Compose up -d n8n
-        Invoke-Compose up -d --no-deps --no-build --force-recreate slackbot
-        Assert-ServiceImage -Service slackbot -Expected $runtimeImageId
+        # The gateway is created stopped and read back, so it never serves an
+        # unverified image and a gateway failure does not burn the generation.
+        Invoke-Compose up --no-start --no-deps --no-build --force-recreate slackbot
+        Assert-ServiceImage -Service slackbot -Expected $runtimeImageId -Created
         # ACTIVATED is terminal. Recording it offline would consume the chain that
         # paid Activate's require-ready needs; runtime acceptance already accepts
-        # the stages without ACTIVATED. It is recorded after the gateway readback,
-        # so a gateway failure no longer burns the generation.
+        # the stages without ACTIVATED. It is recorded before n8n and Slack reopen,
+        # so a failed evidence write unwinds with that intake still closed.
         if (-not $offline) {
             Invoke-Evidence -Command record -Stage ACTIVATED -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
+        }
+        Invoke-Compose up -d n8n
+        Invoke-Compose start slackbot
+        if (-not $offline) {
             Write-Host "Primary activation health passed and authenticated intake was reopened."
         }
         else {
@@ -1074,8 +1080,11 @@ if ($Action -in @("Activate", "ActivateOffline")) {
 }
 
 if ($Action -eq "Rollback") {
-    # A missing or invalid record refuses before anything is stopped.
-    $prior = Read-PriorImages
+    # An invalid record refuses before anything is stopped. With no record the
+    # fenced return to legacy still runs, on the candidate image, and says so.
+    $prior = if (Test-Path -LiteralPath (Get-PriorImagesPath) -PathType Leaf) { Read-PriorImages } else { $null }
+    $orchestratorImage = if ($prior) { [string]$prior.orchestrator_image_id } else { $runtimeImageId }
+    $gatewayImage = if ($prior) { [string]$prior.gateway_image_id } else { $runtimeImageId }
     Stop-And-Prove-AllIntake
     Write-Switches @{
         ALLOW_PAID_RUNS = "false"
@@ -1087,17 +1096,32 @@ if ($Action -eq "Rollback") {
     Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
         "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
     Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; LANGGRAPH_PRIMARY_ENABLED = "false"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false" }
-    # Image selection is a process override only; the profile is not changed.
-    $env:DIRECTOR_RUNTIME_IMAGE = $prior.orchestrator_image_id; $env:DIRECTOR_RUNTIME_IMAGE_ID = $prior.orchestrator_image_id
-    Invoke-Compose up -d --no-build --force-recreate orchestrator
-    Assert-ServiceImage -Service orchestrator -Expected $prior.orchestrator_image_id
-    $null = Wait-Health
-    Invoke-Compose up -d n8n
-    # --no-deps is mandatory: re-rendering orchestrator now would move it onto the gateway image.
-    $env:DIRECTOR_RUNTIME_IMAGE = $prior.gateway_image_id
-    Invoke-Compose up -d --no-deps --no-build --force-recreate slackbot
-    Assert-ServiceImage -Service slackbot -Expected $prior.gateway_image_id
-    Write-Host "Fenced rollback returned new intake to legacy on the recorded prior orchestrator and gateway images; primary evidence was preserved."
+    try {
+        # Image selection is a process override only; the profile is not changed.
+        $env:DIRECTOR_RUNTIME_IMAGE = $orchestratorImage; $env:DIRECTOR_RUNTIME_IMAGE_ID = $orchestratorImage
+        Invoke-Compose up -d --no-build --force-recreate orchestrator
+        Assert-ServiceImage -Service orchestrator -Expected $orchestratorImage
+        $null = Wait-Health
+        # --no-deps is mandatory: re-rendering orchestrator now would move it onto the gateway image.
+        $env:DIRECTOR_RUNTIME_IMAGE = $gatewayImage
+        Invoke-Compose up --no-start --no-deps --no-build --force-recreate slackbot
+        Assert-ServiceImage -Service slackbot -Expected $gatewayImage -Created
+        Invoke-Compose up -d n8n
+        Invoke-Compose start slackbot
+    }
+    catch {
+        # The CAS already returned new intake to legacy; no surface may serve it
+        # from an unverified image, so every intake surface is closed again.
+        $failure = $_.Exception.Message
+        Stop-And-Prove-AllIntake
+        throw "Rollback returned new intake to legacy, but its restore failed and was unwound; Slack, API, and n8n intake remain stopped. $failure"
+    }
+    if ($prior) {
+        Write-Host "Fenced rollback returned new intake to legacy on the recorded prior orchestrator and gateway images; primary evidence was preserved."
+    }
+    else {
+        Write-Host "Fenced rollback returned new intake to legacy; no prior-image record existed, so no image was restored and the orchestrator and gateway run the candidate image with paid runs and primary off. Primary evidence was preserved."
+    }
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
@@ -1132,3 +1156,4 @@ if ($Action -eq "Rollback") {
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

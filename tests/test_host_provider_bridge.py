@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -798,13 +799,14 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         self.write(self.pinned)
         self.account = self.root / "synthetic-account.json"
         self.account.write_text("synthetic fixture account, not a credential")
+        python = str(Path(sys.executable).resolve(strict=True))
         self.executor = WindowsHostProviderExecutor(
-            {"claude": (str(Path(sys.executable).resolve(strict=True)), "-c", "pass")}, cwd=self.root)
+            {lane: (python, "-c", "pass") for lane in ("claude", "github-copilot", "grok")}, cwd=self.root)
 
     def write(self, environment, version="director-native-process-environment/v1") -> None:
         self.file.write_text(json.dumps({"version": version, "environment": environment}))
 
-    def digest_under(self, ambient, *, pinned=True):
+    def digest_under(self, ambient, *, pinned=True, lane="claude"):
         from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
         from director_orchestrator.provider_validation import production_configuration_digest
         environment = dict(ambient)
@@ -812,7 +814,38 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             environment["DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"] = str(self.file)
         with patch.dict(os.environ, environment, clear=True):
             self.assertEqual(_apply_pinned_process_environment(), pinned)
-            return production_configuration_digest(self.executor, "claude", account_files=(str(self.account),))
+            return production_configuration_digest(self.executor, lane, account_files=(str(self.account),))
+
+    def test_pinned_environment_drops_inherited_lane_credentials(self) -> None:
+        from director_orchestrator.host_provider_bridge_server import (
+            PROFILE_AUTH_NAMES, _apply_pinned_process_environment)
+        bare = {"PATH": "ambient-a"}
+        inherited = {"ANTHROPIC_API_KEY": "ambient-key", "CLAUDE_CODE_OAUTH_TOKEN": "ambient-oauth",
+                     "GH_TOKEN": "ambient-gh", "GITHUB_TOKEN": "ambient-github", "XAI_API_KEY": "ambient-xai"}
+        noisy = {"PATH": "ambient-b", **inherited}
+        for lane in ("claude", "github-copilot", "grok"):
+            with self.subTest(lane=lane):
+                self.assertEqual(self.digest_under(bare, lane=lane), self.digest_under(noisy, lane=lane))
+                # Control: without the pin an inherited credential changes the digest.
+                self.assertNotEqual(self.digest_under(bare, pinned=False, lane=lane),
+                                    self.digest_under({**bare, **inherited}, pinned=False, lane=lane))
+        # A credential the launcher copied from the profile survives and is bound.
+        forwarded = {**noisy, "XAI_API_KEY": "profile-xai", PROFILE_AUTH_NAMES: "XAI_API_KEY"}
+        with patch.dict(os.environ, {**forwarded, "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file)},
+                        clear=True):
+            _apply_pinned_process_environment()
+            self.assertEqual(os.environ["XAI_API_KEY"], "profile-xai")
+            for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+                self.assertNotIn(name, os.environ)
+        self.assertNotEqual(self.digest_under(forwarded, lane="grok"), self.digest_under(bare, lane="grok"))
+        self.assertEqual(self.digest_under(forwarded, lane="claude"), self.digest_under(bare, lane="claude"))
+        # A name outside the lane credential set refuses without changing the process.
+        with patch.dict(os.environ, {**noisy, PROFILE_AUTH_NAMES: "OPENAI_API_KEY",
+                                     "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file)}, clear=True):
+            before = dict(os.environ)
+            with self.assertRaises(RuntimeError):
+                _apply_pinned_process_environment()
+            self.assertEqual(dict(os.environ), before)
 
     def test_pinned_environment_makes_the_digest_shell_independent(self) -> None:
         first = {"PATH": str(self.root / "one"), "TEMP": "ambient-a", "TMP": "ambient-a", "UNRELATED": "kept"}
@@ -930,3 +963,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

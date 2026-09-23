@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
@@ -583,15 +584,10 @@ class PostgresValidationTests(unittest.TestCase):
             return remaining
         return remaining_seconds
 
-    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
-        import time
-        from types import SimpleNamespace
+    def _team_canary_grant(self):
         from tests.test_antigravity_team import grant
-        from tests import test_entitlement_control_plane as fixtures
         from director_orchestrator.antigravity_team import SourceBlob
-        from director_orchestrator.antigravity_team_worker import sign,DENIED
-        from director_orchestrator.entitlement_contracts import document_digest
-        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        from director_orchestrator.provider_validation_team import SYNTHETIC_SOURCE
         work=work_packet()
         work["project"]="uppercut"
         g=grant(task_id=work["task_id"],assignment_id=work["assignment_id"],project_id=work["project"],
@@ -599,6 +595,22 @@ class PostgresValidationTests(unittest.TestCase):
             operation="review",review_base=CANDIDATE,writable_paths=(),commands=(),
             binding_digest=digest(canonical_json_bytes(asdict(binding("antigravity")))) ,
             source=tuple(SourceBlob(path=p,sha256=digest(b)) for p,b in SYNTHETIC_SOURCE.items()))
+        return work,g
+
+    def _attempts_and_reserved(self,generation):
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        return attempts,reserved
+
+    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
+        import time
+        from types import SimpleNamespace
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.antigravity_team_worker import sign,DENIED
+        from director_orchestrator.entitlement_contracts import document_digest
+        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        work,g=self._team_canary_grant()
         worker_key=b"w"*32
         calls=[]
         class Worker:
@@ -1398,6 +1410,41 @@ class PostgresValidationTests(unittest.TestCase):
         # The UNIQUE(generation,provider) slot is still free for a corrected pin.
         self.assertEqual(self.admit(generation)["provider"],"claude")
 
+    def test_team_configuration_drift_burns_no_attempt_or_budget(self):
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.provider_validation_team import TeamValidationRoute
+        work,g=self._team_canary_grant()
+        def no_worker(grant):
+            raise AssertionError("drift must be refused before any worker exists")
+        route=TeamValidationRoute(grant=g,owner_secret=fixtures.OWNER_SECRET,worker_secret=b"w"*32,
+            worker_factory=no_worker,configuration_digest=lambda:"d"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,owner_token=OWNER,
+            expires_at=int(time.time())+600,budget_units=2,lanes={"antigravity":{
+            "binding":asdict(binding("antigravity")),"configuration_digest":"c"*64,"cost_units":2,"work_packet":work}})
+        service=ValidationBridgeService(store=self.store,production_executor=None,capture_key=KEY,owner_token=OWNER,
+            account_files={},team_route=route)
+        with self.assertRaisesRegex(ValidationError,"team validation binding or generation mismatch"):
+            service.run(ValidationRequest(generation=generation,provider="antigravity"),OWNER)
+        self.assertEqual(self._attempts_and_reserved(generation),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected fingerprint.
+        self.assertEqual(self.admit(generation,"antigravity")["provider"],"antigravity")
+
+    def test_responses_configuration_drift_burns_no_attempt_or_budget(self):
+        fixture=self._responses_service_fixture()
+        route=fixture["service"].openai_responses_route
+        registered=route.configuration_digest
+        request=ValidationRequest(generation=fixture["generation"],provider="openai")
+        with patch.object(route.transport,"model","gpt-fixture-drifted"):
+            self.assertNotEqual(route.configuration_digest,registered)
+            with self.assertRaisesRegex(ValidationError,"configuration digest drift"):
+                fixture["service"].run(request,OWNER)
+        self.assertEqual(fixture["sends"],[])
+        route.budget_authority.reserve.assert_not_called()
+        self.assertEqual(self._attempts_and_reserved(fixture["generation"]),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for the registered configuration.
+        self.assertEqual(self.store.admit(request,OWNER,preserve_canary_identity=True)["provider"],"openai")
+
     def test_expected_configuration_digest_is_a_read_only_lane_lookup(self):
         generation=self.generation()
         self.assertEqual(self.store.expected_configuration_digest(generation,"claude"),"c"*64)
@@ -1422,3 +1469,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

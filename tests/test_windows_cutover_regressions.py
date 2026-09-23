@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | BEGIN]]
@@ -22,6 +23,7 @@ import tempfile
 import unittest
 
 from director_orchestrator.host_provider_bridge import (
+    _LANE_AUTH_ENV,
     SUPPORTED_HOST_LANES,
 )
 
@@ -137,10 +139,17 @@ function docker {
         return
     }
     $service = [string]$arguments[-1]
-    $name = @{ orchestrator = 'restart'; n8n = 'n8n'; slackbot = 'reopen' }[$service]
+    if ($arguments -contains 'start') {
+        if ($service -ne 'slackbot') { throw 'unexpected Compose start' }
+        Record-Event 'reopen' $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return
+    }
+    $name = @{ orchestrator = 'restart'; n8n = 'n8n'; slackbot = 'create-slackbot' }[$service]
     if ($arguments -notcontains 'up' -or -not $name) { throw 'unexpected Compose operation' }
+    if ($service -eq 'slackbot' -and $arguments -notcontains '--no-start') { throw 'gateway started before its readback' }
     Record-Event $name $env:DIRECTOR_RUNTIME_IMAGE
-    if ($service -ne 'n8n' -and -not ($Scenario -eq 'wrong-gateway' -and $service -eq 'slackbot')) {
+    if ($service -ne 'n8n' -and -not ($Scenario -eq "wrong-$service")) {
         $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
     }
     $global:LASTEXITCODE = 0
@@ -185,8 +194,6 @@ function Record-Event($Event, $Image) {
 }
 function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
 function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
-function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$FactsJson, [int]$LegacyTaskCount, [string]$LegacyInventoryDigest)
-    Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' })) }
 function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
 function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
 function docker {
@@ -206,14 +213,24 @@ function docker {
         return $script:images[$service]
     }
     if (($arguments[0..4] -join '|') -cne "compose|--project-name|$($script:ComposeProject)|--env-file|$EnvironmentPath" -or
-        $arguments[5] -cne 'up') { throw 'unexpected Docker operation' }
+        $arguments[5] -cnotin @('up', 'start')) { throw 'unexpected Docker operation' }
     $service = [string]$arguments[-1]
+    if ($arguments[5] -ceq 'start') {
+        if ($service -ne 'slackbot') { throw 'unexpected Compose start' }
+        Record-Event "start-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return
+    }
+    if ($service -eq 'slackbot' -and $arguments -notcontains '--no-start') { throw 'gateway started before its readback' }
     Record-Event "up-$service" $env:DIRECTOR_RUNTIME_IMAGE
     if ($service -ne 'n8n' -and -not ($Scenario -eq 'wrong-gateway' -and $service -eq 'slackbot')) {
         $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
     }
     $global:LASTEXITCODE = 0
 }
+function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$FactsJson, [int]$LegacyTaskCount, [string]$LegacyInventoryDigest)
+    Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' }))
+    if ($Scenario -eq "fail-$Command") { throw "evidence $Command refused" } }
 & ([scriptblock]::Create($block[0].Extent.Text))
 '''
 
@@ -443,6 +460,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
         source = (ROOT / "scripts/windows-host-provider-bridge.ps1").read_text(encoding="utf-8")
         for pattern, expected in (
             (r'\$provider -notin @\(([^)]+)\)', SUPPORTED_HOST_LANES),
+            # The launcher forwards only these lane credentials from the profile.
+            (r'\$laneAuthNames = @\(([^)]+)\)', frozenset().union(*_LANE_AUTH_ENV.values())),
         ):
             match = re.search(pattern, source)
             self.assertIsNotNone(match)
@@ -460,8 +479,10 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             environment.write_text("".join(f"{key}={value}\n" for key, value in initial.items()))
             events = root / "events.jsonl"
             events.write_text("")
-            if scenario != "missing-record":
-                prior = Path(str(environment) + ".prior-images.unselected." + "c" * 64 + ".json")
+            prior = Path(str(environment) + ".prior-images.unselected." + "c" * 64 + ".json")
+            if scenario == "invalid-record":
+                prior.write_text(json.dumps({"version": "director-prior-images/v1"}))
+            elif scenario != "missing-record":
                 prior.write_text(json.dumps({
                     "version": "director-prior-images/v1", "compose_project": "offline-cutover-test",
                     "candidate_image_id": CANDIDATE_IMAGE, "orchestrator_image_id": PRIOR_ORCHESTRATOR,
@@ -487,16 +508,20 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             with self.subTest(simulation=simulation):
                 result, events, final = self._rollback(simulation=simulation, scenario="success")
                 self.assertEqual(result.returncode, 0, result.stderr)
+                # The gateway is created stopped and read back before n8n or Slack reopen.
                 self.assertEqual([event["event"] for event in events],
                                  ["stopped", "wait", "database", "cas", "closed", "restart",
-                                  "readback-orchestrator", "health", "n8n", "reopen", "readback-slackbot"])
+                                  "readback-orchestrator", "health", "create-slackbot", "readback-slackbot",
+                                  "n8n", "reopen"])
                 images = {event["event"]: event["image"] for event in events if event.get("image")}
                 # Each service returns to its own recorded prior image, not the candidate.
                 self.assertEqual(images["restart"], PRIOR_ORCHESTRATOR)
                 self.assertEqual(images["readback-orchestrator"], PRIOR_ORCHESTRATOR)
-                self.assertEqual(images["reopen"], PRIOR_GATEWAY)
+                self.assertEqual(images["create-slackbot"], PRIOR_GATEWAY)
                 self.assertEqual(images["readback-slackbot"], PRIOR_GATEWAY)
-                self.assertNotIn(CANDIDATE_IMAGE, {images["restart"], images["reopen"]})
+                self.assertEqual(images["reopen"], PRIOR_GATEWAY)
+                self.assertNotIn(CANDIDATE_IMAGE, {images["restart"], images["create-slackbot"]})
+                self.assertIn("recorded prior orchestrator and gateway images", result.stdout)
                 cas = next(event for event in events if event["event"] == "cas")
                 self.assertEqual(cas["arguments"], {
                     "intake_owner": "legacy", "owner_token": "offline-owner", "expected_generation": 7})
@@ -525,7 +550,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                     names = [event["event"] for event in events]
                     self.assertEqual(names[:3], ["stopped", "wait", "database"])
                     self.assertEqual("cas" in names, scenario == "cas_failure")
-                    self.assertTrue(set(names).isdisjoint({"restart", "health", "reopen"}))
+                    self.assertTrue(set(names).isdisjoint({"restart", "health", "create-slackbot", "n8n", "reopen"}))
                     self.assertEqual(final["LANGGRAPH_PRIMARY_ENABLED"], "true")
                     self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
                                      str(simulation).lower())
@@ -533,19 +558,49 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                                  "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"):
                         self.assertEqual(final[name], "false")
 
-    def test_rollback_without_prior_image_record_refuses_before_stopping(self):
+    def test_rollback_without_prior_image_record_still_returns_intake_to_legacy(self):
         result, events, final = self._rollback(simulation=False, scenario="missing-record")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([event["event"] for event in events],
+                         ["stopped", "wait", "database", "cas", "closed", "restart",
+                          "readback-orchestrator", "health", "create-slackbot", "readback-slackbot",
+                          "n8n", "reopen"])
+        # No image restore: both services are verified on the candidate image.
+        for event in events:
+            if event.get("image"):
+                self.assertEqual(event["image"], CANDIDATE_IMAGE, event["event"])
+        self.assertIn("no image was restored", result.stdout)
+        for name in SWITCHES:
+            self.assertEqual(final[name], "false")
+
+    def test_rollback_with_an_invalid_prior_image_record_refuses_before_stopping(self):
+        result, events, final = self._rollback(simulation=False, scenario="invalid-record")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("were not recorded", result.stderr)
+        self.assertIn("prior-image record is invalid", result.stderr)
         self.assertEqual(events, [])
         self.assertEqual(final["ALLOW_PAID_RUNS"], "true")
 
-    def test_rollback_refuses_a_gateway_left_on_another_image(self):
-        result, events, _ = self._rollback(simulation=False, scenario="wrong-gateway")
+    def test_rollback_gateway_readback_mismatch_closes_all_intake(self):
+        result, events, final = self._rollback(simulation=False, scenario="wrong-slackbot")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("slackbot image differs", result.stderr)
-        self.assertEqual(events[-1]["event"], "readback-slackbot")
-        self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
+        self.assertIn("intake remain stopped", result.stderr)
+        names = [event["event"] for event in events]
+        self.assertEqual(names[-3:], ["create-slackbot", "readback-slackbot", "stopped"])
+        self.assertEqual(events[-2]["image"], CANDIDATE_IMAGE)
+        # The refused gateway was never started and n8n never reopened.
+        self.assertNotIn("reopen", names)
+        self.assertNotIn("n8n", names)
+        self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+
+    def test_rollback_orchestrator_readback_mismatch_closes_all_intake(self):
+        result, events, _ = self._rollback(simulation=False, scenario="wrong-orchestrator")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("orchestrator image differs", result.stderr)
+        self.assertIn("intake remain stopped", result.stderr)
+        names = [event["event"] for event in events]
+        self.assertEqual(names[-3:], ["restart", "readback-orchestrator", "stopped"])
+        self.assertTrue(set(names).isdisjoint({"health", "create-slackbot", "n8n", "reopen"}))
 
     def _activate(self, root, *, action="Activate", health=None, images=None, scenario="success"):
         environment = root / "fixture.env"
@@ -576,7 +631,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
         prior = root / ("fixture.env.prior-images.unselected." + "c" * 64 + ".json")
         return result, observed, final, prior
 
-    def test_paid_activation_reopens_intake_on_the_verified_gateway_before_activated(self):
+    def test_paid_activation_records_activated_on_the_verified_gateway_before_reopening_intake(self):
         with tempfile.TemporaryDirectory() as temporary:
             result, events, final, prior = self._activate(Path(temporary))
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -584,8 +639,11 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertEqual(names[:5], ["intake-stopped", "inventory", "evidence-bind-legacy-inventory",
                                          "evidence-require-ready", "readback-orchestrator"])
             self.assertLess(names.index("readback-slackbot"), names.index("up-orchestrator"))
-            self.assertEqual(names[-4:], ["up-n8n", "up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED"])
-            self.assertEqual(events[-2]["image"], CANDIDATE_IMAGE)
+            # Created stopped, read back, ACTIVATED recorded, and only then n8n and Slack start.
+            self.assertEqual(names[-5:], ["up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED",
+                                          "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-4]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
             self.assertEqual(json.loads(prior.read_text())["orchestrator_image_id"], PRIOR_ORCHESTRATOR)
             self.assertEqual(json.loads(prior.read_text())["gateway_image_id"], PRIOR_GATEWAY)
             for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
@@ -617,8 +675,12 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             names = [event["event"] for event in events]
             self.assertNotIn("evidence-record-ACTIVATED", names)
-            self.assertEqual(names[-3:], ["up-n8n", "up-slackbot", "readback-slackbot"])
-            self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
+            # Offline activation keeps the ACCEPTED..RESTORE_PROVED gate before any start.
+            self.assertEqual(names[:4], ["intake-stopped", "inventory", "evidence-bind-legacy-inventory",
+                                         "evidence-require-ready"])
+            self.assertLess(names.index("evidence-require-ready"), names.index("up-orchestrator"))
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-3]["image"], CANDIDATE_IMAGE)
             self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
             self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
             self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "true")
@@ -627,6 +689,32 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
             self.assertTrue(prior.exists())
             self.assertIn("no ACTIVATED stage was recorded", result.stdout)
+
+    def test_offline_activation_without_ready_evidence_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), action="ActivateOffline",
+                                                          scenario="fail-require-ready")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence require-ready refused", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["intake-stopped", "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
+            self.assertFalse(prior.exists())
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+
+    def test_paid_activation_failed_activated_write_unwinds_with_slack_and_n8n_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="fail-record")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED",
+                                          "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"):
+                self.assertEqual(final[name], "false")
 
     def test_offline_activation_refuses_a_live_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -646,6 +734,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             names = [event["event"] for event in events]
             self.assertNotIn("evidence-record-ACTIVATED", names)
             self.assertEqual(names[-3:], ["up-slackbot", "readback-slackbot", "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
             self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
 
     def test_second_activation_keeps_the_first_prior_image_record(self):
@@ -715,6 +805,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             "DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG",
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
             "DIRECTOR_HOST_PROVIDER_WORKSPACE",
+            "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES",
+            "XAI_API_KEY",
         ]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -757,6 +849,8 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "f" * 40,
                 "DIRECTOR_PROVIDER_VALIDATION_TREE": "a" * 40,
                 "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "b" * 64,
+                "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "XAI_API_KEY",
+                "XAI_API_KEY": "profile-xai-fixture",
             }
             environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
             parent = dict.fromkeys(keys, "stale-parent-value")
@@ -789,6 +883,9 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 observed = json.loads(capture.read_text(encoding="utf-8-sig"))
                 for name in keys:
                     expected = str(root.resolve()) if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE" else profile.get(name)
+                    if name == "XAI_API_KEY" and expected is None:
+                        # An unlisted credential is left for the Python pin to drop.
+                        expected = parent[name]
                     self.assertEqual(observed.get(name) or None, expected, name)
                 self.assertEqual(json.loads(restored.read_text(encoding="utf-8-sig")), parent)
 
@@ -832,6 +929,9 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 {"DIRECTOR_PROVIDER_VALIDATION_GENERATION": "d" * 64},
                 {"DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": values["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"]},
                 {"DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": '{"claude":"not-an-array"}'},
+                # Only a known lane credential that this profile sets may be forwarded.
+                {"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "OPENAI_API_KEY", "OPENAI_API_KEY": "fixture"},
+                {"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "XAI_API_KEY"},
             )
             for change in malformed:
                 environment.write_text("".join(f"{k}={v}\n" for k, v in {**values, **change}.items()))
@@ -869,3 +969,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]

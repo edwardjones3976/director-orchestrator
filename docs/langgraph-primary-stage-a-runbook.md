@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | BEGIN]] -->
@@ -266,10 +267,16 @@ constraint (`langgraph_postgres.py:540-542`) and a trigger
 `-Action Rollback` performs the inverse fenced generation change. It is **not
 unconditional**, and it is **not an undo**. It requires all of the following.
 
+- **A valid prior-image record, or none.** It reads
+  `<profile>.prior-images.<generation>.<image>.json`, written once before the
+  first candidate recreate. An invalid record refuses rollback **before**
+  intake is stopped. A missing record does not refuse: the fenced return to
+  legacy runs on the candidate image and the tool reports that no image was
+  restored.
 - **Closed intake, proved.** It stops `slackbot`, `n8n` and `orchestrator`, then
   re-reads each service's running-container list and throws *"Authenticated
   intake surface remains active"* if any is still up. This is a hard stop, not a
-  drain, and it happens before anything else.
+  drain, and it happens before anything else changes.
 - **The same accepted pins.** Like every runtime action it verifies the snapshot
   against `LANGGRAPH_PRIMARY_PINNED_COMMIT_SHA` and
   `LANGGRAPH_PRIMARY_PINNED_TREE_SHA`, requires a clean checkout whose own
@@ -289,8 +296,9 @@ doubled, ambiguous effects should not arise — but the refusal is real and
 rollback must not be planned as an always-available exit once live dispatch is
 on.
 
-Both refusals fire **after** intake has been stopped and after the switches have
-been written false. A refused rollback is therefore not a no-op: it leaves the
+The ambiguous-effect and quiescence refusals fire **after** intake has been
+stopped and after the switches have been written false. A refused rollback is
+therefore not a no-op: it leaves the
 deployment with intake stopped, `ALLOW_PAID_RUNS`,
 `LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED` and
 `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` false, the kill switch true,
@@ -307,8 +315,12 @@ body of the script held before running any of them.
 The sequence it runs in this checkout: stop and prove all intake stopped, write
 the switches false, wait 65 seconds for the lease to lapse, run the guarded
 inverse compare-and-swap in a throwaway container, set
-`LANGGRAPH_PRIMARY_ENABLED=false` and restore the live ASGI app, recreate, wait
-for health, then restart n8n and slackbot.
+`LANGGRAPH_PRIMARY_ENABLED=false` and restore the live ASGI app, recreate the
+orchestrator on the recorded prior orchestrator image and read its image ID
+back, wait for health, create slackbot stopped on the recorded prior gateway
+image and read it back, then start n8n and slackbot. If a readback or the
+health wait fails after the compare-and-swap, it stops and proves Slack, n8n
+and API intake closed again and reports the failure.
 
 **What rollback does not do.** It changes who owns *new* intake and nothing
 else. It never transfers ownership of tasks that already exist
@@ -350,3 +362,4 @@ closed.
 <!-- [[Grok Bot | serving model unreported | 2026-09-10 | END]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

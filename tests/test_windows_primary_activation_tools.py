@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
@@ -408,16 +409,21 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         container = text[text.index("function Get-ServiceContainer"):text.index("function Get-ServiceImageId")]
         self.assertIn("label=com.docker.compose.project=$script:ComposeProject", container)
         self.assertIn("label=com.docker.compose.service=$Service", container)
-        self.assertIn("up -d --no-deps --no-build --force-recreate slackbot", activation)
-        self.assertIn("Assert-ServiceImage -Service slackbot -Expected $runtimeImageId", activation)
-        # Rollback restores the separately recorded prior images, never the candidate.
+        # The gateway is created stopped and read back before anything starts it.
+        self.assertIn("up --no-start --no-deps --no-build --force-recreate slackbot", activation)
+        self.assertIn("Assert-ServiceImage -Service slackbot -Expected $runtimeImageId -Created", activation)
+        self.assertNotIn("up -d --no-deps --no-build --force-recreate slackbot", text)
+        # Rollback restores the separately recorded prior images; only a missing
+        # record falls back to the candidate image, and says so.
         rollback = text[text.index('if ($Action -eq "Rollback")'):]
         self.assertLess(rollback.index("Read-PriorImages"), rollback.index("Stop-And-Prove-AllIntake"))
         self.assertEqual(re.findall(r"Assert-ServiceImage [^\n]*", rollback), [
-            "Assert-ServiceImage -Service orchestrator -Expected $prior.orchestrator_image_id",
-            "Assert-ServiceImage -Service slackbot -Expected $prior.gateway_image_id",
+            "Assert-ServiceImage -Service orchestrator -Expected $orchestratorImage",
+            "Assert-ServiceImage -Service slackbot -Expected $gatewayImage -Created",
         ])
-        self.assertNotIn("$runtimeImageId", rollback)
+        self.assertEqual(rollback.count("$runtimeImageId"), 2)
+        self.assertIn("[string]$prior.orchestrator_image_id } else { $runtimeImageId }", rollback)
+        self.assertIn("[string]$prior.gateway_image_id } else { $runtimeImageId }", rollback)
         stage = text[text.index('if ($Action -eq "StageRuntime")'):text.index('if ($Action -eq "ValidateProviders")')]
         self.assertLess(stage.index("Save-PriorImages"),
                         stage.index("up -d --no-deps --no-build --force-recreate orchestrator"))
@@ -472,6 +478,8 @@ catch { 'exit=refused' }
         self.assertIn("[string]::IsNullOrWhiteSpace($InstallRoot)", install)
         self.assertLess(install.index("if (-not $pinnedEnvironmentFile)"), install.index("Install-BridgeRuntime"))
         self.assertIn("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", install)
+        self.assertLess(install.index("Get-CleanBridgeSource"), install.index("Install-BridgeRuntime"))
+        self.assertIn('"$destination.source.json"', install)
         self.assertLess(install.index("Install-BridgeRuntime"), install.index("-Action CheckEnvironment"))
         self.assertLess(install.index("-Action CheckEnvironment"), install.index("Register-BridgeTask"))
         self.assertIn("no task was registered", install)
@@ -482,7 +490,90 @@ catch { 'exit=refused' }
             self.assertNotIn(forbidden, text)
         # The launcher runs the code beside it and never inherits a stale pinned file.
         self.assertIn('[Environment]::SetEnvironmentVariable("PYTHONPATH", (Join-Path (Split-Path -Parent $PSScriptRoot) "src"), "Process")', text)
-        self.assertIn('foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"))', text)
+        self.assertIn('foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", '
+                      '"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"))', text)
+        # The clean-source check covers exactly the directories the manifest copies.
+        manifest = text[text.index("function Get-BridgeRuntimeManifest"):text.index("function Get-CleanBridgeSource")]
+        clean = text[text.index("function Get-CleanBridgeSource"):text.index("function Install-BridgeRuntime")]
+        copied = re.search(r'foreach \(\$directory in @\(([^)]+)\)\)', manifest).group(1)
+        self.assertIn(" ".join(re.findall(r'"([^"]+)"', copied)) + " scripts/windows-host-provider-bridge.ps1", clean)
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and git are required")
+    def test_bridge_install_requires_a_clean_committed_runtime_source(self) -> None:
+        # Only the clean-source helper executes against a throwaway repository.
+        harness = r"""
+param($Source, $Root)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-CleanBridgeSource'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+'source=' + ((Get-CleanBridgeSource -Root $Root) -join '|')
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repository = root / "repository"
+            files = {
+                "src/director_orchestrator/__init__.py": "# package\n",
+                "docs/schemas/packet.json": "{}\n",
+                "docs/provider-profiles/claude.md": "profile\n",
+                "prompts/director-system.md": "prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": "# launcher\n",
+                "README.md": "outside the runtime\n",
+                ".gitignore": "__pycache__/\n*.local\n",
+            }
+            for relative, content in files.items():
+                (repository / relative).parent.mkdir(parents=True, exist_ok=True)
+                (repository / relative).write_text(content, encoding="utf-8")
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def git(*arguments):
+                return subprocess.run(["git", "-C", str(repository), "-c", "core.autocrlf=false", *arguments],
+                                      capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout.strip()
+
+            git("init", "-q")
+            git("add", "-A")
+            git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture")
+            expected = git("rev-parse", "HEAD^{commit}") + "|" + git("rev-parse", "HEAD^{tree}")
+
+            def check():
+                return subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(repository)],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+
+            # Bytecode caches and edits outside the runtime paths do not block.
+            (repository / "src/director_orchestrator/__pycache__").mkdir()
+            (repository / "src/director_orchestrator/__pycache__/module.cpython-312.pyc").write_bytes(b"\x00")
+            (repository / "README.md").write_text("edited\n", encoding="utf-8")
+            result = check()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("source=" + expected, result.stdout)
+
+            dirty = {
+                "modified": ("prompts/director-system.md", "edited prompt\n"),
+                "untracked": ("src/director_orchestrator/extra.py", "VALUE = 1\n"),
+                "ignored": ("docs/schemas/operator.local", "not committed\n"),
+            }
+            for case, (relative, content) in dirty.items():
+                with self.subTest(case=case):
+                    path = repository / relative
+                    original = path.read_text(encoding="utf-8") if path.exists() else None
+                    path.write_text(content, encoding="utf-8")
+                    try:
+                        result = check()
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("clean checkout of the bridge runtime files", result.stderr)
+                        self.assertNotIn("source=", result.stdout)
+                    finally:
+                        if original is None:
+                            path.unlink()
+                        else:
+                            path.write_text(original, encoding="utf-8")
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_bridge_runtime_install_is_content_addressed_and_verified(self) -> None:
@@ -788,3 +879,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
