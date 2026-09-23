@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
@@ -11,15 +12,19 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:54 UTC | BEGIN]]
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import replace
+from http.server import ThreadingHTTPServer
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -771,6 +776,143 @@ class HostProviderBridgeTests(unittest.TestCase):
                 )
 
 
+class PinnedProcessEnvironmentTests(unittest.TestCase):
+    OWNER = "validation-owner-fixture-" + "o" * 40
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        folders = {}
+        for name in ("bin", "tools", "temp", "system", "local", "roaming", "profile"):
+            folders[name] = self.root / name
+            folders[name].mkdir()
+        self.pinned = {
+            "PATH": os.pathsep.join((str(folders["bin"]), str(folders["tools"]))),
+            "PATHEXT": ".COM;.EXE", "TEMP": str(folders["temp"]), "TMP": str(folders["temp"]),
+            "SYSTEMROOT": str(folders["system"]), "WINDIR": str(folders["system"]),
+            "COMSPEC": str(folders["system"] / "cmd.exe"), "LOCALAPPDATA": str(folders["local"]),
+            "APPDATA": str(folders["roaming"]), "USERPROFILE": str(folders["profile"]),
+        }
+        self.file = self.root / "native-process-environment.json"
+        self.write(self.pinned)
+        self.account = self.root / "synthetic-account.json"
+        self.account.write_text("synthetic fixture account, not a credential")
+        self.executor = WindowsHostProviderExecutor(
+            {"claude": (str(Path(sys.executable).resolve(strict=True)), "-c", "pass")}, cwd=self.root)
+
+    def write(self, environment, version="director-native-process-environment/v1") -> None:
+        self.file.write_text(json.dumps({"version": version, "environment": environment}))
+
+    def digest_under(self, ambient, *, pinned=True):
+        from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
+        from director_orchestrator.provider_validation import production_configuration_digest
+        environment = dict(ambient)
+        if pinned:
+            environment["DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"] = str(self.file)
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(_apply_pinned_process_environment(), pinned)
+            return production_configuration_digest(self.executor, "claude", account_files=(str(self.account),))
+
+    def test_pinned_environment_makes_the_digest_shell_independent(self) -> None:
+        first = {"PATH": str(self.root / "one"), "TEMP": "ambient-a", "TMP": "ambient-a", "UNRELATED": "kept"}
+        second = {"PATH": str(self.root / "two"), "TEMP": "ambient-b", "TMP": "ambient-b"}
+        self.assertEqual(self.digest_under(first), self.digest_under(second))
+        # Control: without the pin the same ambient difference changes the digest.
+        self.assertNotEqual(self.digest_under(first, pinned=False), self.digest_under(second, pinned=False))
+        from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
+        with patch.dict(os.environ, {**first, "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file)}, clear=True):
+            _apply_pinned_process_environment()
+            self.assertEqual(os.environ["UNRELATED"], "kept")
+            self.assertEqual(os.environ["TEMP"], self.pinned["TEMP"])
+
+    def test_invalid_pinned_environment_refuses_without_changing_the_process(self) -> None:
+        from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
+        cases = {
+            "missing name": ({k: v for k, v in self.pinned.items() if k != "PATHEXT"}, None, None),
+            "extra name": ({**self.pinned, "HOME": self.pinned["TEMP"]}, None, None),
+            "newline value": ({**self.pinned, "TEMP": self.pinned["TEMP"] + "\n"}, None, None),
+            "missing TEMP directory": ({**self.pinned, "TEMP": str(self.root / "absent")}, None, None),
+            "wrong version": (self.pinned, "director-native-process-environment/v0", None),
+            "relative path": (self.pinned, None, self.file.name),
+        }
+        for name, (environment, version, location) in cases.items():
+            with self.subTest(case=name):
+                self.write(environment, **({"version": version} if version else {}))
+                ambient = {"PATH": "ambient-path", "TEMP": "ambient-temp",
+                           "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": location or str(self.file)}
+                with patch.dict(os.environ, ambient, clear=True):
+                    before = dict(os.environ)
+                    with self.assertRaises(RuntimeError) as caught:
+                        _apply_pinned_process_environment()
+                    self.assertEqual(str(caught.exception),
+                                     "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE is invalid")
+                    self.assertEqual(dict(os.environ), before)
+
+    def test_configuration_digest_endpoint_requires_the_owner_bearer(self) -> None:
+        from director_orchestrator.host_provider_bridge_server import _Handler
+        from director_orchestrator.provider_validation import production_configuration_digest
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        server.executor = self.executor
+        server.validation_service = SimpleNamespace(
+            owner_token=self.OWNER, production=self.executor, account_files={"claude": (str(self.account),)})
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        url = f"http://127.0.0.1:{server.server_port}/v1/provider/configuration-digest"
+
+        def get(authorization=None):
+            request = urllib.request.Request(url)
+            if authorization is not None:
+                request.add_header("Authorization", authorization)
+            try:
+                with opener.open(request, timeout=30) as response:
+                    return response.status, response.read()
+            except urllib.error.HTTPError as error:
+                return error.code, error.read()
+
+        self.assertEqual(get()[0], 401)
+        self.assertEqual(get("Bearer wrong")[0], 401)
+        self.assertEqual(get(self.OWNER)[0], 401)
+        status, body = get("Bearer " + self.OWNER)
+        self.assertEqual(status, 200)
+        expected = production_configuration_digest(self.executor, "claude", account_files=(str(self.account),))
+        self.assertEqual(json.loads(body), {"ok": True, "configuration_digests": {"claude": expected},
+                                            "pinned_environment": False})
+        text = body.decode("utf-8")
+        for secret_or_path in (self.OWNER, str(self.account), json.dumps(str(self.account))[1:-1], self.account.name):
+            self.assertNotIn(secret_or_path, text)
+        server.validation_service = None
+        self.assertEqual(get("Bearer " + self.OWNER)[0], 503)
+
+    def test_check_environment_prints_pins_without_serving_or_calling_providers(self) -> None:
+        from director_orchestrator import host_provider_bridge_server as server_module
+        from director_orchestrator.provider_validation import production_configuration_digest
+        marker = self.root / "provider-was-called"
+        provider = self.root / "marker_provider.py"
+        provider.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+        command = (str(Path(sys.executable).resolve(strict=True)), str(provider))
+        environment = {
+            "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps({"claude": list(command)}),
+            "DIRECTOR_HOST_PROVIDER_WORKSPACE": str(self.root),
+            "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": json.dumps({"claude": [str(self.account)]}),
+            "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file),
+            "PATH": "ambient-path",
+        }
+        output = io.StringIO()
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(server_module, "ThreadingHTTPServer", side_effect=AssertionError("server started")), \
+             redirect_stdout(output):
+            server_module.main(["--check-environment"])
+            expected = production_configuration_digest(
+                WindowsHostProviderExecutor({"claude": command}, cwd=self.root), "claude",
+                account_files=(str(self.account),))
+        self.assertEqual(json.loads(output.getvalue()), {
+            "configuration_digests": {"claude": expected}, "pinned_environment": True, "provider_calls": 0})
+        self.assertFalse(marker.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -787,3 +929,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | END]]

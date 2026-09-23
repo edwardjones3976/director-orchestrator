@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
@@ -9,10 +10,12 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:50 UTC | BEGIN]]
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("Preflight", "Run")][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet("Preflight", "Run", "CheckEnvironment", "Install")][string]$Action,
     [Parameter(Mandatory = $true)][string]$EnvironmentFile,
     [Parameter(Mandatory = $true)][string]$Workspace,
-    [string]$Python = ".venv-win\Scripts\python.exe"
+    [string]$Python = ".venv-win\Scripts\python.exe",
+    [string]$InstallRoot,
+    [ValidatePattern('^[A-Za-z0-9 ._-]+$')][string]$TaskName = "DirectorHostProviderBridge"
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +28,70 @@ function Read-DotEnvNames {
         if ($line -match '^\s*([^#=\s]+)\s*=\s*(.*)$') { $values[$matches[1]] = $matches[2] }
     }
     return $values
+}
+
+function Get-BridgeRuntimeManifest {
+    # ponytail: fixed runtime set; add a directory if the bridge starts reading another repo path.
+    param([string]$Root)
+    $base = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $files = @(foreach ($directory in @("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts")) {
+        Get-ChildItem -LiteralPath (Join-Path $base $directory) -Recurse -File
+    }) + @(Get-Item -LiteralPath (Join-Path $base "scripts/windows-host-provider-bridge.ps1"))
+    $lines = [string[]]@(foreach ($file in $files) {
+        $relative = $file.FullName.Substring($base.Length + 1).Replace('\', '/')
+        if ($relative -notmatch '(^|/)__pycache__/') {
+            "$((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
+        }
+    })
+    [Array]::Sort($lines, [StringComparer]::Ordinal)
+    return ,$lines
+}
+
+function Install-BridgeRuntime {
+    # Content-addressed copy: the directory name is the SHA256 of the manifest text.
+    param([string]$SourceRoot, [string]$InstallRoot)
+    $source = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
+    $target = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\', '/')
+    if ($target -eq $source -or $target.StartsWith($source + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "The bridge install root must be outside the source checkout."
+    }
+    $manifest = Get-BridgeRuntimeManifest -Root $source
+    $text = ($manifest -join "`n") + "`n"
+    $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
+    $destination = Join-Path $target $digest
+    if (-not (Test-Path -LiteralPath $destination)) {
+        $staging = Join-Path $target ".staging-$([Guid]::NewGuid().ToString('N'))"
+        foreach ($line in $manifest) {
+            $relative = $line.Substring(66)
+            $copy = Join-Path $staging $relative
+            $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $copy))
+            Copy-Item -LiteralPath (Join-Path $source $relative) -Destination $copy
+        }
+        # Directory.Move refuses an existing destination; Move-Item would nest into it.
+        [IO.Directory]::Move($staging, $destination)
+    }
+    if (((Get-BridgeRuntimeManifest -Root $destination) -join "`n") + "`n" -cne $text) {
+        throw "Installed bridge runtime does not match its content address."
+    }
+    return $destination
+}
+
+function Register-BridgeTask {
+    # Registration only: no password is stored and the task is never started here.
+    param([string]$Destination, [string]$TaskName, [string]$EnvironmentPath, [string]$WorkspacePath,
+        [string]$PythonPath, [string]$PowerShell)
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $launcher = Join-Path $Destination "scripts\windows-host-provider-bridge.ps1"
+    $action = New-ScheduledTaskAction -Execute $PowerShell -WorkingDirectory $Destination -Argument (
+        "-NoLogo -NoProfile -NonInteractive -File `"$launcher`" -Action Run -EnvironmentFile `"$EnvironmentPath`" " +
+        "-Workspace `"$WorkspacePath`" -Python `"$PythonPath`"")
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
+    $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+        -Principal $principal -Force | Out-Null
 }
 
 $environmentPath = (Resolve-Path -LiteralPath $EnvironmentFile).Path
@@ -50,6 +117,11 @@ $missing = @($required | Where-Object {
 })
 if ($missing.Count -gt 0) {
     throw "Host bridge configuration is incomplete: $($missing -join ', '). No values were printed."
+}
+# Python validates the pinned environment's content; only its presence is checked here.
+$pinnedEnvironmentFile = [string]$values["DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"]
+if ($pinnedEnvironmentFile -and -not (Test-Path -LiteralPath $pinnedEnvironmentFile -PathType Leaf)) {
+    throw "The pinned process environment file is unavailable."
 }
 foreach ($otherSecret in @(
     "ORCHESTRATOR_SHARED_SECRET", "SLACK_GATEWAY_SECRET",
@@ -150,16 +222,40 @@ if ($validationEnabled) {
 Write-Host "Host bridge preflight passed for $($commands.Count) supported provider command(s); no provider was invoked."
 if ($Action -eq "Preflight") { return }
 
+if ($Action -eq "Install") {
+    if ([string]::IsNullOrWhiteSpace($InstallRoot)) { throw "Install requires -InstallRoot." }
+    # A scheduled task does not inherit this shell's PATH/TEMP, so the pinned environment is mandatory.
+    if (-not $pinnedEnvironmentFile) {
+        throw "Install requires DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE in the bridge profile."
+    }
+    $destination = Install-BridgeRuntime -SourceRoot (Split-Path -Parent $PSScriptRoot) -InstallRoot $InstallRoot
+    # The app-execution alias, not [Environment]::ProcessPath: the packaged path is ACL-restricted.
+    $powerShell = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+    & $powerShell -NoLogo -NoProfile -NonInteractive -File (Join-Path $destination "scripts\windows-host-provider-bridge.ps1") `
+        -Action CheckEnvironment -EnvironmentFile $environmentPath -Workspace $workspacePath -Python $pythonPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "The installed bridge runtime failed its environment check; no task was registered."
+    }
+    Register-BridgeTask -Destination $destination -TaskName $TaskName -EnvironmentPath $environmentPath `
+        -WorkspacePath $workspacePath -PythonPath $pythonPath -PowerShell $powerShell
+    # The adapter path is part of production_configuration_digest, so generations
+    # must pin the digests the installed copy printed above.
+    Write-Host "Bridge runtime $(Split-Path -Leaf $destination) was installed and task '$TaskName' was registered; it was NOT started."
+    return
+}
+
 $optional = @(
     "DIRECTOR_HOST_PROVIDER_WORKSPACE", "DIRECTOR_HOST_PROVIDER_BIND",
     "DIRECTOR_HOST_PROVIDER_PORT", "DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS",
-    "DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE", "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE"
+    "DIRECTOR_HOST_PROVIDER_TLS_CERT_FILE", "DIRECTOR_HOST_PROVIDER_TLS_KEY_FILE",
+    "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"
 ) + $validationNames
 $original = @{}
-foreach ($name in ($required + $optional | Select-Object -Unique)) {
+foreach ($name in ($required + $optional + @("PYTHONPATH") | Select-Object -Unique)) {
     $original[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
 }
-foreach ($name in $validationNames) {
+# A stale parent value must never select validation or a pinned environment.
+foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE")) {
     [Environment]::SetEnvironmentVariable($name, $null, "Process")
 }
 foreach ($name in $required + $optional) {
@@ -168,8 +264,12 @@ foreach ($name in $required + $optional) {
     }
 }
 [Environment]::SetEnvironmentVariable("DIRECTOR_HOST_PROVIDER_WORKSPACE", $workspacePath, "Process")
+# The launcher always runs the code beside it, including an installed copy.
+[Environment]::SetEnvironmentVariable("PYTHONPATH", (Join-Path (Split-Path -Parent $PSScriptRoot) "src"), "Process")
+$serverArguments = @()
+if ($Action -eq "CheckEnvironment") { $serverArguments = @("--check-environment") }
 try {
-    & $pythonPath -m director_orchestrator.host_provider_bridge_server
+    & $pythonPath -m director_orchestrator.host_provider_bridge_server @serverArguments
     if ($LASTEXITCODE -ne 0) { throw "The Windows host provider bridge exited unsuccessfully." }
 }
 finally {
@@ -187,3 +287,4 @@ finally {
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:05 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]

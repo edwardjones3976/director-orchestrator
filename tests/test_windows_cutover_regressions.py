@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
@@ -85,7 +86,8 @@ Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
-foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose')) {
+foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
+    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages')) {
     $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
     if (@($node).Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -95,19 +97,36 @@ if (@($block).Count -ne 1) { throw 'expected one production rollback branch' }
 $script:environmentPath = $EnvironmentPath
 $script:values = @{}
 $script:ComposeProject = 'offline-cutover-test'
+$script:runtimeImageId = 'sha256:' + ('c' * 64)
+$script:images = @{ orchestrator = $script:runtimeImageId; slackbot = $script:runtimeImageId }
+$env:DIRECTOR_RUNTIME_IMAGE = $script:runtimeImageId
 $databaseIdentity = 'offline-identity'; $databaseInstanceId = 'offline-instance'
-function Record-Event($Event) {
+function Record-Event($Event, $Image) {
     $state = @{}
     foreach ($line in Get-Content -LiteralPath $EnvironmentPath) {
         $parts = $line.Split('=', 2); $state[$parts[0]] = $parts[1]
     }
-    @{event=$Event; state=$state} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
+    @{event=$Event; state=$state; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
 }
 function Stop-And-Prove-AllIntake { Record-Event 'stopped' }
 function Start-Sleep { param($Seconds) if($Seconds -ne 65){throw 'unexpected lease wait'}; Record-Event 'wait' }
 function Wait-Health { Record-Event 'health'; @{langgraph_primary=@{}} }
 function docker {
     $arguments = @($args)
+    if ($arguments[0] -eq 'ps') {
+        $selected = @($arguments | Where-Object { $_ -like 'label=com.docker.compose.service=*' })
+        if ($selected.Count -ne 1 -or $arguments -notcontains "label=com.docker.compose.project=$($script:ComposeProject)") {
+            throw 'unexpected container selection'
+        }
+        $global:LASTEXITCODE = 0
+        return $selected[0].Split('=')[-1] + '-container'
+    }
+    if ($arguments[0] -eq 'inspect') {
+        $service = ([string]$arguments[-1]).Replace('-container', '')
+        Record-Event "readback-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return $script:images[$service]
+    }
     if ($arguments[0] -ne 'compose') { throw 'unexpected Docker operation' }
     if ($arguments -contains 'run') {
         if ($arguments[-2] -ne '-c') { throw 'unexpected helper command' }
@@ -117,16 +136,84 @@ function docker {
         $global:LASTEXITCODE = $LASTEXITCODE
         return
     }
-    if ($arguments -contains 'up' -and $arguments[-1] -eq 'orchestrator') {
-        Record-Event 'restart'
-    } elseif ($arguments -contains 'up' -and $arguments[-1] -eq 'slackbot') {
-        Record-Event 'reopen'
-    } else {
-        throw 'unexpected Compose operation'
+    $service = [string]$arguments[-1]
+    $name = @{ orchestrator = 'restart'; n8n = 'n8n'; slackbot = 'reopen' }[$service]
+    if ($arguments -notcontains 'up' -or -not $name) { throw 'unexpected Compose operation' }
+    Record-Event $name $env:DIRECTOR_RUNTIME_IMAGE
+    if ($service -ne 'n8n' -and -not ($Scenario -eq 'wrong-gateway' -and $service -eq 'slackbot')) {
+        $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
     }
     $global:LASTEXITCODE = 0
 }
 $Action = 'Rollback'
+& ([scriptblock]::Create($block[0].Extent.Text))
+'''
+
+
+PRIOR_ORCHESTRATOR = "sha256:" + "a" * 64
+PRIOR_GATEWAY = "sha256:" + "b" * 64
+CANDIDATE_IMAGE = "sha256:" + "c" * 64
+
+# The production activation branch and every image helper execute; only intake
+# proofs, evidence, inventory, health and Docker are substituted, so no service,
+# database or provider is reachable.
+ACTIVATION_HARNESS = r'''
+param($Source, $EnvironmentPath, $EventsPath, $Action, $HealthJson, $ImagesJson, $Scenario)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
+    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages')) {
+    $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
+    if (@($node).Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$block = $ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$Action -in @("Activate", "ActivateOffline")'}, $true)
+if (@($block).Count -ne 1) { throw 'expected one production activation branch' }
+$script:environmentPath = $EnvironmentPath
+$script:values = @{}
+$script:ComposeProject = 'offline-activation-test'
+$script:runtimeImageId = 'sha256:' + ('c' * 64)
+$runtimeImageId = $script:runtimeImageId
+$env:DIRECTOR_RUNTIME_IMAGE = $script:runtimeImageId
+$script:images = @{}
+foreach ($entry in ($ImagesJson | ConvertFrom-Json).PSObject.Properties) { $script:images[$entry.Name] = [string]$entry.Value }
+function Record-Event($Event, $Image) {
+    @{event=$Event; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
+}
+function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
+function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
+function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$FactsJson, [int]$LegacyTaskCount, [string]$LegacyInventoryDigest)
+    Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' })) }
+function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
+function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
+function docker {
+    $arguments = @($args)
+    if ($arguments[0] -eq 'ps') {
+        $selected = @($arguments | Where-Object { $_ -like 'label=com.docker.compose.service=*' })
+        if ($selected.Count -ne 1 -or $arguments -notcontains "label=com.docker.compose.project=$($script:ComposeProject)") {
+            throw 'unexpected container selection'
+        }
+        $global:LASTEXITCODE = 0
+        return $selected[0].Split('=')[-1] + '-container'
+    }
+    if ($arguments[0] -eq 'inspect') {
+        $service = ([string]$arguments[-1]).Replace('-container', '')
+        Record-Event "readback-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return $script:images[$service]
+    }
+    if (($arguments[0..4] -join '|') -cne "compose|--project-name|$($script:ComposeProject)|--env-file|$EnvironmentPath" -or
+        $arguments[5] -cne 'up') { throw 'unexpected Docker operation' }
+    $service = [string]$arguments[-1]
+    Record-Event "up-$service" $env:DIRECTOR_RUNTIME_IMAGE
+    if ($service -ne 'n8n' -and -not ($Scenario -eq 'wrong-gateway' -and $service -eq 'slackbot')) {
+        $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
+    }
+    $global:LASTEXITCODE = 0
+}
 & ([scriptblock]::Create($block[0].Extent.Text))
 '''
 
@@ -372,6 +459,13 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             initial["PRESERVED"] = "fixture-value"
             environment.write_text("".join(f"{key}={value}\n" for key, value in initial.items()))
             events = root / "events.jsonl"
+            events.write_text("")
+            if scenario != "missing-record":
+                prior = Path(str(environment) + ".prior-images.unselected." + "c" * 64 + ".json")
+                prior.write_text(json.dumps({
+                    "version": "director-prior-images/v1", "compose_project": "offline-cutover-test",
+                    "candidate_image_id": CANDIDATE_IMAGE, "orchestrator_image_id": PRIOR_ORCHESTRATOR,
+                    "gateway_image_id": PRIOR_GATEWAY}))
             harness = root / "rollback.ps1"
             harness.write_text(ROLLBACK_HARNESS, encoding="utf-8")
             runner = root / "database_stub.py"
@@ -394,7 +488,15 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                 result, events, final = self._rollback(simulation=simulation, scenario="success")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual([event["event"] for event in events],
-                                 ["stopped", "wait", "database", "cas", "closed", "restart", "health", "reopen"])
+                                 ["stopped", "wait", "database", "cas", "closed", "restart",
+                                  "readback-orchestrator", "health", "n8n", "reopen", "readback-slackbot"])
+                images = {event["event"]: event["image"] for event in events if event.get("image")}
+                # Each service returns to its own recorded prior image, not the candidate.
+                self.assertEqual(images["restart"], PRIOR_ORCHESTRATOR)
+                self.assertEqual(images["readback-orchestrator"], PRIOR_ORCHESTRATOR)
+                self.assertEqual(images["reopen"], PRIOR_GATEWAY)
+                self.assertEqual(images["readback-slackbot"], PRIOR_GATEWAY)
+                self.assertNotIn(CANDIDATE_IMAGE, {images["restart"], images["reopen"]})
                 cas = next(event for event in events if event["event"] == "cas")
                 self.assertEqual(cas["arguments"], {
                     "intake_owner": "legacy", "owner_token": "offline-owner", "expected_generation": 7})
@@ -430,6 +532,133 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                     for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
                                  "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"):
                         self.assertEqual(final[name], "false")
+
+    def test_rollback_without_prior_image_record_refuses_before_stopping(self):
+        result, events, final = self._rollback(simulation=False, scenario="missing-record")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("were not recorded", result.stderr)
+        self.assertEqual(events, [])
+        self.assertEqual(final["ALLOW_PAID_RUNS"], "true")
+
+    def test_rollback_refuses_a_gateway_left_on_another_image(self):
+        result, events, _ = self._rollback(simulation=False, scenario="wrong-gateway")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("slackbot image differs", result.stderr)
+        self.assertEqual(events[-1]["event"], "readback-slackbot")
+        self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
+
+    def _activate(self, root, *, action="Activate", health=None, images=None, scenario="success"):
+        environment = root / "fixture.env"
+        if not environment.exists():
+            environment.write_text("".join(f"{name}=false\n" for name in SWITCHES) + "PRESERVED=fixture-value\n")
+        primary = dict.fromkeys(("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres",
+            "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready",
+            "reconciliation_worker_ready", "primary_runtime_active", "paid_off_primary_intake_active",
+            "legacy_new_intake_disabled"), True)
+        primary.update(new_intake_owner="langgraph", ambiguous_effect_count=0, intake_fencing_generation=3,
+                       provider_activation={"combined_live_ready": True})
+        primary.update(health or {})
+        events = root / "events.jsonl"
+        events.write_text("")
+        harness = root / "activation.ps1"
+        harness.write_text(ACTIVATION_HARNESS, encoding="utf-8")
+        result = subprocess.run(
+            [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
+             str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), str(environment), str(events), action,
+             json.dumps(primary), json.dumps(images or {"orchestrator": PRIOR_ORCHESTRATOR, "slackbot": PRIOR_GATEWAY}),
+             scenario],
+            capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+        )
+        observed = [json.loads(line) for line in events.read_text(encoding="utf-8-sig").splitlines()]
+        final = dict(line.split("=", 1) for line in environment.read_text().splitlines())
+        self.assertEqual(final["PRESERVED"], "fixture-value")
+        self.assertEqual(list(root.glob("*.tmp")), [])
+        prior = root / ("fixture.env.prior-images.unselected." + "c" * 64 + ".json")
+        return result, observed, final, prior
+
+    def test_paid_activation_reopens_intake_on_the_verified_gateway_before_activated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:5], ["intake-stopped", "inventory", "evidence-bind-legacy-inventory",
+                                         "evidence-require-ready", "readback-orchestrator"])
+            self.assertLess(names.index("readback-slackbot"), names.index("up-orchestrator"))
+            self.assertEqual(names[-4:], ["up-n8n", "up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED"])
+            self.assertEqual(events[-2]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(json.loads(prior.read_text())["orchestrator_image_id"], PRIOR_ORCHESTRATOR)
+            self.assertEqual(json.loads(prior.read_text())["gateway_image_id"], PRIOR_GATEWAY)
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED", "LANGGRAPH_PRIMARY_ENABLED"):
+                self.assertEqual(final[name], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+            self.assertIn("authenticated intake was reopened", result.stdout)
+
+    def test_paid_activation_without_provider_readiness_unwinds_before_intake(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(
+                Path(temporary), health={"provider_activation": {"combined_live_ready": False}})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertNotIn("up-slackbot", names)
+            self.assertEqual(names[-1], "intake-stopped")
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"):
+                self.assertEqual(final[name], "false")
+            self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
+
+    def test_offline_activation_needs_no_provider_readiness_and_records_no_activated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), action="ActivateOffline", health={
+                "provider_activation": {"combined_live_ready": False},
+                "primary_runtime_active": False, "paid_off_primary_intake_active": True})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertEqual(names[-3:], ["up-n8n", "up-slackbot", "readback-slackbot"])
+            self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
+            self.assertTrue(prior.exists())
+            self.assertIn("no ACTIVATED stage was recorded", result.stdout)
+
+    def test_offline_activation_refuses_a_live_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), action="ActivateOffline", health={
+                "provider_activation": {"combined_live_ready": False}, "primary_runtime_active": True})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            self.assertNotIn("up-slackbot", [event["event"] for event in events])
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_activation_gateway_readback_mismatch_closes_all_intake(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="wrong-gateway")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("slackbot image differs", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertEqual(names[-3:], ["up-slackbot", "readback-slackbot", "intake-stopped"])
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+
+    def test_second_activation_keeps_the_first_prior_image_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, _, _, prior = self._activate(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            recorded = prior.read_bytes()
+            result, events, _, _ = self._activate(
+                root, images={"orchestrator": CANDIDATE_IMAGE, "slackbot": CANDIDATE_IMAGE})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(prior.read_bytes(), recorded)
+            self.assertEqual(json.loads(recorded)["gateway_image_id"], PRIOR_GATEWAY)
 
     def _preflight(self, commands):
         with tempfile.TemporaryDirectory() as temporary:
@@ -639,3 +868,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | END]]

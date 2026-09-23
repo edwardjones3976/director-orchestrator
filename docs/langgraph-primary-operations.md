@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | BEGIN]] -->
@@ -394,9 +395,19 @@ their mere presence:
 - `scripts/windows-host-provider-bridge.ps1 -Action Preflight` verifies the
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
+  `-Action CheckEnvironment` prints the per-lane production configuration
+  digests and makes no provider call. When the profile sets
+  `DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE`, the bridge replaces its
+  shell-dependent process variables with that pinned file before any digest or
+  provider run, so the digests no longer depend on the launching shell.
+  `-Action Install -InstallRoot <dir>` copies the bridge runtime into a
+  content-addressed directory, runs `CheckEnvironment` from the copy and
+  registers a restart-on-failure Scheduled Task without starting it. Install is
+  persistent host configuration and needs owner approval. Generations must pin
+  the digests printed by the installed copy.
 - `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
-  `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`, and `Rollback`
-  operations. Every invocation requires the exact environment-file path,
+  `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`,
+  `ActivateOffline`, and `Rollback` operations. Every invocation requires the exact environment-file path,
   Compose project, and host port; profile identity is never inferred.
 - `scripts/windows-postgres-test-lane.ps1` starts, inspects, exports, tests
   against, and removes one disposable `postgres:17-alpine` container pinned to
@@ -560,10 +571,19 @@ accounts, signing credentials, deployment authority, or a fallback acceptance mo
 
 Activation reopens Slack only after the observed health
 projection proves Postgres, writer fencing, reconciliation, current provider
-activation, graph ownership, and zero ambiguous effects. Rollback stops Slack and
-the orchestrator, waits for the writer lease to expire, refuses when ambiguous
-effects exist, performs the fenced generation change back to legacy, and preserves
-the primary database.
+activation, graph ownership, and zero ambiguous effects. It recreates the Slack
+gateway from the verified candidate image and reads back the running gateway's
+image ID before it records `ACTIVATED`. `ActivateOffline` needs the same
+acceptance, migration and restore evidence but not provider readiness: it turns
+offline simulation on and paid runs and live dispatch off, requires the paid-off
+intake projection with the live runtime inactive, and records no `ACTIVATED`
+stage, so a later paid `Activate` can still use the evidence chain. Rollback
+stops Slack and the orchestrator, waits for the writer lease to expire, refuses
+when ambiguous effects exist, performs the fenced generation change back to
+legacy, and preserves the primary database. It then restores the orchestrator
+and gateway images recorded before the first candidate recreate (by `StageRuntime`,
+or by activation when no staging ran) and reads both back. A missing record
+refuses rollback before anything stops.
 
 The control tool persists `/data/langgraph-primary-activation-evidence.json` as
 an atomic versioned state machine. Its identity binds the exact Director
@@ -601,9 +621,9 @@ legacy SQLite task ID/status inventory and durably binds that immutable snapshot
 to legacy ownership before `require-ready` may pass. Pre-cutover tasks remain
 legacy-owned; only the fenced new-intake generation transfers to LangGraph.
 
-If any post-start activation health check fails, the tool stops the orchestrator,
-restores paid/live/new-intake switches to their closed values, and leaves Slack,
-n8n, and API intake stopped. Rollback uses unconditional runtime exceptions for
+If any post-start activation check fails, including the gateway image readback,
+the tool stops and proves Slack, n8n, and API intake closed, and restores the
+paid, live, offline-simulation and new-intake switches to their closed values. Rollback uses unconditional runtime exceptions for
 ambiguous-effect and quiescence failures; Python optimization cannot remove the
 safety checks.
 
@@ -745,3 +765,4 @@ identity cannot authorize successful completion.
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:42 UTC | END]] -->
 <!-- [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->

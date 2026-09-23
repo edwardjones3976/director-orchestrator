@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
@@ -1380,6 +1381,29 @@ class PostgresValidationTests(unittest.TestCase):
                     service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
                 execute.assert_not_called()
 
+    def test_configuration_drift_burns_no_attempt_or_budget(self):
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        generation=self.generation()
+        with tempfile.TemporaryDirectory() as directory:
+            account=Path(directory)/"synthetic-auth";account.write_text("fixture")
+            executor=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),"-c","pass")},cwd=directory)
+            service=ValidationBridgeService(store=self.store,production_executor=executor,capture_key=KEY,
+                owner_token=OWNER,account_files={"claude":(str(account),)})
+            with self.assertRaisesRegex(ValidationError,"binding drift"):
+                service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        self.assertEqual((attempts,reserved),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected pin.
+        self.assertEqual(self.admit(generation)["provider"],"claude")
+
+    def test_expected_configuration_digest_is_a_read_only_lane_lookup(self):
+        generation=self.generation()
+        self.assertEqual(self.store.expected_configuration_digest(generation,"claude"),"c"*64)
+        self.assertIsNone(self.store.expected_configuration_digest(generation,"grok"))
+        self.assertIsNone(self.store.expected_configuration_digest(secrets.token_hex(32),"claude"))
+
 
 if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
@@ -1397,3 +1421,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]

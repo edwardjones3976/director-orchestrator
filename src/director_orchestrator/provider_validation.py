@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
@@ -375,6 +376,16 @@ class PostgresValidationStore:
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
                         packet=raw,owner_digest=row[2])
 
+    def expected_configuration_digest(self, generation: str, provider: str) -> str | None:
+        """Read-only lookup so a drifted native pin is refused before any attempt row exists."""
+        with self._connect_bounded() as db:
+            db.execute("SET TRANSACTION READ ONLY")
+            row = db.execute(f"SELECT configuration FROM {SCHEMA}.generations WHERE generation=%s",
+                             (generation,)).fetchone()
+        # Index the jsonb in Python: configuration->%s is ambiguous for an untyped parameter.
+        spec = None if row is None else row[0].get(provider)
+        return spec.get("configuration_digest") if isinstance(spec, dict) else None
+
     def claim_execution(self, admission: dict, *, remaining_seconds=None) -> None:
         with self._connect_bounded(remaining_seconds) as db:
             if remaining_seconds is not None:
@@ -736,11 +747,16 @@ class ValidationBridgeService:
             return self.team_route.run(self,request,owner_token)
         if request.provider == "openai" and self.openai_responses_route is not None:
             return self._run_openai_responses(request, owner_token)
+        # A drifted native pin is refused before admission, so it creates no
+        # attempt row and burns neither budget nor the one-attempt lane slot.
+        pin=production_configuration_digest(self.production,request.provider,
+                                           account_files=self.account_files.get(request.provider,()))
+        expected=self.store.expected_configuration_digest(request.generation,request.provider)
+        if expected is not None and pin!=expected:
+            raise ValidationError("production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
-            pin=production_configuration_digest(self.production,request.provider,
-                                               account_files=self.account_files.get(request.provider,()))
             if pin!=admission["configuration_digest"]:
                 raise ValidationError("production executable/account/workspace/adapter binding drift")
             self.store.claim_execution(admission)
@@ -1036,3 +1052,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]

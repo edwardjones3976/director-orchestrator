@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
@@ -36,6 +37,7 @@ import re
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -393,13 +395,174 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertIn('Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"', text)
         self.assertIn("Primary activation failed and was unwound", text)
         self.assertIn("acquire_intake_authority(intake_owner='legacy'", text)
+        activate = 'if ($Action -in @("Activate", "ActivateOffline"))'
         self.assertLess(
-            text.index("Stop-And-Prove-AllIntake", text.index('if ($Action -eq "Activate")')),
+            text.index("Stop-And-Prove-AllIntake", text.index(activate)),
             text.index('LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"'),
         )
-        activation = text[text.index('if ($Action -eq "Activate")'):text.index('if ($Action -eq "Rollback")')]
+        activation = text[text.index(activate):text.index('if ($Action -eq "Rollback")')]
         self.assertLess(activation.index("bind-legacy-inventory"), activation.index("require-ready"))
         self.assertIn("finally { Write-Switches", activation)
+        # Services are found by Compose labels only; no stored ID is restarted.
+        self.assertNotIn("docker start", text)
+        container = text[text.index("function Get-ServiceContainer"):text.index("function Get-ServiceImageId")]
+        self.assertIn("label=com.docker.compose.project=$script:ComposeProject", container)
+        self.assertIn("label=com.docker.compose.service=$Service", container)
+        self.assertIn("up -d --no-deps --no-build --force-recreate slackbot", activation)
+        self.assertIn("Assert-ServiceImage -Service slackbot -Expected $runtimeImageId", activation)
+        # Rollback restores the separately recorded prior images, never the candidate.
+        rollback = text[text.index('if ($Action -eq "Rollback")'):]
+        self.assertLess(rollback.index("Read-PriorImages"), rollback.index("Stop-And-Prove-AllIntake"))
+        self.assertEqual(re.findall(r"Assert-ServiceImage [^\n]*", rollback), [
+            "Assert-ServiceImage -Service orchestrator -Expected $prior.orchestrator_image_id",
+            "Assert-ServiceImage -Service slackbot -Expected $prior.gateway_image_id",
+        ])
+        self.assertNotIn("$runtimeImageId", rollback)
+        stage = text[text.index('if ($Action -eq "StageRuntime")'):text.index('if ($Action -eq "ValidateProviders")')]
+        self.assertLess(stage.index("Save-PriorImages"),
+                        stage.index("up -d --no-deps --no-build --force-recreate orchestrator"))
+        digest = text[text.index("function Get-ResolvedDeploymentDigest"):text.index("function Assert-RunningCandidate")]
+        self.assertNotIn("| & docker", digest)
+        self.assertIn("Invoke-NativeBytes", digest)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_native_bytes_transport_is_exact(self) -> None:
+        harness = r'''
+param($Source, $Python, $InputPath, $OutputPath, $WorkDirectory)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-NativeBytes'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$echo = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import sys;sys.stdout.buffer.write(sys.stdin.buffer.read())') -InputBytes ([IO.File]::ReadAllBytes($InputPath))
+[IO.File]::WriteAllBytes($OutputPath, $echo)
+Set-Location -LiteralPath $WorkDirectory
+$cwd = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import os,sys;sys.stdout.buffer.write(os.getcwd().encode())')
+'cwd=' + [Text.Encoding]::UTF8.GetString($cwd)
+try { $null = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import sys;sys.exit(3)'); 'exit=accepted' }
+catch { 'exit=refused' }
+'''
+        payload = "config {\"é☃\": 1}\r\nlast".encode("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            (root / "input.bin").write_bytes(payload)
+            work = root / "work"
+            work.mkdir()
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-langgraph-primary-control.ps1"), sys.executable,
+                 str(root / "input.bin"), str(root / "output.bin"), str(work)],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual((root / "output.bin").read_bytes(), payload)
+            observed = next(line for line in result.stdout.splitlines() if line.startswith("cwd="))
+            self.assertEqual(Path(observed[4:]).resolve(), work.resolve())
+            self.assertIn("exit=refused", result.stdout)
+            self.assertNotIn("exit=accepted", result.stdout)
+
+    def test_bridge_install_registers_a_supervised_task_without_starting_it(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        self.assertIn('[ValidateSet("Preflight", "Run", "CheckEnvironment", "Install")]', text)
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        self.assertIn("[string]::IsNullOrWhiteSpace($InstallRoot)", install)
+        self.assertLess(install.index("if (-not $pinnedEnvironmentFile)"), install.index("Install-BridgeRuntime"))
+        self.assertIn("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", install)
+        self.assertLess(install.index("Install-BridgeRuntime"), install.index("-Action CheckEnvironment"))
+        self.assertLess(install.index("-Action CheckEnvironment"), install.index("Register-BridgeTask"))
+        self.assertIn("no task was registered", install)
+        register = text[text.index("function Register-BridgeTask"):text.index("$environmentPath = (Resolve-Path")]
+        for required in ("-RestartCount", "-MultipleInstances IgnoreNew", "-LogonType Interactive", "-Action Run"):
+            self.assertIn(required, register)
+        for forbidden in ("Start-ScheduledTask", "Unregister-ScheduledTask", "schtasks", "-Password"):
+            self.assertNotIn(forbidden, text)
+        # The launcher runs the code beside it and never inherits a stale pinned file.
+        self.assertIn('[Environment]::SetEnvironmentVariable("PYTHONPATH", (Join-Path (Split-Path -Parent $PSScriptRoot) "src"), "Process")', text)
+        self.assertIn('foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE"))', text)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_bridge_runtime_install_is_content_addressed_and_verified(self) -> None:
+        # Only the manifest and copy helpers execute; the Install branch and
+        # task registration are never run, even with mocks.
+        harness = r"""
+param($Source, $SourceRoot, $InstallRoot)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+'destination=' + (Install-BridgeRuntime -SourceRoot $SourceRoot -InstallRoot $InstallRoot)
+"""
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, target = root / "source", root / "install"
+            files = {
+                "src/director_orchestrator/__init__.py": b"# package\n",
+                "src/director_orchestrator/nested/module.py": "VALUE = 'é'\r\n".encode("utf-8"),
+                "docs/schemas/packet.json": b'{"type":"object"}',
+                "docs/provider-profiles/claude.md": b"profile\n",
+                "prompts/director-system.md": b"prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": b"# launcher\n",
+            }
+            excluded = {
+                "src/director_orchestrator/__pycache__/module.cpython-312.pyc": b"\x00bytecode",
+                "README.md": b"not runtime\n",
+                "scripts/other.ps1": b"# not runtime\n",
+            }
+            for relative, content in {**files, **excluded}.items():
+                (source / relative).parent.mkdir(parents=True, exist_ok=True)
+                (source / relative).write_bytes(content)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def install():
+                result = subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(source), str(target)],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+                lines = [line for line in result.stdout.splitlines() if line.startswith("destination=")]
+                return result, (Path(lines[-1][len("destination="):]) if lines else None)
+
+            def address(contents):
+                manifest = sorted(f"{hashlib.sha256(data).hexdigest()}  {relative}" for relative, data in contents.items())
+                return hashlib.sha256(("\n".join(manifest) + "\n").encode("utf-8")).hexdigest()
+
+            result, first = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(first, target / address(files))
+            copied = {path.relative_to(first).as_posix(): path.read_bytes() for path in first.rglob("*") if path.is_file()}
+            self.assertEqual(copied, files)
+            self.assertFalse(any("__pycache__" in path.parts for path in first.rglob("*")))
+
+            result, again = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(again, first)
+            self.assertEqual(list(target.glob(".staging-*")), [])
+
+            edited = dict(files, **{"prompts/director-system.md": b"edited prompt\n"})
+            (source / "prompts/director-system.md").write_bytes(edited["prompts/director-system.md"])
+            result, second = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(second, target / address(edited))
+            self.assertNotEqual(second, first)
+            self.assertEqual((first / "prompts/director-system.md").read_bytes(), files["prompts/director-system.md"])
+
+            (source / "prompts/director-system.md").write_bytes(files["prompts/director-system.md"])
+            (first / "docs/schemas/packet.json").write_bytes(b'{"type":"tampered"}')
+            result, _ = install()
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("does not match its content address", result.stderr)
 
     def test_host_wrapper_preserves_unsupported_lane_rejection(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
@@ -624,3 +787,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
