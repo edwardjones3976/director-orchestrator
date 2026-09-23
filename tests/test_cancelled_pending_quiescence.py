@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | BEGIN]]
@@ -96,7 +97,8 @@ class CancelledPendingQuiescenceTests(unittest.TestCase):
         activation=object.__new__(DefaultPrimaryActivation)
         activation._lease_diagnostics = LeaseRenewalDiagnostics()
         activation.coordinator=self.coordinator
-        activation.services=SimpleNamespace(available_provider_lanes=())
+        activation.services=SimpleNamespace(
+            available_provider_lanes=(), occupied=lambda _task_id: False)
         activation.application=SimpleNamespace(recover=self.coordinator.recover)
         settings=Settings()
         cleared={field.name:'' for field in fields(settings)
@@ -466,3 +468,5 @@ if __name__ == '__main__':
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 11:23 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 14:05 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]

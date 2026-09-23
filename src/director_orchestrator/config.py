@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
@@ -78,6 +79,7 @@ import math
 import os
 import re
 import time
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -352,6 +354,14 @@ class Settings:
     langgraph_primary_provider_activation_bindings_json: str = field(
         default_factory=lambda: os.getenv(
             "LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON", "{}"
+        ).strip()
+    )
+    # Owner-configured per-attempt USD ceilings; {} preserves equal allocation.
+    # A nonempty map must cover every selected lane; the three-attempt ceiling
+    # binds its pre-approval assignment budget, within MAX_TASK_BUDGET_USD.
+    langgraph_primary_provider_attempt_budgets_usd_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON", "{}"
         ).strip()
     )
     # Optional immutable canary authority. Both values are required together;
@@ -1209,6 +1219,39 @@ class Settings:
             "ready_specialist_ranks_complete": bool(ready_specialists)
             and ready_specialists.issubset(cost_ranks),
         }
+
+    def primary_provider_attempt_budgets_usd(self) -> dict[str, Decimal]:
+        """Trusted deployment limits, never model-authored estimates or grants."""
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("primary provider budget names must be unique")
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(
+                self.langgraph_primary_provider_attempt_budgets_usd_json,
+                parse_float=Decimal, parse_int=Decimal, object_pairs_hook=unique,
+            )
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("primary provider budgets must be a JSON object") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("primary provider budgets must be a JSON object")
+        allowed = {"openai", "claude", "cursor", "grok", "antigravity",
+                   "perplexity", "firecrawl", "github-copilot"}
+        for provider, amount in payload.items():
+            if provider not in allowed:
+                raise ValueError("primary provider budget names must be canonical lanes")
+            if not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
+                raise ValueError("primary provider budgets require positive whole micro-USD")
+            try:
+                if amount != amount.quantize(Decimal("0.000001")):
+                    raise ValueError("primary provider budgets require positive whole micro-USD")
+            except InvalidOperation as exc:
+                raise ValueError("primary provider budget is outside monetary precision") from exc
+        return payload
 
     def trusted_provider_cost_ranks(self) -> dict[str, int]:
         """Parse explicit operator-controlled comparable cost ranks.
@@ -2493,3 +2536,4 @@ class Settings:
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]

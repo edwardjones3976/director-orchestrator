@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
@@ -812,13 +813,14 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             activation = DefaultPrimaryActivation(settings, live_dependencies=dependencies, effect_gateways=registry)
         return activation, settings
 
-    def _register(self, activation, settings, *, task_id, provider="openai", agent=ProviderName.OPENAI):
+    def _register(self, activation, settings, *, task_id, provider="openai", agent=ProviderName.OPENAI,
+                  assignment_budget=1.0):
         record = TaskRecord(task_id=task_id, status=TaskStatus.QUEUED,
             intake=SlackIntake(source_event_id=task_id, channel_id="C123", user_id="U123",
                                 text="Ship a bounded change", thread_ts="1.0"))
         plan = preview_plan(record.intake.text, settings)
         assignment = plan.assignments[0].model_copy(update={"agent": agent,
-            "primary_provider_lane": provider, "estimated_cost_usd": 1.0})
+            "primary_provider_lane": provider, "estimated_cost_usd": assignment_budget})
         record.plan = plan.model_copy(update={"assignments": [assignment]})
         activation.services._packet_router = packet_router(settings)
         activation.services.register(record)
@@ -834,17 +836,22 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         task_id = "DIR-PG-RESP-REAL-" + uuid.uuid4().hex[:8].upper()
         api_key, model = "test-secret-key", "configured-model"
         transport = OpenAIResponsesPacketTransport(api_key=api_key, model=model, response_meter=None)
-        activation, settings = self._build_activation(transport)
-        assignment_id, sequence, packet = self._register(activation, settings, task_id=task_id)
+        with patch.dict(os.environ, {
+            "LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON": '{"openai":0.55}',
+        }):
+            activation, settings = self._build_activation(transport)
+        assignment_id, sequence, packet = self._register(
+            activation, settings, task_id=task_id, assignment_budget=1.65)
 
         day = datetime.now(timezone.utc).date().isoformat()
-        attempt_usd = float(packet["limits"]["budget_usd"]) / 3.0
+        attempt_usd = float(Decimal(str(packet["limits"]["budget_usd"])) / 3)
         signed_budget = budget(grant(task_id=task_id, project_id=packet["project"]),
             provider_id="openai", project_id=packet["project"], day=day, token_limit=1000,
             task_limit_microusd=int(Decimal(str(settings.max_task_budget_usd)) * 1_000_000),
             daily_limit_microusd=int(Decimal(str(settings.max_daily_provider_budget_usd)) * 1_000_000),
             attempt_reservation_microusd=int(
                 (Decimal(str(attempt_usd)) * 1_000_000).to_integral_value(rounding=ROUND_CEILING)))
+        self.assertEqual(550000, signed_budget.attempt_reservation_microusd)
         with self.handle.pool.connection() as connection, connection.transaction():
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest,document) "
@@ -1541,11 +1548,11 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
                 "WHERE task_id=%s ORDER BY event_sequence", (task_id,)).fetchall()
         return [row["status"] for row in rows], {row["attempt_digest"] for row in rows}
 
-    def test_host_bridge_carried_deadline_holds_the_whole_wave_at_readiness(self):
+    def test_host_bridge_expired_carried_deadline_holds_the_whole_wave_at_readiness(self):
         """Real HostBridgePacketTransport under the constructor-created preflight.
 
         Signed budget and writer prerequisites are otherwise valid; refusal is
-        attributable to the bridge transport's pure deadline hook, not missing
+        attributable to an expired carried deadline at the bridge transport, not missing
         enrollment. No ACTIVE reservation, no bridge HTTP, and no attempt or
         workload rows are written.
         """
@@ -1601,7 +1608,8 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         with patch(
             "director_orchestrator.host_provider_bridge.urllib.request.build_opener",
             side_effect=forbid_bridge_http,
-        ):
+        ), patch("director_orchestrator.primary_transports.monotonic",
+                 lambda: real_monotonic() + 3601):
             reservations = self.ledger.reserve_ready(
                 task_id=task_id,
                 writer=writer,
@@ -2693,3 +2701,5 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]

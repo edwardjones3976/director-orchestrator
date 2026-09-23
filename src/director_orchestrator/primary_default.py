@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
@@ -79,6 +80,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -87,6 +89,7 @@ import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -675,6 +678,52 @@ def _typed_effect_binding(
     raise RuntimeError("external effect action is unsupported")
 
 
+def _live_assignment_budgets(settings: Settings, providers: tuple[str, ...]) -> tuple[float, ...]:
+    """Freeze deployment-controlled ceilings before the owner's plan approval."""
+    task_budget = Decimal(str(settings.max_task_budget_usd))
+    if not providers or not task_budget.is_finite() or task_budget <= 0:
+        raise ValueError("live primary dispatch requires a positive configured task budget")
+    configured = settings.primary_provider_attempt_budgets_usd()
+    if not configured:
+        return (float(task_budget) / len(providers),) * len(providers)
+    if any(provider not in configured for provider in providers):
+        raise ValueError("primary provider budgets must cover every selected lane")
+    budgets = tuple(configured[provider] * 3 for provider in providers)
+    if sum(budgets) > task_budget:
+        raise ValueError("primary provider assignment budgets exceed the configured task budget")
+    return tuple(float(amount) for amount in budgets)
+
+
+def _live_assignment_attempt_budget(
+    record: TaskRecord, settings: Settings, assignment: Assignment, packet: Mapping[str, Any],
+) -> float:
+    """One plan/packet/ceiling check shared by readiness and paid dispatch."""
+    if record.plan is None or not record.plan.assignments:
+        raise ValueError("live provider budget requires a plan")
+    assignments = record.plan.assignments
+    providers = tuple(_assignment_provider_lane(item) for item in assignments)
+    expected = _live_assignment_budgets(settings, providers)
+    configured = settings.primary_provider_attempt_budgets_usd()
+    amounts = tuple(Decimal(str(item.estimated_cost_usd)) for item in assignments)
+    if (any(not amount.is_finite() or amount <= 0 for amount in amounts)
+            or math.fsum(float(amount) for amount in amounts) > settings.max_task_budget_usd
+            or any(item.retry_limit != 3 for item in assignments)):
+        raise ValueError("live provider plan exceeds its budget or retry ceiling")
+    if configured and amounts != tuple(Decimal(str(amount)) for amount in expected):
+        raise ValueError("live provider plan differs from configured assignment budgets")
+    if not any(item is assignment for item in assignments):
+        raise ValueError("live provider assignment is not in the approved plan")
+    amount = Decimal(str(assignment.estimated_cost_usd))
+    limits = packet["limits"]
+    if (Decimal(str(limits["budget_usd"])) != amount or limits["retry_limit"] != 3):
+        raise ValueError("live provider packet budget or retry binding changed")
+    # The exact configured ceiling already binds three slots in this packet.
+    # Keep the historical arithmetic unchanged when no override was configured.
+    if configured:
+        return float(configured[_assignment_provider_lane(assignment)])
+    return float(amount) / 3.0
+
+
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         available: tuple[str, ...], history: tuple[str, ...]) -> None:
     """Freeze a minimal capability-selected DAG before execution approval."""
@@ -693,13 +742,10 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
     # The paid-off preview always declares a zero cost. A live wave must carry a
     # trusted positive per-lane limit derived from the configured task budget so
     # the packet, the dispatcher and the transport all enforce the same ceiling.
-    assignment_count = len(required) + 1
-    task_budget_usd = float(settings.max_task_budget_usd)
-    lane_budget_usd = task_budget_usd / assignment_count
-    if task_budget_usd <= 0.0 or lane_budget_usd <= 0.0:
-        raise RuntimeError(
-            "live primary dispatch requires a positive configured task budget"
-        )
+    try:
+        lane_budgets = _live_assignment_budgets(settings, (*required, selected.reviewer))
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     plan = record.plan
     work_template = min(plan.assignments, key=lambda item: item.sequence)
@@ -753,7 +799,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                     "requires_approval": is_research,
                     "allow_draft_pr": False,
                     "retry_limit": 3,
-                    "estimated_cost_usd": lane_budget_usd,
+                    "estimated_cost_usd": lane_budgets[sequence - 1],
                 }
             )
         )
@@ -780,7 +826,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
             "requires_approval": False,
             "allow_draft_pr": False,
             "retry_limit": 3,
-            "estimated_cost_usd": lane_budget_usd,
+            "estimated_cost_usd": lane_budgets[-1],
         }
     )
     record.plan = plan.model_copy(update={"assignments": [*first_wave, review]})
@@ -2910,13 +2956,10 @@ class DefaultPrimaryActivation:
                     # before any attempt reservation or paid provider call.
                     limits = packet["limits"]
                     assignment_budget_usd = float(limits["budget_usd"])
-                    attempt_budget_usd = assignment_budget_usd / 3.0
-                    if (
-                        assignment_budget_usd <= 0.0
-                        or attempt_budget_usd <= 0.0
-                        or assignment_budget_usd
-                        > float(settings.max_task_budget_usd)
-                    ):
+                    try:
+                        attempt_budget_usd = _live_assignment_attempt_budget(
+                            record, settings, assignment, packet)
+                    except ValueError:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED,
                             None,
@@ -3325,9 +3368,8 @@ class DefaultPrimaryActivation:
                         packet = validate_packet("work", services._packet_router.planned_work_packet(record, assignment))
                         packet_digest = document_digest(packet)
                         limits = packet['limits']
-                        attempt_usd = float(limits['budget_usd']) / 3.0
-                        if attempt_usd <= 0 or float(limits['budget_usd']) > settings.max_task_budget_usd:
-                            raise PaidSetupHold()
+                        attempt_usd = _live_assignment_attempt_budget(
+                            record, settings, assignment, packet)
                         readiness_timeout_seconds = max(1, int(limits['timeout_seconds']) // 3)
                         roster = tuple(live_dependencies.format_roster(provider))
                         if live_dependencies.team_routing is not None and provider == 'antigravity':
@@ -3747,3 +3789,4 @@ class DefaultPrimaryActivation:
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]

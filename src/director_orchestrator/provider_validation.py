@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
@@ -615,8 +616,9 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     native = _decode_json(raw,source="native validation capture")
     if not isinstance(native,dict) or "schema_version" in native:
         raise ValidationError("raw native terminal envelope is required")
-    # These are native CLI envelopes, not result-packet status assertions.
-    # Three vendor dialects are recognised.  The third was established by an
+    # These are authenticated provider envelopes, not result-packet assertions.
+    # Grok Responses keeps its API terminal status/id and is validated by the
+    # shared normalizer. Three CLI dialects are recognised; the third came from an
     # authenticated grok canary on 2026-09-08: that CLI reports terminal success
     # as stopReason and names its session sessionId.  Only the exact value
     # "end_turn" is accepted, so a truncated ("max_tokens") or errored run still
@@ -627,10 +629,12 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     # true would pass.  Only grok's envelope was observed, and a
     # provider payload must never select the dialect it is judged by.
     grok = provider == "grok"
+    responses = grok and native.get("object") == "response"
     success = grok_terminal_success(native) if grok else (native.get("status") == "SUCCESS" or (
         native.get("type") == "result" and native.get("subtype") == "success"
         and native.get("is_error") is False))
-    session_keys = ("session_id","conversation_id") + (("sessionId",) if grok else ())
+    session_keys = (("id",) if responses else
+                    ("session_id","conversation_id") + (("sessionId",) if grok else ()))
     session = next((native[key] for key in session_keys
         if isinstance(native.get(key),str) and native[key]),None)
     if not success or session is None:
@@ -638,8 +642,9 @@ def normalize_capture(provider: str, work: dict, raw: bytes, *, team_route=None,
     if any(native.get(key) for key in ("tool_calls","tool_uses","side_effects")):
         raise ValidationError("unexpected native canary tool effects")
     native = dict(native)
-    # Whichever dialect supplied it, the canonical key is promoted once here.
-    native["session_id"] = session
+    # API captures keep their genuine request id; only CLI dialects need an alias.
+    if not responses:
+        native["session_id"] = session
     return validate_packet("result",normalize_native_provider_envelope(provider,work,native))
 
 
@@ -1030,3 +1035,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
