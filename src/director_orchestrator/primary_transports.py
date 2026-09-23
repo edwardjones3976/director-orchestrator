@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
@@ -1288,9 +1289,17 @@ class NativeCommandPacketTransport:
                 handle.close()
             argv.extend(("--prompt-file", temporary_path))
             input_bytes = None
+        # Per-call admission wins over any reusable or inherited command state.
+        environment = dict(self.environment)
+        for name, field in (("DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD", "budget_usd"),
+                            ("DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT", "total_token_limit")):
+            value = getattr(context, field, None)
+            environment.pop(name, None)
+            if value is not None:
+                environment[name] = str(value)
         try:
             completed = _run_bounded_command(
-                argv, cwd=self.cwd, environment=self.environment,
+                argv, cwd=self.cwd, environment=environment,
                 input_bytes=input_bytes, cutoff=cutoff, what="native transport",
             )
         finally:
@@ -1754,3 +1763,4 @@ def provider_lane_detail(
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]

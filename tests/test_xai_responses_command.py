@@ -1,9 +1,12 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 01:43 UTC | BEGIN]]
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("xai_command", Path(__file__).resolve().parents[1] / "scripts/xai-responses-command.py")
 command = importlib.util.module_from_spec(spec)
@@ -11,6 +14,32 @@ spec.loader.exec_module(command)
 
 
 class ResponsesCommandTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {"DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD": "0.55",
+                                             "DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT": "125000"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_missing_malformed_or_smaller_admitted_limit_never_starts_inference(self):
+        cases = [({}, []), ({"DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD": "0.55"}, [])]
+        for budget, tokens, calls in (("NaN", "125000", []), ("0.56", "125000", []),
+                ("0.0000001", "125000", []), ("0.55", "125001", []),
+                ("0.55", "true", []), ("0.01", "125000", ["tokenize-text"]),
+                ("0.55", "9000", ["tokenize-text"])):
+            cases.append(({"DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD": budget,
+                           "DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT": tokens}, calls))
+        for environment, expected in cases:
+            with self.subTest(environment=environment), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                def send(endpoint, body, key):
+                    calls.append(endpoint)
+                    return {"token_ids": [{"token_id": 1}] * 20}
+                with self.assertRaises(ValueError):
+                    command.execute("fixture packet", Path(directory), "fixture", send, environment=environment)
+                self.assertEqual(calls, expected)
+                for receipt in Path(directory).glob("*.receipt.json"):
+                    self.assertFalse(json.loads(receipt.read_text())["inference_started"])
+
     def test_real_request_cap_preflight_capture_and_no_replay(self):
         calls = []
         response = {"object": "response", "id": "test-response", "status": "incomplete",
@@ -55,3 +84,4 @@ class ResponsesCommandTests(unittest.TestCase):
             self.assertEqual(json.loads(next(Path(directory).glob("*.response.json")).read_text()), response)
             self.assertTrue(json.loads(next(Path(directory).glob("*.receipt.json")).read_text())["inference_started"])
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 01:43 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]

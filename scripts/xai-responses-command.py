@@ -1,7 +1,9 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 01:43 UTC | BEGIN]]
 """One receipt-backed xAI Responses request for the existing host command seam."""
 import argparse
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import os
@@ -39,7 +41,23 @@ def post(endpoint, body, key):
     return value
 
 
-def token_bound(tokenized):
+def attempt_limits(environment):
+    try:
+        budget = Decimal(environment["DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD"])
+        tokens = environment["DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT"]
+        if (not budget.is_finite() or not 0 < budget <= Decimal("0.55")
+                or budget * 1000000 != (budget * 1000000).to_integral_value()
+                or not tokens.isascii() or not tokens.isdigit() or not 0 < int(tokens) <= 125000):
+            raise ValueError("Invalid admitted provider allowance")
+    except (KeyError, InvalidOperation, TypeError, AttributeError) as exc:
+        raise ValueError("Authoritative admitted provider allowance is required") from exc
+    return {"budget_microusd": int(budget * 1000000), "total_token_limit": int(tokens)}
+
+
+def token_bound(tokenized, *, budget_microusd, total_token_limit):
+    if (type(budget_microusd) is not int or not 0 < budget_microusd <= 550000
+            or type(total_token_limit) is not int or not 0 < total_token_limit <= 125000):
+        raise ValueError("Invalid admitted provider allowance")
     tokens = tokenized.get("token_ids")
     if not isinstance(tokens, list) or not tokens or any(
         not isinstance(token, dict) or type(token.get("token_id")) is not int
@@ -50,13 +68,14 @@ def token_bound(tokenized):
     # retain another 1024 tokens for server framing. No hidden CLI prompt exists.
     inputs = len(tokens) + 1024
     cost = inputs * 2 + OUTPUT_CAP * 6  # short-context standard tariff, micro-USD
-    if inputs + OUTPUT_CAP > 125000 or cost > 550000:
+    if inputs + OUTPUT_CAP > total_token_limit or cost > budget_microusd:
         raise ValueError("Provider token or monetary allowance exceeded before inference")
     return {"input_token_upper_bound": inputs, "output_token_cap": OUTPUT_CAP,
             "total_token_upper_bound": inputs + OUTPUT_CAP, "reserved_upper_microusd": cost}
 
 
-def execute(prompt, receipt_dir, key, send=post):
+def execute(prompt, receipt_dir, key, send=post, *, environment=None):
+    limits = attempt_limits(os.environ if environment is None else environment)
     body = request_body(prompt)
     raw = canonical(body)
     if not prompt or len(raw) > 1048576:
@@ -66,7 +85,7 @@ def execute(prompt, receipt_dir, key, send=post):
     stem = receipt_dir / fingerprint
     record = {"request_sha256": fingerprint, "model": MODEL,
               "started_at": datetime.now(timezone.utc).isoformat(), "inference_started": False,
-              "automatic_retries": 0}
+              "automatic_retries": 0, "admitted_limits": limits}
     # Exclusive creation is the replay guard. An uncertain prior call is retained.
     with stem.with_suffix(".intent.json").open("x", encoding="utf-8") as stream:
         json.dump(record, stream)
@@ -75,7 +94,7 @@ def execute(prompt, receipt_dir, key, send=post):
     stem.with_suffix(".request.json").write_bytes(raw)
     try:
         tokenized = send("tokenize-text", {"text": raw.decode("utf-8"), "model": MODEL}, key)
-        record.update(token_bound(tokenized))
+        record.update(token_bound(tokenized, **limits))
         record["tokenizer_response_sha256"] = hashlib.sha256(canonical(tokenized)).hexdigest()
         record["inference_started"] = True
         stem.with_suffix(".preflight.json").write_bytes(canonical(record))
@@ -109,3 +128,4 @@ if __name__ == "__main__":
         print("xAI Responses command refused or ambiguous: " + type(exc).__name__, file=sys.stderr)
         raise SystemExit(1)
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 01:43 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]

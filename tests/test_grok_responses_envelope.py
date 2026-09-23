@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 """Genuine Responses captures cross the same boundaries as native Grok replies."""
 
@@ -46,11 +47,20 @@ class GrokResponsesEnvelopeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             transport = NativeCommandPacketTransport("grok", ["fixture-command"],
                 cwd=directory, prompt_mode="grok-prompt-file")
+            transport.environment.update(DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD="stale",
+                                         DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT="stale")
+            original_environment = dict(transport.environment)
 
             def run(argv, **kwargs):
                 prompt = Path(argv[argv.index("--prompt-file") + 1]).read_bytes()
                 self.assertTrue(prompt.endswith(canonical_json_bytes(work)))
                 self.assertIsNone(kwargs["input_bytes"])
+                for name, value in (("DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD", budget),
+                                    ("DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT", tokens)):
+                    if value is None:
+                        self.assertNotIn(name, kwargs["environment"])
+                    else:
+                        self.assertEqual(str(value), kwargs["environment"][name])
                 return subprocess.CompletedProcess(argv, 0, stdout=raw, stderr=b"")
 
             with patch("director_orchestrator.primary_transports._run_bounded_command", side_effect=run):
@@ -58,8 +68,12 @@ class GrokResponsesEnvelopeTests(unittest.TestCase):
                     fencing_generation=1, timeout_seconds=30, total_token_limit=tokens,
                     budget_usd=budget, execution_observer=lambda *args: observed.append(args)))
             self.assertEqual([], list(Path(directory).glob("director-packet-*.txt")))
+            self.assertEqual(original_environment, transport.environment)
         self.assertEqual([("grok", raw, result)], observed)
         return validate_packet("result", result)
+
+    def test_missing_admission_never_inherits_stale_command_limits(self):
+        self.send(response(), tokens=None, budget=None)
 
     def test_completed_capture_and_actual_command_share_genuine_response_normalization(self):
         native = response()
@@ -181,3 +195,4 @@ class GrokResponsesEnvelopeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]
