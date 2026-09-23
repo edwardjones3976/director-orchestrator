@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
@@ -15,6 +16,8 @@ from pathlib import Path
 
 from director_orchestrator.hotl_execution import (
     NON_RECOVERABLE_TERMS,
+    PRE_EXECUTION_CLASSES,
+    PRE_EXECUTION_TERMS,
     TERMS,
     TIER_ONE_CLASSES,
     CompletionRate,
@@ -24,6 +27,7 @@ from director_orchestrator.hotl_execution import (
     TermEvidence,
     classify,
     decide,
+    decide_pre_execution,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,6 +172,55 @@ class GoverningDocumentTests(unittest.TestCase):
         text = DOC.read_text(encoding="utf-8")
         self.assertIn("hotl_execution.py", text)
         self.assertIn("implements the rules above and adds none", text)
+
+
+SMALL = ProposedAction(
+    action_class="execute_small_read_only_task",
+    repository="edwardjones3976/director-orchestrator",
+    environment="local",
+    candidate_sha="0" * 40,
+    acting_identity="director-langgraph",
+)
+
+
+class PreExecutionTests(unittest.TestCase):
+    """The pre-execution class never borrows H(a)'s candidate-bound terms."""
+
+    @staticmethod
+    def evidence(**overrides: TermEvidence) -> dict[str, TermEvidence]:
+        return {**{term: TermEvidence(True) for term in PRE_EXECUTION_TERMS}, **overrides}
+
+    def test_it_owns_its_term_names_and_never_claims_gates_or_independence(self):
+        self.assertEqual({"execute_small_read_only_task"}, set(PRE_EXECUTION_CLASSES))
+        self.assertLessEqual(PRE_EXECUTION_CLASSES, TIER_ONE_CLASSES)
+        self.assertNotIn("gates", PRE_EXECUTION_TERMS)
+        self.assertNotIn("independence", PRE_EXECUTION_TERMS)
+        self.assertIn("audit", PRE_EXECUTION_TERMS)
+        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        section = text.split("## The pre-execution class", 1)[1].split("\n## ", 1)[0]
+        for term in PRE_EXECUTION_TERMS:
+            self.assertIn(f"| `{term}` |", section, term)
+
+    def test_h_of_a_holds_the_class_even_with_every_term_met(self):
+        decision = decide(SMALL, _all(True))
+        self.assertIs(decision.outcome, Outcome.HOLD)
+        self.assertFalse(decision.autonomous)
+
+    def test_every_pre_execution_term_is_required(self):
+        self.assertTrue(decide_pre_execution(SMALL, self.evidence()).autonomous)
+        for term in PRE_EXECUTION_TERMS:
+            with self.subTest(term=term):
+                decision = decide_pre_execution(
+                    SMALL, self.evidence(**{term: TermEvidence(False, f"{term} unmet")}))
+                self.assertIs(decision.outcome, Outcome.HOLD)
+                self.assertIn(f"{term} unmet", " ".join(decision.blockers))
+
+    def test_it_decides_only_its_class_and_exactly_its_terms(self):
+        self.assertFalse(decide_pre_execution(MERGE, self.evidence()).autonomous)
+        with self.assertRaises(ValueError):
+            decide_pre_execution(SMALL, _all(True))
+        with self.assertRaises(ValueError):
+            decide_pre_execution(SMALL, {**self.evidence(), "gates": TermEvidence(True)})
 
 
 class ConjunctionTests(unittest.TestCase):
@@ -424,3 +477,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

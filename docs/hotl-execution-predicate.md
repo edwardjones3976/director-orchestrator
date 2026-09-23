@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]] -->
@@ -67,6 +68,30 @@ This ordering is the load-bearing part. Evaluating the conjunction first and the
 tier afterwards would let eight satisfied terms carry a production deployment,
 which is why `test_a_tier_zero_action_never_executes_even_with_every_term_met`
 asserts the negative directly.
+
+## The pre-execution class
+
+`execute_small_read_only_task` is tier 1, but `H(a)` never decides it. It is
+decided before any candidate or verdict exists, so `G` (items 1, 2, 7) and `I`
+(items 3, 4, 5) have nothing to read, and recording them as satisfied would be
+exactly the unevaluated-term failure above. `decide()` therefore holds it, and
+`decide_pre_execution()` decides it over its own closed list,
+`PRE_EXECUTION_TERMS`:
+
+| Term | Required condition | Bar |
+| --- | --- | --- |
+| `authorization` | A grant is live, unexpired, unrevoked, unexhausted and untripped, and covers this class, repository, branch and both lanes; the intake is an attested owner message. | 9 |
+| `eligibility` | `policy.small_read_only_eligible()` admits the task, which includes that no deterministic approval reason, and so no tier-0 class, is implicated. | 7 |
+| `bounds` | Hop and revision limits are within their configured bounds. | 8 |
+| `verification` | The exact starting commit and snapshot digest are bound. | — |
+| `lane_independence` | Two distinct lanes from different provider families. Structural only; it is not a verdict. | — |
+| `safe_stopping` | A positive provider timeout is configured. | — |
+| `owned_paths_declared` | Owned paths are declared and no write surface is granted, before any change exists. | 6 |
+| `audit` | The `PRE_AUTHORIZED` record is durably written **before** execution. | 10 |
+
+Items 1 to 5 are carried by the task's own `exact_sha_review` and
+`ci_security_completion` graph gates, which run unchanged. Every term is
+required, none recovers, and an unlisted or missing term is refused.
 
 ## A hold is not a permission question
 
@@ -154,3 +179,4 @@ gap to `Activate`.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->

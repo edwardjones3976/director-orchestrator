@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
@@ -91,11 +92,12 @@ import subprocess
 import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Collection, Mapping
 
 from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
@@ -138,7 +140,12 @@ from .delegation_ledger import (
     GateStatus,
     RecordedOutcome,
 )
-from .hotl_execution import TERMS, ProposedAction, TermEvidence, decide
+from .hotl_execution import (
+    PRE_EXECUTION_TERMS,
+    ProposedAction,
+    TermEvidence,
+    decide_pre_execution,
+)
 from .models import (
     AntigravityDirective,
     AntigravityFixtureLane,
@@ -155,6 +162,7 @@ from .models import (
 )
 from .packet_contracts import canonical_json_bytes, document_digest, validate_packet
 from .packet_routing import DirectorPacketTaskRouter, compact_provider_view
+from .store import DelegationAuditAdvanced
 from .packet_transports import (
     LocalGitAuthoritySnapshotResolver,
     canonical_github_remote_repository,
@@ -744,24 +752,143 @@ def _live_assignment_attempt_budget(
     return float(amount) / 3.0
 
 
+def _small_review_view_bytes(packet: Mapping[str, Any]) -> int:
+    return len(canonical_json_bytes(compact_provider_view(packet)))
+
+
+def _compact_view_lanes(live_dependencies: Any) -> frozenset[str]:
+    """Lanes whose every configured adapter shows the model only the compact view."""
+
+    from .primary_transports import sends_compact_provider_view
+
+    attempt = getattr(live_dependencies, "attempt_adapters", None) or {}
+    return frozenset(
+        lane
+        for lane, adapter in live_dependencies.adapters.items()
+        if all(
+            sends_compact_provider_view(getattr(item, "_transport", None))
+            for item in (adapter, *dict(attempt.get(lane, {})).values())
+        )
+    )
+
+
 def small_review_bounds(
     record: TaskRecord, settings: Settings, assignment: Assignment, packet: Mapping[str, Any],
+    *, compact_view_lanes: Collection[str],
 ) -> tuple[str | None, int | None]:
     """(refusal reason, token cap) for the reviewer of an eligible small read-only
     task; (None, None) for every other assignment.
 
     The reviewer is sent the compact view of its packet: the objective,
     acceptance checks, the producer's result embedded as a predecessor
-    constraint and the evidence digests. Over the byte cap it is refused before
-    any budget, admission or artifact work. The token cap only ever narrows.
+    constraint and the evidence digests. Membership requires both lanes to
+    send exactly that view, so the bytes measured here are the packet bytes
+    the reviewer's model is shown; its transport adds only fixed instructions.
+    Over the byte cap it is refused before any budget, admission or artifact
+    work. The token cap only ever narrows.
     """
 
     if (assignment.kind is not AssignmentKind.INDEPENDENT_REVIEW
-            or not small_read_only_eligible(record, settings)):
+            or not small_read_only_eligible(
+                record, settings, compact_view_lanes=compact_view_lanes)):
         return None, None
-    if len(canonical_json_bytes(compact_provider_view(packet))) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES:
+    if _small_review_view_bytes(packet) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES:
         return "small_task_review_packet_over_cap", settings.small_task_review_max_tokens
     return None, settings.small_task_review_max_tokens
+
+
+def _accepted_outcome(
+    assignment: Assignment, result: Mapping[str, Any], result_digest: str
+) -> AssignmentOutcome:
+    return AssignmentOutcome(
+        assignment_sequence=assignment.sequence,
+        provider=assignment.agent,
+        run_id=str(result["run_reference"]),
+        result=str(result["outcome"]),
+        review_summary=str(result["outcome"]),
+        provider_result_digest=result_digest.removeprefix("sha256:"),
+    )
+
+
+def small_producer_result_refusal(
+    record: TaskRecord,
+    settings: Settings,
+    assignment: Assignment,
+    result: Mapping[str, Any],
+    result_digest: str,
+    router: DirectorPacketTaskRouter,
+    *,
+    compact_view_lanes: Collection[str],
+) -> str | None:
+    """Refuse a small task's producer result its reviewer could not be sent.
+
+    Runs when the producer's result is accepted, before it is recorded and
+    before any reviewer work: it builds the exact review packet this result
+    would produce and applies the cap small_review_bounds applies at reviewer
+    dispatch. None for every other assignment and every other task.
+    """
+
+    plan = record.plan
+    if plan is None or not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return None
+    reviewer = next(
+        (item for item in plan.assignments if assignment.sequence in item.depends_on), None
+    )
+    if reviewer is None:
+        return None
+    refusal = "small_task_producer_result_over_cap"
+    try:
+        outcome = _accepted_outcome(assignment, result, result_digest)
+        candidate = record.model_copy(update={"assignment_outcomes": [
+            *(item for item in record.assignment_outcomes
+              if item.assignment_sequence != assignment.sequence),
+            outcome,
+        ]})
+        packet = router.planned_work_packet(candidate, reviewer)
+    except ValueError:
+        # The outcome model's and the router's own content bounds.
+        return refusal
+    return refusal if _small_review_view_bytes(packet) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES else None
+
+
+def _small_producer_constraints(
+    settings: Settings,
+    router: DirectorPacketTaskRouter,
+    record: TaskRecord,
+    assignment: Assignment,
+) -> list[str]:
+    """Tell a small task's producer, before dispatch, what its outcome must fit.
+
+    Plan-level membership only: lane configuration is not packet authority, and
+    this text must not differ between the approval packet and the dispatched
+    one. small_producer_result_refusal enforces the bound exactly.
+    """
+
+    plan = record.plan
+    if plan is None or not small_read_only_eligible(record, settings, compact_view_lanes=None):
+        return []
+    producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+    if assignment.sequence != producer.sequence:
+        return []
+    probe = record.model_copy(update={"assignment_outcomes": [AssignmentOutcome(
+        assignment_sequence=producer.sequence,
+        provider=producer.agent,
+        run_id="size-probe",
+        result="x",
+        review_summary="x",
+        provider_result_digest="0" * 64,
+    )]})
+    overhead = _small_review_view_bytes(router.planned_work_packet(probe, reviewer)) - 2
+    # The outcome reaches the reviewer twice (result and summary), each copy
+    # JSON-escaped twice: plain text costs about four review bytes a character.
+    ceiling = max(0, SMALL_TASK_REVIEW_MAX_PACKET_BYTES - overhead) // 4
+    return [
+        f"Small read-only task: keep the outcome under {ceiling} characters of plain "
+        f"text. Its independent review is refused above "
+        f"{SMALL_TASK_REVIEW_MAX_PACKET_BYTES} bytes, so a longer outcome fails "
+        "before review."
+    ]
 
 
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
@@ -1469,6 +1596,7 @@ class DefaultDryRunServices:
                 ),
                 timeout_seconds=settings.provider_timeout_seconds,
                 typed_effect_grant_kinds=typed_external_effect_grant_kinds(settings),
+                extra_constraints=partial(_small_producer_constraints, settings),
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
@@ -2040,6 +2168,7 @@ class DefaultPrimaryApplication:
             Callable[[ParallelReservation], ParallelDispatchOutcome] | None
         ) = None,
         delegation_ledger: Any = None,
+        compact_view_lanes: Collection[str] = (),
     ) -> None:
         self.settings = settings
         self.coordinator = coordinator
@@ -2053,8 +2182,12 @@ class DefaultPrimaryApplication:
         # None, the production default while no anchor exists, holds every
         # standing-grant exercise, so the execution button is unchanged.
         self._delegation_ledger = delegation_ledger
-        # Set on any unreadable or unwritable ledger and on every trip; it
-        # holds for the life of this process.
+        # Lanes whose configured transport shows the model only the compact
+        # provider view; empty, the default, admits no task to the small class.
+        self._compact_view_lanes = frozenset(compact_view_lanes)
+        # Set on an absent, unreadable or unwritable ledger. It holds for the
+        # life of this process only; trips on task outcomes are derived from
+        # durable state instead (_failed_prior_exercise).
         self._delegation_tripped = False
         self._delegation_lock = threading.Lock()
 
@@ -2157,7 +2290,6 @@ class DefaultPrimaryApplication:
                 aggregate=aggregate,
                 candidate_sha=self.authority.starting_sha,
             )
-            self._trip_failed_exercise(record.task_id)
         return aggregate
 
     def _attested_owner_intake(self, record: TaskRecord) -> bool:
@@ -2176,15 +2308,16 @@ class DefaultPrimaryApplication:
         self, record: TaskRecord, grant, *, attested: bool, tripped: bool,
         exercised: int, now: datetime,
     ) -> dict[str, bool]:
-        """Every H(a) term but `audit`, evaluated before execution.
+        """Every pre-execution term but `audit`, evaluated before execution.
 
-        No candidate change and no verdict exists yet, so evidence-bar items
-        1-5 are left to the task's own exact-SHA review and CI/security graph
-        gates, which this class never skips. Items 6-10 and structural
-        independence are what can be read here.
+        These are hotl_execution.PRE_EXECUTION_TERMS, not H(a): no candidate
+        and no verdict exists yet, so evidence-bar items 1-5 cannot be read
+        here and are never recorded as passing. They stay with the task's own
+        exact-SHA review and CI/security graph gates, which this class never
+        skips.
         """
 
-        names = tuple(term for term in TERMS if term != "audit")
+        names = tuple(term for term in PRE_EXECUTION_TERMS if term != "audit")
         plan = record.plan
         if plan is None or len(plan.assignments) < 2:
             return dict.fromkeys(names, False)
@@ -2219,7 +2352,8 @@ class DefaultPrimaryApplication:
                 and attested
                 and set(lanes) <= grant.providers
             ),
-            "gates": small_read_only_eligible(record, settings),
+            "eligibility": small_read_only_eligible(
+                record, settings, compact_view_lanes=self._compact_view_lanes),
             "bounds": (
                 plan.max_hops <= settings.max_agent_hops
                 and plan.max_revisions <= settings.max_revisions
@@ -2228,9 +2362,9 @@ class DefaultPrimaryApplication:
                 _SHA40.fullmatch(self.authority.starting_sha) is not None
                 and self.authority.authority_snapshot_digest.startswith("sha256:")
             ),
-            "independence": independent,
+            "lane_independence": independent,
             "safe_stopping": settings.provider_timeout_seconds >= 1,
-            "scope": (
+            "owned_paths_declared": (
                 prestage is not None
                 and bool(prestage.owned_paths)
                 and not any(item.allow_draft_pr for item in ordered)
@@ -2238,13 +2372,71 @@ class DefaultPrimaryApplication:
         }
         return {term: bool(values[term]) for term in names}
 
+    def _audit_small_class(
+        self, ledger, grant, task_id: str, outcome: RecordedOutcome,
+        terms: Mapping[str, bool], now: datetime, **conditions: Any,
+    ) -> None:
+        sha = self.authority.starting_sha
+        ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=outcome,
+            grant_id=grant.grant_id,
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=sha if _SHA40.fullmatch(sha) else None,
+            acting_agent=f"director-langgraph:{task_id}",
+            verdicts=(),
+            gate_results=tuple(
+                GateResult(term, GateStatus.PASS if passed else GateStatus.FAIL, now)
+                for term, passed in terms.items()
+            ),
+            recorded_at=now,
+        ), **conditions)
+
+    def _failed_prior_exercise(self, records) -> str | None:
+        """The first task this grant pre-authorized that must trip it, if any.
+
+        Read from durable state at every exercise, so a task settled through a
+        provider callback, one left with an ambiguous slot, and one whose
+        process died after its terminal was persisted all trip the same way.
+        A terminal other than SUCCEEDED trips, and so does an unreadable task.
+        A task with no projection never started: its intake failed after the
+        audit record, so it consumed an exercise and ran nothing.
+        """
+
+        for item in records:
+            if item.outcome is not RecordedOutcome.PRE_AUTHORIZED:
+                continue
+            task_id = item.acting_agent.removeprefix("director-langgraph:")
+            try:
+                projection = self.coordinator.get_projection(task_id)
+            except Exception:
+                return task_id
+            if projection is None:
+                continue
+            classification = projection.projection.get("terminal_classification")
+            if classification is not None:
+                if classification != "SUCCEEDED":
+                    return task_id
+                continue
+            if not isinstance(projection.projection.get("parallel_plan_digest"), str):
+                # Its plan is not registered yet, so nothing has dispatched.
+                continue
+            try:
+                if self.coordinator.parallel_aggregate(task_id).ambiguous_slot_count:
+                    return task_id
+            except Exception:
+                return task_id
+        return None
+
     def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
         """Whether a live standing grant pre-authorizes executing this task.
 
         Only the tier-1 class `execute_small_read_only_task` is considered, and
         only for a task `policy.small_read_only_eligible()` admits. An audit
-        record is written before execution: `PRE_AUTHORIZED` when every term
-        holds, `REFUSED` otherwise. Anything unexpected stays attended.
+        record is written before execution: `PRE_AUTHORIZED` when every
+        pre-execution term holds, `REFUSED` otherwise. Anything unexpected
+        stays attended.
         """
 
         try:
@@ -2274,50 +2466,62 @@ class DefaultPrimaryApplication:
             if self._delegation_tripped or ledger is None:
                 self._delegation_tripped = True
                 return False
+            now = datetime.now(timezone.utc)
+            if not small_read_only_eligible(
+                    record, settings, compact_view_lanes=self._compact_view_lanes):
+                # Not a member of the class: refused and audited without
+                # reading history, and no other term is claimed evaluated.
+                try:
+                    self._audit_small_class(ledger, grant, record.task_id,
+                                            RecordedOutcome.REFUSED, {"eligibility": False}, now)
+                except Exception:
+                    self._delegation_tripped = True
+                return False
             try:
                 history, after = [], None
                 while True:
+                    # ponytail: each page re-verifies the whole chain, O(N^2/1000) per eligible intake; a per-grant ledger read when history grows
                     page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
                     history.extend(page)
                     if len(page) < 1_000:
                         break
                     after = page[-1].digest
+                mine = [item for item in history if item.grant_id == grant.grant_id]
+                tripped = any(
+                    item.outcome is RecordedOutcome.REFUSED
+                    and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+                    for item in mine
+                )
+                sequence = len(history)
+                failed = None if tripped else self._failed_prior_exercise(mine)
+                if failed is not None:
+                    # The durable trip: it holds this grant_id in every process
+                    # until the owner writes a new one.
+                    self._audit_small_class(ledger, grant, failed, RecordedOutcome.REFUSED,
+                                            {"delegation_trip": False}, now,
+                                            expected_sequence=sequence)
+                    tripped, sequence = True, sequence + 1
+            except DelegationAuditAdvanced:
+                return False
             except Exception:
                 self._delegation_tripped = True
                 return False
-            mine = [item for item in history if item.grant_id == grant.grant_id]
-            tripped = any(
-                item.outcome is RecordedOutcome.REFUSED
-                and any(gate.gate == "delegation_trip" for gate in item.gate_results)
-                for item in mine
-            )
-            # ponytail: process lock only; cross-process count-then-append can exceed max_exercises by concurrent writers
             exercised = sum(item.outcome is RecordedOutcome.PRE_AUTHORIZED for item in mine)
-            now = datetime.now(timezone.utc)
             terms = self._standing_grant_terms(
                 record, grant, attested=attested, tripped=tripped,
                 exercised=exercised, now=now,
             )
             granted = all(terms.values())
-            sha = self.authority.starting_sha
             try:
-                ledger.append_delegation_audit_record(DelegationAuditRecord(
-                    schema_version=AUDIT_SCHEMA_VERSION,
-                    outcome=(
-                        RecordedOutcome.PRE_AUTHORIZED if granted else RecordedOutcome.REFUSED
-                    ),
-                    grant_id=grant.grant_id,
-                    grant_snapshot=settings.delegation_grant_json,
-                    decision_class=decision_class,
-                    candidate_sha=sha if _SHA40.fullmatch(sha) else None,
-                    acting_agent=f"director-langgraph:{record.task_id}",
-                    verdicts=(),
-                    gate_results=tuple(
-                        GateResult(term, GateStatus.PASS if passed else GateStatus.FAIL, now)
-                        for term, passed in terms.items()
-                    ),
-                    recorded_at=now,
-                ))
+                # Conditional on the history just counted, so a writer in
+                # another process cannot spend the same remaining exercise.
+                self._audit_small_class(
+                    ledger, grant, record.task_id,
+                    RecordedOutcome.PRE_AUTHORIZED if granted else RecordedOutcome.REFUSED,
+                    terms, now, expected_sequence=sequence,
+                )
+            except DelegationAuditAdvanced:
+                return False
             except Exception:
                 self._delegation_tripped = True
                 return False
@@ -2327,55 +2531,12 @@ class DefaultPrimaryApplication:
             decision_class.value,
             canonical_repository(record.plan.prestage.repository),
             settings.app_env,
-            sha,
+            self.authority.starting_sha,
             "director-langgraph",
         )
         evidence = {term: TermEvidence(True) for term in terms}
         evidence["audit"] = TermEvidence(True)
-        return decide(action, evidence, now=now).autonomous
-
-    def _trip_failed_exercise(self, task_id: str) -> None:
-        """A granted task that did not succeed suspends its grant.
-
-        Stricter than the document's trip list on purpose: any terminal
-        classification other than SUCCEEDED trips. The durable record holds that
-        grant_id until the owner writes a new one; the latch holds this process.
-        """
-
-        try:
-            state = self.coordinator._runtime.compact_state(task_id)
-            if state.get("execution_approval_required") is not False:
-                return
-            projection = self.coordinator.get_projection(task_id)
-            if projection is not None and projection.projection.get(
-                "terminal_classification"
-            ) in (None, "SUCCEEDED"):
-                return
-        except Exception:
-            pass
-        with self._delegation_lock:
-            self._delegation_tripped = True
-            ledger = self._delegation_ledger
-            try:
-                grant = parse_grant(self.settings.delegation_grant_json)
-                if ledger is None or grant is None:
-                    return
-                now = datetime.now(timezone.utc)
-                sha = self.authority.starting_sha
-                ledger.append_delegation_audit_record(DelegationAuditRecord(
-                    schema_version=AUDIT_SCHEMA_VERSION,
-                    outcome=RecordedOutcome.REFUSED,
-                    grant_id=grant.grant_id,
-                    grant_snapshot=self.settings.delegation_grant_json,
-                    decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
-                    candidate_sha=sha if _SHA40.fullmatch(sha) else None,
-                    acting_agent=f"director-langgraph:{task_id}",
-                    verdicts=(),
-                    gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
-                    recorded_at=now,
-                ))
-            except Exception:
-                return
+        return decide_pre_execution(action, evidence, now=now).autonomous
 
     def _request(
         self, record: TaskRecord, *, execution_approval_required: bool = True
@@ -2918,6 +3079,9 @@ class DefaultPrimaryActivation:
                         settings, handle, services, team_routing=team_routing
                     )
                 self.live_dependencies = live_dependencies
+                # One reading for intake and dispatch alike: the small class
+                # admits only lanes whose transport sends the compact view.
+                compact_view_lanes = _compact_view_lanes(live_dependencies)
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -3240,7 +3404,8 @@ class DefaultPrimaryActivation:
                     )
                     packet_digest = document_digest(packet)
                     review_refusal, review_token_cap = small_review_bounds(
-                        record, settings, assignment, packet)
+                        record, settings, assignment, packet,
+                        compact_view_lanes=compact_view_lanes)
                     if review_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None, review_refusal)
@@ -3600,6 +3765,15 @@ class DefaultPrimaryActivation:
                         )
                     if result is None or result_digest is None:
                         raise RuntimeError("successful attempt lacks result evidence")
+                    # A small task's producer result is bounded here, before it
+                    # is recorded and before any reviewer work, by the exact
+                    # review packet it would produce.
+                    producer_refusal = small_producer_result_refusal(
+                        record, settings, assignment, result, result_digest,
+                        services._packet_router, compact_view_lanes=compact_view_lanes)
+                    if producer_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, result_digest, producer_refusal)
                     persisted = handle.claim_store.record_result_packet_artifact(
                         task_id=record.task_id,
                         assignment_id=assignment_id,
@@ -3619,16 +3793,7 @@ class DefaultPrimaryActivation:
                             for item in record.assignment_outcomes
                         ):
                             record.assignment_outcomes.append(
-                                AssignmentOutcome(
-                                    assignment_sequence=assignment.sequence,
-                                    provider=assignment.agent,
-                                    run_id=str(result["run_reference"]),
-                                    result=str(result["outcome"]),
-                                    review_summary=str(result["outcome"]),
-                                    provider_result_digest=(
-                                        result_digest.removeprefix("sha256:")
-                                    ),
-                                )
+                                _accepted_outcome(assignment, result, result_digest)
                             )
                     return ParallelDispatchOutcome(
                         ParallelAssignmentStatus.SUCCEEDED,
@@ -3769,6 +3934,7 @@ class DefaultPrimaryActivation:
                 parallel_dispatcher = dispatch_parallel_assignment
                 self._live_dependencies_ready = True
             else:
+                compact_view_lanes = frozenset()
                 services = (
                     DefaultOfflineSimulationServices(settings)
                     if settings.langgraph_primary_offline_simulation_enabled
@@ -3813,6 +3979,7 @@ class DefaultPrimaryActivation:
             authority,
             parallel_dispatcher=parallel_dispatcher,
             delegation_ledger=delegation_ledger,
+            compact_view_lanes=compact_view_lanes,
         )
 
     @property
@@ -4094,3 +4261,4 @@ class DefaultPrimaryActivation:
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

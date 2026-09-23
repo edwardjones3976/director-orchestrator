@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Collection
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import urlparse
@@ -403,22 +405,45 @@ SMALL_TASK_REVIEW_MAX_PACKET_BYTES = 16_384
 _SMALL_TASK_EXCLUDED_AGENTS = frozenset(
     {ProviderName.PERPLEXITY, ProviderName.FIRECRAWL, ProviderName.GEMINI}
 )
+# Write-shaped wording in the intake or the producer's task. "Read-only" means
+# no write tool or effect in the packet; native and bridge CLIs still run in a
+# host workspace, so any request worded as a change is kept out of the class.
+_WRITE_SCOPE = re.compile(
+    r"\b(?:(?:updat|writ|creat|renam|delet|remov|chang|replac|mov|upgrad|migrat|"
+    r"overwrit|sav)(?:e|es|ed|ing|ion|ions)"
+    r"|(?:edit|add|insert|append|install|push|commit)(?:s|es|ed|ted|ing|ting)?"
+    r"|(?:modif|appl)(?:y|ies|ied|ying)"
+    r"|wrote|written)\b",
+    re.I,
+)
 
 
-def small_read_only_eligible(record: TaskRecord, settings: Settings) -> bool:
+def small_read_only_eligible(
+    record: TaskRecord,
+    settings: Settings,
+    *,
+    compact_view_lanes: Collection[str] | None,
+) -> bool:
     """Whether a task is a member of the tier-1 class ``execute_small_read_only_task``.
 
     This is the only authority for that membership, and it is deterministic. It
-    reads the owner's intake text, the frozen plan and deployment settings, and
-    nothing a provider returned. Fields a model or planner writes can only make
-    a task ineligible: every condition below is one a plan can fail, never one
-    it can assert, and every model involved (``DirectorPlan``, ``Assignment``,
-    ``SlackIntake``) is ``extra="forbid"``, so no field can carry eligibility.
+    reads the owner's intake text, the frozen plan, deployment settings and the
+    set of provider lanes whose configured transport shows the model only the
+    compact provider view, and nothing a provider returned. Fields a model or
+    planner writes can only make a task ineligible: every condition below is
+    one a plan can fail, never one it can assert, and every model involved
+    (``DirectorPlan``, ``Assignment``, ``SlackIntake``) is ``extra="forbid"``,
+    so no field can carry eligibility.
 
     Eligible means: no deterministic approval reason in the intake or in any
-    generated plan string, no external effect or draft pull request, exactly
-    one non-implementation producer and one independent reviewer from another
-    provider family, and a frozen plan total within the small-task ceiling.
+    generated plan string, no write-shaped wording in the intake or the
+    producer's task, no external effect or draft pull request, exactly one
+    non-implementation producer and one independent reviewer from another
+    provider family, both on lanes that send the compact view, and a frozen
+    plan total within the small-task ceiling.
+
+    ``compact_view_lanes`` is required. ``None`` evaluates the plan alone and
+    is only for advisory text; a membership decision always passes the lanes.
     """
 
     plan = record.plan
@@ -438,11 +463,13 @@ def small_read_only_eligible(record: TaskRecord, settings: Settings) -> bool:
         or record.intake.primary_public_research_query is not None
         or record.intake.primary_required_capabilities
         or len(plan.assignments) != 2
+        or _WRITE_SCOPE.search(record.intake.text)
     ):
         return False
     producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
     if (
-        producer.depends_on != []
+        _WRITE_SCOPE.search(producer.task)
+        or producer.depends_on != []
         or reviewer.kind is not AssignmentKind.INDEPENDENT_REVIEW
         or reviewer.depends_on != [producer.sequence]
         or producer.kind is not AssignmentKind.GENERAL
@@ -458,6 +485,11 @@ def small_read_only_eligible(record: TaskRecord, settings: Settings) -> bool:
             or item.public_research_query is not None
             or item.antigravity_directive is not None
             or item.agent in _SMALL_TASK_EXCLUDED_AGENTS
+            or (
+                compact_view_lanes is not None
+                and (item.primary_provider_lane or item.agent.value)
+                not in compact_view_lanes
+            )
         ):
             return False
     try:
@@ -1665,3 +1697,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

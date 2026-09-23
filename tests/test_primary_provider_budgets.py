@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 """Owner-configured ceilings at the real Default planning and dispatch seams."""
 from contextlib import contextmanager
@@ -29,18 +30,19 @@ from director_orchestrator.primary_effect_gateways import (
 )
 from director_orchestrator.primary_generation import deployment_digest
 from director_orchestrator.primary_parallel import (
-    PaidSetupHold, ParallelReservation, ProviderAttemptReservation,
+    PaidSetupHold, ParallelAssignmentStatus, ParallelReservation, ProviderAttemptReservation,
 )
 from tests.test_antigravity_team import budget, fixtures, grant
 from tests.test_primary_default import SHA, digest, packet_router
 
 
 def settings(**updates):
-    return replace(Settings(), repository_allowlist=("owner/repository",),
-        trusted_provider_cost_ranks_json='{"openai":3,"claude":2,"grok":1}',
-        max_task_budget_usd=16.0, max_daily_provider_budget_usd=16.0,
-        langgraph_primary_provider_attempt_budgets_usd_json='{"claude":4,"grok":0.55}',
-        **updates)
+    return replace(Settings(), **{
+        "repository_allowlist": ("owner/repository",),
+        "trusted_provider_cost_ranks_json": '{"openai":3,"claude":2,"grok":1}',
+        "max_task_budget_usd": 16.0, "max_daily_provider_budget_usd": 16.0,
+        "langgraph_primary_provider_attempt_budgets_usd_json": '{"claude":4,"grok":0.55}',
+        **updates})
 
 
 def record_for(configuration):
@@ -127,12 +129,18 @@ class PrimaryProviderBudgetTests(unittest.TestCase):
                     _live_assignment_attempt_budget(record, configuration, assignment, packet)
 
 
-class LiveBudgetBoundaryTests(unittest.TestCase):
+class _LiveDispatchHarness:
+    """The real Default activation and dispatch closure over synthetic I/O."""
+
+    budgets = '{"claude":4,"grok":0.55}'
+    reserved_microusd = (550000, 4000000)
+
     def setUp(self):
         self.settings = settings(langgraph_primary_enabled=True,
             langgraph_primary_live_provider_dispatch_enabled=True, allow_paid_runs=True,
             langgraph_primary_owner_token="o" * 32, allowed_starting_refs=("main",),
-            repository_snapshot_root=str(Path.cwd()))
+            repository_snapshot_root=str(Path.cwd()),
+            langgraph_primary_provider_attempt_budgets_usd_json=self.budgets)
         self.writer = SimpleNamespace(engine_owner="langgraph", owner_token="o" * 32,
             lease_live=True, fencing_generation=4)
 
@@ -206,7 +214,8 @@ class LiveBudgetBoundaryTests(unittest.TestCase):
             provider, "test-deployment", digest("reservation"))
         signed = budget(grant(), provider_id=provider, project_id=packet["project"], task_id=self.record.task_id,
             task_limit_microusd=16_000_000, daily_limit_microusd=16_000_000,
-            attempt_reservation_microusd=reserved if reserved is not None else (550000, 4000000)[index])
+            attempt_reservation_microusd=(
+                reserved if reserved is not None else self.reserved_microusd[index]))
         document = signed.model_dump(mode="json")
         if signature is not None:
             document["owner_signature"] = signature
@@ -219,6 +228,8 @@ class LiveBudgetBoundaryTests(unittest.TestCase):
             digest("key"), digest("attempt"), digest("budget"), total_token_limit=400000)
         return reservation, connection
 
+
+class LiveBudgetBoundaryTests(_LiveDispatchHarness, unittest.TestCase):
     def test_real_readiness_and_dispatch_use_identical_heterogeneous_limits(self):
         for index, expected in enumerate((0.55, 4.0)):
             reservation, connection = self.request(index)
@@ -251,6 +262,69 @@ class LiveBudgetBoundaryTests(unittest.TestCase):
                 self.assertEqual([], self.dispatch_contexts)
 
 
+class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
+    """The small-task bounds reach the real dispatch closure, not only helpers."""
+
+    # grok produces and claude reviews within the small class: 0.3 + 0.45 <= $1.
+    budgets = '{"claude":0.15,"grok":0.1}'
+    reserved_microusd = (100000, 150000)
+
+    def setUp(self):
+        # Both lanes' transports send the compact view in this deployment.
+        with patch("director_orchestrator.primary_default._compact_view_lanes",
+                   return_value=frozenset({"grok", "claude"})):
+            super().setUp()
+        self.adapter = self.activation.live_dependencies.adapter_for_format()
+        self.handle.claim_store.record_result_packet_artifact = Mock(side_effect=lambda **kw:
+            SimpleNamespace(document_digest=document_digest(kw["packet"])))
+
+    def run_assignment(self, index):
+        reservation, connection = self.request(index)
+        self.dispatch.preflight(reservation, writer=self.writer, connection=connection,
+                                wave_budget_usage={})
+        with patch("director_orchestrator.primary_default.live_provider_admissions",
+                   return_value={}):
+            return self.dispatch(reservation)
+
+    def test_an_oversized_reviewer_fails_before_budget_admission_or_artifacts(self):
+        self.record.assignment_outcomes[0].result = "x" * 20_000
+        reservation, _ = self.request(1)
+        with patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
+            outcome = self.dispatch(reservation)
+        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual("small_task_review_packet_over_cap", outcome.reason_code)
+        admission.assert_not_called()
+        self.activation.coordinator.reserve_provider_attempt.assert_not_called()
+        self.handle.claim_store.record_work_packet_artifact.assert_not_called()
+        self.assertEqual([], self.dispatch_contexts)
+
+    def test_the_reviewer_context_carries_the_narrowed_token_cap(self):
+        self.run_assignment(1)
+        # The reservation allowed 400,000 tokens; the small-task cap only narrows.
+        self.assertEqual(self.settings.small_task_review_max_tokens,
+                         self.dispatch_contexts[-1].total_token_limit)
+        self.assertLess(self.dispatch_contexts[-1].total_token_limit, 400000)
+
+    def test_a_producer_result_over_the_review_cap_is_refused_before_recording(self):
+        self.record.assignment_outcomes = []
+        self.adapter.dispatch = lambda _packet, *, context: {
+            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "x" * 20_000}
+        outcome = self.run_assignment(0)
+        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual("small_task_producer_result_over_cap", outcome.reason_code)
+        self.handle.claim_store.record_result_packet_artifact.assert_not_called()
+        self.assertEqual([], self.record.assignment_outcomes)
+
+        # A short result is recorded and becomes the reviewer's predecessor.
+        self.adapter.dispatch = lambda _packet, *, context: {
+            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "short"}
+        self.record.assignment_outcomes = []
+        outcome = self.run_assignment(0)
+        self.assertIs(ParallelAssignmentStatus.SUCCEEDED, outcome.status)
+        self.assertEqual(["short"], [item.result for item in self.record.assignment_outcomes])
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

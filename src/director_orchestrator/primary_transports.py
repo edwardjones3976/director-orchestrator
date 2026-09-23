@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
@@ -1577,6 +1578,24 @@ def _pplx_cli_authenticated(command: Sequence[str] | None) -> bool:
     return completed.returncode == 0
 
 
+def sends_compact_provider_view(transport: object) -> bool:
+    """Whether the model behind this transport is shown only compact_provider_view().
+
+    The small-task reviewer cap measures that view, so a lane is small-class
+    capable only when this holds. Every other transport, including the cursor,
+    github-copilot, openai (native Codex) and antigravity bridge lanes, is
+    treated as posting the full packet or a different document.
+    """
+
+    if isinstance(transport, OpenAIResponsesPacketTransport):
+        return True
+    if isinstance(transport, NativeCommandPacketTransport):
+        return transport.payload_mode == "work-packet"
+    if isinstance(transport, HostBridgePacketTransport):
+        return transport.outbound_payload_builder is compact_provider_view
+    return False
+
+
 def discover_local_primary_command_transports(
     *,
     cwd: str | Path,
@@ -1863,3 +1882,4 @@ def provider_lane_detail(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

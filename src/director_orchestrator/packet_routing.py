@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from .approvals import assignment_is_approved
@@ -145,6 +146,9 @@ class DirectorPacketTaskRouter:
         writer_secret: str,
         timeout_seconds: int,
         typed_effect_grant_kinds: Sequence[str] = (),
+        extra_constraints: Callable[
+            [DirectorPacketTaskRouter, TaskRecord, Assignment], Sequence[str]
+        ] | None = None,
     ) -> None:
         if not writer_owner_id.strip():
             raise ValueError("writer_owner_id is required")
@@ -159,6 +163,9 @@ class DirectorPacketTaskRouter:
         # effect kind becomes proposable: a result packet may never propose a
         # kind the work packet did not grant, at any side-effect status.
         self._typed_effect_grant_kinds = grants
+        # Deterministic, Director-side constraints derived from the frozen
+        # record only; they can narrow what a provider is told, never widen it.
+        self._extra_constraints = extra_constraints
         self._authority_snapshots = authority_snapshots
         self._boundary_adapters = dict(boundary_adapters)
         self._writer_owner_id = writer_owner_id
@@ -415,6 +422,8 @@ class DirectorPacketTaskRouter:
                 "packet: " + ", ".join(prohibited_paths) + "."
             )
         constraints.extend(self._predecessor_review_constraints(record, assignment))
+        if self._extra_constraints is not None:
+            constraints.extend(self._extra_constraints(self, record, assignment))
 
         objective = assignment.task
         if assignment.agent.value == "perplexity":
@@ -589,3 +598,4 @@ class DirectorPacketTaskRouter:
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

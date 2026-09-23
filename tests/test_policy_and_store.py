@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
 # OpenAI continuation repairs attribution only here; prior material from
@@ -995,6 +996,7 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
     """policy.small_read_only_eligible is the only authority for the small class."""
 
     TEXT = "Project: demo\nSummarize README.md for the owner."
+    COMPACT = frozenset({"claude", "cursor", "grok", "openai", "github-copilot"})
 
     def setUp(self) -> None:
         self.settings = replace(Settings(), repository_allowlist=("example/demo",))
@@ -1023,8 +1025,10 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
         record.plan = record.plan.model_copy(update={"assignments": assignments})
         return record
 
-    def eligible(self, record: TaskRecord, settings: Settings | None = None) -> bool:
-        return small_read_only_eligible(record, settings or self.settings)
+    def eligible(self, record: TaskRecord, settings: Settings | None = None,
+                 lanes=COMPACT) -> bool:
+        return small_read_only_eligible(
+            record, settings or self.settings, compact_view_lanes=lanes)
 
     def test_the_preview_plan_for_a_small_read_only_task_is_eligible(self) -> None:
         self.assertTrue(self.eligible(self.record()))
@@ -1054,6 +1058,10 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
             "public_research_intake": self.record().model_copy(update={
                 "intake": self.record().intake.model_copy(
                     update={"primary_public_research_query": "public sources"})}),
+            "write_worded_intake": self.record(
+                text="Project: demo\nSummarize README.md, then update its install section."),
+            "write_worded_producer": self.with_assignments(
+                {"task": "Rename the helpers listed in README.md"}, {}),
         }
         for name, record in cases.items():
             with self.subTest(case=name):
@@ -1063,6 +1071,24 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
         self.assertFalse(self.eligible(
             self.with_assignments({"estimated_cost_usd": 0.1}, {"estimated_cost_usd": 0.1}),
             replace(self.settings, max_task_budget_usd=0.15)))
+        for verb in ("edit", "update", "write", "add", "create", "rename", "modify",
+                     "delete", "remove", "commit", "push", "move", "save"):
+            with self.subTest(verb=verb):
+                self.assertFalse(self.eligible(
+                    self.record(text=f"Project: demo\nSummarize README.md and {verb} it.")))
+
+    def test_both_lanes_must_send_the_compact_view(self) -> None:
+        record = self.record()
+        lanes = {item.primary_provider_lane or item.agent.value
+                 for item in record.plan.assignments}
+        self.assertTrue(self.eligible(record, lanes=frozenset(lanes)))
+        for lane in lanes:
+            with self.subTest(full_packet_lane=lane):
+                # e.g. the cursor or github-copilot host-bridge lane.
+                self.assertFalse(self.eligible(record, lanes=frozenset(lanes - {lane})))
+        self.assertFalse(self.eligible(record, lanes=frozenset()))
+        # None evaluates the plan alone; only advisory text may ask for that.
+        self.assertTrue(self.eligible(record, lanes=None))
 
     def test_model_output_cannot_carry_eligibility(self) -> None:
         from pydantic import ValidationError
@@ -1095,3 +1121,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

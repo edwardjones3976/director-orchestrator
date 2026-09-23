@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
@@ -36,6 +37,7 @@ from director_orchestrator.primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
     normalize_native_provider_envelope,
+    sends_compact_provider_view,
 )
 from director_orchestrator.provider_validation import normalize_capture
 from tests.test_grok_responses_envelope import response as grok_response
@@ -178,6 +180,38 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 for changes in ({"task_id": "wrong-task"}, {"schema_version": "2.0"}):
                     with self.subTest(changes=changes), self.assertRaises(PacketContractError):
                         self.dispatch(provider, {**packet, **changes})
+
+    def test_outbound_bytes_per_bridge_lane_match_the_small_class_predicate(self):
+        """What each bridge lane actually posts, and what eligibility believes."""
+
+        work = work_packet()
+        example = json.loads((ROOT / "docs/schemas/model-result-packet-v1.example.json").read_text())
+        example.update({key: work[key] for key in (
+            "task_id", "assignment_id", "idempotency_key",
+            "authority_snapshot_digest", "correlation",
+        )})
+        lanes = ("claude", "grok", "cursor", "github-copilot")
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset(lanes), "sha256:" + "c" * 64, 1),
+            )
+        for provider in lanes:
+            with self.subTest(provider=provider):
+                _, sent = self.dispatch(provider, {**example, "provider": provider})
+                compact = provider in {"claude", "grok"}
+                self.assertEqual(
+                    canonical_json_bytes(compact_provider_view(work) if compact else work),
+                    sent["data"])
+                # A lane that posts the full packet can never join the small
+                # class, so its reviewer is never measured on a view it was not sent.
+                self.assertIs(compact, sends_compact_provider_view(transports[provider]))
 
     def test_native_failure_is_not_promoted_to_success(self):
         native = grok_response()
@@ -338,3 +372,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

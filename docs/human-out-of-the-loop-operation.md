@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
@@ -41,6 +42,17 @@ grant described here. A delegated decision must clear strictly more evidence
 than an attended one, because the owner's judgment is no longer present to
 catch what the gates do not model.
 
+The one pre-execution class, `execute_small_read_only_task`, is stated here as
+an explicit carve-out rather than left to be read as a relaxation. It resolves
+no decision about a candidate, because none exists yet. The attended act it
+replaces is the per-task execution button, which reads no evidence at all; the
+grant replaces that click with the pre-execution bar in
+[Standing grant for small read-only tasks](#standing-grant-for-small-read-only-tasks),
+and every gate the attended task passes afterwards still runs unchanged. That
+is how this class also clears strictly more evidence than the attended act. The
+carve-out is itself a tier-0 change and holds only with the owner's explicit
+sign-off.
+
 ## Operating states
 
 Exactly one state is in force per deployment profile at any time.
@@ -48,12 +60,20 @@ Exactly one state is in force per deployment profile at any time.
 | State | Meaning |
 | --- | --- |
 | `ATTENDED` | Default. Every `OWNER_DECISION_REQUIRED` waits for the owner. No delegation exists. |
-| `DELEGATED` | A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds. Everything else still waits. |
+| `DELEGATED` | A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds, or start the one pre-execution class when its pre-execution bar holds. Everything else still waits. |
 | `SUSPENDED` | Entered automatically on any trip condition. Behaves exactly as `ATTENDED` until the owner clears it explicitly. |
 
 A deployment starts in `ATTENDED` and returns to it whenever configuration is
 absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
 `DELEGATED` that does not pass through an explicit owner action.
+
+For the pre-execution class, `SUSPENDED` is recorded per grant: a durable
+`delegation_trip` record holds that `grant_id` in every process until the owner
+writes a new one. An absent, unreadable, or unwritable audit ledger holds the
+process attended without such a record, because the ledger is what failed; a
+restart re-arms the grant only if the ledger then reads, verifies, and writes
+cleanly. Accepting that restart behaviour is part of the owner's sign-off on
+the class.
 
 ## Decision classes
 
@@ -114,6 +134,17 @@ the decision to `OWNER_DECISION_REQUIRED`. **Absence of evidence is never
 consent.** A provider that is out of quota, unauthenticated, or silent has not
 approved anything, and its silence may not be counted, inferred, or waited out.
 
+**The pre-execution carve-out.** The one pre-execution class is not resolved
+against this bar at its decision point, because no candidate commit and no
+verdict exist yet, so items 1 to 5 cannot hold there. It is resolved against the
+pre-execution bar in
+[Standing grant for small read-only tasks](#standing-grant-for-small-read-only-tasks),
+which evaluates items 6 to 10 in their pre-execution form and never records
+items 1 to 5 as passing. Items 1 to 5 are not waived: the task's own exact-SHA
+review and CI/security gates must still hold, exactly as for an attended task,
+and the class authorizes no merge, publication, or other effect. This is the
+only carve-out.
+
 ## Why one independent verdict
 
 A single agent verdict is a single point of failure, and this repository's own
@@ -158,6 +189,8 @@ decision in flight completes:
 - the owner reverses two consecutive delegated decisions;
 - a provider authentication or quota failure occurs mid-decision;
 - a tier-0 class is implicated at any point;
+- a task a pre-execution grant started ends other than `SUCCEEDED`, is left
+  with an ambiguous slot, or cannot be read (recorded against that grant);
 - the audit ledger cannot be written.
 
 The last one is not a formality. A decision that cannot be recorded cannot be
@@ -188,44 +221,76 @@ no public research query or required capability; the plan has exactly one
 producer and one independent reviewer from another provider family; neither
 assignment requires approval, opens a draft pull request, carries a public
 query or a closed directive, or runs on the Perplexity, Firecrawl, or Gemini
-lane; the producer is not implementation work; and the frozen plan total is at
-most $1 and within the task budget, with the reviewer inside its own cap. Model
-or plan output can only remove eligibility. Every plan, assignment, and intake
-model forbids extra fields, so nothing a model writes can assert it.
+lane; both lanes' configured transports show the model only the compact
+provider view described below; the producer is not implementation work; neither
+the intake nor the producer's task is worded as a change (edit, update, write,
+add, create, rename, modify, delete, and similar); and the frozen plan total is
+at most $1 and within the task budget, with the reviewer inside its own cap.
+Model or plan output can only remove eligibility. Every plan, assignment, and
+intake model forbids extra fields, so nothing a model writes can assert it.
+"Read-only" means the packet grants no write tool and no effect. It does not
+mean a sandboxed process: native and bridge CLIs still run in a host
+workspace, which is why write-shaped requests are kept out of the class.
 
 **Exercise.** The execution button is skipped only when all of these hold at
 intake: `DELEGATION_ENABLED` is true and `DELEGATION_SUSPENDED` is false; a live
 grant, unexpired and unrevoked, names this class, the task's repository as a
 lowercase `owner/name`, its branch, and both of its provider lanes; the grant is
-not exhausted; no `delegation_trip` record exists for its `grant_id`; and the
-intake is a Slack-gateway-attested message from the configured owner in the
+not exhausted; no `delegation_trip` record exists for its `grant_id` and no task
+it pre-authorized must write one (see Trips); both lanes send the compact view;
+and the intake is a Slack-gateway-attested message from the configured owner in the
 configured channel that is not a replay. A bearer intake never evaluates a
 grant. Any other case stops for the button exactly as before.
 
 **What is evaluated, and when.** At the decision point no candidate change and
-no verdict exists yet, so evidence-bar items 1-5 cannot hold. Items 6-10, plus
-structural independence (two distinct lanes from different provider families),
-are evaluated before execution through the `hotl_execution` predicate. Items 1-5
-are carried by the task's own unchanged graph gates, `exact_sha_review` and
-`ci_security_completion`, which this class never skips or relaxes.
+no verdict exists yet, so evidence-bar items 1-5 cannot hold. The decision is
+made by `hotl_execution.decide_pre_execution`, never by `H(a)`, over its own
+closed terms: `authorization` (item 9, including an attested owner intake and
+an untripped, unexhausted grant), `eligibility` (item 7), `bounds` (item 8),
+`verification` (the exact starting commit and snapshot digest),
+`lane_independence` (two distinct lanes from different provider families),
+`safe_stopping`, `owned_paths_declared` (item 6 before any change), and `audit`
+(item 10). `H(a)` holds this class, and no record uses the `gates` or
+`independence` names for it, so nothing ever records items 1-5 as passing.
+Items 1-5 are carried by the task's own unchanged graph
+gates, `exact_sha_review` and `ci_security_completion`, which this class
+never skips or relaxes.
 
 **Audit.** A `PRE_AUTHORIZED` record is written before execution. It names the
 grant, carries its snapshot and the exact starting commit, lists every
-evaluated term as `PASS`, and holds no verdict. A refusal writes a `REFUSED`
-record naming the failed terms. `PRE_AUTHORIZED` is valid only for this class,
-and this class can never record `DELEGATED` or `WOULD_DELEGATE`.
+evaluated pre-execution term as `PASS`, and holds no verdict. A refusal writes a
+`REFUSED` record naming the failed terms; a task outside the class is refused on
+`eligibility` alone, without reading history, and claims no other term. The
+record that spends an exercise is appended only if the ledger still holds the
+history it was counted from, so concurrent writers cannot overspend a grant.
+`PRE_AUTHORIZED` is valid only for this class, and this class can never record
+`DELEGATED` or `WOULD_DELEGATE`.
 
-**Trips.** An unreadable or unwritable audit ledger latches the process to
-attended operation. A granted task whose terminal classification is anything
-other than `SUCCEEDED` writes a `delegation_trip` record, which suspends that
-grant. Clearing it takes an explicit owner action, a new grant_id.
+**Trips.** Trips are derived from durable state at every exercise, not from the
+path a task happened to finish on. Before a grant is exercised again, every task
+it pre-authorized is read: one that ended other than `SUCCEEDED`, one left with
+an ambiguous slot, or one that cannot be read writes a `delegation_trip` record,
+which suspends that grant. That covers a task settled through a provider
+callback and one whose process stopped after its terminal was persisted. A task
+whose intake failed after its `PRE_AUTHORIZED` record never started; it spends
+an exercise and trips nothing. An absent, unreadable, or unwritable audit ledger
+holds the process attended, as described under operating states. Clearing a
+trip takes an explicit owner action, a new grant_id.
 
-**Bounded provider traffic.** Providers receive a compact view of the work
-packet: its commit, digest, and file count, plus only the snapshot entries
-under owned paths or named in the objective. The Director keeps the full packet
-and rebinds every result to it by digest. The reviewer of a small task receives
-at most 16 KB and is capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
-`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000).
+**Bounded provider traffic.** Providers on the native CLI work-packet lanes,
+the OpenAI Responses lane, and the Claude and Grok host-bridge lanes receive a
+compact view of the work packet: its commit, digest, and file count, plus only
+the snapshot entries under owned paths or named in the objective. The cursor,
+github-copilot, native Codex, and Antigravity host-bridge lanes still post the
+full packet or a closed directive, so a task using any of them is outside the
+class and keeps the button. The Director keeps the full packet and rebinds
+every result to it by digest. The compact view a small task's reviewer is sent
+is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
+also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
+`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000). The producer's packet states the
+outcome size that fits, and a producer result whose review would exceed 16 KB is
+refused when it is accepted, before it is recorded and before any reviewer
+work. A result refused there still spent the producer's attempt.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -312,6 +377,7 @@ working, not failing. It is also the present condition of this repository.
 
 Each phase is separately built, reviewed, and accepted. No phase begins before
 its predecessor is accepted, and acceptance of one grants nothing to the next.
+Row 4S names its own predecessor below.
 
 | Phase | Content | Executes a decision? |
 | --- | --- | --- |
@@ -322,6 +388,12 @@ its predecessor is accepted, and acceptance of one grants nothing to the next.
 | 4 | Enable tier-1 merge only, one repository, owner observing. | Yes |
 | 5 | Broaden tier-1 classes only after a clean shadow record and a clean live record. | Yes |
 | 4S | The pre-execution class `execute_small_read_only_task` only, one repository, live grant, owner-signed PR. | Yes |
+
+Row 4S is a separate track, not a step after phase 5. Its predecessor is
+phase 2, and it does not depend on phase 4. For this one class only, it waives
+phase 3's shadow record and phase 5's clean-shadow and clean-live
+preconditions. That waiver is part of the tier-0 act the owner's sign-off on
+its pull request accepts; without that sign-off, row 4S does not exist.
 
 ## The evaluated form
 
@@ -422,3 +494,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->

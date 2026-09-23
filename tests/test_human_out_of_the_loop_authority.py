@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
@@ -140,6 +141,30 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "can only remove eligibility",
             "not a replay",
         ):
+            self.assertIn(required, standing)
+
+    def test_the_pre_execution_class_is_an_explicit_carve_out_everywhere(self) -> None:
+        """Each rule the class departs from says so where the rule is stated."""
+
+        def flat(text: str) -> str:
+            return " ".join(text.split())
+
+        self.assertIn("explicit carve-out", flat(self.section("Purpose")))
+        states = flat(self.section("Operating states"))
+        self.assertIn("start the one pre-execution class when its pre-execution bar holds", states)
+        self.assertIn("recorded per grant", states)
+        self.assertIn("a restart re-arms the grant only if the ledger", states)
+        bar = flat(self.section("The evidence bar"))
+        self.assertIn("The pre-execution carve-out.", bar)
+        self.assertIn("never records items 1 to 5 as passing", bar)
+        self.assertIn("Items 1 to 5 are not waived", bar)
+        phases = flat(self.section("Implementation phases"))
+        self.assertIn("Its predecessor is phase 2", phases)
+        self.assertIn("waives phase 3's shadow record and phase 5's", phases)
+        standing = flat(self.section("Standing grant for small read-only tasks"))
+        for required in ("decide_pre_execution", "never by `H(a)`", "derived from durable state",
+                         "provider callback", "ambiguous slot", "outside the class and keeps the button",
+                         "before any reviewer work"):
             self.assertIn(required, standing)
 
     def test_evidence_bar_is_conjunctive_and_complete(self) -> None:
@@ -465,3 +490,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

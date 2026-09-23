@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | BEGIN]]
@@ -16,6 +17,12 @@ booleans that let an operator see the configured state. The audit ledger is
 phase 2, shadow recording is phase 3, and the first phase that resolves a real
 decision is phase 4. Building any of those here would defeat the sequencing the
 document relies on for safety.
+
+One class resolves outside this module. Phase 4S lets a live grant naming
+``execute_small_read_only_task`` start a small read-only task without the
+per-task execution button; ``primary_default`` exercises it, and only when an
+audit ledger is wired. ``delegation_readiness`` reports whether that path is
+armed, so ``/health`` never says nothing executes while it can.
 
 Everything defaults off. A deployment is ``ATTENDED`` unless a grant is present
 and valid, and it returns to ``ATTENDED`` whenever configuration is absent,
@@ -263,10 +270,10 @@ def configured_state(
     """Report the state the owner has **configured**, not authority to act.
 
     A ``DELEGATED`` result means "the owner configured a live grant", never
-    "this deployment may act unattended". No phase that resolves a decision
-    exists yet: the evidence bar, the audit ledger and the decision path are
-    later phases, so a caller must not branch on this value to take an action,
-    and every ``OWNER_DECISION_REQUIRED`` still waits for the owner.
+    "this deployment may act unattended", so a caller must not branch on this
+    value to take an action. The only decision any phase resolves is the
+    phase-4S pre-execution class, evaluated in ``primary_default``; every other
+    ``OWNER_DECISION_REQUIRED`` still waits for the owner.
 
     ``ATTENDED`` unless everything holds. ``SUSPENDED`` wins over everything:
     the document states there is no path from ``SUSPENDED`` to ``DELEGATED``
@@ -287,6 +294,7 @@ def delegation_readiness(
     suspended: bool,
     grant_document: str | None,
     moment: datetime,
+    pre_execution_ledger_configured: bool = False,
 ) -> dict[str, Any]:
     """Readiness booleans for ``/health``. Names and booleans only.
 
@@ -295,9 +303,12 @@ def delegation_readiness(
     values, and a grant names real repositories and providers.
 
     ``configured_state`` is what the owner has configured, not a grant of
-    authority. ``executes_decisions`` is reported beside it and is always
-    false, so an operator reading this endpoint can see that phase 1 resolves
-    nothing rather than inferring it from the absence of a field.
+    authority. ``executes_decisions`` is reported beside it. It is true only
+    when the phase-4S pre-execution path is armed: delegation enabled and not
+    suspended, a live grant naming ``execute_small_read_only_task``, and an
+    audit ledger wired into the primary application. Then ``phase`` reads
+    ``"4S"``; otherwise it stays 1 and nothing is resolved. A per-task check
+    can still refuse an armed path.
     """
 
     try:
@@ -309,9 +320,16 @@ def delegation_readiness(
     state = configured_state(
         grant, enabled=enabled, suspended=suspended, moment=moment
     )
+    armed = bool(
+        state is DelegationState.DELEGATED
+        and grant is not None
+        and Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK in grant.classes
+        and pre_execution_ledger_configured
+    )
     return {
-        "phase": 1,
-        "executes_decisions": False,
+        "phase": "4S" if armed else 1,
+        "executes_decisions": armed,
+        "pre_execution_armed": armed,
         "configured_state": state.value,
         "enabled_requested": bool(enabled),
         "suspended": bool(suspended),
@@ -327,3 +345,4 @@ def delegation_readiness(
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 19:54 UTC | END]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

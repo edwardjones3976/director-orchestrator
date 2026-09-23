@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
@@ -335,6 +336,33 @@ class ReadinessTests(unittest.TestCase):
 
         self.assertFalse(hasattr(delegation, "resolve_state"))
 
+    def test_executes_decisions_is_true_exactly_when_the_4s_path_is_armed(self):
+        """/health must not say nothing executes while a grant can skip the button."""
+
+        small = grant_document(classes=[Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK.value])
+        armed = delegation_readiness(
+            enabled=True, suspended=False, grant_document=small, moment=NOW,
+            pre_execution_ledger_configured=True,
+        )
+        self.assertTrue(armed["executes_decisions"])
+        self.assertTrue(armed["pre_execution_armed"])
+        self.assertEqual("4S", armed["phase"])
+        for name, changes in {
+            "no_ledger": {"pre_execution_ledger_configured": False},
+            "disabled": {"enabled": False},
+            "suspended": {"suspended": True},
+            "other_class": {"grant_document": grant_document()},
+            "expired": {"moment": LATER + timedelta(seconds=1)},
+        }.items():
+            with self.subTest(case=name):
+                readiness = delegation_readiness(**{
+                    "enabled": True, "suspended": False, "grant_document": small,
+                    "moment": NOW, "pre_execution_ledger_configured": True, **changes,
+                })
+                self.assertFalse(readiness["executes_decisions"])
+                self.assertFalse(readiness["pre_execution_armed"])
+                self.assertEqual(1, readiness["phase"])
+
     def test_phase_one_exposes_no_decision_entry_point(self):
         """Phase 4 is the first phase that resolves a decision. Phase 1 must not
         ship one early, so the module surface is asserted directly."""
@@ -358,3 +386,4 @@ if __name__ == "__main__":
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

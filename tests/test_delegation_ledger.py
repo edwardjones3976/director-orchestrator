@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
@@ -46,6 +47,7 @@ from director_orchestrator.delegation_ledger import (
     parse_record,
 )
 from director_orchestrator.store import (
+    DelegationAuditAdvanced,
     DelegationAuditConflict,
     DelegationAuditAnchorUnavailable,
     DelegationAuditLedgerCorrupt,
@@ -1262,6 +1264,31 @@ class PreAuthorizedRecordTests(unittest.TestCase):
             RecordedOutcome.DELEGATED, record(outcome=RecordedOutcome.DELEGATED).outcome
         )
 
+    def test_a_conditional_append_refuses_a_ledger_that_advanced(self):
+        """Two processes that counted the same history cannot both spend it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path, anchor = str(Path(directory) / "audit.sqlite3"), MemoryAnchor()
+            first = TaskStore(path, delegation_audit_anchor=anchor)
+            second = TaskStore(path, delegation_audit_anchor=anchor)
+            seen = len(second.delegation_audit_records())
+            first.append_delegation_audit_record(
+                self.pre_authorized(acting_agent="director-langgraph:DIR-LG-A"),
+                expected_sequence=seen,
+            )
+            with self.assertRaises(DelegationAuditAdvanced):
+                second.append_delegation_audit_record(
+                    self.pre_authorized(acting_agent="director-langgraph:DIR-LG-B"),
+                    expected_sequence=seen,
+                )
+            [kept] = first.delegation_audit_records()
+            self.assertEqual("director-langgraph:DIR-LG-A", kept.acting_agent)
+            self.assertEqual(1, anchor.head[0])
+            # Unconditional appends keep their existing behaviour.
+            second.append_delegation_audit_record(
+                self.pre_authorized(acting_agent="director-langgraph:DIR-LG-C"))
+            self.assertEqual(2, len(first.delegation_audit_records()))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1273,3 +1300,4 @@ if __name__ == "__main__":
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

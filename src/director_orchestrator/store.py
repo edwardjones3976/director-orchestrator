@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | BEGIN]]
@@ -133,6 +134,14 @@ class DelegationAuditConflict(RuntimeError):
     The ledger is append-only, so a repeat is refused rather than replacing the
     row that is already there. A genuinely new observation differs in at least
     its timestamp and therefore in its digest.
+    """
+
+
+class DelegationAuditAdvanced(RuntimeError):
+    """A conditional append found the ledger past the sequence its caller read.
+
+    Nothing was written. The caller decided on a history that is no longer
+    current, so it must read again rather than append on stale evidence.
     """
 
 
@@ -4010,7 +4019,9 @@ class TaskStore:
             raise ValueError("after_digest is not in this ledger")
         return (count, chain), page
 
-    def append_delegation_audit_record(self, record: DelegationAuditRecord) -> str:
+    def append_delegation_audit_record(
+        self, record: DelegationAuditRecord, *, expected_sequence: int | None = None
+    ) -> str:
         """Append one immutable delegation audit record and return its digest.
 
         This is the whole write surface for the ledger. There is deliberately no
@@ -4024,6 +4035,12 @@ class TaskStore:
         ceiling. BEGIN IMMEDIATE remains necessary here to serialize verification,
         insertion and external anchor advancement across store instances, including
         the interval between anchor advancement and SQLite commit.
+
+        ``expected_sequence`` makes the append conditional: it is refused with
+        DelegationAuditAdvanced unless the ledger still holds exactly that many
+        records, checked inside the same BEGIN IMMEDIATE transaction. A caller
+        that counts records and then appends uses it so a concurrent writer in
+        another process cannot make both appends count the same history.
         """
 
         if not isinstance(record, DelegationAuditRecord):
@@ -4033,6 +4050,8 @@ class TaskStore:
             with self._lock, self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 previous, _ = self._verified_audit_snapshot(connection)
+                if expected_sequence is not None and previous[0] != expected_sequence:
+                    raise DelegationAuditAdvanced("audit ledger advanced since it was read")
                 cursor = connection.execute(
                     """INSERT INTO delegated_decision_audit(
                         record_digest, record_json, recorded_at
@@ -4201,3 +4220,4 @@ class TaskStore:
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

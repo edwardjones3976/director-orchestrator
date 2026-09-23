@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -1132,14 +1133,17 @@ class Settings:
             "perplexity": readiness["perplexity"],
         }
 
-    def delegation_readiness(self, *, moment=None) -> dict:
+    def delegation_readiness(
+        self, *, moment=None, pre_execution_ledger_configured: bool = False
+    ) -> dict:
         """Report the human-out-of-the-loop state as readiness booleans.
 
-        Phase 1 only. This reports configuration; it resolves nothing, and the
-        payload says so explicitly so an operator does not have to infer it.
-        Grant contents are never reported: /health returns readiness booleans
-        and never secret or allowlist values, and a grant names real
-        repositories and providers.
+        This reports configuration and resolves nothing itself. The payload
+        says whether the phase-4S pre-execution path is armed, which needs an
+        audit ledger wired into the primary application, so an operator does
+        not have to infer it. Grant contents are never reported: /health
+        returns readiness booleans and never secret or allowlist values, and a
+        grant names real repositories and providers.
         """
 
         from datetime import datetime, timezone
@@ -1151,6 +1155,7 @@ class Settings:
             suspended=self.delegation_suspended,
             grant_document=self.delegation_grant_json,
             moment=moment or datetime.now(timezone.utc),
+            pre_execution_ledger_configured=pre_execution_ledger_configured,
         )
 
     def workload_policy_readiness(
@@ -2543,3 +2548,4 @@ class Settings:
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

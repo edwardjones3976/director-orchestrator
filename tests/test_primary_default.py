@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
@@ -54,7 +55,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import re
 import unittest
+from functools import partial
 from unittest.mock import patch
 import uuid
 from dataclasses import replace
@@ -130,8 +133,10 @@ from director_orchestrator.primary_default import (
     build_primary_packet_result_resolver,
     build_typed_external_effect_grant,
     resolve_default_primary_authority,
+    small_producer_result_refusal,
     small_review_bounds,
     typed_external_effect_grant_kinds,
+    _small_producer_constraints,
 )
 
 
@@ -156,6 +161,10 @@ def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
         writer_secret="default-primary-test-writer-secret",
         timeout_seconds=settings.provider_timeout_seconds,
     )
+
+
+# The preview plan's producer and reviewer lanes, as compact-view transports.
+SMALL_LANES = frozenset({"claude", "cursor"})
 
 
 class SmallReviewBoundsTests(unittest.TestCase):
@@ -194,11 +203,12 @@ class SmallReviewBoundsTests(unittest.TestCase):
         )
         return record
 
-    def bounds(self, record: TaskRecord, *, reviewer: bool = True):
+    def bounds(self, record: TaskRecord, *, reviewer: bool = True, lanes=SMALL_LANES):
         pick = max if reviewer else min
         assignment = pick(record.plan.assignments, key=lambda item: item.sequence)
         packet = self.router.planned_work_packet(record, assignment)
-        return small_review_bounds(record, self.settings, assignment, packet)
+        return small_review_bounds(
+            record, self.settings, assignment, packet, compact_view_lanes=lanes)
 
     def test_an_oversized_review_packet_is_refused(self):
         self.assertEqual(
@@ -212,7 +222,8 @@ class SmallReviewBoundsTests(unittest.TestCase):
         record = self.record("done")
         review = max(record.plan.assignments, key=lambda item: item.sequence)
         packet = self.router.planned_work_packet(record, review)
-        self.assertEqual((None, 1_234), small_review_bounds(record, capped, review, packet))
+        self.assertEqual((None, 1_234), small_review_bounds(
+            record, capped, review, packet, compact_view_lanes=SMALL_LANES))
 
     def test_the_producer_and_ineligible_tasks_are_not_bounded(self):
         self.assertEqual((None, None), self.bounds(self.record("done"), reviewer=False))
@@ -220,6 +231,82 @@ class SmallReviewBoundsTests(unittest.TestCase):
             "done", text="Project: default\nCreate a bounded implementation plan."
         )
         self.assertEqual((None, None), self.bounds(ineligible))
+
+    def test_a_full_packet_reviewer_lane_is_outside_the_class(self):
+        # The cursor host-bridge lane posts the whole packet, so its reviewer is
+        # never measured on a compact view it is not sent: no class, no cap.
+        self.assertEqual((None, None), self.bounds(self.record("done"), lanes={"claude"}))
+        self.assertEqual((None, None), self.bounds(self.record("x" * 20_000), lanes={"claude"}))
+
+    def producer_refusal(self, outcome: str, record: TaskRecord | None = None):
+        record = record or self.record("unused")
+        record.assignment_outcomes = []
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        return small_producer_result_refusal(
+            record, self.settings, producer,
+            {"run_reference": "run-1", "outcome": outcome}, "sha256:" + "e" * 64,
+            self.router, compact_view_lanes=SMALL_LANES,
+        )
+
+    def test_a_producer_result_is_bounded_before_any_reviewer_work(self):
+        """The producer check and the reviewer check agree to the byte."""
+
+        self.assertIsNone(self.producer_refusal("done"))
+        low, high = 1, 20_000
+        while low < high:
+            middle = (low + high + 1) // 2
+            if self.producer_refusal("x" * middle) is None:
+                low = middle
+            else:
+                high = middle - 1
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal("x" * (low + 1)))
+        # A result exactly at the limit still reaches its reviewer uncapped.
+        record = self.record("x" * low)
+        record.assignment_outcomes[0].review_summary = "x" * low
+        record.assignment_outcomes[0].provider_result_digest = "e" * 64
+        self.assertEqual((None, 40_000), self.bounds(record))
+        record.assignment_outcomes[0].result = record.assignment_outcomes[0].review_summary = (
+            "x" * (low + 1))
+        self.assertEqual("small_task_review_packet_over_cap", self.bounds(record)[0])
+        # Quotes and newlines are escaped twice, so they fit fewer characters.
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal('"\n' * (low // 2)))
+        # Past the outcome model's own bounds it is refused, not raised.
+        self.assertEqual("small_task_producer_result_over_cap",
+                         self.producer_refusal("x" * 60_000))
+        # Every other task and the reviewer itself are unaffected.
+        ineligible = self.record(
+            "unused", text="Project: default\nCreate a bounded implementation plan.")
+        self.assertIsNone(self.producer_refusal("x" * 60_000, ineligible))
+
+    def test_the_producer_is_told_the_ceiling_before_dispatch(self):
+        hinted = DirectorPacketTaskRouter(
+            authority_snapshots=_FixedAuthorityResolver(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-primary-default",
+            writer_secret="default-primary-test-writer-secret",
+            timeout_seconds=self.settings.provider_timeout_seconds,
+            extra_constraints=partial(_small_producer_constraints, self.settings),
+        )
+        record = self.record("unused")
+        record.assignment_outcomes = []
+        producer = min(record.plan.assignments, key=lambda item: item.sequence)
+        [hint] = [item for item in hinted.planned_work_packet(record, producer)["constraints"]
+                  if item.startswith("Small read-only task:")]
+        ceiling = int(re.search(r"under (\d+) characters", hint).group(1))
+        self.assertGreater(ceiling, 0)
+        # The advertised ceiling is conservative: plain text of that length fits.
+        self.assertIsNone(self.producer_refusal("x" * ceiling))
+        # Deterministic, so the approval packet and the dispatched one agree.
+        self.assertEqual(hinted.planned_work_packet(record, producer),
+                         hinted.planned_work_packet(record, producer))
+        ineligible = self.record(
+            "unused", text="Project: default\nCreate a bounded implementation plan.")
+        ineligible.assignment_outcomes = []
+        first = min(ineligible.plan.assignments, key=lambda item: item.sequence)
+        self.assertFalse(any(item.startswith("Small read-only task:") for item in
+                             hinted.planned_work_packet(ineligible, first)["constraints"]))
 
 
 class _MemoryAuditAnchor:
@@ -255,9 +342,12 @@ SMALL_GRANT = {
 }
 SMALL_TEXT = "Project: default\nSummarize README.md for the owner."
 TERM_ORDER = [
-    "authorization", "gates", "bounds", "verification",
-    "independence", "safe_stopping", "scope",
+    "authorization", "eligibility", "bounds", "verification",
+    "lane_independence", "safe_stopping", "owned_paths_declared",
 ]
+
+
+RUNNING = {"terminal_classification": None, "parallel_plan_digest": digest("parallel-plan")}
 
 
 def small_grant(**changes) -> str:
@@ -298,14 +388,17 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.ledger = audit_ledger(self.directory)
         self.sequence = 0
 
-    def application(self, ledger="default", *, dispatcher=True, **changes):
+    def application(self, ledger="default", *, dispatcher=True, lanes=SMALL_LANES, **changes):
         return DefaultPrimaryApplication(
             replace(self.settings, **changes),
-            None,
+            # Prior pre-authorized tasks read as never started unless a test
+            # supplies their durable state.
+            self.coordinator(None),
             None,
             DefaultPrimaryAuthority(SHA, digest("authority")),
             parallel_dispatcher=(lambda reservation: None) if dispatcher else None,
             delegation_ledger=self.ledger if ledger == "default" else ledger,
+            compact_view_lanes=lanes,
         )
 
     def record(self, text=SMALL_TEXT, *, user="UOWNER", channel="CDIRECTOR",
@@ -401,12 +494,24 @@ class StandingGrantExerciseTests(unittest.TestCase):
             self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
 
     def test_an_ineligible_task_is_refused_and_audited(self):
-        record = self.record("Project: default\nCreate a bounded implementation plan.")
-        self.assertFalse(self.exercise(self.application(), record))
-        [entry] = self.audit()
-        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
-        self.assertIs(GateStatus.FAIL, gate_statuses(entry)["gates"])
-        self.assertIs(GateStatus.PASS, gate_statuses(entry)["authorization"])
+        for application, record in (
+            (self.application(), self.record(
+                "Project: default\nCreate a bounded implementation plan.")),
+            # The reviewer's cursor lane posts the full packet: outside the class.
+            (self.application(lanes={"claude"}), self.record()),
+        ):
+            self.assertFalse(self.exercise(application, record))
+        for entry in self.audit():
+            self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+            # Refused on eligibility alone; no other term is claimed evaluated.
+            self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(entry))
+        self.assertEqual(2, len(self.audit()))
+
+    def test_no_record_claims_the_candidate_bound_gates_or_independence(self):
+        self.assertTrue(self.exercise(self.application(), self.record()))
+        self.assertFalse(self.exercise(self.application(), self.record(user="UOTHER")))
+        for entry in self.audit():
+            self.assertFalse({"gates", "independence", "scope"} & set(gate_statuses(entry)))
 
     def test_an_absent_or_unreadable_ledger_latches_attended(self):
         application = self.application(ledger=None)
@@ -452,32 +557,107 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertFalse(self.exercise(application, self.record()))
         self.assertEqual([], self.audit())
 
-    def test_a_granted_task_that_does_not_succeed_trips_its_grant(self):
-        def coordinator(required, classification):
-            return SimpleNamespace(
-                _runtime=SimpleNamespace(
-                    compact_state=lambda task_id: {"execution_approval_required": required}),
-                get_projection=lambda task_id: SimpleNamespace(
-                    projection={"terminal_classification": classification}),
-            )
+    @staticmethod
+    def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False):
+        def get_projection(task_id):
+            if unreadable:
+                raise OSError("projection unavailable")
+            return None if projection is None else SimpleNamespace(projection=projection)
 
-        application = self.application()
-        for required, classification in ((True, "FAILED"), (False, "SUCCEEDED"), (False, None)):
-            application.coordinator = coordinator(required, classification)
-            application._trip_failed_exercise("DIR-LG-UNTRIPPED")
-        self.assertEqual([], self.audit())
+        def parallel_aggregate(task_id):
+            if aggregate_unreadable:
+                raise OSError("aggregate unavailable")
+            return SimpleNamespace(ambiguous_slot_count=ambiguous)
+
+        return SimpleNamespace(get_projection=get_projection,
+                               parallel_aggregate=parallel_aggregate)
+
+    def test_trips_are_derived_from_durable_task_state_on_every_path(self):
+        """Callback-settled, ambiguous and crash-after-terminal tasks all trip."""
+
+        tripping = {
+            # Settled by a provider callback, or its process stopped after the
+            # terminal was persisted: either way only the durable state remains.
+            "failed_terminal": self.coordinator({"terminal_classification": "FAILED"}),
+            "owner_decision": self.coordinator(
+                {"terminal_classification": "OWNER_DECISION_REQUIRED"}),
+            "ambiguous_slot": self.coordinator(RUNNING, ambiguous=1),
+            "unreadable": self.coordinator(unreadable=True),
+            "aggregate_unreadable": self.coordinator(RUNNING, aggregate_unreadable=True),
+        }
+        for name, state in tripping.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                first = self.application(ledger)
+                first.coordinator = state
+                self.assertTrue(self.exercise(first, self.record()))
+                earlier = self.audit(ledger)[0].acting_agent
+                # A fresh process: nothing in memory carries the failure.
+                second = self.application(ledger)
+                second.coordinator = state
+                self.assertFalse(self.exercise(second, self.record()))
+                pre, trip, refused = self.audit(ledger)
+                self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+                self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+                self.assertEqual(earlier, trip.acting_agent)
+                self.assertIs(GateStatus.FAIL, gate_statuses(refused)["authorization"])
+                self.assertFalse(second._delegation_tripped)
+                # The trip is durable: a healthy state no longer re-arms it.
+                third = self.application(ledger)
+                third.coordinator = self.coordinator({"terminal_classification": "SUCCEEDED"})
+                self.assertFalse(self.exercise(third, self.record()))
+                self.assertEqual(1, sum(
+                    "delegation_trip" in gate_statuses(item) for item in self.audit(ledger)))
+
+    def test_succeeded_running_or_never_started_tasks_do_not_trip(self):
+        for name, state in {
+            "succeeded": self.coordinator({"terminal_classification": "SUCCEEDED"}),
+            "running": self.coordinator(RUNNING),
+            # Created, its parallel plan not registered yet: nothing dispatched.
+            "registering": self.coordinator(
+                {"terminal_classification": None}, aggregate_unreadable=True),
+            # Its intake failed after the audit record: it spent an exercise
+            # and ran nothing.
+            "never_started": self.coordinator(None),
+        }.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                application = self.application(ledger)
+                application.coordinator = state
+                self.assertTrue(self.exercise(application, self.record()))
+                self.assertTrue(self.exercise(application, self.record()))
+                self.assertEqual(
+                    [RecordedOutcome.PRE_AUTHORIZED] * 2,
+                    [item.outcome for item in self.audit(ledger)])
+
+    def test_a_concurrent_writer_cannot_overspend_the_last_exercise(self):
+        """Count-then-append is conditional on the history that was counted."""
+
+        grant = small_grant(max_exercises=1)
+        path, anchor = str(Path(self.directory) / "shared.sqlite3"), _MemoryAuditAnchor()
+        mine = TaskStore(path, delegation_audit_anchor=anchor)
+        theirs = TaskStore(path, delegation_audit_anchor=anchor)
+        other = self.application(theirs, delegation_grant_json=grant)
+        other.coordinator = self.coordinator(None)
+        read = mine.delegation_audit_records
+        raced = []
+
+        def read_then_race(**kwargs):
+            page = read(**kwargs)
+            if not raced:
+                raced.append(True)
+                # Another process spends the last exercise after this one counted.
+                self.assertTrue(self.exercise(other, self.record()))
+            return page
+
+        application = self.application(mine, delegation_grant_json=grant)
+        application.coordinator = self.coordinator(None)
+        with patch.object(mine, "delegation_audit_records", side_effect=read_then_race):
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertEqual([RecordedOutcome.PRE_AUTHORIZED],
+                         [item.outcome for item in theirs.delegation_audit_records()])
+        # A lost race refuses this one intake; it does not latch the process.
         self.assertFalse(application._delegation_tripped)
-
-        application.coordinator = coordinator(False, "FAILED")
-        application._trip_failed_exercise("DIR-LG-FAILED")
-        [entry] = self.audit()
-        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
-        self.assertEqual(["delegation_trip"], [item.gate for item in entry.gate_results])
-        self.assertTrue(entry.acting_agent.endswith("DIR-LG-FAILED"))
-        self.assertTrue(application._delegation_tripped)
-        self.assertFalse(self.exercise(application, self.record()))
-        # The durable record holds a fresh process too.
-        self.assertFalse(self.exercise(self.application(), self.record()))
 
     def test_main_intake_schedules_recover_only_via_callback(self):
         import importlib
@@ -2237,6 +2417,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             DefaultPrimaryAuthority(SHA, digest("authority")),
             parallel_dispatcher=dispatcher,
             delegation_ledger=delegation_ledger,
+            compact_view_lanes=SMALL_LANES,
         )
         self.settings = settings
         self.services = services
@@ -2366,17 +2547,71 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertNotIn(
             projection.projection["terminal_classification"], (None, "SUCCEEDED")
         )
-        entries = ledger.delegation_audit_records(limit=10)
-        self.assertEqual(
-            [RecordedOutcome.PRE_AUTHORIZED, RecordedOutcome.REFUSED],
-            [item.outcome for item in entries],
-        )
-        self.assertEqual(["delegation_trip"], [item.gate for item in entries[1].gate_results])
+        self.assert_next_exercise_trips_on(failed.task_id, ledger, "tripped-small-2")
 
-        after = self.attested_intake("tripped-small-2")
+    def assert_next_exercise_trips_on(self, failed_task_id, ledger, event):
+        after = self.attested_intake(event)
         projection = self.coordinator.get_projection(after.task_id)
         assert projection is not None
         self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
+        pre, trip, refused = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertEqual(["delegation_trip"], [item.gate for item in trip.gate_results])
+        self.assertTrue(trip.acting_agent.endswith(failed_task_id))
+        self.assertIs(RecordedOutcome.REFUSED, refused.outcome)
+        self.assertTrue(refused.acting_agent.endswith(after.task_id))
+
+    def test_a_callback_settled_failure_trips_the_grant(self):
+        """No drive loop runs: the task fails through record_provider_callback."""
+
+        ledger = self.use_standing_grant(self.succeeding([]))
+        ready: list[str] = []
+        granted = self.attested_intake("callback-failed-small", on_dispatch_ready=ready.append)
+        self.assertEqual([granted.task_id], ready)
+        [first] = self.coordinator.reserve_parallel_ready(
+            task_id=granted.task_id, policy=self.application._parallel_policy())
+        attempt = self.coordinator.reserve_provider_attempt(
+            reservation=first,
+            attempt_ordinal=1,
+            format_roster=(("json", "callback"),),
+            idempotency_key_digest=digest("granted-callback-key"),
+            budget_evidence_digest=digest("granted-callback-budget"),
+        )
+        self.application.record_provider_callback(
+            task_id=granted.task_id,
+            assignment_id=first.assignment_id,
+            provider_id=first.provider_id,
+            provider_run_id="run-granted-callback",
+            command=ProviderSubgraphResult(
+                provider_attempt_digest=attempt.attempt_digest,
+                idempotency_key_digest=attempt.idempotency_key_digest,
+                authority_snapshot_digest=digest("granted-callback-authority"),
+                producer_id=first.provider_id,
+                disposition=ProviderDisposition.FAILED,
+                result_digest=None,
+                candidate_sha=None,
+                reason_code="callback_failed",
+            ),
+        )
+        projection = self.coordinator.get_projection(granted.task_id)
+        assert projection is not None
+        self.assertNotIn(
+            projection.projection["terminal_classification"], (None, "SUCCEEDED"))
+        self.assert_next_exercise_trips_on(granted.task_id, ledger, "callback-failed-next")
+
+    def test_an_ambiguous_granted_task_trips_the_grant(self):
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.AMBIGUOUS, None, "provider_outcome_unknown")
+
+        ledger = self.use_standing_grant(dispatch)
+        granted = self.attested_intake("ambiguous-small")
+        projection = self.coordinator.get_projection(granted.task_id)
+        assert projection is not None
+        # Never terminal, so no drive-loop or callback hook would ever see it.
+        self.assertIsNone(projection.projection["terminal_classification"])
+        self.assertEqual(1, self.coordinator.parallel_aggregate(granted.task_id).ambiguous_slot_count)
+        self.assert_next_exercise_trips_on(granted.task_id, ledger, "ambiguous-next")
 
     def same_lane_review_plan(self):
         """A plan whose review barrier reuses the first-wave producer's lane."""
@@ -4678,3 +4913,4 @@ if __name__ == "__main__":
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
