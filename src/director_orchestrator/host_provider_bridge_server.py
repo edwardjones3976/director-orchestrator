@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
@@ -70,14 +71,17 @@ def _commands() -> dict[str, tuple[str, ...]]:
 
 
 def _apply_pinned_process_environment() -> bool:
-    """Pin every process name that child processes and the digest read.
+    """Pin every process name that host-command children and the digest read.
 
-    Provider children and production_configuration_digest read only
-    _SAFE_OS_ENV and _LANE_AUTH_ENV names. The safe names come from the pinned
-    file. A lane credential survives only when the launcher copied it from the
-    bridge profile and listed it in PROFILE_AUTH_NAMES; every other inherited
-    credential is dropped, so neither the digest nor a provider's billing route
-    depends on the launching shell. Nothing from the file is echoed on refusal.
+    Host-command provider children and production_configuration_digest read
+    only _SAFE_OS_ENV and _LANE_AUTH_ENV names. The safe names come from the
+    pinned file. A lane credential survives only when the launcher copied it
+    from the bridge profile and listed it in PROFILE_AUTH_NAMES; every other
+    inherited credential is dropped, so neither the digest nor a host-command
+    provider's billing route depends on the launching shell. The openai lane's
+    native Codex child (codex_environment) also inherits HOME, PROGRAMDATA,
+    PROGRAMFILES, PROGRAMFILES(X86), LANG and LC_ALL, which are neither pinned
+    nor hashed. Nothing from the file is echoed on refusal.
     """
     source = os.environ.get("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "").strip()
     if not source:
@@ -132,14 +136,23 @@ def _account_files() -> dict[str, tuple[str, ...]]:
     return {key: tuple(values) for key, values in account_files.items()}
 
 
-def configuration_digests(executor, account_files) -> dict[str, str]:
-    """Per-lane production pins; digests only, never paths or values."""
+def configuration_digests(executor, account_files, routed=None) -> dict[str, str]:
+    """Per-lane pins as ValidationBridgeService.run binds them; digests only.
+
+    antigravity is always team-routed and openai is Responses-routed when that
+    route is configured. ``routed`` maps a routed lane to its route digest, or
+    to None when the caller holds no route; a routed lane never reports the
+    native digest the bridge would not bind.
+    """
     from .provider_validation import production_configuration_digest
-    return {
+    routed = {"antigravity": None, **(routed or {})}
+    digests = {
         lane: production_configuration_digest(executor, lane, account_files=tuple(files))
-        for lane, files in sorted(account_files.items())
-        if lane in executor.commands and files
+        for lane, files in account_files.items()
+        if lane in executor.commands and files and lane not in routed
     }
+    digests.update({lane: value for lane, value in routed.items() if value is not None})
+    return dict(sorted(digests.items()))
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -211,7 +224,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False})
                 return
             try:
-                digests = configuration_digests(service.production, service.account_files)
+                routed = {}
+                if service.team_route is not None:
+                    routed["antigravity"] = service.team_route.configuration_digest()
+                if service.openai_responses_route is not None:
+                    routed["openai"] = service.openai_responses_route.configuration_digest
+                digests = configuration_digests(service.production, service.account_files, routed)
             except Exception:
                 self._json(409, {"ok": False, "reason": "configuration_unavailable"})
                 return
@@ -326,11 +344,13 @@ def main(argv: list[str] | None = None) -> None:
     pinned = _apply_pinned_process_environment()
     if arguments.check_environment:
         # No secret, store, database or server: print the pins this process would bind.
+        # Routes are never opened here, so routed lanes are omitted, not guessed.
         executor = WindowsHostProviderExecutor(
             _commands(), cwd=Path(_required("DIRECTOR_HOST_PROVIDER_WORKSPACE")).resolve(strict=True)
         )
+        routed = {"openai": None} if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG") else {}
         print(json.dumps({
-            "configuration_digests": configuration_digests(executor, _account_files()),
+            "configuration_digests": configuration_digests(executor, _account_files(), routed),
             "pinned_environment": pinned, "provider_calls": 0,
         }, sort_keys=True))
         return
@@ -404,3 +424,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | END]]

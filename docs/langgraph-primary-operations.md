@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]] -->
@@ -397,8 +398,14 @@ their mere presence:
   allowlisted Windows command map without invoking a provider. `-Action Run`
   starts the authenticated host bridge in the foreground for supervision.
   `-Action CheckEnvironment` prints the per-lane production configuration
-  digests and makes no provider call. Provider children and those digests read
-  only ten operating-system names (`SYSTEMROOT`, `WINDIR`, `PATH`, `PATHEXT`,
+  digests and makes no provider call. It opens no validation route, so it
+  omits `antigravity`, which the bridge validates only through the team route,
+  and omits `openai` when `DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG`
+  is set; for those lanes the bridge binds the team fingerprint or the
+  Responses route digest, which only the authenticated
+  `GET /v1/provider/configuration-digest` endpoint reports. Host-command
+  provider children and those digests read only ten operating-system names
+  (`SYSTEMROOT`, `WINDIR`, `PATH`, `PATHEXT`,
   `TEMP`, `TMP`, `COMSPEC`, `LOCALAPPDATA`, `APPDATA`, `USERPROFILE`) and the
   lane credentials (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GH_TOKEN`,
@@ -411,6 +418,10 @@ their mere presence:
   launcher copies that value from the profile and refuses an unknown or unset
   name. With a pin, the digests depend on the pinned file and the profile, not
   on the launching shell. Without a pin, the launching shell's values are used.
+  The `openai` lane's native Codex child is not a host command: besides the ten
+  names it inherits `HOME`, `PROGRAMDATA`, `PROGRAMFILES`, `PROGRAMFILES(X86)`,
+  `LANG` and `LC_ALL` from the bridge process. Those six are neither pinned nor
+  hashed, so that child still follows the launching shell or Scheduled Task.
   The pinned file is a UTF-8 JSON object of at most 64 KiB at an absolute path
   with exactly two keys: `version`, equal to
   `director-native-process-environment/v1`, and `environment`, an object with
@@ -426,7 +437,9 @@ their mere presence:
   commit and tree beside it in `<digest>.source.json`, runs `CheckEnvironment`
   from the copy and registers a restart-on-failure Scheduled Task without
   starting it. Install is persistent host configuration and needs owner
-  approval. Generations must pin the digests printed by the installed copy.
+  approval. Generations must pin the digests printed by the installed copy,
+  and for the routed `openai` and `antigravity` lanes the digests the running
+  bridge's authenticated endpoint reports.
 - `scripts/windows-langgraph-primary-control.ps1` provides separate `Preflight`,
   `Accept`, `Migrate`, `Backup`, `RestoreDrill`, `Health`, `Activate`,
   `ActivateOffline`, and `Rollback` operations. Every invocation requires the exact environment-file path,
@@ -803,3 +816,4 @@ identity cannot authorize successful completion.
 <!-- [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->

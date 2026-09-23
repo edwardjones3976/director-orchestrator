@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
@@ -734,6 +735,18 @@ foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime')) {
         self.assertIn("may still be running; rerun -Action Stop", test_section)
         self.assertIn("if (-not $laneRemoved) { throw", test_section)
 
+    def test_stage_a_runbook_lists_every_control_action_and_the_scripted_offline_path(self) -> None:
+        script = self.text("windows-langgraph-primary-control.ps1")
+        actions = re.findall(r'"(\w+)"', re.search(
+            r"\[ValidateSet\(([^)]*)\)\]\s*\[string\]\$Action", script).group(1))
+        runbook = (ROOT / "docs" / "langgraph-primary-stage-a-runbook.md").read_text(encoding="utf-8")
+        listed = runbook.split("`-Action` set is", 1)[1].split("Confirm the ValidateSet", 1)[0]
+        self.assertEqual(re.findall(r"`(\w+)`", listed), actions)
+        # Stage A is the scripted ActivateOffline action; the hand edit is only a fallback.
+        execution = runbook.split("\n## Execution", 1)[1].split("\n## Verification", 1)[0]
+        self.assertIn("-Action ActivateOffline", execution)
+        self.assertIn("**Fallback only.**", execution)
+
     def test_postgres_test_lane_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         section = readme.split("\n## Local validation", 1)[1].split("\n## LangGraph transition planning", 1)[0]
@@ -880,3 +893,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]

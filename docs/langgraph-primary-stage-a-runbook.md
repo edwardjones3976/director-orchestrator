@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | BEGIN]] -->
@@ -25,15 +26,17 @@ and then asserts `combined_live_ready`
 (`scripts/windows-langgraph-primary-control.ps1`). `PrepareOfflineHandoff`
 provides the missing immutable inventory prerequisite while leaving intake
 stopped and paid execution off. It does not transfer ownership or start Stage A;
-the separately authorized mode switch and runtime startup below do that.
+the separately authorized `-Action ActivateOffline` below does that.
 
 ## Which control version this describes
 
-This runbook requires the control script with `PrepareOfflineHandoff` in this
-checkout. That version's `-Action` set is `PrepareAcceptance`,
-`BootstrapDatabaseIdentity`, `SelectGeneration`, `StageRuntime`, `PrepareOfflineHandoff`,
-`ValidateProviders`, `Challenge`, `Preflight`, `Accept`, `Migrate`, `Backup`,
-`RestoreDrill`, `Health`, `Activate`, `Rollback`. Confirm the ValidateSet of the
+This runbook requires the control script with `PrepareOfflineHandoff` and
+`ActivateOffline` in this checkout. That version's `-Action` set is
+`PrepareAcceptance`, `BootstrapDatabaseIdentity`, `SelectGeneration`,
+`StageRuntime`, `PrepareOfflineHandoff`, `ValidateProviders`,
+`PublishProviderEvidence`, `Challenge`, `Preflight`, `Accept`, `Migrate`,
+`Backup`, `RestoreDrill`, `Health`, `Activate`, `ActivateOffline`, `Rollback`.
+Confirm the ValidateSet of the
 script the deployment actually holds before running anything here; an earlier
 version has neither the staged rungs nor the generation and image verification
 that everything below assumes.
@@ -116,8 +119,8 @@ The snapshot check must be run **inside the container**, not on the host. A
 snapshot created on Windows can be clean to host git and entirely dirty to the
 container; see `docs/` history for the line-ending defect this caused.
 
-Stage A's mode switch remains an operator edit. First use
-`PrepareOfflineHandoff` on a deployment that has reached, and is held at, the
+`-Action ActivateOffline` performs Stage A's mode switch (see "Execution"). First
+use `PrepareOfflineHandoff` on a deployment that has reached, and is held at, the
 accepted lifecycle state:
 
 - Authenticated acceptance, migration, backup and matching restore proof recorded
@@ -147,9 +150,11 @@ accepted lifecycle state:
 `PrepareOfflineHandoff` enforces the paid-off profile, exact candidate/image,
 database/generation, acceptance, restore and immutable inventory checks. It
 returns with selected-project intake stopped, without writing switches or an
-`ACTIVATED` stage. The subsequent Stage A edit, cross-deployment quarantine and
-quiescence checks remain operator responsibilities; preparation does not
-authorize runtime startup or paid execution.
+`ACTIVATED` stage. `ActivateOffline` does not repeat the signed-provider-mode and
+paid-off-profile checks, so run `PrepareOfflineHandoff` first on the same
+profile. The subsequent `ActivateOffline` run, cross-deployment quarantine and
+quiescence checks remain separately authorized operator responsibilities;
+preparation does not authorize runtime startup or paid execution.
 
 ## The switch set
 
@@ -159,12 +164,16 @@ LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED=true
 LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true
 ```
 
-Left untouched, and expected to stay false:
+Written false by `ActivateOffline` (the fallback edit leaves them untouched), and
+expected to stay false:
 
 ```
 LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED=false
 ALLOW_PAID_RUNS=false
 ```
+
+`ActivateOffline` also writes `DIRECTOR_ASGI_APP=director_orchestrator.main:app`
+and `LANGGRAPH_PARALLEL_KILL_SWITCH=true`.
 
 **The first two must move together.** `LANGGRAPH_PRIMARY_ENABLED=true` with
 `NEW_INTAKE_ENABLED=false` does not fall back to legacy — `main.py:637-641`
@@ -174,13 +183,14 @@ the life of the process.
 
 ## Execution
 
-No control action writes the Stage A switch set. `StageRuntime` and `Activate`
-write their own fixed sets, and neither of them ever writes
-`LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true`. Stage A is an operator edit
-of `.env`, performed outside the script, and the generation binding will not
-catch a mistake in it: operational switches are deliberately normalised out of
-both the deployment-configuration digest and the resolved-Compose digest, so
-generation verification neither authorises nor detects this edit.
+`-Action ActivateOffline` is the scripted Stage A path and the only control
+action that writes the Stage A switch set. `StageRuntime` and `Activate` write
+their own fixed sets, and neither of them ever writes
+`LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED=true`. The generation binding does
+not check the switch set: operational switches are deliberately normalised out
+of both the deployment-configuration digest and the resolved-Compose digest, so
+generation verification neither authorises nor detects it. `ActivateOffline`'s
+own health assertions are what check it.
 
 First run `scripts/windows-langgraph-primary-control.ps1
 -Action PrepareOfflineHandoff -EnvironmentFile <protected-profile>
@@ -192,8 +202,10 @@ allowed, but a changed inventory cannot replace the bound one. Leave intake
 closed until the separately authorized steps below; do not use `Activate` to
 prepare an offline run.
 
-1. Capture a **protected configuration backup**: for each of the three switch
-   names, whether it was present and what its prior value was, written through
+1. Capture a **protected configuration backup**: for each switch name
+   `ActivateOffline` writes (the five above, `DIRECTOR_ASGI_APP` and
+   `LANGGRAPH_PARALLEL_KILL_SWITCH`), whether it was present and what its prior
+   value was, written through
    the operator's protected-payload procedure for the deployment identity, in
    the same form the staging worksheet requires. Do not write a plaintext
    timestamped copy of the whole `.env`: that file holds the primary Postgres
@@ -201,14 +213,49 @@ prepare an offline run.
    bridge secrets, and copying it spreads all of them to an unprotected path.
    Nothing in the repository implements this payload today; it is an
    operator-performed procedure.
-2. Write the three switches by hand. Change nothing else.
-3. Recreate the orchestrator **with the compose file that matches the running
-   deployment**. Check which branch the repo root is on first: a stale
-   `docker-compose.yml` will drop the primary DSN and the `/repository` bind
-   without saying so beyond an orphan-container warning.
-4. Wait for health, then verify.
+2. Run `scripts/windows-langgraph-primary-control.ps1 -Action ActivateOffline
+   -EnvironmentFile <protected-profile> -ComposeProject <selected-project>
+   -HostPort <selected-port>` from the same clean, accepted candidate. In order,
+   it stops `slackbot`, `n8n` and `orchestrator` and proves each stopped;
+   captures and binds the legacy inventory (an identical inventory is accepted
+   again, a changed one is refused); runs `require-ready` (acceptance,
+   migration and restore proof plus the bound inventory, but not provider
+   readiness); records the prior orchestrator and gateway images once in
+   `<profile>.prior-images.<generation>.<image>.json` for Rollback; writes the
+   switch set above; recreates the orchestrator and reads back that it runs the
+   verified candidate image and the live ASGI app; waits for health and
+   requires the nine fields under "Verification", `paid_off_primary_intake_active`
+   true, `primary_runtime_active` false, `new_intake_owner` `langgraph` and
+   `ambiguous_effect_count` 0; creates the Slack gateway stopped from the
+   candidate image and reads its image ID back; and only then starts n8n and
+   the gateway. It records **no** `ACTIVATED` stage.
+3. Verify as below. Note that step 2 ends by **reopening authenticated n8n and
+   Slack intake** on the verified gateway image, where the fallback edit below
+   recreates only the orchestrator.
 
-That backup restores **configuration only**. It is not a rollback of the
+If anything fails from the switch write onwards, `ActivateOffline` stops and
+proves Slack, n8n and API intake closed, writes `ALLOW_PAID_RUNS`,
+`LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED`, live dispatch and offline simulation
+false and the kill switch true, and reports the failure. That unwind leaves
+`LANGGRAPH_PRIMARY_ENABLED` true, and it does not move the authority row back:
+if the orchestrator had already started, `intake_owner` may say `langgraph`, and
+only the fenced inverse compare-and-swap under "Rollback" returns it.
+
+A later paid `Activate` on the same generation reuses this evidence chain only
+while the legacy inventory is unchanged: it binds the inventory again and
+refuses any difference. Legacy tasks stay live under primary, so a legacy
+status change during Stage A means paid activation needs a new generation.
+
+**Fallback only.** The hand edit this runbook used to prescribe remains for a
+control script without `ActivateOffline`: write the three switches and nothing
+else, recreate the orchestrator **with the compose file that matches the
+running deployment** (a stale `docker-compose.yml` drops the primary DSN and the
+`/repository` bind without saying so beyond an orphan-container warning), wait
+for health, then verify. It skips the stop and inventory proof, the prior-image
+record, the gateway image readback and the fail-closed unwind above, and
+nothing in it checks the switch set.
+
+The step 1 backup restores **configuration only**. It is not a rollback of the
 authority move. Once Stage A has run, `intake_owner` is a fenced row in the
 primary database, and putting the three switches back does not touch it: it
 leaves the authority row saying `langgraph` while the process that was serving
@@ -240,8 +287,12 @@ The field that measures Stage A is **`paid_off_primary_intake_active`**
 `legacy_new_intake_disabled`, plus `not allow_paid_runs`. It exists precisely to
 describe primary owning intake with the money switched off. It must be **true**.
 
-The ten-field list belongs to `-Action Activate`, which asserts it only on the
-live path where dispatch is on.
+`-Action Activate` asserts a ten-field list that includes `primary_runtime_active`
+true, on the live path where dispatch is on. `-Action ActivateOffline` asserts
+the same list with `paid_off_primary_intake_active` in its place and refuses a
+true `primary_runtime_active`. Both also require `new_intake_owner` `langgraph`
+and `ambiguous_effect_count` 0. Neither asserts the fencing-generation increment
+or the three switch readouts below; those remain operator checks.
 
 Then the ownership proof:
 
@@ -363,3 +414,4 @@ closed.
 <!-- [[OpenAI Codex mechanical recovery | GPT-6 | 2026-09-10 | 18:21 UTC | END]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | END]] -->

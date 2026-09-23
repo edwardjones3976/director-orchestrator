@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
@@ -859,6 +860,20 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             self.assertEqual(os.environ["UNRELATED"], "kept")
             self.assertEqual(os.environ["TEMP"], self.pinned["TEMP"])
 
+    def test_codex_child_names_outside_the_pin_are_documented(self) -> None:
+        # The openai native Codex child inherits more than the pinned names;
+        # the docstring and the operations doc must name exactly that residual.
+        from director_orchestrator import host_provider_bridge_server as server_module
+        from director_orchestrator.host_provider_bridge import _SAFE_OS_ENV
+        from director_orchestrator.primary_transports import _BASE_CHILD_ENVIRONMENT
+        residual = _BASE_CHILD_ENVIRONMENT - _SAFE_OS_ENV
+        self.assertEqual(residual, {"HOME", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "LANG", "LC_ALL"})
+        operations = (Path(__file__).resolve().parents[1] / "docs" / "langgraph-primary-operations.md"
+                      ).read_text(encoding="utf-8")
+        for name in residual:
+            self.assertIn(name, server_module._apply_pinned_process_environment.__doc__)
+            self.assertIn(f"`{name}`", operations)
+
     def test_invalid_pinned_environment_refuses_without_changing_the_process(self) -> None:
         from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
         cases = {
@@ -888,7 +903,8 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         server.executor = self.executor
         server.validation_service = SimpleNamespace(
-            owner_token=self.OWNER, production=self.executor, account_files={"claude": (str(self.account),)})
+            owner_token=self.OWNER, production=self.executor, account_files={"claude": (str(self.account),)},
+            team_route=None, openai_responses_route=None)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -916,6 +932,14 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         text = body.decode("utf-8")
         for secret_or_path in (self.OWNER, str(self.account), json.dumps(str(self.account))[1:-1], self.account.name):
             self.assertNotIn(secret_or_path, text)
+        # A routed lane reports the digest its route binds.
+        server.validation_service = SimpleNamespace(
+            owner_token=self.OWNER, production=self.executor, account_files={"claude": (str(self.account),)},
+            team_route=SimpleNamespace(configuration_digest=lambda: "t" * 64),
+            openai_responses_route=SimpleNamespace(configuration_digest="r" * 64))
+        status, body = get("Bearer " + self.OWNER)
+        self.assertEqual((status, json.loads(body)["configuration_digests"]),
+                         (200, {"antigravity": "t" * 64, "claude": expected, "openai": "r" * 64}))
         server.validation_service = None
         self.assertEqual(get("Bearer " + self.OWNER)[0], 503)
 
@@ -926,10 +950,15 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         provider = self.root / "marker_provider.py"
         provider.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
         command = (str(Path(sys.executable).resolve(strict=True)), str(provider))
+        # antigravity is always team-routed and openai is Responses-routed here;
+        # no route is opened, so neither may report a native digest.
+        commands = {"claude": list(command), "antigravity": list(command), "openai": [command[0], "fixture-model"]}
         environment = {
-            "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps({"claude": list(command)}),
+            "DIRECTOR_HOST_PROVIDER_COMMANDS_JSON": json.dumps(commands),
             "DIRECTOR_HOST_PROVIDER_WORKSPACE": str(self.root),
-            "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": json.dumps({"claude": [str(self.account)]}),
+            "DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": json.dumps(
+                {lane: [str(self.account)] for lane in commands}),
+            "DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG": str(self.root / "never-opened.json"),
             "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file),
             "PATH": "ambient-path",
         }
@@ -964,3 +993,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
