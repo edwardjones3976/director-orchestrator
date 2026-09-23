@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
@@ -65,7 +66,7 @@ Owner direction (2026-09-22 20:57:47 UTC), verbatim:
 
 **Author-provided operating guidance:**
 
-OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings stay in the task thread or PR/issue. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority.
+OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority.
 
 The OpenAI/Director team, including ChatGPT and Codex, also holds the title
 **INVESTIGATOR**. While other providers carry out ongoing assignments, team
@@ -83,9 +84,8 @@ from hypotheses; redact credentials and other sensitive content.
 Communicate the finding and suggested solutions to the responsible provider
 through the acting Director's task thread or an existing PR/issue, when the
 assignment authorizes that communication. The Director relays sanitized summaries only to Slack, keeping detailed findings
-in the task thread or PR/issue; this role does not authorize
-providers to post directly. Keep the finding and its disposition in that same
-task thread or PR/issue. Record the provider owner,
+in the existing authorized PR/issue; this role does not authorize
+providers to post directly. Keep the finding and its disposition in that existing authorized PR/issue. Record the provider owner,
 handoff reference, next action, and disposition (open, acknowledged, in
 progress, resolved with evidence, or explicitly deferred with a reason).
 Consolidate duplicate findings and follow actionable changes instead of
@@ -971,3 +971,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->

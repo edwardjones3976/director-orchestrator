@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | BEGIN]] -->
@@ -53,7 +54,7 @@
 | --- | --- |
 | Team | primary |
 | Lane class | director_control_plane |
-| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings stay in the task thread or PR/issue. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority. |
+| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority. |
 | Charter workload lane | `chatgpt_codex_director_lane` |
 | Strategy key | `openai` |
 | Strategy priority | `director_control_plane_and_authorized_production` |
@@ -339,3 +340,4 @@ Separation of duties:
 <!-- [[Codex | GPT-6 Astra | 2026-09-14 | 02:12 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->

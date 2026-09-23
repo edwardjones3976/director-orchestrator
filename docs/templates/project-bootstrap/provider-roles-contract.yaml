@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -293,7 +294,7 @@ providers:
     team: "primary"
     standing_role: "chatgpt_codex_director"
     leadership_authority: "owner_appointed_project_director_no_implicit_runtime_activation"
-    investigator_responsibility: "OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings stay in the task thread or PR/issue. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority."
+    investigator_responsibility: "OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority."
     # The three canonical identities from docs/team-operating-charter.md and
     # prompts/director-system.md. Coordination, planning, and acceptance are
     # duties nested under these identities; they never replace or blur them,
@@ -397,3 +398,4 @@ project_local_bindings:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]]
 # [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]]

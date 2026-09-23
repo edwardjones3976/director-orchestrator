@@ -1,3 +1,4 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
@@ -24,8 +25,9 @@ issues and suggested solutions, then hand them off through the acting Director's
 task thread or an existing PR/issue, when the assignment authorizes communication.
 Do not directly fix an investigated issue unless separately assigned that fix,
 and do not take over the ongoing assignment. Record disposition with the finding;
-The Director relays sanitized summaries only to Slack; detailed findings stay in
-the task thread or PR/issue, subject to existing authorization gates.
+The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
+If none exists, retain details locally and request an authorized destination;
+never post them to Slack.
 
 ## Daily operation
 
@@ -198,3 +200,4 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
