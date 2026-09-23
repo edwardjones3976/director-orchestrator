@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
@@ -26,13 +27,15 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
-               "batches_pending_projection_binding")
+               "batches_pending_projection_binding", "pending_owner_decisions")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
 # that hold is resumable and counts as in flight. A PENDING assignment behind a
 # FAILED or owner-held prerequisite is the aggregator's BLOCKED projection
-# (primary_parallel), stored as PENDING; it is neither open nor active.
+# (primary_parallel), stored as PENDING; it is neither open nor active. The
+# resumable hold itself counts as pending_owner_decisions, so a held task with
+# no open assignment, effect or lease is still in flight.
 _COUNTS = """WITH RECURSIVE a AS (SELECT fencing_generation FROM {s}.director_primary_intake_authority WHERE singleton),
  p AS (SELECT task_id, intake_fencing_generation, projection->>'terminal_classification' tc,
               (projection->>'terminal_classification' IS NOT NULL
@@ -72,7 +75,8 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
       (SELECT 1 FROM blocked b WHERE b.task_id=x.task_id AND b.assignment_id=x.assignment_id)) AS active_assignments,
  (SELECT count(*) FROM {s}.director_primary_task_writer WHERE lease_expires_at>now()) AS live_writer_claims,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
-    WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding"""
+    WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding,
+ (SELECT count(*) FROM p WHERE NOT p.settled AND p.tc='OWNER_DECISION_REQUIRED') AS pending_owner_decisions"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,
@@ -246,3 +250,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

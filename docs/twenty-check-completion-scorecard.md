@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]] -->
@@ -125,11 +126,13 @@ a container ID, never a name.
   `GET /v1/slack-thread-bindings` and the task readback (see below).
 - 04: the newest saved successful scheduled `Director Status` execution in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
-  the Slack readback of the message it posted to `--channel`.
+  the Slack readback of the message it posted to `--channel`. An execution that
+  started before the running Director container was created is UNKNOWN.
 - 05, 19: the Director's `/health`.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
-- 07, 17, 15 (budget and meter rows): the in-image `consistency` command.
+- 07, 17, 15 (budget and meter rows): the in-image `consistency` command. 17
+  is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
   trial to the last.
@@ -148,7 +151,7 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 | Kind | PASS | FAIL | UNKNOWN |
 |---|---|---|---|
 | `refusal-4xx` | complete thread, one owner input, a `DIRECTOR — BLOCKED` reply, no receipt, binding 404 | a bound task (200) or ambiguous binding (409), or any receipt | otherwise |
-| `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised) |
+| `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, no receipt, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise |
 | `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
 | `duplicate-input` | one owner input, two or more receipts naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
 | `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
@@ -186,7 +189,8 @@ runtime and write nothing.
   tasks with open assignments or effects, projection/batch plan-digest
   conflicts, projections ahead of the intake fence, and in-flight work (open
   effect reservations, active assignments, live writer claims, batches pending
-  projection binding). For each `--task` it adds the spend rows with their
+  projection binding, and `OWNER_DECISION_REQUIRED` holds with a pending
+  approval, which are in flight even with no open assignment or lease). For each `--task` it adds the spend rows with their
   settled usage and request correlation, and the enrolled budget rows with the
   day's held amount, and its `approval_resume` command receipts (SHA-256 of
   the command ID, command and resulting projection digests, recorded time). In
@@ -233,7 +237,10 @@ non-zero and the dependent checks read UNKNOWN.
 
 The owner's paid Slack input must carry `rubric-sha256:<sha256 of the file's
 bytes>`, `declared_at` must not follow the input, the task must be `DONE` with
-exactly one final reply, and every substring must appear in that reply.
+exactly one final reply, and every substring must appear in that reply. A
+final reply Slack reports as edited, or with any subtype, is graded incorrect:
+Slack keeps its original timestamp, which the wall time uses, but returns the
+new text.
 
 ### Local-replica receipt format
 
@@ -298,7 +305,9 @@ No producer records which image or process executed a task. Checks 10, 11 and
 the task was. Checks 03 and 09 do the same for each drill (the drill post and,
 when a task is bound, its creation), and check 08 for the approval task. Check
 06 requires the current process start to fall between the task's creation and
-its terminal delivery. A later container recreation, such as an activation that
+its terminal delivery, and a durable processing step (an approval prompt
+enqueued or a provider attempt recorded) before it; a task that was only
+created or queued before the restart is UNKNOWN. A later container recreation, such as an activation that
 force-recreates the Director, therefore makes those checks UNKNOWN until the
 runs and drills are repeated. The writer generation does not prove a restart,
 because the same owner token renews a live lease. This is an ordering check,
@@ -507,3 +516,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->

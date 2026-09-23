@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | BEGIN]]
@@ -221,7 +222,7 @@ def approval_entry(decided=None):
     prompt = ts(30005)
     projection = "sha256:" + "9" * 64
     delivery = {"notification_key": "approval:sha256:" + "8" * 64 + ":" + projection, "projection_digest": projection,
-                "client_msg_id": "approval-client-1", "state": "DELIVERED", "created_at": "2026-09-12T10:00:02+00:00",
+                "client_msg_id": "approval-client-1", "state": "DELIVERED", "created_at": "2026-09-12T09:20:00+00:00",
                 "claimed_at": "2026-09-12T10:00:03+00:00", "acknowledged_at": "2026-09-12T10:00:04+00:00",
                 "delivered_at": "2026-09-12T10:00:05+00:00", "slack_ts": prompt, "readback_attempts": 1,
                 "last_error": None, "owner_decision": "approve",
@@ -1375,6 +1376,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         duplicated = self.world()
         duplicated.tasks["DIR-LG-5E"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
         self.assertEqual(duplicated.state("03"), "FAIL")
+        receipted_5xx = self.world()
+        receipted_5xx.threads[ts(200)].append({"ts": ts(202), "thread_ts": ts(200), "user": BOT,
+                                               "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
+        self.assertEqual(receipted_5xx.state("03"), "UNKNOWN")
         unreserved = self.world()
         unreserved.bindings[ts(200)] = (404, None)
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
@@ -1432,6 +1437,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         incomplete = self.world()
         incomplete.failing.add(STATUS_TS)
         self.assertEqual(incomplete.state("04"), "UNKNOWN")
+        # The execution started at 09:59:00; a container created after it was not the poster.
+        recreated = self.world()
+        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:59:30Z"
+        report = recreated.report()
+        self.assertEqual(row(report, "04")["status"], "UNKNOWN")
+        self.assertIn("before the running Director", row(report, "04")["explanation"])
 
     def test_flatted_decoder_resolves_shared_and_cyclic_references(self):
         self.assertEqual(sc._flatted(flatted({"a": ["x", 1, None, {"b": "y"}]})), {"a": ["x", 1, None, {"b": "y"}]})
@@ -1483,6 +1494,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         no_snapshot = self.world()
         no_snapshot.consistency = None
         self.assertEqual([row(no_snapshot.report(), key)["status"] for key in ("06", "08")], ["PASS", "UNKNOWN"])
+        queued_only = self.world()
+        queued_only.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["created_at"] = (
+            "2026-09-12T10:00:02+00:00")
+        self.assertEqual(queued_only.state("06"), "UNKNOWN")
         late_start = self.world()
         late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T10:30:00Z"
         self.assertEqual(late_start.state("06"), "UNKNOWN")
@@ -1511,6 +1526,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         busy = self.world()
         busy.consistency["counts"]["live_writer_claims"] = 1
         self.assertEqual(busy.state("07"), "UNKNOWN")
+        held = self.world()
+        held.consistency["counts"]["pending_owner_decisions"] = 1
+        self.assertEqual(held.state("07"), "UNKNOWN")
         for change in ({"generation": {**consistency_fixture()["generation"], "manifest_sha256": "0" * 64}},
                        {"intake_fencing_generation": 82}, {"counts": {"projection_batch_digest_conflicts": 0}}):
             case = self.world()
@@ -1827,6 +1845,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         other = self.world()
         other.consistency["generation"]["adoption"]["reviewed_source_commit"] = OTHER
         self.assertEqual(other.state("17"), "UNKNOWN")
+        fork = self.world()
+        fork.consistency["generation"]["adoption"]["repository"] = "someone-else/director-orchestrator"
+        self.assertEqual(fork.state("17"), "UNKNOWN")
         provider = self.world()
         provider.consistency["generation"]["acceptance_mode"] = "provider-v2"
         self.assertEqual(provider.state("17"), "UNKNOWN")
@@ -1850,6 +1871,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         incorrect = self.world()
         incorrect.add(task_entry(PAID_TASK, 20000, offline=False, text=incorrect.paid_text, answer="No idea"))
         self.assertEqual(incorrect.state("20"), "FAIL")
+        edited = self.world()
+        final = next(m for m in edited.threads[ts(20000)] if m.get("ts") == ts(20030))
+        final["edited"] = {"user": BOT, "ts": ts(20090)}
+        self.assertEqual(edited.state("20"), "FAIL")
         simulated = self.world()
         simulated.add(task_entry(PAID_TASK, 20000, text=simulated.paid_text))
         self.assertEqual(simulated.state("20"), "FAIL")
@@ -1936,3 +1961,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]

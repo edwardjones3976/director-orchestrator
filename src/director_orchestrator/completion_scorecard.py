@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]]
@@ -552,7 +553,7 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
-                    "batches_pending_projection_binding")
+                    "batches_pending_projection_binding", "pending_owner_decisions")
 _CONSISTENCY_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation consistency (READ ONLY)"
 _CAPTURES_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation activation-captures"
 
@@ -722,6 +723,10 @@ def _acceptance_observation(at: datetime, candidate_sha: str, consistency: dict 
                             source, {}, at, candidate_sha=candidate_sha)
     facts = {key: adoption.get(key) for key in ("repository", "pull_request_number", "pull_request_author",
              "independent_reviewer", "security_reviewer", "adoption_digest", "reviewed_source_tree")}
+    # Forks share commit SHAs: an adoption for another repository cannot accept this one's candidate.
+    if adoption.get("repository") != REPOSITORY:
+        return _observation("17", None, "The adopted acceptance is not for " + REPOSITORY + ".",
+                            source, facts, at, candidate_sha=candidate_sha)
     reviewed = adoption.get("reviewed_source_commit")
     bound = reviewed if isinstance(reviewed, str) and re.fullmatch(r"[a-f0-9]{40}", reviewed) else None
     actors = [adoption.get(key) for key in ("pull_request_author", "independent_reviewer", "security_reviewer")]
@@ -787,6 +792,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
     well_formed = isinstance(ts, str) and bool(_TS.fullmatch(ts))
     facts = {"execution_id": execution.get("id"), "stopped_at": stopped.isoformat(), "message_ts": ts if well_formed else None}
+    # No producer records the posting image: an execution that started before the
+    # running container was created was posted by an earlier runtime.
+    if started < runtime.created_at:
+        return _observation("04", None, "The newest saved status execution started before the running Director "
+                            "container was created, so it cannot attest this image.", source, facts, at, **binding)
     if (out.get("ok") is not True or not well_formed or out.get("channel") != t.channel
             or not Decimal(str(started.timestamp())) <= Decimal(ts) <= Decimal(str(stopped.timestamp())) + 1):
         return _observation("04", None, "The saved execution's Slack response is not a correlated post to the project channel.",
@@ -829,7 +839,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
     elif kind == "reserved-5xx":
         if status == 409 or (tasks is not None and tasks > 1):
             verdict = False
-        elif status == 200 and complete and owner_inputs == 1 and blocked >= 1 and tasks == 1:
+        # A receipt means the gateway answered 202, so the reserved 5xx was not exercised.
+        elif status == 200 and complete and owner_inputs == 1 and blocked >= 1 and tasks == 1 and not receipts:
             verdict = True
     elif kind == "transport-failure":
         # No status reached the gateway: the task may or may not exist, but never twice.
@@ -925,7 +936,13 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         obs06 = _observation("06", False, "The approval task was duplicated, redispatched or replied to more than once.",
                              _SLACK_SOURCE, facts06, at, **binding)
     else:
-        spans = (len(terminal) == 1
+        # A task record that merely survived is not a resume: an approval prompt enqueued or a
+        # provider attempt recorded must precede the process start, and the terminal delivery follow it.
+        processed = (any(_when(r["created_at"]) < runtime.started_at for r in readback["slack_deliveries"]
+                         if t.m.notification_key_family(r.get("notification_key")) == "approval")
+                     or any(_when(e["recorded_at"]) < runtime.started_at for e in readback["provider_attempts"]))
+        facts06["processed_before_start"] = processed
+        spans = (len(terminal) == 1 and processed
                  and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
         resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
@@ -933,9 +950,10 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
                    and row["qualification_evidence"].get("effect_state") != "AMBIGUOUS_DELIVERY_EFFECT"
                    and replies == 1 and row.get("final_receipt_matches_native_message") is True)
         obs06 = _observation("06", True if resumed else None,
-                             "One task spanned the current Director process start and finished with one dispatch per "
-                             "assignment and one final reply." if resumed else
-                             "The task did not demonstrably span the current process start, or it is unsettled.",
+                             "One task was processed before the current Director process start and finished after it "
+                             "with one dispatch per assignment and one final reply." if resumed else
+                             "The task was not demonstrably processed before the current process start and finished "
+                             "after it, or it is unsettled.",
                              _SLACK_SOURCE, facts06, at, **binding)
     approvals = [r for r in readback["slack_deliveries"]
                  if t.m.notification_key_family(r.get("notification_key")) == "approval"]
@@ -1114,8 +1132,12 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
             and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
             and row.get("task_status") == "DONE" and len(finals) == 1):
         return False
-    text = next((html.unescape(str(m.get("text", ""))) for m in paid["messages"] if m.get("ts") == finals[0]["ts"]), None)
-    return text is not None and all(item in text for item in rubric["expected_answer_substrings"])
+    final = [m for m in paid["messages"] if m.get("ts") == finals[0]["ts"]]
+    # Slack keeps an edited message's ts but returns its new text: grade only the unedited reply.
+    if len(final) != 1 or "edited" in final[0] or final[0].get("subtype"):
+        return False
+    text = html.unescape(str(final[0].get("text", "")))
+    return all(item in text for item in rubric["expected_answer_substrings"])
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -1922,3 +1944,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

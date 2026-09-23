@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | BEGIN]]
@@ -340,6 +341,24 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.classify(connection, task_id, "DONE")
         self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
 
+    def test_owner_held_assignment_with_pending_approval_is_in_flight(self):
+        task_id = self.intake()
+        # The held assignment is not PENDING/ACTIVE and its dependent is BLOCKED, so only the hold shows it.
+        self.plan(task_id, "OWNER_DECISION_REQUIRED", [("a1", "OWNER_DECISION_REQUIRED", []), ("a2", "PENDING", ["a1"])])
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{pending_approval}', %s::jsonb) WHERE task_id = %s",
+                (json.dumps({"request_digest": "sha256:" + "4" * 64}), task_id))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["active_assignments"], counts["open_effect_reservations"],
+                          counts["batches_pending_projection_binding"], counts["pending_owner_decisions"]), (0, 0, 0, 1))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = projection - 'pending_approval' WHERE task_id = %s", (task_id,))
+        self.assertEqual(self.report()["counts"]["pending_owner_decisions"], 0)
+
     def test_every_residue_count_is_driven_by_real_rows(self):
         task_id = self.intake()
         other = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
@@ -456,3 +475,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
