@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -155,6 +156,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "acceptance_review",
             "review_handoff",
             "milestone_reporting",
+            "investigator",
         ],
         "duties_excluded_from_direct_production_share": True,
         "direct_workload_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
@@ -856,3 +858,4 @@ def tally_advisory_votes(
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:30 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]]

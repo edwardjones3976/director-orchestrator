@@ -1,8 +1,13 @@
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 10:45 UTC | BEGIN]] -->
 # Director-Orchestrator operator guide
+
 
 For the owner running this system day to day. It covers what to do, what the
 output means, and what to do when something refuses.
@@ -11,6 +16,18 @@ One idea underpins everything here: **the system is built to refuse, and a
 refusal is information rather than a fault.** Almost every stop you will hit is
 a gate doing its job. The useful response is to read what it refused on, not to
 retry it.
+
+## INVESTIGATOR responsibility
+
+OpenAI/Director members also act as **INVESTIGATOR** under the
+[canonical charter](team-operating-charter.md#openaidirector--investigator): identify and document
+issues and suggested solutions, then hand them off through the acting Director's
+task thread or an existing PR/issue, when the assignment authorizes communication.
+Do not directly fix an investigated issue unless separately assigned that fix,
+and do not take over the ongoing assignment. Record disposition with the finding;
+The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
+If none exists, retain details locally and request an authorized destination;
+never post them to Slack.
 
 ## Daily operation
 
@@ -180,3 +197,7 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-12 | 22:36 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:15 UTC | END]] -->
 <!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:37 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 20:59 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
+<!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
