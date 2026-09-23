@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
@@ -1012,7 +1013,7 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         and intake["source_event_id"] and (intake["source_event_id"] in
         (m.get("client_msg_id"), m.get("event_ts"), m.get("ts")))
         and m.get("user") == owner and not m.get("bot_id")
-        and not m.get("subtype") and clean(str(m.get("text", ""))) == intake.get("text")]
+        and unedited(m) and clean(str(m.get("text", ""))) == intake.get("text")]
     bound = (task.get("task_id") == task_id and intake.get("channel_id") == channel
         and intake.get("thread_ts") == thread and intake.get("user_id") == owner
         and headers.get("x-task-engine-owner") == "langgraph")
@@ -1292,3 +1293,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]

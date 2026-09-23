@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
@@ -123,7 +124,11 @@ a container ID, never a name.
 - 01, 02: Docker running inventory for `--gateway`, the gateway's channel and
   relay, the published n8n intake version and the n8n upstream `/health`. 01 is
   UNKNOWN without `--channel`, FAIL when the gateway belongs to another Compose
-  project, and UNKNOWN when the gateway has no Compose labels.
+  project, and UNKNOWN when the gateway has no Compose labels. 01 also requires,
+  from `docker inspect` alone, that the gateway and n8n share a Docker network
+  (same network ID) on which n8n's aliases or DNS names include the relay
+  host: FAIL when they share none, UNKNOWN when either shows no network
+  attachments. No probe runs inside the gateway.
 - 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
   `GET /v1/slack-thread-bindings` and the task readback (see below). A drill
   whose thread holds a bot reply Slack reports as edited or with a subtype
@@ -136,7 +141,9 @@ a container ID, never a name.
   is a posted message Slack reports as edited or with a subtype.
 - 05, 19: the Director's `/health`.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
-  08 also the task's `approval_resume` command receipts from `consistency`.
+  08 also the task's `approval_resume` command receipts from `consistency`. An
+  approval prompt Slack reports as edited or with a subtype is not the native
+  prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
 - 07, 17, 15 (budget and meter rows): the in-image `consistency` command. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
@@ -148,7 +155,11 @@ a container ID, never a name.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
 - 16: GitHub `ci.yml` runs and jobs at the exact head, or `--ci-replica-receipt`.
-- 18: the native Security index for `--security-scan`.
+- 18: the native Security index for `--security-scan`. The sealed scan's base
+  must equal the candidate's merge base with `main` (GitHub compare, GET only);
+  any other base, or an unreadable merge base, is UNKNOWN, because a convenient
+  base can drop the candidate's own changes from the covered diff. A candidate
+  whose merge base moves (for example after merging `main`) needs a new scan.
 - 20: the `--paid-thread` readback, `--paid-rubric` and settled meter rows.
 
 ### Drill-thread kinds
@@ -529,3 +540,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]] -->

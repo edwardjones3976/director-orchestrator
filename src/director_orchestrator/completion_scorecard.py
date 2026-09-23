@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
@@ -310,6 +311,21 @@ def _gateway_launch(container: dict[str, Any]) -> bool:
             or any(str(arg).replace("\\", "/").endswith("/slack_bot.py") for arg in command))
 
 
+def _relay_network(gateway: dict[str, Any], n8n: dict[str, Any] | None, host: str | None) -> bool | None:
+    """From docker inspect only: do gateway and n8n share a network on which n8n answers to host?"""
+    ours = (gateway.get("NetworkSettings") or {}).get("Networks")
+    theirs = ((n8n or {}).get("NetworkSettings") or {}).get("Networks")
+    if not isinstance(ours, dict) or not isinstance(theirs, dict) or not ours or not theirs:
+        return None
+    for name, attach in theirs.items():
+        mine = ours.get(name)
+        if (isinstance(attach, dict) and isinstance(mine, dict) and attach.get("NetworkID")
+                and mine.get("NetworkID") == attach.get("NetworkID")
+                and host in {*(attach.get("Aliases") or []), *(attach.get("DNSNames") or [])}):
+            return True
+    return False
+
+
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
                            channel: str | None) -> list[Observation]:
     """Inspect every running container; the gateway is the caller's exact name, never a guess."""
@@ -370,12 +386,18 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
              "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
              "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
+             "gateway_n8n_network_shared": _relay_network(gateway, n8n, relay.hostname),
              "n8n_upstream_environment": upstream.get("environment"),
              "active_intake": workflow,
              "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
                                        for row in (director, gateway, n8n))}
     route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
-                                   "gateway_n8n_route_matches": True, "containers_running": True})
+                                   "gateway_n8n_route_matches": True, "containers_running": True,
+                                   "gateway_n8n_network_shared": True})
+    if route_pass is False and facts["gateway_n8n_network_shared"] is None and all(
+            facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
+                                           "gateway_n8n_route_matches", "containers_running")):
+        route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
                                              "supported_webhook": True, "direct_connection": True})
     if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
@@ -530,7 +552,7 @@ _RECEIPT = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQ
 
 def _thread_counts(t: _SlackThreads, thread: str,
                    messages: list[dict[str, Any]]) -> tuple[int, list[str], int, int]:
-    owner_inputs = sum(1 for m in messages if m.get("user") == t.owner and not m.get("bot_id") and not m.get("subtype")
+    owner_inputs = sum(1 for m in messages if m.get("user") == t.owner and not m.get("bot_id") and t.m.unedited(m)
                        and (m.get("ts") == thread or m.get("thread_ts") == thread))
     replies = [m for m in messages if m.get("user") == t.bot and m.get("thread_ts") == thread]
     bot = [html.unescape(str(m.get("text", ""))) for m in replies]
@@ -981,7 +1003,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             failures.append("decision precedes its prompt")
         if complete and prompt and any(m.get("user") != t.bot for m in prompt):
             failures.append("prompt message is from another user")
-        native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot]
+        native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot
+                  and t.m.unedited(m)]
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         receipted = decided is not None and any(
@@ -1413,6 +1436,14 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     coverage, findings = contents["coverage.json"], contents["findings.json"]
     if coverage.get("scanId") != scan_id or findings.get("scanId") != scan_id:
         raise ValueError("canonical evidence belongs to another scan")
+    # A convenient base (a descendant, or any commit other than the candidate's merge
+    # base with main) can drop the candidate's own changes from the diff it covers.
+    authoritative = _merge_base(candidate_sha)
+    if base != authoritative:
+        return _observation("18", None, "The sealed scan's base is not the candidate's merge base with main, so its "
+                            "changed-path coverage may omit the candidate's changes.", str(root / "scan-manifest.json"),
+                            {"scan_id": scan_id, "scan_base": base, "merge_base_with_main": authoritative},
+                            at, candidate_sha=candidate_sha)
     changed = set(_run_bytes(["git", "-C", indexed["target_path"], "diff", "--name-only", "-z", base, candidate_sha, "--"]).decode().rstrip("\0").split("\0"))
     surfaces = coverage.get("surfaces", [])
     covered = {item.get("label") for item in surfaces if item.get("disposition") in {"no_issue_found", "rejected", "validated"}}
@@ -1562,6 +1593,14 @@ def _ci_replica_observation(path: Path, candidate_sha: str, at: datetime) -> Obs
                          "and Ubuntu replica receipt, diffed against a main ancestor, shows no failure beyond the base's "
                          "failure set."),
                         str(source.resolve()), facts, at, candidate_sha=candidate)
+
+
+def _merge_base(head: str) -> str | None:
+    """GitHub's merge base of main and head (GET only)."""
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/compare/main...{head}", "--jq",
+                       "{merge_base: .merge_base_commit.sha}"])
+    sha = value.get("merge_base") if isinstance(value, dict) else None
+    return sha if isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha) else None
 
 
 def _compare_status(base: str, head: str) -> str:
@@ -1958,3 +1997,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]

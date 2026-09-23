@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
@@ -438,15 +439,22 @@ def qualify(records, mode="offline"):
     return sc.evaluate_run_records(records, mode=mode, runtime_sha=SHA, image_id=IMAGE)[0]
 
 
+NETWORK = "edge-engine-director_default"
+
+
 def topology():
     api = containers()[0]
     api["Config"].update(Cmd=["uvicorn", "director_orchestrator.main:app"], Env=["SLACK_APP_TOKEN=fixture-app-token"])
     gateway = {"Id": GATEWAY_ID, "Image": IMAGE, "Name": "/" + GATEWAY, "State": {"Running": True},
                "Config": {"Cmd": ["python", "-m", "director_orchestrator.slack_bot"], "Labels": compose_labels("slackbot"),
                           "Env": ["SLACK_APP_TOKEN=fixture-app-token", "SLACK_BOT_TOKEN=fixture-secret-bot",
-                                  f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake"]}}
+                                  f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake"]},
+               "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["slackbot"],
+                                                          "DNSNames": ["edge-engine-director-slackbot-1", "slackbot"]}}}}
     n8n = {"Id": N8N_ID, "Name": "/edge-engine-director-n8n-1", "State": {"Running": True},
-           "NetworkSettings": {"Ports": {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "45678"}]}},
+           "NetworkSettings": {"Ports": {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "45678"}]},
+                               "Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n"],
+                                                      "DNSNames": ["edge-engine-director-n8n-1", "n8n"]}}},
            "Config": {"Labels": compose_labels("n8n")}}
     n8n_db = {"Id": N8N_DB_ID, "Name": "/edge-engine-director-n8n-db-1", "State": {"Running": True},
               "Config": {"Labels": compose_labels("n8n-db")}}
@@ -717,9 +725,17 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_native_security_recomputes_indexed_hashes_and_exact_file_coverage(self):
         with tempfile.TemporaryDirectory() as folder:
             scan_id, index, root = native_security_fixture(folder)
-            with patch.object(sc, "_native_security_index", return_value=index), patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"):
+            with patch.object(sc, "_native_security_index", return_value=index), patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
+                    patch.object(sc, "_merge_base", return_value=OTHER):
                 observation = sc._security_observation(scan_id, SHA, NOW)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "PASS")
+                # A base other than the candidate's merge base with main can omit its changes.
+                with patch.object(sc, "_merge_base", return_value="c" * 40):
+                    moved = sc._security_observation(scan_id, SHA, NOW)
+                self.assertEqual(sc.score(SHA, [moved], now=NOW)["checks"][17]["status"], "UNKNOWN")
+                with patch.object(sc, "_merge_base", return_value=None):
+                    unreadable = sc._security_observation(scan_id, SHA, NOW)
+                self.assertEqual(sc.score(SHA, [unreadable], now=NOW)["checks"][17]["status"], "UNKNOWN")
                 self.assertEqual(sc.score(OTHER, [observation], now=NOW)["checks"][17]["status"], "UNKNOWN")
                 (root / "coverage.json").write_text('{"completeness":"complete","verified":true}')
                 with self.assertRaisesRegex(ValueError, "digest mismatch"):
@@ -740,7 +756,9 @@ class CompletionScorecardTests(unittest.TestCase):
     def test_native_security_missing_changed_file_coverage_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             scan_id, index, _ = native_security_fixture(folder)
-            with patch.object(sc, "_native_security_index", return_value=index), patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0src/unreviewed.py\0"):
+            with patch.object(sc, "_native_security_index", return_value=index), \
+                    patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0src/unreviewed.py\0"), \
+                    patch.object(sc, "_merge_base", return_value=OTHER):
                 observation = sc._security_observation(scan_id, SHA, NOW)
                 self.assertEqual(sc.score(SHA, [observation], now=NOW)["checks"][17]["status"], "FAIL")
 
@@ -1346,6 +1364,16 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(row(collect_topology(unlabelled), "01")["status"], "UNKNOWN")
         no_n8n = [item for item in topology() if item["Id"] != N8N_DB_ID]
         self.assertEqual(row(collect_topology(no_n8n), "01")["status"], "UNKNOWN")
+        # The gateway must share a network with n8n on which the relay host resolves.
+        detached = topology()
+        detached[1]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64, "Aliases": ["slackbot"]}}
+        self.assertEqual(row(collect_topology(detached), "01")["status"], "FAIL")
+        unaliased = topology()
+        unaliased[2]["NetworkSettings"]["Networks"][NETWORK].update(Aliases=[], DNSNames=[])
+        self.assertEqual(row(collect_topology(unaliased), "01")["status"], "FAIL")
+        uninspected = topology()
+        del uninspected[1]["NetworkSettings"]
+        self.assertEqual(row(collect_topology(uninspected), "01")["status"], "UNKNOWN")
         relay = topology()
         relay[1]["Config"]["Env"][3] = "N8N_DIRECTOR_WEBHOOK_URL=http://edge-engine-director-n8n-1:5678/webhook/director-intake"
         self.assertEqual(row(collect_topology(relay), "01")["status"], "PASS")
@@ -1486,6 +1514,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         impostor = self.world()
         impostor.threads[ts(30000)][2]["user"] = OWNER
         self.assertEqual(impostor.state("08"), "FAIL")
+        edited_prompt = self.world()
+        edited_prompt.threads[ts(30000)][2]["edited"] = {"user": BOT, "ts": ts(30020)}
+        self.assertEqual(edited_prompt.state("08"), "UNKNOWN")
         unscoped = self.world()
         unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
         self.assertEqual(unscoped.state("08"), "UNKNOWN")
@@ -1987,3 +2018,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
