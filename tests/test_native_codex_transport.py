@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:29 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:20 UTC | BEGIN]]
@@ -125,7 +126,8 @@ class NativeCodexTests(unittest.TestCase):
         verifier = SimpleNamespace(verify=lambda request: observed.append(request))
         observed = []
         executor = WindowsHostProviderExecutor({'openai': [str(Path(sys.executable).resolve()), 'gpt-5.6']}, cwd=ROOT, writer_fence_verifier=verifier)
-        request = SimpleNamespace(provider='openai', writer_generation=7, packet=json.dumps(work()).encode())
+        request = SimpleNamespace(provider='openai', writer_generation=7,
+                                  packet=json.dumps(work()).encode(), host_deadline='')
         with patch.object(executor.native_codex, 'send', return_value={'provider': 'openai'}) as send:
             self.assertEqual({'provider': 'openai'}, json.loads(executor.execute(request)))
         self.assertEqual([request], observed)
@@ -143,3 +145,5 @@ class NativeCodexTests(unittest.TestCase):
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:32 UTC | END]]
 
 # [[OpenAI Codex queue_runtime author | GPT-6 Astra | 2026-09-12 | 09:29 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]

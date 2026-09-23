@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:33 UTC | BEGIN]]
@@ -22,6 +23,7 @@ class PrimaryReconciliationLeaseTests(unittest.TestCase):
         )
         activation.coordinator = MagicMock()
         activation.services = MagicMock()
+        activation.services.occupied.return_value = False
         activation._reconciliation_worker_ready = False
         return activation
 
@@ -70,3 +72,5 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 22:33 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:00 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 17:27 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]
