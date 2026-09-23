@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -548,7 +549,7 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
-                "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
+                "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
                     "batches_pending_projection_binding")
@@ -676,8 +677,10 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
         transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
         surface = (value.get("surfaces") or {}).get("runtime_adapter")
-        # A capture minted after the attempt, or expired before it ended, did not gate it.
-        if (not isinstance(surface, dict) or not times or not surface.get("observed_at")
+        # A capture that does not verify now, was minted after the attempt or expired before it ended
+        # cannot attest the attempt: its missing product is unknown, not a substitution.
+        if (not isinstance(surface, dict) or surface.get("capture_verified") is not True or not times
+                or not surface.get("observed_at")
                 or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])):
             unbound.append(lane)
     facts = {"lanes_used": used, "products": products, "transports": transports}
@@ -696,12 +699,12 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         return lane != "openai" or {"openai-responses" if transport == "responses-api" else "openai-codex"
                                     for transport in transports[lane]} == {products[lane]}
 
-    substituted = [lane for lane in used if not attested(lane)]
+    substituted = [lane for lane in used if lane not in REAL_PRODUCTS or (lane not in unbound and not attested(lane))]
     if substituted:
         return _observation("11", False, "Lanes used without an attested real product: " + ", ".join(substituted) + ".",
                             _CAPTURES_SOURCE, facts, at, **binding)
     if unbound:
-        return _observation("11", None, "No capture observed before and unexpired through the paid attempts of: "
+        return _observation("11", None, "No verified capture observed before and unexpired through the paid attempts of: "
                             + ", ".join(unbound) + ".", _CAPTURES_SOURCE, facts, at, **binding)
     return _observation("11", True, "Every lane the paid run used is attested as its real product by a verified "
                         "validation-store capture that was current when its attempts ran, under the running "
@@ -800,7 +803,7 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     return _observation("04", None, "The status message readback was incomplete.", source, facts, at, **binding)
 
 
-def _drill_verdict(t: _SlackThreads, kind: str, thread: str) -> tuple[bool | None, dict[str, Any]]:
+def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
     owner_inputs, receipts, blocked = _thread_counts(t, thread, messages)
     bound = t.binding(thread)
@@ -812,6 +815,11 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str) -> tuple[bool | Non
     tasks = readback["task_scope_counters"]["thread_tasks"] if readback else None
     replies = snapshot["row"]["terminal_reply_count"] if snapshot else None
     facts.update(thread_tasks=tasks, terminal_reply_count=replies)
+    # No producer records the executing image: a drill posted, or a task created,
+    # before the running container was created cannot attest it.
+    current = Decimal(thread) >= Decimal(str(since.timestamp())) and (
+        readback is None or _when(readback["task_created_at"]) >= since)
+    facts["after_container_created"] = current
     verdict: bool | None = None
     if kind == "refusal-4xx":
         if status != 404 or receipts:
@@ -847,6 +855,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str) -> tuple[bool | Non
               and row.get("delivered_at") and row.get("slack_ts") and replies == 1
               and snapshot["row"].get("final_receipt_matches_native_message") is True):
             verdict = True
+    if verdict is True and not current:
+        verdict = None
     facts["verdict"] = verdict
     return verdict, facts
 
@@ -857,14 +867,16 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     facts: dict[str, Any] = {}
     for kind, thread in drills.items():
         try:
-            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread)
+            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at)
         except _SOURCE_ERRORS:
             verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
     result = []
     for check, kinds, proven in (
             ("03", ("refusal-4xx", "reserved-5xx", "transport-failure"),
              "The 4xx refusal created no task or receipt, the 5xx after reservation kept exactly one task, and the "
-             "relay transport failure was reported BLOCKED with no receipt and at most one task."),
+             "operator-labelled transport-failure thread was answered BLOCKED with no receipt and at most one task. "
+             "That outcome matches a refusal or a reserved 5xx, so the relay transport failure itself is "
+             "operator-attested, not observed."),
             ("09", ("duplicate-input", "ambiguous-post"),
              "Duplicate input kept one task and one final reply; the ambiguous post was recovered by readback "
              "to exactly one delivered final reply.")):
@@ -877,8 +889,10 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
             passed, explanation = True, proven
         else:
             passed = None
+            stale = [kind for kind in kinds if (facts.get(kind) or {}).get("after_container_created") is False]
             explanation = ("Missing --drill-thread selections: " + ", ".join(missing) + "." if missing else
-                           "A drill was not exercised or its evidence was incomplete or unavailable.")
+                           "Drills that predate the running Director container cannot attest it: " + ", ".join(stale) + "."
+                           if stale else "A drill was not exercised or its evidence was incomplete or unavailable.")
         result.append(_observation(check, passed, explanation, _SLACK_SOURCE,
                                    {kind: facts.get(kind) for kind in kinds}, at, **runtime.binding))
     return result
@@ -953,11 +967,16 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
                 and len(native) == 1 and receipted):
             gaps += 1
+    # Only a container that already existed when the approval task was created can have handled it.
+    current = _when(readback["task_created_at"]) >= runtime.created_at
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
-               "failures": sorted(set(failures)), "unproven_rows": gaps}
+               "failures": sorted(set(failures)), "unproven_rows": gaps, "task_created_after_container": current}
     if failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
+    elif not current:
+        passed08, explanation08 = None, ("The approval task was created before the running Director container, so it "
+                                         "cannot attest this image.")
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
                                          "an approval_resume command receipt re-read from the control plane whose command "
@@ -1046,12 +1065,16 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
     # Consecutive: the ten threads are the only top-level owner posts between the first and the last.
     # Only what the gateway itself ignores is excluded, so any post it could forward counts.
     ordered = sorted(trials, key=Decimal)
-    posts = {str(m.get("ts")) for m in t.history(ordered[0], ordered[-1])
+    window = t.history(ordered[0], ordered[-1])
+    posts = {str(m.get("ts")) for m in window
              if m.get("user") == t.owner and not m.get("bot_id")
              and m.get("subtype") not in ("bot_message", "message_changed", "message_deleted")}
-    if posts != set(trials):
+    # A deleted post that had replies leaves a hidden tombstone, which may be a skipped trial.
+    removed = sum(1 for m in window if m.get("subtype") == "tombstone" or m.get("hidden") is True)
+    if posts != set(trials) or removed:
         return _observation("10", None, f"The ten trials are not consecutive: {len(posts - set(trials))} other top-level "
-                            "owner post(s) fall between them, or a trial is not a top-level owner post.",
+                            f"owner post(s) and {removed} deleted or hidden message(s) fall between them, or a trial "
+                            "is not a top-level owner post.",
                             _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
     return _observation("10", True, observed.explanation + " The ten are the only top-level owner posts in the "
                         "channel between the first and the last, so they are consecutive.",
@@ -1898,3 +1921,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]

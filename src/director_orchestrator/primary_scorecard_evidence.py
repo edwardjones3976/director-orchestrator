@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 """Read-only, generation-bound evidence reports for the completion scorecard.
@@ -23,16 +24,20 @@ _ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", 
                     "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
 _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
-               "projection_batch_digest_conflicts", "projections_ahead_of_fence", "open_effect_reservations",
-               "active_assignments", "live_writer_claims", "batches_pending_projection_binding")
+               "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
+               "open_effect_reservations", "active_assignments", "live_writer_claims",
+               "batches_pending_projection_binding")
 
-# A task is settled when terminal and not OWNER_DECISION_REQUIRED, which is a
-# resumable approval hold and counts as in flight. A PENDING assignment behind a
+# A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
+# with a pending approval (the predicate Slack delivery enqueues approvals by):
+# that hold is resumable and counts as in flight. A PENDING assignment behind a
 # FAILED or owner-held prerequisite is the aggregator's BLOCKED projection
-# (primary_parallel), stored as PENDING; it is not an open assignment.
+# (primary_parallel), stored as PENDING; it is neither open nor active.
 _COUNTS = """WITH RECURSIVE a AS (SELECT fencing_generation FROM {s}.director_primary_intake_authority WHERE singleton),
  p AS (SELECT task_id, intake_fencing_generation, projection->>'terminal_classification' tc,
-              coalesce(projection->>'terminal_classification' <> 'OWNER_DECISION_REQUIRED', false) settled,
+              (projection->>'terminal_classification' IS NOT NULL
+               AND (projection->>'terminal_classification' <> 'OWNER_DECISION_REQUIRED'
+                    OR projection->'pending_approval'->>'request_digest' IS NULL)) settled,
               projection->>'parallel_plan_digest' pd FROM {s}.director_primary_task_projection),
  blocked(task_id, assignment_id) AS (
    SELECT x.task_id, x.assignment_id FROM {s}.director_primary_parallel_assignment x
@@ -55,16 +60,19 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
     WHERE t.claim_key IS NULL AND p.settled) AS terminal_tasks_open_effects,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
+    WHERE p.pd IS NULL AND p.settled) AS terminal_batches_unbound,
+ (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NOT NULL AND p.pd<>b.plan_digest) AS projection_batch_digest_conflicts,
  (SELECT count(*) FROM p WHERE p.intake_fencing_generation>(SELECT fencing_generation FROM a)) AS projections_ahead_of_fence,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
     LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
     WHERE t.claim_key IS NULL AND NOT p.settled) AS open_effect_reservations,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
-    WHERE NOT p.settled AND x.status IN ('PENDING','ACTIVE')) AS active_assignments,
+    WHERE NOT p.settled AND x.status IN ('PENDING','ACTIVE') AND NOT EXISTS
+      (SELECT 1 FROM blocked b WHERE b.task_id=x.task_id AND b.assignment_id=x.assignment_id)) AS active_assignments,
  (SELECT count(*) FROM {s}.director_primary_task_writer WHERE lease_expires_at>now()) AS live_writer_claims,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
-    WHERE p.pd IS NULL) AS batches_pending_projection_binding"""
+    WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,
@@ -237,3 +245,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes}
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]

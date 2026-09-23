@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -257,7 +258,7 @@ class World:
         self.failing, self.slack_down = set(), False
         self.threads[STATUS_TS] = [{"ts": STATUS_TS, "user": BOT, "bot_id": "BBOT123",
                                     "text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}]
-        self.history_extra = []
+        self.history_extra, self.history_hidden = [], set()
         for offset in (100, 150, 200):
             self.threads[ts(offset)] = [
                 {"ts": ts(offset), "user": OWNER, "client_msg_id": f"drill-{offset}", "text": f"<@{BOT}> drill"},
@@ -346,7 +347,8 @@ class World:
                 if "history" in self.failing:
                     raise httpx.ConnectError("fixture transport failure", request=request)
                 low, high = Decimal(url.params["oldest"]), Decimal(url.params["latest"])
-                top = [message for key, messages in self.threads.items() for message in messages if message["ts"] == key]
+                top = [message for key, messages in self.threads.items() for message in messages
+                       if message["ts"] == key and key not in self.history_hidden]
                 return httpx.Response(200, json={"ok": True, "has_more": False, "messages": [
                     message for message in top + self.history_extra if low <= Decimal(message["ts"]) <= high]})
             thread = url.params["ts"]
@@ -1399,6 +1401,18 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = self.world().report(channel=None)
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--channel", row(report, "03")["explanation"])
+        # A drill posted before the running container was created cannot attest it (the 404 drill has no task).
+        recreated = self.world()
+        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T10:48:30Z"
+        report = recreated.report()
+        self.assertEqual([row(report, key)["status"] for key in ("03", "09")], ["UNKNOWN", "UNKNOWN"])
+        self.assertIn("refusal-4xx", row(report, "03")["explanation"])
+        # Nor can a drill whose bound task was created before it.
+        early_task = self.world()
+        early_task.rows[0]["Created"] = early_task.rows[0]["State"]["StartedAt"] = "2026-09-12T10:00:10Z"
+        explanation = row(early_task.report(), "03")["explanation"]
+        self.assertIn("reserved-5xx", explanation)
+        self.assertNotIn("refusal-4xx", explanation)
 
     def test_status_execution_04(self):
         self.assertEqual(self.world().state("04"), "PASS")
@@ -1472,6 +1486,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         late_start = self.world()
         late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T10:30:00Z"
         self.assertEqual(late_start.state("06"), "UNKNOWN")
+        # An approval task created before the running container cannot attest it.
+        recreated = self.world()
+        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:00:40Z"
+        report = recreated.report()
+        self.assertEqual(row(report, "08")["status"], "UNKNOWN")
+        self.assertIn("before the running Director container", row(report, "08")["explanation"])
         report = self.world().report(approval_task=None)
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
         self.assertIn("--approval-task", row(report, "06")["explanation"])
@@ -1553,6 +1573,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         shared_file = self.world()
         shared_file.history_extra.append({"ts": ts(1500), "user": OWNER, "subtype": "file_share", "text": "DIRECTOR x"})
         self.assertEqual(shared_file.state("10"), "UNKNOWN")
+        # A deleted post leaves a tombstone that may be a skipped trial.
+        deleted = self.world()
+        deleted.history_extra.append({"ts": ts(1500), "user": "USLACKBOT", "subtype": "tombstone", "hidden": True,
+                                      "text": "This message was deleted."})
+        self.assertEqual(deleted.state("10"), "UNKNOWN")
+        # Every trial must itself be a visible top-level post in the window.
+        not_a_post = self.world()
+        not_a_post.history_hidden.add(not_a_post.trials[4])
+        self.assertEqual(not_a_post.state("10"), "UNKNOWN")
         chatter_from_bot = self.world()
         chatter_from_bot.history_extra.append({"ts": ts(1500), "user": BOT, "bot_id": "BBOT123", "text": "status"})
         self.assertEqual(chatter_from_bot.state("10"), "PASS")
@@ -1598,6 +1627,18 @@ class ScorecardCollectorTests(unittest.TestCase):
         rebound = self.world()
         rebound.captures["provider_bindings_sha256"] = "0" * 64
         self.assertEqual(rebound.state("11"), "UNKNOWN")
+        regenerated = self.world()
+        regenerated.captures["generation_manifest_sha256"] = "0" * 64
+        self.assertEqual(regenerated.state("11"), "UNKNOWN")
+        # A capture that no longer verifies reports no product: stale evidence, not a substitution.
+        unverified = self.world()
+        unverified.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"] = False
+        unverified.captures["lanes"]["claude"]["product"] = None
+        self.assertEqual(unverified.state("11"), "UNKNOWN")
+        # A verified, bound capture that names no product is still a substitution.
+        productless = self.world()
+        productless.captures["lanes"]["claude"]["product"] = None
+        self.assertEqual(productless.state("11"), "FAIL")
         report = self.world().report(paid_thread=None, paid_rubric_path=None)
         self.assertEqual(row(report, "11")["status"], "UNKNOWN")
         unavailable = self.world()
@@ -1894,3 +1935,4 @@ if __name__ == "__main__":
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:47 UTC | END]]

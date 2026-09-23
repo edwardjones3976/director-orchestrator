@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
@@ -97,7 +98,8 @@ bound, using credentials read in memory from the selected Director container.
 
 The candidate SHA and observed runtime image/commit are separate. A merged
 candidate's CI cannot prove a different running image passed that CI. Runtime
-facts are tied to the inspected image's immutable ID and commit label.
+facts are tied to the inspected image's immutable ID and commit label, within
+the time bindings described under [Execution-binding limits](#execution-binding-limits).
 
 ### Deployment profile
 
@@ -160,8 +162,10 @@ UNKNOWN. A transport failure (the relay pointed at a closed port, step 7b of
 `reserved-5xx` cannot score; it is therefore its own drill. Observable outcomes
 overlap between kinds (a 4xx refusal and a transport failure both read 404 and
 `BLOCKED`), so each kind names a distinct operator-labelled thread and the
-scorecard scores the observable outcome. The drill procedures themselves are
-operator actions and are not automated here.
+scorecard scores the observable outcome. The scorecard cannot tell a transport
+failure from a refusal or a reserved 5xx, so 03's PASS says the transport
+failure itself is operator-attested, not observed. The drill procedures
+themselves are operator actions and are not automated here.
 
 ### In-image commands
 
@@ -188,14 +192,19 @@ runtime and write nothing.
   the command ID, command and resulting projection digests, recorded time). In
   `owner-local-evidence-v1` mode it also returns the pinned adoption's
   repository, pull request, author, reviewers, reviewed source and adoption
-  digest. A task is terminal here when its terminal classification is set and
-  is not `OWNER_DECISION_REQUIRED`: that is a resumable approval hold, so its
-  open assignments and effects count as in flight. A `PENDING` assignment whose
-  prerequisites include a `FAILED` or owner-held assignment, directly or
-  through another such assignment, is the aggregator's `BLOCKED` projection and
-  is not counted as open. Check 07 fails on any unresolved, ambiguous or
-  conflicting count, is UNKNOWN unless the snapshot names the running
-  generation pin and intake fence, and is UNKNOWN while work is in flight.
+  digest. A task is terminal here when its terminal classification is set,
+  unless it is `OWNER_DECISION_REQUIRED` with a pending approval request (the
+  predicate Slack delivery enqueues approvals by): that hold is resumable, so
+  its open assignments, effects and unbound batch count as in flight. An
+  `OWNER_DECISION_REQUIRED` hold with no pending approval cannot resume and is
+  terminal. A terminal task whose batch never bound to its projection counts as
+  `terminal_batches_unbound`. A `PENDING` assignment whose prerequisites
+  include a `FAILED` or owner-held assignment, directly or through another such
+  assignment, is the aggregator's `BLOCKED` projection and is counted neither
+  as open nor as active. Check 07 fails on any unresolved, ambiguous,
+  conflicting or terminal-residue count, is UNKNOWN unless the snapshot names
+  the running generation pin and intake fence, and is UNKNOWN while work is in
+  flight.
 - `activation-captures` reads the activation store through a load-only view and
   the validation store through its read-only capture reader. For every lane it
   reports the binding digest and, per surface, the latest stage, evidence
@@ -286,11 +295,17 @@ saved executions for its own default age. The scorecard reads only the last
 
 No producer records which image or process executed a task. Checks 10, 11 and
 20 bind a run to the running image only when the container was created before
-the task was, and check 06 requires the current process start to fall between the
-task's creation and its terminal delivery. A later container recreation, such
-as an activation that force-recreates the Director, therefore makes those
-checks UNKNOWN until the runs are repeated. The writer generation does not
-prove a restart, because the same owner token renews a live lease.
+the task was. Checks 03 and 09 do the same for each drill (the drill post and,
+when a task is bound, its creation), and check 08 for the approval task. Check
+06 requires the current process start to fall between the task's creation and
+its terminal delivery. A later container recreation, such as an activation that
+force-recreates the Director, therefore makes those checks UNKNOWN until the
+runs and drills are repeated. The writer generation does not prove a restart,
+because the same owner token renews a live lease. This is an ordering check,
+not an execution record: a task created after the container but handled by a
+process the scorecard cannot see is still credited to the running image.
+Check 10 reads only what Slack still shows: a deleted post leaves a tombstone,
+which 10 treats as a break, but a deleted post with no replies leaves nothing.
 
 ## Evidence and limits
 
@@ -304,7 +319,8 @@ hidden files. A hash establishes byte identity, not truth or author identity.
 
 Evidence includes source, observed time, expiry, digest and applicable immutable
 bindings. Observations expire after five minutes. Missing, stale, future-dated,
-wrong-head and wrong-image evidence yields UNKNOWN, never PASS. The diagnostic
+wrong-head and wrong-image evidence yields UNKNOWN, never PASS, as far as the
+bindings above can see it. The diagnostic
 trusts the named local host and service; its in-process marker is not a security
 sandbox against arbitrary Python code, and it does not attest an uncompromised
 host or validate image-label supply-chain provenance.
@@ -377,13 +393,13 @@ cap, and fails when any admission lacks a USD limit or a verified hard cap.
 
 Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
-products above or its verified capture names another product; a missing product
-counts as a substitution. On the OpenAI lane the product must also match the
+products above or its verified capture names another product; a verified,
+bound capture with no product counts as a substitution. On the OpenAI lane the product must also match the
 attempts' transport: `responses-api` needs `openai-responses` and any other
 transport `openai-codex`. 11 is UNKNOWN when the running container was created
 after the paid task, the captures are not bound to the running generation pin
-and provider bindings, or a lane's runtime-adapter capture was observed after
-its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
+and provider bindings, or a lane's runtime-adapter capture does not verify now,
+was observed after its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
 the mode is paid only when the readback records at least one provider attempt,
 never from the runtime's paid switch, and actual cost is the sum of settled
 usage rows whose metering evidence carries request and response IDs, correlated
@@ -425,8 +441,8 @@ simulation-labelled final reply), not the runtime's current mode switch. The
 ten must also be consecutive: one bounded `conversations.history` read of
 `--channel` from the first trial to the last must show no other top-level owner
 post the gateway could forward (only bot posts and `bot_message`,
-`message_changed` and `message_deleted` subtypes are ignored). Otherwise 10 is
-UNKNOWN. Replies inside other threads are not read. Check 10 is FAIL, not
+`message_changed` and `message_deleted` subtypes are ignored) and no deleted
+(`tombstone`) or hidden message. Otherwise 10 is UNKNOWN. Replies inside other threads are not read. Check 10 is FAIL, not
 UNKNOWN, when a selected run fails the standard.
 
 ## Qualification verdicts with explicit UNKNOWN cost
@@ -490,3 +506,4 @@ touched.
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:50 UTC | END]] -->

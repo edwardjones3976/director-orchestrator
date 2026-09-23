@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | BEGIN]]
 """In-image read-only scorecard evidence: capture attestations and consistency."""
@@ -317,18 +318,86 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         counts = self.report()["counts"]
         # Only a4, which nothing blocks, is open work on a terminal task.
         self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (1, 0))
+        # An OWNER_DECISION_REQUIRED hold with no pending approval cannot resume: it is settled residue.
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, task_id, "OWNER_DECISION_REQUIRED")
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = projection - 'pending_approval' WHERE task_id = %s", (task_id,))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (1, 0))
+        # With a pending approval it is a resumable hold: in flight, and its blocked chain is not active work.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{pending_approval}', %s::jsonb) WHERE task_id = %s",
+                (json.dumps({"request_digest": "sha256:" + "4" * 64}), task_id))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (0, 1))
         with self.handle.pool.connection() as connection:
             connection.execute(f"DELETE FROM {self.schema}.director_primary_parallel_assignment"
                                " WHERE task_id = %s AND assignment_id = 'a4'", (task_id,))
-        self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
-        # OWNER_DECISION_REQUIRED is a resumable approval hold: in flight, never terminal residue.
-        with self.handle.pool.connection() as connection:
-            self.classify(connection, task_id, "OWNER_DECISION_REQUIRED")
-        counts = self.report()["counts"]
-        self.assertEqual((counts["terminal_tasks_open_assignments"], counts["active_assignments"]), (0, 2))
-        with self.handle.pool.connection() as connection:
             self.classify(connection, task_id, "DONE")
         self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
+
+    def test_every_residue_count_is_driven_by_real_rows(self):
+        task_id = self.intake()
+        other = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        self.coordinator.create_intake(self.coordinator_fixtures.request(other))
+        s = self.schema
+        with self.handle.pool.connection() as connection:
+            for claim in ("effect-1", "reconcile-1"):
+                connection.execute(
+                    f"INSERT INTO {s}.director_primary_claim(claim_key, task_id, field, expected_state, target_state,"
+                    " attempt_digest, owner_token, fencing_generation)"
+                    " VALUES (%s, %s, 'effect', 'NOT_STARTED', 'COMPLETED', 'fixture', 'default-director-owner', 1)",
+                    (claim, task_id))
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_effect_reservation(reservation_key, claim_key, task_id, owner_token,"
+                " fencing_generation, effect_key_digest, effect_attempt_digest, writer_owner_id, reserved_units)"
+                " VALUES ('reservation-1', 'effect-1', %s, 'default-director-owner', 1, 'k', 'a', 'w', 0)", (task_id,))
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_reconciliation_event(claim_key, task_id, owner_token,"
+                " fencing_generation, state, evidence_digest)"
+                " VALUES ('reconcile-1', %s, 'default-director-owner', 1, 'AMBIGUOUS', 'e')", (task_id,))
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_task_writer(task_id, engine_owner, owner_token, fencing_generation,"
+                " lease_expires_at) VALUES ('DIR-LG-LEASE', 'langgraph', 'default-director-owner', 1,"
+                " now() + interval '1 hour'), ('DIR-LG-LAPSED', 'langgraph', 'default-director-owner', 1,"
+                " now() - interval '1 hour')")
+        live = self.report()["counts"]
+        self.assertEqual((live["open_effect_reservations"], live["terminal_tasks_open_effects"],
+                          live["unresolved_reconciliation"]), (1, 0, 1))
+        self.assertGreaterEqual(live["live_writer_claims"], 1)
+        # Settle the task: its unfinished effect and its unblocked assignments become terminal residue.
+        # a2 waits on a SUCCEEDED prerequisite, so nothing blocks it.
+        self.plan(task_id, "FAILED", [("a1", "SUCCEEDED", []), ("a2", "PENDING", ["a1"]), ("a3", "AMBIGUOUS", [])])
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_parallel_batch(task_id, plan_digest, owner_token, fencing_generation,"
+                " max_concurrency) VALUES (%s, %s, 'default-director-owner', 1, 1)", (other, "sha256:" + "5" * 64))
+            self.classify(connection, other, "RECONCILIATION_REQUIRED")
+            # The projection guard forbids this state; lift it in the disposable schema to prove the count sees it.
+            connection.execute(f"ALTER TABLE {s}.director_primary_task_projection DISABLE TRIGGER USER")
+            connection.execute(f"UPDATE {s}.director_primary_task_projection SET intake_fencing_generation = 99"
+                               " WHERE task_id = %s", (other,))
+        counts = self.report()["counts"]
+        self.assertEqual({key: counts[key] for key in (
+            "unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
+            "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
+            "projections_ahead_of_fence", "open_effect_reservations", "batches_pending_projection_binding")},
+            {"unresolved_reconciliation": 1, "ambiguous_assignments": 1, "tasks_requiring_reconciliation": 1,
+             "terminal_tasks_open_assignments": 2, "terminal_tasks_open_effects": 1, "terminal_batches_unbound": 1,
+             "projections_ahead_of_fence": 1, "open_effect_reservations": 0, "batches_pending_projection_binding": 0})
+        self.assertEqual(counts["live_writer_claims"], live["live_writer_claims"])
+
+    def test_snapshot_connection_refuses_writes(self):
+        import psycopg
+        self.intake()
+        write = ("INSERT INTO {s}.director_primary_task_writer(task_id, engine_owner, owner_token, fencing_generation,"
+                 " lease_expires_at) VALUES ('DIR-LG-W', 'langgraph', 'x', 1, now()) RETURNING now() AS captured_at")
+        with patch.object(evidence, "_COUNTS", write), self.assertRaises(psycopg.errors.ReadOnlySqlTransaction):
+            self.report()
 
     def test_approval_command_receipts_leave_only_a_command_digest(self):
         task_id = self.intake()
@@ -386,3 +455,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | END]]
