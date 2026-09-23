@@ -112,49 +112,22 @@ jobs:
             rm -rf "$tmp"
           fi
           echo "$dest" >> "$GITHUB_PATH"
-      # Same image digest as ci.yml, but a per-run container and a
-      # Docker-assigned loopback port, because runs share the host.
-      # `pg_isready -h 127.0.0.1` inside the container succeeds only once the
-      # real server listens on TCP; the entrypoint's init server is
-      # socket-only. postgresql-client is not apt-installed (no sudo). The
-      # tests use the container's tools through
+      # AGENTS.md "Postgres-backed unit tests": on this Docker Desktop host
+      # the test database comes ONLY from scripts/windows-postgres-test-lane.ps1
+      # (pinned image, labeled container, refuses ports it does not own).
+      # Both OS jobs therefore use the lane (pwsh + Docker) instead of ci.yml's
+      # hosted-runner `docker run` (Linux) or choco install (Windows, needs
+      # admin). Each run gets its own container name and port range, because
+      # both runners share one host. postgresql-client is not apt-installed
+      # (no sudo); the tests use the container's tools through
       # LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER.
-      - name: Start disposable PostgreSQL (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          container="director-ci-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-linux"
-          docker run --detach --rm \
-            --name "$container" \
-            --publish 127.0.0.1::5432 \
-            --env POSTGRES_HOST_AUTH_METHOD=trust \
-            --env POSTGRES_USER=director_ci \
-            --env POSTGRES_DB=director_test \
-            postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
-          for attempt in $(seq 1 60); do
-            if docker exec "$container" pg_isready -h 127.0.0.1 -U director_ci -d director_test >/dev/null 2>&1; then
-              break
-            fi
-            if [ "$attempt" -eq 60 ]; then
-              echo "Disposable PostgreSQL did not become ready" >&2
-              exit 1
-            fi
-            sleep 1
-          done
-          port="$(docker port "$container" 5432/tcp | head -n 1 | sed 's/.*://')"
-          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:${port}/director_test?sslmode=disable" >> "$GITHUB_ENV"
-          echo "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$container" >> "$GITHUB_ENV"
-      # windows-latest installs PostgreSQL with choco, which needs admin. The
-      # self-hosted runner reuses the repo's Docker-based test lane instead,
-      # with the same pinned image.
-      - name: Start disposable PostgreSQL (Windows)
-        if: runner.os == 'Windows'
+      - name: Start disposable PostgreSQL (test lane)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $port = 56000 + ([int64]$env:GITHUB_RUN_ID % 900)
-          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-win"
+          $base = if ($IsLinux) { 57000 } else { 56000 }
+          $port = $base + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-$($env:RUNNER_OS.ToLowerInvariant())"
           & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
           "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -182,15 +155,8 @@ jobs:
       - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
       - run: python -m json.tool docs/oracle-review-artifact.example.json
-      - name: Stop disposable PostgreSQL (Linux)
-        if: always() && runner.os == 'Linux'
-        shell: bash
-        run: |
-          if [ -n "${LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER:-}" ]; then
-            docker rm --force "$LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER" >/dev/null 2>&1 || true
-          fi
-      - name: Stop disposable PostgreSQL (Windows)
-        if: always() && runner.os == 'Windows'
+      - name: Stop disposable PostgreSQL (test lane)
+        if: always()
         shell: pwsh
         run: |
           if ($env:DIRECTOR_CI_PG_LANE) {
