@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | BEGIN]]
 # Administrative attribution only; material implementation remains Cursor-authored.
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | BEGIN]]
@@ -918,7 +919,7 @@ def command_handler(ack, command, client, respond):
             respond(_tag(f"*{task_id} — RESUMING*\nYour approval or clarification was recorded."), response_type="ephemeral")
         except Exception as exc:
             _log_boundary_failure("Failed to approve Director task", exc)
-            respond(_tag(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`."), response_type="ephemeral")
+            respond(_tag(f"*{task_id} — APPROVAL RESPONSE UNCONFIRMED*\nThe response failed: `{type(exc).__name__}`. The decision may already be recorded; check the current task before trying again."), response_type="ephemeral")
         return
 
     if not text:
@@ -1051,7 +1052,7 @@ def approval_button_handler(ack, body, client):
         client.chat_postMessage(
             channel=channel_id,
             thread_ts=message.get("thread_ts") or message.get("ts"),
-            text=_tag(f"*{task_id} — BLOCKED*\nApproval was not recorded: `{type(exc).__name__}`."),
+            text=_tag(f"*{task_id} — APPROVAL RESPONSE UNCONFIRMED*\nThe response failed: `{type(exc).__name__}`. The decision may already be recorded; check the current task before trying again."),
         )
 
 
@@ -1083,3 +1084,5 @@ if __name__ == "__main__":
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-21 | 20:43 UTC | END]]
 
 # [[Codex | GPT-6 Astra | 2026-09-21 | 20:46 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]

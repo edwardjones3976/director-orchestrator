@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]]
@@ -1165,7 +1166,7 @@ def _record_primary_command(
     dependencies=[Depends(require_auth)],
 )
 def primary_resume_approval(
-    task_id: str, request: ApprovalResumeRequest
+    task_id: str, request: ApprovalResumeRequest, background: BackgroundTasks = None
 ) -> PrimaryCommandResponse:
     _require_primary_owner_actor(request.actor_id)
     if (
@@ -1238,10 +1239,16 @@ def primary_resume_approval(
                 writer_owner_id="langgraph",
                 writer_fencing_generation=writer.fencing_generation,
             )
-        primary_default_activation.application.resume_approval(command)
+        primary_default_activation.application.resume_approval(
+            command, defer_provider_dispatch=background is not None
+        )
         response = _record_primary_command(
             request, PrimaryCommandOperation.APPROVAL_RESUME
         )
+        # Persist and acknowledge the decision before a paid provider can keep
+        # Slack's request open. Recovery uses the same fenced dispatch lifecycle.
+        if background is not None and command.decision.value == "approve":
+            background.add_task(primary_default_activation.application.recover, task_id)
         return response
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1891,3 +1898,5 @@ def complete_run(
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]

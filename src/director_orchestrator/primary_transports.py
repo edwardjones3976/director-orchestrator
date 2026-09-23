@@ -1,3 +1,6 @@
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
@@ -46,6 +49,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +58,7 @@ import hashlib
 import asyncio
 from time import monotonic
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from typing import Any, Collection, Mapping, Sequence
@@ -64,6 +69,7 @@ from .host_provider_bridge import (
     HostBridgeChallengeEvidence,
     HostBridgePacketTransport,
     SUPPORTED_HOST_LANES,
+    _enforce_native_result_attempt_limits,
 )
 from .process_isolation import launch_contained_process, stop_contained_process
 
@@ -72,7 +78,7 @@ from .langgraph_runtime import (
     ProviderAdapterContext,
     RawProviderTransport,
 )
-from .packet_contracts import canonical_json_bytes, result_contract_properties, _validators
+from .packet_contracts import canonical_json_bytes, result_contract_properties, _decode_json, _validators
 from .packet_routing import ANTIGRAVITY_DIRECTIVE_OBJECTIVE_PREFIX
 
 
@@ -910,6 +916,13 @@ def _structured_native_output(native: Mapping[str, Any]) -> dict[str, Any]:
         try:
             decoded = json.loads(candidate)
         except json.JSONDecodeError:
+            if "```" in candidate:
+                fence = re.fullmatch(r"```json[ \t]*\r?\n([\s\S]*)\r?\n```", candidate.strip())
+                if fence is None:
+                    raise RuntimeError("native JSON fence is malformed or has extra text")
+                # Accept exactly one enclosed object. Duplicate keys, constants,
+                # multiple objects and malformed JSON remain contract failures.
+                return _decode_json(fence[1].encode("utf-8"), source="native fenced output")
             return {"outcome": candidate}
         candidate = decoded
     return dict(candidate) if isinstance(candidate, Mapping) else dict(native)
@@ -1066,19 +1079,77 @@ def _project_onto_result_contract(field: str, value: Any) -> Any:
 
 
 def _projected_native_usage(
-    usage: Any, native: Mapping[str, Any]
+    usage: Any, native: Mapping[str, Any], *, provider_id: str
 ) -> dict[str, Any] | None:
     """Project a native usage block, carrying cost under its contract name.
 
     ``total_cost_usd`` is accepted when a provider does not use ``cost_usd``.
     Both name the same quantity, and dropping it would lose real cost telemetry
     that budget accounting depends on. Nothing is estimated: absent cost stays
-    absent.
+    absent. A cumulative Claude session map must be complete and consistent
+    before it replaces per-invocation counters.
     """
 
     if not isinstance(usage, Mapping):
+        if provider_id == "claude" and "modelUsage" in native:
+            raise RuntimeError("Claude cumulative usage lacks invocation usage")
         return None
     projected = _project_onto_result_contract("usage", usage)
+    if provider_id == "claude" and (
+        {"input_tokens", "output_tokens"} <= usage.keys()
+        or {"cache_creation_input_tokens", "cache_read_input_tokens"} & usage.keys()
+    ):
+        # Claude's cache counts are disjoint input categories. Keep the reported
+        # input/output counts and carry their full sum in the existing total
+        # field before projecting away provider-specific cache detail.
+        counts = (
+            usage.get("input_tokens"), usage.get("output_tokens"),
+            usage.get("cache_creation_input_tokens", 0),
+            usage.get("cache_read_input_tokens", 0),
+        )
+        if any(type(value) is not int or value < 0 for value in counts):
+            raise RuntimeError("Claude native token usage is malformed")
+        total = sum(counts)
+        reported_total = usage.get("total_tokens")
+        if reported_total is not None and (
+            type(reported_total) is not int or reported_total != total
+        ):
+            raise RuntimeError("Claude native token usage is inconsistent")
+        projected["total_tokens"] = total
+    if provider_id == "claude" and "modelUsage" in native:
+        # On resume, modelUsage and total_cost_usd describe the retained session;
+        # usage describes only this invocation. Replace, never add, those counts.
+        models = native["modelUsage"]
+        if not isinstance(models, Mapping) or not models:
+            raise RuntimeError("Claude cumulative model usage is malformed")
+        fields = {
+            "inputTokens": "input_tokens", "outputTokens": "output_tokens",
+            "cacheCreationInputTokens": "cache_creation_input_tokens",
+            "cacheReadInputTokens": "cache_read_input_tokens",
+        }
+        totals = {field: 0 for field in fields.values()}
+        costs = []
+        for model, reported in models.items():
+            if (not isinstance(model, str) or not model.strip()
+                    or not isinstance(reported, Mapping)
+                    or any(type(reported.get(key)) is not int or reported[key] < 0 for key in fields)):
+                raise RuntimeError("Claude cumulative model usage is malformed")
+            for key, field in fields.items():
+                totals[field] += reported[key]
+            cost = reported.get("costUSD")
+            if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0:
+                raise RuntimeError("Claude cumulative model cost is malformed")
+            costs.append(Decimal(str(cost)))
+        for field, cumulative in totals.items():
+            current = usage.get(field, 0 if field.startswith("cache_") else None)
+            if type(current) is not int or not 0 <= current <= cumulative:
+                raise RuntimeError("Claude cumulative model usage is inconsistent")
+        cost = native.get("total_cost_usd")
+        if (type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0
+                or Decimal(str(cost)) != sum(costs, Decimal(0))):
+            raise RuntimeError("Claude cumulative model cost is inconsistent")
+        projected.update(input_tokens=totals["input_tokens"], output_tokens=totals["output_tokens"],
+                         total_tokens=sum(totals.values()), cost_usd=cost)
     if "cost_usd" not in projected:
         for source in (usage, native):
             candidate = source.get("total_cost_usd")
@@ -1151,7 +1222,9 @@ def normalize_native_provider_envelope(
         return _project_onto_result_contract(
             name, list(value) if isinstance(value, list) else []
         )
-    usage = _projected_native_usage(native.get("usage", structured.get("usage")), native)
+    usage = _projected_native_usage(
+        native.get("usage", structured.get("usage")), native, provider_id=provider_id
+    )
     return {
         "schema_version": "1.0",
         "task_id": work["task_id"],
@@ -1178,6 +1251,22 @@ def normalize_native_provider_envelope(
         "usage": usage,
         "revision_recommended": bool(structured.get("revision_recommended", False)),
     }
+
+
+def _normalize_host_native_result(
+    provider_id: str, work: Mapping[str, Any], native: Mapping[str, Any]
+) -> dict[str, Any]:
+    # Already-packetized replies must retain their original identity and fields;
+    # the packet boundary must reject invalid versions/bindings, not repair them.
+    if "schema_version" in native:
+        return dict(native)
+    if provider_id == "claude" and (
+        native.get("type") != "result"
+        or native.get("subtype") != "success"
+        or native.get("is_error") is not False
+    ):
+        raise RuntimeError("host Claude envelope is not a successful terminal result")
+    return normalize_native_provider_envelope(provider_id, work, native)
 
 
 class NativeCommandPacketTransport:
@@ -1310,18 +1399,12 @@ class NativeCommandPacketTransport:
         work = json.loads(work_packet_json)
         native = self._native_payload(completed.stdout)
         result = self._normalize(work, native)
-        if self.provider_id == "grok" and native.get("object") == "response":
-            usage = result["usage"]
-            tokens = getattr(context, "total_token_limit", None)
-            budget = getattr(context, "budget_usd", None)
-            if ((type(tokens) is int and usage["total_tokens"] > tokens)
-                    or (budget is not None and usage.get("cost_usd") is not None
-                        and usage["cost_usd"] > budget)):
-                # Retain the provider's real usage and raw capture even when its
-                # reported usage exceeds the admitted attempt, not merely the
-                # larger multi-attempt assignment budget in the work packet.
-                result["status"] = "FAILED"
-                result["blockers"].append("Grok Responses usage exceeds the admitted attempt limit")
+        if self.provider_id == "claude" or (
+            self.provider_id == "grok" and native.get("object") == "response"
+        ):
+            # The host bridge applies this same admission check to raw replies;
+            # usage must survive even when the attempt ceiling was exceeded.
+            result = _enforce_native_result_attempt_limits(result, context=context)
         observer = getattr(context, "execution_observer", None)
         if observer is not None:
             observer(self.provider_id, completed.stdout, result)
@@ -1616,6 +1699,8 @@ def discover_local_primary_command_transports(
                 result_normalizer=(
                     partial(normalize_native_provider_envelope, provider_id)
                     if redacted
+                    else partial(_normalize_host_native_result, provider_id)
+                    if provider_id in {"claude", "grok"}
                     else None
                 ),
             )
@@ -1764,3 +1849,6 @@ def provider_lane_detail(
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
+# [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]

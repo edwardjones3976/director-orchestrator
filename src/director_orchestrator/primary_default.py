@@ -1,3 +1,4 @@
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
@@ -2344,7 +2345,9 @@ class DefaultPrimaryApplication:
             created_at=created_at,
         )
 
-    def resume_approval(self, command: ApprovalResume) -> TaskRecord:
+    def resume_approval(
+        self, command: ApprovalResume, *, defer_provider_dispatch: bool = False
+    ) -> TaskRecord:
         self._check_historical_parallel_hold(command.task_id)
         projection = self.coordinator.get_projection(command.task_id)
         if projection is None:
@@ -2362,7 +2365,7 @@ class DefaultPrimaryApplication:
         try:
             updated = self.coordinator.resume_approval(command)
             record = self._record_from_projection(updated)
-            if command.decision == ApprovalDecision.APPROVE:
+            if command.decision == ApprovalDecision.APPROVE and not defer_provider_dispatch:
                 self._drive_parallel_lifecycle(record)
                 refreshed = self.coordinator.get_projection(command.task_id)
                 if refreshed is None:
@@ -3790,3 +3793,5 @@ class DefaultPrimaryActivation:
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+
+# [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
