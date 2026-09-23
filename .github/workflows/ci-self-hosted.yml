@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:38 UTC | BEGIN]]
 # Self-hosted mirror of ci.yml.
 #
@@ -83,9 +84,25 @@ jobs:
             }
           }
       - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
         with:
           python-version: "3.12"
           cache: pip
+      # On self-hosted Windows, setup-python's installer writes HKLM, which
+      # needs admin. Use the host's per-user CPython 3.12 in a job-local venv
+      # instead; the explicit path avoids the WindowsApps aliases, which the
+      # runner cannot stat.
+      - name: Provide Python 3.12 (Windows, host interpreter, job-local venv)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = Join-Path $env:LOCALAPPDATA 'Python\pythoncore-3.12-64\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw "Host CPython 3.12 not found at $python" }
+          $venv = Join-Path $env:RUNNER_TEMP 'ci-py312'
+          & $python -m venv --clear $venv
+          if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
+          Join-Path $venv 'Scripts' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       # ubuntu-latest and windows-latest ship Node.js; the n8n status-code
       # tests need it.
       - uses: actions/setup-node@v4
@@ -121,13 +138,29 @@ jobs:
       # both runners share one host. postgresql-client is not apt-installed
       # (no sudo); the tests use the container's tools through
       # LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER.
-      - name: Start disposable PostgreSQL (test lane)
+      # Same lane script on both OSes. Linux runs it under the pinned pwsh.
+      # Windows uses Windows PowerShell 5.1, which the lane supports, so it
+      # doesn't depend on whichever pwsh the runner process inherited.
+      - name: Start disposable PostgreSQL (test lane, Linux)
+        if: runner.os == 'Linux'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $base = if ($IsLinux) { 57000 } else { 56000 }
-          $port = $base + ([int64]$env:GITHUB_RUN_ID % 900)
-          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-$($env:RUNNER_OS.ToLowerInvariant())"
+          $port = 57000 + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-linux"
+          & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LANGGRAPH_RUNTIME_POSTGRES_TEST_CONTAINER=$name" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DIRECTOR_CI_PG_LANE=$name|$port" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Start disposable PostgreSQL (test lane, Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $port = 56000 + ([int64]$env:GITHUB_RUN_ID % 900)
+          $name = "director-ci-pg-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-windows"
           & ./scripts/windows-postgres-test-lane.ps1 -Action Start -ContainerName $name -HostPort $port
           "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN=postgresql://director_ci@127.0.0.1:$port/director_test?sslmode=disable" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -137,12 +170,16 @@ jobs:
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m pip check
       # WSL appends Windows directories to PATH; ubuntu-latest has none, so
-      # drop them for the test process.
+      # drop them for the test process. The WSL host's `docker` is a shim to
+      # the Windows docker.exe, and WSL forwards to Windows processes only the
+      # environment variables named in WSLENV (/p translates a path). Forward
+      # the ones the compose-rendering test sets, so compose sees them.
       - name: python -m unittest discover -s tests -v
         if: runner.os == 'Linux'
         shell: bash
         env:
           SQLITE_PATH: ${{ runner.temp }}/director.sqlite3
+          WSLENV: DIRECTOR_ENV_FILE/p:DIRECTOR_RUNTIME_IMAGE:DIRECTOR_RUNTIME_IMAGE_ID:DIRECTOR_COMPOSE_PROJECT_NAME:DIRECTOR_ASGI_APP:ALLOW_PAID_RUNS:LANGGRAPH_PRIMARY_ENABLED:LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED:LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED:LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED:LANGGRAPH_PARALLEL_KILL_SWITCH
         run: |
           PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
           export PATH
@@ -155,9 +192,17 @@ jobs:
       - run: python -m compileall -q src scripts tests
       - run: python -m json.tool n8n/workflows/director-intake.json
       - run: python -m json.tool docs/oracle-review-artifact.example.json
-      - name: Stop disposable PostgreSQL (test lane)
-        if: always()
+      - name: Stop disposable PostgreSQL (test lane, Linux)
+        if: always() && runner.os == 'Linux'
         shell: pwsh
+        run: |
+          if ($env:DIRECTOR_CI_PG_LANE) {
+            $name, $port = $env:DIRECTOR_CI_PG_LANE -split '\|', 2
+            & ./scripts/windows-postgres-test-lane.ps1 -Action Stop -ContainerName $name -HostPort ([int]$port)
+          }
+      - name: Stop disposable PostgreSQL (test lane, Windows)
+        if: always() && runner.os == 'Windows'
+        shell: powershell
         run: |
           if ($env:DIRECTOR_CI_PG_LANE) {
             $name, $port = $env:DIRECTOR_CI_PG_LANE -split '\|', 2
@@ -259,3 +304,4 @@ jobs:
           python scripts/recovery_probe.py seed --database "$substituted_database"
           python scripts/recovery_probe.py resume-substituted-identity --database "$substituted_database"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:12 UTC | END]]
