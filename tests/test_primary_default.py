@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -135,7 +136,7 @@ from director_orchestrator.primary_default import (
     build_primary_packet_result_resolver,
     build_typed_external_effect_grant,
     resolve_default_primary_authority,
-    small_pre_authorization_lapsed,
+    small_pre_authorization_refusal,
     small_producer_result_refusal,
     small_review_bounds,
     typed_external_effect_grant_kinds,
@@ -675,24 +676,61 @@ class StandingGrantExerciseTests(unittest.TestCase):
 
     def test_a_pre_authorized_task_that_no_longer_qualifies_is_refused(self):
         record = self.record()
-        other = self.record()
         self.assertTrue(self.exercise(self.application(), record))
-        lapsed = partial(small_pre_authorization_lapsed, ledger=self.ledger)
-        # Still in the class: its bounds apply, nothing is refused.
-        self.assertFalse(lapsed(record, self.settings, compact_view_lanes=SMALL_LANES))
-        # Restarted under a stricter reviewer cap, or with a full-packet lane.
         stricter = replace(self.settings, small_task_review_max_tokens=0)
-        self.assertTrue(lapsed(record, stricter, compact_view_lanes=SMALL_LANES))
-        self.assertTrue(lapsed(record, self.settings, compact_view_lanes={"claude"}))
-        # A task the grant never pre-authorized is unaffected, and so is every
-        # task when no ledger is wired.
-        self.assertFalse(lapsed(other, stricter, compact_view_lanes=SMALL_LANES))
-        self.assertFalse(small_pre_authorization_lapsed(
-            record, stricter, None, compact_view_lanes=SMALL_LANES))
-        # An unreadable ledger refuses.
+
+        def refusal(ledger, settings=self.settings, lanes=SMALL_LANES, *, approval_free=True):
+            return small_pre_authorization_refusal(
+                record, settings, ledger, approval_free=approval_free,
+                compact_view_lanes=lanes)
+
+        # Still in the class with its ledger: its bounds apply, nothing is refused.
+        self.assertIsNone(refusal(self.ledger))
+        # Restarted under a stricter reviewer cap, or with a full-packet lane.
+        self.assertEqual("small_task_pre_authorization_lapsed", refusal(self.ledger, stricter))
+        self.assertEqual("small_task_pre_authorization_lapsed",
+                         refusal(self.ledger, lanes={"claude"}))
+        # Restarted with the ledger omitted or unreadable: refused even when
+        # the task still qualifies, since its trips could not be recorded.
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(None))
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(None, stricter))
         with patch.object(self.ledger, "delegation_audit_records",
                           side_effect=OSError("ledger unavailable")):
-            self.assertTrue(lapsed(other, stricter, compact_view_lanes=SMALL_LANES))
+            self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # A task whose graph keeps the button is never affected and never
+        # reads the ledger, with or without one.
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("ledger read")):
+            for ledger in (None, self.ledger):
+                for settings in (self.settings, stricter):
+                    self.assertIsNone(refusal(ledger, settings, approval_free=False))
+
+    def test_the_approval_free_flag_survives_the_application_projection(self):
+        """Recovery rehydrates it; a projection written before the grant keeps the button."""
+
+        services = DefaultDryRunServices(
+            self.settings, packet_router=packet_router(self.settings))
+        granted, ordinary = self.record(), self.record()
+        services.register(granted, approval_free=True)
+        services.register(ordinary)
+        self.assertTrue(services.execution_approval_free(granted.task_id))
+        self.assertFalse(services.execution_approval_free(ordinary.task_id))
+        views = {task_id: services.application_projection(task_id)
+                 for task_id in (granted.task_id, ordinary.task_id)}
+        self.assertIs(False, views[granted.task_id]["execution_approval_required"])
+        self.assertIs(True, views[ordinary.task_id]["execution_approval_required"])
+        legacy = dict(views[ordinary.task_id])
+        del legacy["execution_approval_required"]
+        for task_id, view, expected in (
+            (granted.task_id, views[granted.task_id], True),
+            (ordinary.task_id, views[ordinary.task_id], False),
+            (ordinary.task_id, legacy, False),
+        ):
+            with self.subTest(task_id=task_id, keys=sorted(view)):
+                services.discard(task_id)
+                self.assertFalse(services.execution_approval_free(task_id))
+                services.hydrate(SimpleNamespace(projection={"application": view}))
+                self.assertIs(expected, services.execution_approval_free(task_id))
 
     def test_a_paid_off_deployment_never_exercises_a_grant(self):
         application = self.application(
@@ -2632,6 +2670,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             self.coordinator._runtime.compact_state(record.task_id)[
                 "execution_approval_required"],
         )
+        # The dispatcher's reading matches the persisted graph flag.
+        self.assertIs(False, projection.projection["application"]["execution_approval_required"])
         [entry] = ledger.delegation_audit_records(limit=10)
         self.assertIs(RecordedOutcome.PRE_AUTHORIZED, entry.outcome)
         self.assertTrue(entry.acting_agent.endswith(record.task_id))
@@ -2650,6 +2690,14 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         projection = self.coordinator.get_projection(record.task_id)
         assert projection is not None
         self.assertEqual("execution", projection.projection["pending_approval"]["kind"])
+        # An ordinary graph persists the button, and the dispatcher reads the
+        # same, so no pre-authorization refusal can ever apply to it.
+        self.assertIs(
+            True,
+            self.coordinator._runtime.compact_state(record.task_id)[
+                "execution_approval_required"],
+        )
+        self.assertIs(True, projection.projection["application"]["execution_approval_required"])
         self.assertEqual([], ready)
         self.assertEqual([], dispatched)
         [entry] = ledger.delegation_audit_records(limit=10)
@@ -5090,3 +5138,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]

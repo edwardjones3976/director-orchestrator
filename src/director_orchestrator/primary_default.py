@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -786,37 +787,32 @@ def _independent_lane_pair(lanes: Collection[str]) -> bool:
     return False
 
 
-def small_pre_authorization_lapsed(
+def small_pre_authorization_refusal(
     record: TaskRecord, settings: Settings, ledger: Any, *,
-    compact_view_lanes: Collection[str],
-) -> bool:
-    """Whether a task a standing grant pre-authorized no longer qualifies.
+    approval_free: bool, compact_view_lanes: Collection[str],
+) -> str | None:
+    """Why a task a standing grant pre-authorized may not be dispatched, if at all.
 
-    Its graph was persisted without the execution button. If a restart under
-    stricter settings or different lanes takes it out of the class, every bound
-    tied to the class (the reviewer's byte and token caps, the producer's
-    result cap) would silently lapse, so its dispatch is refused instead. Only
-    a task outside the class reads the audit ledger, and an unreadable ledger
-    refuses.
+    Its graph was persisted without the execution button, so nothing but this
+    check stands between a restart and an unbounded run. With no configured
+    or readable audit ledger it is refused: its trips could not be recorded.
+    If stricter settings or different lanes have taken it out of the class,
+    every bound tied to the class (the reviewer's byte and token caps, the
+    producer's result cap) would silently lapse, so it is refused too. A task
+    whose graph keeps the button is never affected and never reads the ledger.
     """
 
-    if ledger is None or small_read_only_eligible(
-            record, settings, compact_view_lanes=compact_view_lanes):
-        return False
-    agent = f"director-langgraph:{record.task_id}"
+    if not approval_free:
+        return None
     try:
-        after = None
-        while True:
-            # ponytail: full-chain read per dispatch of a task outside the class while a ledger is wired; index PRE_AUTHORIZED by task if history grows
-            page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
-            if any(item.outcome is RecordedOutcome.PRE_AUTHORIZED
-                   and item.acting_agent == agent for item in page):
-                return True
-            if len(page) < 1_000:
-                return False
-            after = page[-1].digest
+        ledger.delegation_audit_records(limit=1)
     except Exception:
-        return True
+        # None, unreadable, or failing verification alike.
+        return "small_task_pre_authorization_unaudited"
+    if not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return "small_task_pre_authorization_lapsed"
+    return None
 
 
 def small_review_bounds(
@@ -1662,13 +1658,19 @@ class DefaultDryRunServices:
         self._records: dict[str, TaskRecord] = {}
         self._effect_grants: dict[str, dict | None] = {}
         self._execution_modes: dict[str, str] = {}
+        # Task ids whose graph was created without the execution button. Only a
+        # standing grant does that; it is persisted in the application
+        # projection beside the graph's own flag, so dispatch reads it without
+        # a checkpoint read ahead of its readiness refusals.
+        self._approval_free: dict[str, bool] = {}
         self._lock = threading.RLock()
         self._owners: dict[str, int] = {}
 
     def register(self, record: TaskRecord, *, effect_grant: dict | None = None,
-                 execution_mode: str | None = None) -> None:
+                 execution_mode: str | None = None, approval_free: bool = False) -> None:
         self._acquire_record(
-            record, effect_grant=effect_grant, execution_mode=execution_mode
+            record, effect_grant=effect_grant, execution_mode=execution_mode,
+            approval_free=approval_free,
         )
 
     def discard(self, task_id: str) -> None:
@@ -1681,6 +1683,7 @@ class DefaultDryRunServices:
             self._records.pop(task_id, None)
             self._effect_grants.pop(task_id, None)
             self._execution_modes.pop(task_id, None)
+            self._approval_free.pop(task_id, None)
 
     def occupied(self, task_id: str) -> bool:
         """Return whether an in-process caller still owns this task record."""
@@ -1711,6 +1714,9 @@ class DefaultDryRunServices:
             TaskRecord.model_validate(dict(raw)),
             effect_grant=application.get("effect_grant"),
             execution_mode=application.get("execution_mode", "unknown"),
+            # Absent on every projection written before the standing grant
+            # existed, and those tasks all kept the button.
+            approval_free=application.get("execution_approval_required") is False,
             exclusive=exclusive,
         )
 
@@ -1720,6 +1726,7 @@ class DefaultDryRunServices:
         *,
         effect_grant: dict | None = None,
         execution_mode: str | None = None,
+        approval_free: bool = False,
         exclusive: bool = False,
     ) -> bool:
         with self._lock:
@@ -1739,8 +1746,15 @@ class DefaultDryRunServices:
                 if self.settings.langgraph_primary_offline_simulation_enabled
                 else "live" if self._live_composition else "paid_off"
             )
+            self._approval_free[task_id] = approval_free
             self._owners[task_id] = 1
             return True
+
+    def execution_approval_free(self, task_id: str) -> bool:
+        """Whether this task's graph was created without the execution button."""
+
+        with self._lock:
+            return self._approval_free.get(task_id, False)
 
     def _record(self, task_id: str) -> TaskRecord:
         with self._lock:
@@ -1759,6 +1773,7 @@ class DefaultDryRunServices:
                 "task_record": record.model_dump(mode="json"),
                 "effect_grant": self._effect_grants.get(task_id),
                 "execution_mode": self._execution_modes[task_id],
+                "execution_approval_required": not self._approval_free.get(task_id, False),
             }
 
     def authenticate_scope(self, context: HandlerContext) -> PhaseResult:
@@ -2807,7 +2822,8 @@ class DefaultPrimaryApplication:
             )
             request = self._request(record, execution_approval_required=not granted)
         self.services.register(record, effect_grant=(
-            None if self.effect_grant is None else self.effect_grant.as_dict()))
+            None if self.effect_grant is None else self.effect_grant.as_dict()),
+            approval_free=granted)
         try:
             projection = self.coordinator.create_intake(request)
             planned = self._record_from_projection(projection)
@@ -3500,12 +3516,14 @@ class DefaultPrimaryActivation:
                         services._packet_router.planned_work_packet(record, assignment),
                     )
                     packet_digest = document_digest(packet)
-                    if small_pre_authorization_lapsed(
-                            record, settings, delegation_ledger,
-                            compact_view_lanes=compact_view_lanes):
+                    pre_authorization_refusal = small_pre_authorization_refusal(
+                        record, settings, delegation_ledger,
+                        approval_free=services.execution_approval_free(record.task_id),
+                        compact_view_lanes=compact_view_lanes)
+                    if pre_authorization_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
-                            "small_task_pre_authorization_lapsed")
+                            pre_authorization_refusal)
                     review_refusal, review_token_cap = small_review_bounds(
                         record, settings, assignment, packet,
                         compact_view_lanes=compact_view_lanes)
@@ -4367,3 +4385,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]

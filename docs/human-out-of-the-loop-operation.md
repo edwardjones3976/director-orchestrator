@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
@@ -322,9 +323,11 @@ also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
 outcome size that fits, and a producer result whose review would exceed 16 KB is
 refused when it is accepted, before it is recorded and before any reviewer
 work. A result refused there still spent the producer's attempt. A
-pre-authorized task that no longer qualifies when it is dispatched, for example
-after a restart under a lower reviewer cap or different lanes, is refused
-rather than run without the class's bounds; that failure trips the grant.
+pre-authorized task, one whose persisted graph skips the execution button, is
+refused at dispatch when no audit ledger is configured or readable, or when it
+no longer qualifies, for example after a restart under a lower reviewer cap or
+different lanes, rather than run without the class's bounds; a task whose graph
+keeps the button is never affected. That failure trips the grant.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -536,3 +539,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
