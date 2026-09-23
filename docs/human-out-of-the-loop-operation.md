@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
@@ -65,7 +66,9 @@ Exactly one state is in force per deployment profile at any time.
 
 A deployment starts in `ATTENDED` and returns to it whenever configuration is
 absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
-`DELEGATED` that does not pass through an explicit owner action.
+`DELEGATED` that does not pass through an explicit owner action, except the
+pre-execution class's process-level ledger hold described next, which is not
+recorded as `SUSPENDED`.
 
 For the pre-execution class, `SUSPENDED` is recorded per grant: a durable
 `delegation_trip` record holds that `grant_id` in every process until the owner
@@ -180,7 +183,11 @@ for another.
 ## Trip conditions
 
 Any of these moves the deployment to `SUSPENDED` immediately, before the
-decision in flight completes:
+decision in flight completes. For the pre-execution class two are narrower, as
+its carve-out: a failed pre-authorized task is recorded against that `grant_id`
+at the grant's next exercise attempt and suspends that grant only, and an audit
+ledger that cannot be written holds only the process attended, as described
+under operating states:
 
 - a gate result changes after a verdict was recorded;
 - a new commit appears on the candidate, which invalidates every prior review,
@@ -203,7 +210,11 @@ Every delegated decision, and every refusal to make one, writes an immutable
 record containing the grant identifier, the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
 consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
-before the action, not after it.
+before the action, not after it. For the pre-execution class, a refusal made
+before the ledger is consulted (no grant for the class, delegation off or
+suspended, a workload hold, a deployment that cannot execute, or a ledger that
+is absent or latched) and an exercise lost to a concurrent writer write no
+record; nothing runs without the button in either case.
 
 ## Standing grant for small read-only tasks
 
@@ -222,15 +233,22 @@ producer and one independent reviewer from another provider family; neither
 assignment requires approval, opens a draft pull request, carries a public
 query or a closed directive, or runs on the Perplexity, Firecrawl, or Gemini
 lane; both lanes' configured transports show the model only the compact
-provider view described below; the producer is not implementation work; neither
-the intake nor the producer's task is worded as a change (edit, update, write,
-add, create, rename, modify, delete, and similar); and the frozen plan total is
-at most $1 and within the task budget, with the reviewer inside its own cap.
+provider view described below; the producer is not implementation work; the
+intake and the producer's task are each a read-shaped request, meaning every
+sentence opens with a read verb (summarize, explain, describe, review, list,
+compare, answer, analyse) and no shell syntax, dotfile, home, parent or
+absolute path, secret-like word or variable name, write-shaped word, or outward
+or mutating verb appears; and the frozen plan total is at most $1 and within the task
+budget, with the reviewer inside its own cap.
 Model or plan output can only remove eligibility. Every plan, assignment, and
 intake model forbids extra fields, so nothing a model writes can assert it.
 "Read-only" means the packet grants no write tool and no effect. It does not
 mean a sandboxed process: native and bridge CLIs still run in a host
-workspace, which is why write-shaped requests are kept out of the class.
+workspace. Membership is a lexical filter over the owner's words, not a
+semantic guarantee: a keyword scan cannot show that no tier-0 class is
+implicated, so evidence-bar item 7 is not evaluated before execution, and
+whether this filter is enough to replace the per-task button is part of the
+owner's sign-off on the class.
 
 **Exercise.** The execution button is skipped only when all of these hold at
 intake: `DELEGATION_ENABLED` is true and `DELEGATION_SUSPENDED` is false; a live
@@ -246,7 +264,8 @@ grant. Any other case stops for the button exactly as before.
 no verdict exists yet, so evidence-bar items 1-5 cannot hold. The decision is
 made by `hotl_execution.decide_pre_execution`, never by `H(a)`, over its own
 closed terms: `authorization` (item 9, including an attested owner intake and
-an untripped, unexhausted grant), `eligibility` (item 7), `bounds` (item 8),
+an untripped, unexhausted grant), `eligibility` (the lexical membership test
+above; not item 7, which is not evaluated before execution), `bounds` (item 8),
 `verification` (the exact starting commit and snapshot digest),
 `lane_independence` (two distinct lanes from different provider families),
 `safe_stopping`, `owned_paths_declared` (item 6 before any change), and `audit`
@@ -260,7 +279,10 @@ never skips or relaxes.
 grant, carries its snapshot and the exact starting commit, lists every
 evaluated pre-execution term as `PASS`, and holds no verdict. A refusal writes a
 `REFUSED` record naming the failed terms; a task outside the class is refused on
-`eligibility` alone, without reading history, and claims no other term. The
+`eligibility` alone, without reading history, and claims no other term, and an
+eligible intake that is not an attested owner message, or that uses a lane the
+grant does not name, is refused on `authorization` alone, also without reading
+history. The refusals that write no record are listed under Audit record. The
 record that spends an exercise is appended only if the ledger still holds the
 history it was counted from, so concurrent writers cannot overspend a grant.
 `PRE_AUTHORIZED` is valid only for this class, and this class can never record
@@ -268,7 +290,8 @@ history it was counted from, so concurrent writers cannot overspend a grant.
 
 **Trips.** Trips are derived from durable state at every exercise, not from the
 path a task happened to finish on. Before a grant is exercised again, every task
-it pre-authorized is read: one that ended other than `SUCCEEDED`, one left with
+it pre-authorized is read: one that ended other than `SUCCEEDED`, one whose
+parallel aggregate ended failed before the graph classified it, one left with
 an ambiguous slot, or one that cannot be read writes a `delegation_trip` record,
 which suspends that grant. That covers a task settled through a provider
 callback and one whose process stopped after its terminal was persisted. A task
@@ -399,10 +422,14 @@ its pull request accepts; without that sign-off, row 4S does not exist.
 
 Phase 0 now has an executable form in `src/director_orchestrator/hotl_execution.py`,
 described in [`hotl-execution-predicate.md`](hotl-execution-predicate.md). It
-implements the rules above and adds none. Where the two disagree, this document
-wins and the code is wrong.
+implements the rules above and adds none. The rules above include the
+pre-execution carve-out, so `decide_pre_execution`, which decides only
+`execute_small_read_only_task` over its own closed terms, is part of that form
+and not an addition. Where the two disagree, this document wins and the code
+is wrong.
 
-An action runs without returning to the owner only when every term holds:
+Every other action, which is candidate-bound, runs without returning to the
+owner only when every term holds:
 
 ```
 H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
@@ -475,8 +502,9 @@ These are stated plainly because a framework that hides them is worse than none.
   dispatches were abandoned on the misreading, and the delegation pool was
   reported to the owner as empty on the strength of it. Cursor's CLI is
   separately blocked by usage quota, which is a real availability failure.
-  Phases 3 and 4 still exist before any broadening; the reason is caution, not
-  this evidence.
+  Phases 3 and 4 still exist before any broadening of the candidate-bound
+  classes (row 4S is the stated exception); the reason is caution, not this
+  evidence.
 - This document was drafted by an agent. An agent writing the rules that govern
   agents is a conflict of interest, and the owner should read it as a proposal
   to be checked rather than as settled policy.
@@ -495,3 +523,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->

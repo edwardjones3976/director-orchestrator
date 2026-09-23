@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
@@ -407,15 +408,58 @@ _SMALL_TASK_EXCLUDED_AGENTS = frozenset(
 )
 # Write-shaped wording in the intake or the producer's task. "Read-only" means
 # no write tool or effect in the packet; native and bridge CLIs still run in a
-# host workspace, so any request worded as a change is kept out of the class.
+# host workspace, so write-shaped wording is one of several lexical filters.
 _WRITE_SCOPE = re.compile(
-    r"\b(?:(?:updat|writ|creat|renam|delet|remov|chang|replac|mov|upgrad|migrat|"
+    r"\b(?:(?:updat|writ|rewrit|creat|renam|delet|remov|chang|replac|mov|upgrad|migrat|"
     r"overwrit|sav)(?:e|es|ed|ing|ion|ions)"
     r"|(?:edit|add|insert|append|install|push|commit)(?:s|es|ed|ted|ing|ting)?"
     r"|(?:modif|appl)(?:y|ies|ied|ying)"
     r"|wrote|written)\b",
     re.I,
 )
+# The class is an allow-list, not a deny-list: every sentence of the request
+# must open with one of these read verbs. A keyword scan cannot prove that no
+# tier-0 class is implicated, so this narrows membership to plainly read-shaped
+# wording; it is still lexical, and the packet's missing write surface is the
+# effect boundary.
+_READ_VERB = re.compile(
+    r"(?:summari[sz]e|explain|describe|review|list|compare|answer|analy[sz]e)\b",
+    re.I,
+)
+_PROJECT_LINE = re.compile(r"\A\s*project\s*:[^\n]*\n", re.I)
+# Terms that keep an otherwise read-shaped request out of the class: shell
+# syntax and commands, dotfiles, home, parent and absolute paths, secret-like words and
+# environment-variable names, and any outward, mutating or tier-0-adjacent verb.
+_OUTSIDE_READ_ONLY = re.compile(
+    r"[|&;$`<>~@#\\]|://|--|\.\.|(?:^|[\s/\"'(])\.\w|(?:^|[\s\"'(])/|\b[A-Za-z]:/"
+    r"|(?-i:\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b)"
+    r"|\b(?:(?:api[\s_-]?)?keys?|tokens?|passwords?|passphrases?|secrets?|credentials?"
+    r"|certificates?|cookies?|ssh|id_rsa|id_ed25519|env|environment|private"
+    r"|run|runs|execute|exec|eval|rm|git|curl|wget|sh|bash|zsh|pwsh|powershell|cmd"
+    r"|sudo|chmod|chown|pip|npm|docker|kubectl|python"
+    r"|e-?mail|mail|tweet|post|share|upload|send|forward|publish|notify|dm|message"
+    r"|slack|wiki|channel|twitter|public|publicly|external|webhook|http|https|www"
+    r"|reset|rebase|revert|bump|drop|erase|clear|close|reopen|disable|enable"
+    r"|raise|lower|set|increase|decrease|grant|revoke|force|format|generate"
+    r"|translate|store|put|uninstall|fix|patch|implement|deploy|merge|approve"
+    r"|pay|buy|order|book|schedule|cancel|restore|rollback|kill|stop|start"
+    r"|restart|trigger|dispatch|assign|budget|billing|protection)\b",
+    re.I,
+)
+
+
+def _read_only_request(text: str) -> bool:
+    """Whether every sentence opens with a read verb and no outside term appears."""
+
+    body = _PROJECT_LINE.sub("", text, count=1)
+    sentences = [part.strip() for part in re.split(r"[.!?]+(?:\s+|\Z)|\n+", body)
+                 if part.strip()]
+    return (
+        bool(sentences)
+        and all(_READ_VERB.match(part) for part in sentences)
+        and not _OUTSIDE_READ_ONLY.search(body)
+        and not _WRITE_SCOPE.search(body)
+    )
 
 
 def small_read_only_eligible(
@@ -436,14 +480,22 @@ def small_read_only_eligible(
     so no field can carry eligibility.
 
     Eligible means: no deterministic approval reason in the intake or in any
-    generated plan string, no write-shaped wording in the intake or the
-    producer's task, no external effect or draft pull request, exactly one
+    generated plan string; an intake and a producer task that are read-shaped
+    requests (every sentence opens with a read verb such as summarize, explain,
+    describe, review, list, compare, answer or analyse, with no shell syntax,
+    dotfile, home, parent or absolute path, secret-like word, or outward or
+    mutating verb); no external effect
+    or draft pull request, exactly one
     non-implementation producer and one independent reviewer from another
     provider family, both on lanes that send the compact view, and a frozen
     plan total within the small-task ceiling.
 
     ``compact_view_lanes`` is required. ``None`` evaluates the plan alone and
     is only for advisory text; a membership decision always passes the lanes.
+
+    This is a lexical filter over the owner's words. It is not evidence that no
+    tier-0 class is implicated (evidence-bar item 7), and nothing records it
+    as such.
     """
 
     plan = record.plan
@@ -463,12 +515,12 @@ def small_read_only_eligible(
         or record.intake.primary_public_research_query is not None
         or record.intake.primary_required_capabilities
         or len(plan.assignments) != 2
-        or _WRITE_SCOPE.search(record.intake.text)
+        or not _read_only_request(record.intake.text)
     ):
         return False
     producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
     if (
-        _WRITE_SCOPE.search(producer.task)
+        not _read_only_request(producer.task)
         or producer.depends_on != []
         or reviewer.kind is not AssignmentKind.INDEPENDENT_REVIEW
         or reviewer.depends_on != [producer.sequence]
@@ -1698,3 +1750,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

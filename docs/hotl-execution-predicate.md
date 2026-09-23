@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
@@ -8,19 +9,23 @@
 # Standing-authorization execution predicate
 
 This describes the executable form of the delegation rules. It adds nothing to
-them. [`human-out-of-the-loop-operation.md`](human-out-of-the-loop-operation.md)
+them; the pre-execution class below is the governing document's own stated
+carve-out, not an addition made here. [`human-out-of-the-loop-operation.md`](human-out-of-the-loop-operation.md)
 remains authoritative. Where the two could ever disagree, the
 governing document wins and this one is wrong.
 
-This integrates the evaluated predicate without changing the closed tier lists.
+This integrates the evaluated predicate. The tier lists stay closed; their one
+owner-signed addition, `execute_small_read_only_task`, is decided by
+`decide_pre_execution`, described below, and never by `H(a)`.
 The current owner protocol requires one non-author reviewer, who carries the merge.
 Tests pin a local copy of the tier authority so checkout depth and remote names
 cannot silently disable the gate comparison.
 
 ## The predicate
 
-A proposed action runs without returning to the owner only when every term
-holds:
+A proposed candidate-bound action runs without returning to the owner only
+when every term holds (the one pre-execution class is decided instead by
+`decide_pre_execution`, under [The pre-execution class](#the-pre-execution-class)):
 
 ```
 H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
@@ -81,7 +86,7 @@ exactly the unevaluated-term failure above. `decide()` therefore holds it, and
 | Term | Required condition | Bar |
 | --- | --- | --- |
 | `authorization` | A grant is live, unexpired, unrevoked, unexhausted and untripped, and covers this class, repository, branch and both lanes; the intake is an attested owner message. | 9 |
-| `eligibility` | `policy.small_read_only_eligible()` admits the task, which includes that no deterministic approval reason, and so no tier-0 class, is implicated. | 7 |
+| `eligibility` | `policy.small_read_only_eligible()` admits the task: no deterministic approval reason matches (a keyword scan), and the request is read-shaped. This is lexical, not evidence that no tier-0 class is implicated, so item 7 is not evaluated before execution. | — |
 | `bounds` | Hop and revision limits are within their configured bounds. | 8 |
 | `verification` | The exact starting commit and snapshot digest are bound. | — |
 | `lane_independence` | Two distinct lanes from different provider families. Structural only; it is not a verdict. | — |
@@ -90,10 +95,15 @@ exactly the unevaluated-term failure above. `decide()` therefore holds it, and
 | `audit` | The `PRE_AUTHORIZED` record is durably written **before** execution. | 10 |
 
 Items 1 to 5 are carried by the task's own `exact_sha_review` and
-`ci_security_completion` graph gates, which run unchanged. Every term is
+`ci_security_completion` graph gates, which run unchanged. Item 7 is not
+evaluated before execution; whether this class's lexical eligibility is enough
+to replace the per-task button is part of the owner's sign-off. Every term is
 required, none recovers, and an unlisted or missing term is refused.
 
 ## A hold is not a permission question
+
+For every candidate-bound class (the pre-execution class uses
+`decide_pre_execution`, where every term is required and none recovers):
 
 ```
 Decision(a) = execute        if H(a)
@@ -180,3 +190,4 @@ gap to `Activate`.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->

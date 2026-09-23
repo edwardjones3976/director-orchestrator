@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -287,7 +288,8 @@ class SmallReviewBoundsTests(unittest.TestCase):
             writer_owner_id="langgraph-primary-default",
             writer_secret="default-primary-test-writer-secret",
             timeout_seconds=self.settings.provider_timeout_seconds,
-            extra_constraints=partial(_small_producer_constraints, self.settings),
+            extra_constraints=partial(
+                _small_producer_constraints, self.settings, compact_view_lanes=SMALL_LANES),
         )
         record = self.record("unused")
         record.assignment_outcomes = []
@@ -296,8 +298,24 @@ class SmallReviewBoundsTests(unittest.TestCase):
                   if item.startswith("Small read-only task:")]
         ceiling = int(re.search(r"under (\d+) characters", hint).group(1))
         self.assertGreater(ceiling, 0)
-        # The advertised ceiling is conservative: plain text of that length fits.
-        self.assertIsNone(self.producer_refusal("x" * ceiling))
+        # The advertised ceiling holds for the costliest characters it allows:
+        # quotes and backslashes, newlines and tabs, and non-ASCII text.
+        for character in ("x", '"', "\\", "\n", "\t", "\u00e9", "\u4e2d", "\U0001f600"):
+            with self.subTest(character=character):
+                self.assertIsNone(self.producer_refusal(character * ceiling))
+        # A task outside the class under the activation's lanes is not told:
+        # nothing would refuse its outcome (the cursor bridge posts the full packet).
+        unhinted = DirectorPacketTaskRouter(
+            authority_snapshots=_FixedAuthorityResolver(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-primary-default",
+            writer_secret="default-primary-test-writer-secret",
+            timeout_seconds=self.settings.provider_timeout_seconds,
+            extra_constraints=partial(
+                _small_producer_constraints, self.settings, compact_view_lanes={"claude"}),
+        )
+        self.assertFalse(any(item.startswith("Small read-only task:") for item in
+                             unhinted.planned_work_packet(record, producer)["constraints"]))
         # Deterministic, so the approval packet and the dispatched one agree.
         self.assertEqual(hinted.planned_work_packet(record, producer),
                          hinted.planned_work_packet(record, producer))
@@ -548,6 +566,73 @@ class StandingGrantExerciseTests(unittest.TestCase):
         renewed = self.application(delegation_grant_json=small_grant(grant_id="grant-small-2"))
         self.assertTrue(self.exercise(renewed, self.record()))
 
+    def test_a_grant_never_reaches_past_its_repository_branch_lanes_or_holds(self):
+        refused = {
+            "foreign_repository": {"delegation_grant_json": small_grant(
+                repository="owner/other-repository")},
+            "branch_not_covered": {"delegation_grant_json": small_grant(
+                branch_pattern="release/*")},
+            "lane_not_named": {"delegation_grant_json": small_grant(
+                providers=["claude", "grok"])},
+        }
+        for name, changes in refused.items():
+            with self.subTest(case=name):
+                ledger = audit_ledger(self.directory)
+                self.assertFalse(self.exercise(self.application(ledger, **changes), self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+        with self.subTest(case="unbound_starting_commit"):
+            ledger = audit_ledger(self.directory)
+            application = self.application(ledger)
+            application.authority = DefaultPrimaryAuthority("not-a-sha", digest("authority"))
+            self.assertFalse(self.exercise(application, self.record()))
+            [entry] = self.audit(ledger)
+            self.assertIs(GateStatus.FAIL, gate_statuses(entry)["verification"])
+        with self.subTest(case="workload_hold"):
+            ledger = audit_ledger(self.directory)
+            record = self.record()
+            record.workload_selection_hold_reasons = ["workload_hold"]
+            self.assertFalse(self.exercise(self.application(ledger), record))
+            self.assertEqual([], self.audit(ledger))
+
+    def test_an_unattested_intake_is_refused_without_reading_history(self):
+        application = self.application()
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("history read")):
+            self.assertFalse(self.exercise(application, self.record(user="UOTHER")))
+        self.assertFalse(application._delegation_tripped)
+        [entry] = self.audit()
+        self.assertEqual({"authorization": GateStatus.FAIL}, gate_statuses(entry))
+
+    def test_health_reports_4s_only_when_the_application_can_pre_authorize(self):
+        import importlib
+
+        main = importlib.import_module("director_orchestrator.main")
+        cases = {
+            "capable": (self.application(), True),
+            "no_ledger": (self.application(None), False),
+            "no_compact_lane": (self.application(lanes=frozenset()), False),
+            "paid_off": (self.application(
+                dispatcher=False,
+                langgraph_primary_offline_simulation_enabled=False,
+                langgraph_primary_live_provider_dispatch_enabled=False), False),
+        }
+        for name, (application, armed) in cases.items():
+            with self.subTest(case=name), patch.object(
+                main, "primary_default_activation",
+                SimpleNamespace(application=application, live_dependencies=None,
+                                health=lambda: {}),
+            ), patch.object(main, "settings", replace(
+                main.settings, delegation_enabled=True, delegation_suspended=False,
+                delegation_grant_json=small_grant())):
+                delegation = main.health()["delegation"]
+                self.assertIs(armed, delegation["pre_execution_armed"])
+                self.assertIs(armed, delegation["executes_decisions"])
+        latched = self.application()
+        latched._delegation_tripped = True
+        self.assertFalse(latched.pre_execution_capable())
+
     def test_a_paid_off_deployment_never_exercises_a_grant(self):
         application = self.application(
             dispatcher=False,
@@ -558,7 +643,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual([], self.audit())
 
     @staticmethod
-    def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False):
+    def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False,
+                    failed_aggregate=False):
         def get_projection(task_id):
             if unreadable:
                 raise OSError("projection unavailable")
@@ -567,7 +653,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
         def parallel_aggregate(task_id):
             if aggregate_unreadable:
                 raise OSError("aggregate unavailable")
-            return SimpleNamespace(ambiguous_slot_count=ambiguous)
+            return SimpleNamespace(ambiguous_slot_count=ambiguous,
+                                   terminal=failed_aggregate, succeeded=False)
 
         return SimpleNamespace(get_projection=get_projection,
                                parallel_aggregate=parallel_aggregate)
@@ -582,6 +669,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
             "owner_decision": self.coordinator(
                 {"terminal_classification": "OWNER_DECISION_REQUIRED"}),
             "ambiguous_slot": self.coordinator(RUNNING, ambiguous=1),
+            # Its aggregate ended failed, but the graph was never resumed.
+            "failed_aggregate_unclassified": self.coordinator(RUNNING, failed_aggregate=True),
             "unreadable": self.coordinator(unreadable=True),
             "aggregate_unreadable": self.coordinator(RUNNING, aggregate_unreadable=True),
         }
@@ -2560,6 +2649,30 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(trip.acting_agent.endswith(failed_task_id))
         self.assertIs(RecordedOutcome.REFUSED, refused.outcome)
         self.assertTrue(refused.acting_agent.endswith(after.task_id))
+
+    def test_a_failed_aggregate_left_unclassified_trips_the_grant(self):
+        """resume_parallel_aggregate raised, so the graph never classified it."""
+
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed")
+
+        ledger = self.use_standing_grant(dispatch)
+        with patch.object(self.coordinator, "resume_parallel_aggregate",
+                          side_effect=RuntimeError("resume failed")):
+            try:
+                self.attested_intake("unclassified-small")
+            except RuntimeError:
+                pass
+        [pre] = ledger.delegation_audit_records(limit=10)
+        failed_task_id = pre.acting_agent.removeprefix("director-langgraph:")
+        projection = self.coordinator.get_projection(failed_task_id)
+        assert projection is not None
+        self.assertIsNone(projection.projection["terminal_classification"])
+        aggregate = self.coordinator.parallel_aggregate(failed_task_id)
+        self.assertTrue(aggregate.terminal)
+        self.assertFalse(aggregate.succeeded)
+        self.assert_next_exercise_trips_on(failed_task_id, ledger, "unclassified-next")
 
     def test_a_callback_settled_failure_trips_the_grant(self):
         """No drive loop runs: the task fails through record_provider_callback."""
@@ -4914,3 +5027,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

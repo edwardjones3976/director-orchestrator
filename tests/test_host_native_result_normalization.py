@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
@@ -213,6 +214,40 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 # class, so its reviewer is never measured on a view it was not sent.
                 self.assertIs(compact, sends_compact_provider_view(transports[provider]))
 
+    def test_compact_view_lanes_admits_only_lanes_whose_every_adapter_is_compact(self):
+        """The production composition used at intake and at dispatch alike."""
+
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.primary_default import _compact_view_lanes
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+
+        lanes = ("claude", "grok", "cursor", "github-copilot")
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset(lanes), "sha256:" + "c" * 64, 1),
+            )
+        adapters = {lane: PacketBoundaryAdapter(lane, transports[lane]) for lane in lanes}
+        adapters["openai"] = PacketBoundaryAdapter(
+            "openai", OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"))
+        self.assertEqual(
+            frozenset({"claude", "grok", "openai"}),
+            _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters={})))
+        # One attempt adapter that posts the full packet takes its lane out.
+        attempts = {
+            "claude": {("json", "full"): PacketBoundaryAdapter("claude", transports["cursor"])},
+            "grok": {("json", "compact"): PacketBoundaryAdapter("grok", transports["grok"])},
+        }
+        self.assertEqual(
+            frozenset({"grok", "openai"}),
+            _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters=attempts)))
+
     def test_native_failure_is_not_promoted_to_success(self):
         native = grok_response()
         native.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
@@ -373,3 +408,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

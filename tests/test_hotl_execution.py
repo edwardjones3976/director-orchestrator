@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
@@ -167,6 +168,18 @@ class GoverningDocumentTests(unittest.TestCase):
         self.assertIn("that reviewer performs the merge", row)
         authority = DOC.read_text(encoding="utf-8")
         self.assertIn("That `ACCEPT` is the whole verdict requirement", authority)
+
+    def test_the_predicate_document_scopes_h_to_candidate_bound_classes(self):
+        text = " ".join(
+            (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8").split())
+        self.assertIn("A proposed candidate-bound action runs without returning", text)
+        self.assertIn("the pre-execution class uses `decide_pre_execution`", text)
+        self.assertNotIn("without changing the closed tier lists", text)
+        row = next(line for line in (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
+            encoding="utf-8").splitlines() if line.startswith("| `eligibility` "))
+        # A keyword scan is not item 7, and the row must not claim it is.
+        self.assertTrue(row.rstrip().endswith("| — |"), row)
+        self.assertIn("item 7 is not evaluated before execution", row)
 
     def test_the_governing_document_names_the_executable_form(self):
         text = DOC.read_text(encoding="utf-8")
@@ -478,3 +491,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

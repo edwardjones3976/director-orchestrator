@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
@@ -115,7 +116,10 @@ NON_RECOVERABLE_TERMS: frozenset[str] = frozenset(
 #
 #   authorization          item 9   live, in-scope, unexhausted, untripped grant
 #                                   and an attested owner intake
-#   eligibility            item 7   policy.small_read_only_eligible() admits it
+#   eligibility            --       policy.small_read_only_eligible() admits it: no
+#                                   deterministic approval reason (a keyword scan)
+#                                   and a read-shaped request; this is not item 7,
+#                                   which nothing evaluates before execution
 #   bounds                 item 8   hop and revision ledgers within bounds
 #   verification           the exact starting commit and snapshot digest are bound
 #   lane_independence      two distinct lanes from different provider families
@@ -356,3 +360,4 @@ class CompletionRate:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
@@ -1134,14 +1135,15 @@ class Settings:
         }
 
     def delegation_readiness(
-        self, *, moment=None, pre_execution_ledger_configured: bool = False
+        self, *, moment=None, pre_execution_capable: bool = False
     ) -> dict:
         """Report the human-out-of-the-loop state as readiness booleans.
 
         This reports configuration and resolves nothing itself. The payload
-        says whether the phase-4S pre-execution path is armed, which needs an
-        audit ledger wired into the primary application, so an operator does
-        not have to infer it. Grant contents are never reported: /health
+        says whether the phase-4S pre-execution path is armed, which needs a
+        primary application able to pre-authorize a task (an audit ledger, a
+        compact-view lane, an executing deployment), so an operator does not
+        have to infer it. Grant contents are never reported: /health
         returns readiness booleans and never secret or allowlist values, and a
         grant names real repositories and providers.
         """
@@ -1155,7 +1157,7 @@ class Settings:
             suspended=self.delegation_suspended,
             grant_document=self.delegation_grant_json,
             moment=moment or datetime.now(timezone.utc),
-            pre_execution_ledger_configured=pre_execution_ledger_configured,
+            pre_execution_capable=pre_execution_capable,
         )
 
     def workload_policy_readiness(
@@ -2549,3 +2551,4 @@ class Settings:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

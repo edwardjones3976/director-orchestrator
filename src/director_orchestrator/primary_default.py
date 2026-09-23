@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -92,7 +93,6 @@ import subprocess
 import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -857,16 +857,20 @@ def _small_producer_constraints(
     router: DirectorPacketTaskRouter,
     record: TaskRecord,
     assignment: Assignment,
+    *,
+    compact_view_lanes: Collection[str],
 ) -> list[str]:
     """Tell a small task's producer, before dispatch, what its outcome must fit.
 
-    Plan-level membership only: lane configuration is not packet authority, and
-    this text must not differ between the approval packet and the dispatched
-    one. small_producer_result_refusal enforces the bound exactly.
+    Only a member of the class under the activation's compact-view lanes is
+    told, because only its review is refused. Those lanes are fixed for the
+    life of the activation, so the approval packet and the dispatched one
+    agree. small_producer_result_refusal enforces the bound exactly.
     """
 
     plan = record.plan
-    if plan is None or not small_read_only_eligible(record, settings, compact_view_lanes=None):
+    if plan is None or not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
         return []
     producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
     if assignment.sequence != producer.sequence:
@@ -881,13 +885,16 @@ def _small_producer_constraints(
     )]})
     overhead = _small_review_view_bytes(router.planned_work_packet(probe, reviewer)) - 2
     # The outcome reaches the reviewer twice (result and summary), each copy
-    # JSON-escaped twice: plain text costs about four review bytes a character.
-    ceiling = max(0, SMALL_TASK_REVIEW_MAX_PACKET_BYTES - overhead) // 4
+    # JSON-escaped twice. Per copy a character costs 1 byte (ASCII), 3 (a
+    # newline or a tab), 2 to 4 (non-ASCII UTF-8) or 4 (a quote or backslash),
+    # so 8 review bytes a character is the worst case for everything but other
+    # control characters.
+    ceiling = max(0, SMALL_TASK_REVIEW_MAX_PACKET_BYTES - overhead) // 8
     return [
-        f"Small read-only task: keep the outcome under {ceiling} characters of plain "
-        f"text. Its independent review is refused above "
-        f"{SMALL_TASK_REVIEW_MAX_PACKET_BYTES} bytes, so a longer outcome fails "
-        "before review."
+        f"Small read-only task: keep the outcome under {ceiling} characters, with "
+        f"no control characters other than newline and tab. Its independent "
+        f"review is refused above {SMALL_TASK_REVIEW_MAX_PACKET_BYTES} bytes, so "
+        "a longer outcome fails before review."
     ]
 
 
@@ -1576,6 +1583,9 @@ class DefaultDryRunServices:
         self._live_composition = live_composition
         self.available_provider_lanes: tuple[str, ...] = ()
         self.provider_lane_ready: Callable[[str], bool] = lambda _provider: False
+        # Set once by the activation from its live transports, before any
+        # packet is built; empty tells no producer about the small class.
+        self.compact_view_lanes: frozenset[str] = frozenset()
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
@@ -1596,7 +1606,10 @@ class DefaultDryRunServices:
                 ),
                 timeout_seconds=settings.provider_timeout_seconds,
                 typed_effect_grant_kinds=typed_external_effect_grant_kinds(settings),
-                extra_constraints=partial(_small_producer_constraints, settings),
+                extra_constraints=lambda router, record, assignment: (
+                    _small_producer_constraints(
+                        settings, router, record, assignment,
+                        compact_view_lanes=self.compact_view_lanes)),
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
@@ -2423,11 +2436,36 @@ class DefaultPrimaryApplication:
                 # Its plan is not registered yet, so nothing has dispatched.
                 continue
             try:
-                if self.coordinator.parallel_aggregate(task_id).ambiguous_slot_count:
-                    return task_id
+                aggregate = self.coordinator.parallel_aggregate(task_id)
             except Exception:
                 return task_id
+            # A terminal, failed aggregate the graph never classified (resume
+            # raised, or the process stopped before it) trips as well.
+            if aggregate.ambiguous_slot_count or (
+                    aggregate.terminal and not aggregate.succeeded):
+                return task_id
         return None
+
+    def _executes(self) -> bool:
+        """Mirrors resume_approval: a paid-off deployment cannot execute."""
+
+        settings = self.settings
+        return (self._parallel_dispatcher is not None
+                or settings.langgraph_primary_offline_simulation_enabled
+                or settings.langgraph_primary_live_provider_dispatch_enabled)
+
+    def pre_execution_capable(self) -> bool:
+        """Whether this process could pre-authorize any task, for /health.
+
+        A wired audit ledger not latched attended, at least one compact-view
+        lane, and a deployment that executes. A per-grant delegation_trip is
+        not reflected: it is visible only in the audit ledger.
+        """
+
+        return (self._delegation_ledger is not None
+                and not self._delegation_tripped
+                and bool(self._compact_view_lanes)
+                and self._executes())
 
     def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
         """Whether a live standing grant pre-authorizes executing this task.
@@ -2456,10 +2494,7 @@ class DefaultPrimaryApplication:
             return False
         if grant is None or decision_class not in grant.classes:
             return False
-        # Mirrors resume_approval: a paid-off deployment cannot execute.
-        if (self._parallel_dispatcher is None
-                and not settings.langgraph_primary_offline_simulation_enabled
-                and not settings.langgraph_primary_live_provider_dispatch_enabled):
+        if not self._executes():
             return False
         with self._delegation_lock:
             ledger = self._delegation_ledger
@@ -2474,6 +2509,16 @@ class DefaultPrimaryApplication:
                 try:
                     self._audit_small_class(ledger, grant, record.task_id,
                                             RecordedOutcome.REFUSED, {"eligibility": False}, now)
+                except Exception:
+                    self._delegation_tripped = True
+                return False
+            lanes = {_assignment_provider_lane(item) for item in record.plan.assignments}
+            if not attested or not lanes <= grant.providers:
+                # Not this owner's attested intake, or a lane the grant does not
+                # name: refused on authorization alone, without reading history.
+                try:
+                    self._audit_small_class(ledger, grant, record.task_id,
+                                            RecordedOutcome.REFUSED, {"authorization": False}, now)
                 except Exception:
                     self._delegation_tripped = True
                 return False
@@ -3082,6 +3127,7 @@ class DefaultPrimaryActivation:
                 # One reading for intake and dispatch alike: the small class
                 # admits only lanes whose transport sends the compact view.
                 compact_view_lanes = _compact_view_lanes(live_dependencies)
+                services.compact_view_lanes = compact_view_lanes
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -4262,3 +4308,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
@@ -166,6 +167,23 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
                          "provider callback", "ambiguous slot", "outside the class and keeps the button",
                          "before any reviewer work"):
             self.assertIn(required, standing)
+        # Every section stating a rule the class departs from says so, and no
+        # section claims the lexical membership test is evidence-bar item 7.
+        self.assertIn("except the pre-execution class's process-level ledger hold", states)
+        self.assertIn("not item 7", standing)
+        self.assertIn("lexical filter", standing)
+        self.assertNotIn("(item 7)", standing)
+        self.assertNotIn("write-shaped requests are kept out", standing)
+        self.assertIn("parallel aggregate ended failed", standing)
+        trips = flat(self.section("Trip conditions"))
+        self.assertIn("suspends that grant only", trips)
+        self.assertIn("holds only the process attended", trips)
+        audit = flat(self.section("Audit record"))
+        self.assertIn("an exercise lost to a concurrent writer write no record", audit)
+        evaluated = flat(self.section("The evaluated form"))
+        self.assertIn("decide_pre_execution", evaluated)
+        self.assertIn("Every other action, which is candidate-bound, runs without", evaluated)
+        self.assertIn("row 4S is the stated exception", flat(self.section("Known limitations")))
 
     def test_evidence_bar_is_conjunctive_and_complete(self) -> None:
         bar = self.section("The evidence bar")
@@ -491,3 +509,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

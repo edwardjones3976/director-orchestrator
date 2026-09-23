@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
@@ -294,7 +295,7 @@ def delegation_readiness(
     suspended: bool,
     grant_document: str | None,
     moment: datetime,
-    pre_execution_ledger_configured: bool = False,
+    pre_execution_capable: bool = False,
 ) -> dict[str, Any]:
     """Readiness booleans for ``/health``. Names and booleans only.
 
@@ -305,10 +306,13 @@ def delegation_readiness(
     ``configured_state`` is what the owner has configured, not a grant of
     authority. ``executes_decisions`` is reported beside it. It is true only
     when the phase-4S pre-execution path is armed: delegation enabled and not
-    suspended, a live grant naming ``execute_small_read_only_task``, and an
-    audit ledger wired into the primary application. Then ``phase`` reads
-    ``"4S"``; otherwise it stays 1 and nothing is resolved. A per-task check
-    can still refuse an armed path.
+    suspended, a live grant naming ``execute_small_read_only_task``, and a
+    primary application that could pre-authorize a task: an audit ledger
+    wired and not latched attended, at least one compact-view lane, and a
+    deployment that executes. Then ``phase`` reads ``"4S"``; otherwise it stays
+    1 and nothing is resolved. A per-task check can still refuse an armed path,
+    and a per-grant ``delegation_trip`` is not reflected here: it is visible
+    only in the audit ledger, which this payload does not read.
     """
 
     try:
@@ -324,7 +328,7 @@ def delegation_readiness(
         state is DelegationState.DELEGATED
         and grant is not None
         and Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK in grant.classes
-        and pre_execution_ledger_configured
+        and pre_execution_capable
     )
     return {
         "phase": "4S" if armed else 1,
@@ -346,3 +350,4 @@ def delegation_readiness(
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
