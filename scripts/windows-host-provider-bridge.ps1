@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -94,6 +95,21 @@ function Install-BridgeRuntime {
         throw "Installed bridge runtime does not match its content address."
     }
     return $destination
+}
+
+function Assert-InstalledBridgeRuntime {
+    # A content-addressed copy (64-hex directory name) re-proves its address on
+    # every launch, so drift in its files refuses startup. This detects drift;
+    # it is not a boundary against the same user, who can also edit the task.
+    param([string]$Root)
+    $base = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $name = Split-Path -Leaf $base
+    if ($name -cnotmatch '^[0-9a-f]{64}$') { return }
+    $text = ((Get-BridgeRuntimeManifest -Root $base) -join "`n") + "`n"
+    $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
+    if ($digest -cne $name) {
+        throw "Installed bridge runtime does not match its content address; the bridge was not started."
+    }
 }
 
 function Register-BridgeTask {
@@ -279,6 +295,7 @@ if ($Action -eq "Install") {
     return
 }
 
+Assert-InstalledBridgeRuntime -Root (Split-Path -Parent $PSScriptRoot)
 $optional = @(
     "DIRECTOR_HOST_PROVIDER_WORKSPACE", "DIRECTOR_HOST_PROVIDER_BIND",
     "DIRECTOR_HOST_PROVIDER_PORT", "DIRECTOR_HOST_PROVIDER_TIMEOUT_SECONDS",
@@ -324,3 +341,4 @@ finally {
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

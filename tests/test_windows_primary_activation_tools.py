@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
@@ -656,6 +657,51 @@ foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime')) {
             self.assertNotEqual(0, result.returncode)
             self.assertIn("does not match its content address", result.stderr)
 
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_installed_bridge_runtime_is_reverified_before_every_launch(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        launch = text[text.index('if ($Action -eq "Install")'):]
+        self.assertLess(launch.index("Assert-InstalledBridgeRuntime -Root (Split-Path -Parent $PSScriptRoot)"),
+                        launch.index("& $pythonPath -m director_orchestrator.host_provider_bridge_server"))
+        harness = r"""
+param($Source, $SourceRoot, $InstallRoot)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime', 'Assert-InstalledBridgeRuntime')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$destination = Install-BridgeRuntime -SourceRoot $SourceRoot -InstallRoot $InstallRoot
+Assert-InstalledBridgeRuntime -Root $SourceRoot
+Assert-InstalledBridgeRuntime -Root $destination
+'verified-clean'
+Set-Content -LiteralPath (Join-Path $destination 'src/director_orchestrator/__init__.py') -Value 'TAMPERED = 1'
+Assert-InstalledBridgeRuntime -Root $destination
+'verified-tampered'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / "source"
+            for relative in ("src/director_orchestrator/__init__.py", "docs/schemas/packet.json",
+                             "docs/provider-profiles/claude.md", "prompts/director-system.md",
+                             "scripts/windows-host-provider-bridge.ps1"):
+                (source / relative).parent.mkdir(parents=True, exist_ok=True)
+                (source / relative).write_bytes(b"fixture\n")
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(source), str(root / "install")],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("verified-clean", result.stdout)
+            self.assertNotIn("verified-tampered", result.stdout)
+            self.assertIn("does not match its content address; the bridge was not started", result.stderr)
+
     def test_host_wrapper_preserves_unsupported_lane_rejection(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
         self.assertIn("unallowlisted provider", text)
@@ -894,3 +940,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

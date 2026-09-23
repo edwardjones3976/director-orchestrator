@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
@@ -160,7 +161,7 @@ function Assert-RunningCandidate {
 
 function Get-ServiceContainer {
     # Compose labels select the service; container IDs are never stored.
-    param([string]$Service, [switch]$Running)
+    param([string]$Service, [switch]$Running, [switch]$AllowAbsent)
     $filters = @(
         "--filter", "label=com.docker.compose.project=$script:ComposeProject",
         "--filter", "label=com.docker.compose.service=$Service",
@@ -168,6 +169,7 @@ function Get-ServiceContainer {
     )
     if ($Running) { $filters += @("--filter", "status=running") }
     $containers = @(& docker ps -a --no-trunc -q @filters | Where-Object { $_ })
+    if ($LASTEXITCODE -eq 0 -and $containers.Count -eq 0 -and $AllowAbsent) { return $null }
     if ($LASTEXITCODE -ne 0 -or $containers.Count -ne 1) {
         throw "Expected exactly one $Service container in the Compose project."
     }
@@ -175,8 +177,9 @@ function Get-ServiceContainer {
 }
 
 function Get-ServiceImageId {
-    param([string]$Service, [switch]$Running)
-    $container = Get-ServiceContainer -Service $Service -Running:$Running
+    param([string]$Service, [switch]$Running, [switch]$AllowAbsent)
+    $container = Get-ServiceContainer -Service $Service -Running:$Running -AllowAbsent:$AllowAbsent
+    if ($null -eq $container) { return $null }
     $image = [string](@(& docker inspect --format "{{.Image}}" $container) | Select-Object -Last 1)
     if ($LASTEXITCODE -ne 0 -or $image -cnotmatch '^sha256:[0-9a-f]{64}$') {
         throw "The $Service image identity could not be read back."
@@ -225,12 +228,18 @@ function Save-PriorImages {
     $path = Get-PriorImagesPath
     # Recorded once, before the first candidate recreate; validated and reused, never replaced.
     if (Test-Path -LiteralPath $path) { $null = Read-PriorImages; return }
+    $orchestrator = Get-ServiceImageId -Service orchestrator -AllowAbsent
+    $gateway = Get-ServiceImageId -Service slackbot -AllowAbsent
+    # An absent container (fresh stack, or after compose down) or one already on
+    # the candidate has no prior image: that is Rollback's documented no-record case.
+    if ($null -eq $orchestrator -or $null -eq $gateway -or
+        $script:runtimeImageId -cin @($orchestrator, $gateway)) { return }
     $record = [ordered]@{
         version = "director-prior-images/v1"
         compose_project = $script:ComposeProject
         candidate_image_id = $script:runtimeImageId
-        orchestrator_image_id = Get-ServiceImageId -Service orchestrator
-        gateway_image_id = Get-ServiceImageId -Service slackbot
+        orchestrator_image_id = $orchestrator
+        gateway_image_id = $gateway
     }
     $temporary = "$path.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
@@ -1157,3 +1166,4 @@ if ($Action -eq "Rollback") {
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

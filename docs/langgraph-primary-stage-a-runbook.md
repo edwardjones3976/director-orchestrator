@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | BEGIN]] -->
@@ -323,7 +324,9 @@ unconditional**, and it is **not an undo**. It requires all of the following.
   first candidate recreate. An invalid record refuses rollback **before**
   intake is stopped. A missing record does not refuse: the fenced return to
   legacy runs on the candidate image and the tool reports that no image was
-  restored.
+  restored. No record is written when the orchestrator or gateway container is
+  absent (a fresh stack, or after `docker compose down`) or already runs the
+  candidate image.
 - **Closed intake, proved.** It stops `slackbot`, `n8n` and `orchestrator`, then
   re-reads each service's running-container list and throws *"Authenticated
   intake surface remains active"* if any is still up. This is a hard stop, not a
@@ -415,3 +418,4 @@ closed.
 <!-- [[Gemini Antigravity | Gemini 3.1 Pro (High) | 2026-09-11 | 19:26 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | BEGIN]]
@@ -883,7 +884,15 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             "missing TEMP directory": ({**self.pinned, "TEMP": str(self.root / "absent")}, None, None),
             "wrong version": (self.pinned, "director-native-process-environment/v0", None),
             "relative path": (self.pinned, None, self.file.name),
+            # Each of these exists relative to the cwd set below, so only the
+            # absolute/non-empty rule refuses it.
+            "relative PATH entry": ({**self.pinned, "PATH": os.pathsep.join((self.pinned["TEMP"], "tools"))},
+                                    None, None),
+            "relative TEMP directory": ({**self.pinned, "TEMP": "temp"}, None, None),
+            "empty PATH entry": ({**self.pinned, "PATH": self.pinned["PATH"] + os.pathsep}, None, None),
         }
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.root)
         for name, (environment, version, location) in cases.items():
             with self.subTest(case=name):
                 self.write(environment, **({"version": version} if version else {}))
@@ -994,3 +1003,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

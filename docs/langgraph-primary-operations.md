@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | BEGIN]] -->
@@ -427,7 +428,8 @@ their mere presence:
   `director-native-process-environment/v1`, and `environment`, an object with
   exactly the ten names above. Every value is a non-empty string without CR, LF
   or NUL, and every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT` and
-  `USERPROFILE` directories must exist. Any other file refuses startup without
+  `USERPROFILE` directories must be absolute and exist; an empty `PATH` entry
+  (including a trailing `;`) refuses. Any other file refuses startup without
   echoing its content.
   `-Action Install -InstallRoot <dir>` requires the pinned file and a clean
   checkout: the runtime paths it copies (`src/director_orchestrator`,
@@ -436,7 +438,12 @@ their mere presence:
   the bridge runtime into a content-addressed directory, records the source
   commit and tree beside it in `<digest>.source.json`, runs `CheckEnvironment`
   from the copy and registers a restart-on-failure Scheduled Task without
-  starting it. Install is persistent host configuration and needs owner
+  starting it. Each `Run` or `CheckEnvironment` from an installed copy
+  recomputes its manifest and refuses to start on a mismatch; that detects
+  drift, not a same-user edit, since that user can also edit the task. The
+  `-Python` interpreter and its packages are neither copied nor hashed: the task
+  runs them in place, so install from an interpreter that outlives the checkout.
+  Install is persistent host configuration and needs owner
   approval. Generations must pin the digests printed by the installed copy,
   and for the routed `openai` and `antigravity` lanes the digests the running
   bridge's authenticated endpoint reports.
@@ -632,7 +639,9 @@ check fails after the compare-and-swap, it stops and proves Slack, n8n and API
 intake closed again before it reports the failure. An invalid record refuses
 rollback before anything stops. With no record, the fenced return to legacy
 still runs on the candidate image with paid runs and primary off, and the tool
-reports that no image was restored.
+reports that no image was restored. No record is written when the orchestrator
+or gateway container is absent (a fresh stack, or after `docker compose down`)
+or already runs the candidate image; staging and activation then proceed.
 
 The control tool persists `/data/langgraph-primary-activation-evidence.json` as
 an atomic versioned state machine. Its identity binds the exact Director
@@ -817,3 +826,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->

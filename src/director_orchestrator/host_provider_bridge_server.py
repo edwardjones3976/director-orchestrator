@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
@@ -102,9 +103,12 @@ def _apply_pinned_process_environment() -> bool:
         if not all(isinstance(value, str) and value and not any(c in value for c in "\r\n\0")
                    for value in pinned.values()):
             raise ValueError("pinned environment value is invalid")
-        directories = [part for part in pinned["PATH"].split(os.pathsep) if part]
+        # Children run with another cwd, so a relative or empty entry (kept in
+        # the child's PATH) would resolve somewhere validation never checked.
+        directories = pinned["PATH"].split(os.pathsep)
         directories += [pinned[name] for name in ("TEMP", "TMP", "SYSTEMROOT", "USERPROFILE")]
-        if not all(Path(directory).is_dir() for directory in directories):
+        if not all(directory and Path(directory).is_absolute() and Path(directory).is_dir()
+                   for directory in directories):
             raise ValueError("pinned environment directory is unavailable")
         lane_auth = frozenset().union(*_LANE_AUTH_ENV.values())
         from_profile = {name for name in os.environ.get(PROFILE_AUTH_NAMES, "").split(",") if name}
@@ -425,3 +429,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]

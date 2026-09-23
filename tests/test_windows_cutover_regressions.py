@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -204,7 +205,10 @@ function docker {
             throw 'unexpected container selection'
         }
         $global:LASTEXITCODE = 0
-        return $selected[0].Split('=')[-1] + '-container'
+        $service = $selected[0].Split('=')[-1]
+        # A service with no image entry has no container at all.
+        if (-not $script:images.ContainsKey($service)) { return }
+        return $service + '-container'
     }
     if ($arguments[0] -eq 'inspect') {
         $service = ([string]$arguments[-1]).Replace('-container', '')
@@ -620,7 +624,7 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
         result = subprocess.run(
             [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
              str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), str(environment), str(events), action,
-             json.dumps(primary), json.dumps(images or {"orchestrator": PRIOR_ORCHESTRATOR, "slackbot": PRIOR_GATEWAY}),
+             json.dumps(primary), json.dumps({"orchestrator": PRIOR_ORCHESTRATOR, "slackbot": PRIOR_GATEWAY} if images is None else images),
              scenario],
             capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
         )
@@ -737,6 +741,17 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertNotIn("up-n8n", names)
             self.assertNotIn("start-slackbot", names)
             self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+
+    def test_activation_without_prior_containers_proceeds_with_no_record(self):
+        # A fresh stack (or one after compose down) has no container to record;
+        # a re-run then sees candidate containers, which are not prior images.
+        for images in ({}, {"orchestrator": PRIOR_ORCHESTRATOR},
+                       {"orchestrator": CANDIDATE_IMAGE, "slackbot": CANDIDATE_IMAGE}):
+            with self.subTest(images=images), tempfile.TemporaryDirectory() as temporary:
+                result, events, _, prior = self._activate(Path(temporary), images=images)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(prior.exists())
+                self.assertEqual([event["event"] for event in events][-2:], ["up-n8n", "start-slackbot"])
 
     def test_second_activation_keeps_the_first_prior_image_record(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -970,3 +985,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
