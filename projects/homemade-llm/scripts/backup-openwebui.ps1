@@ -11,6 +11,30 @@ param(
     [string]$OutDir = 'C:\llm\state\open-webui'
 )
 $ErrorActionPreference = 'Stop'
+$Keep = 14   # newest archives kept; older ones are pruned only after a successful backup
+
+# Restore, run inside the container with the volume at /d and the archive dir at /b:
+#  1. extract into container scratch (/x): a missing or corrupt archive stops here, volume untouched;
+#  2. move the current contents aside into /d/.pre-restore (a rename on the same volume, needs no space);
+#  3. copy the extracted tree in; on success drop the rollback copy, on failure remove the partial copy
+#     and move the previous contents back. A leftover .pre-restore (an interrupted run) blocks the restore.
+# ./cache is not in archives; Open WebUI re-downloads it on start.
+$RestoreSh = @'
+set -e
+mkdir /x
+tar xzf "/b/$ARCHIVE" -C /x
+mkdir /d/.pre-restore
+find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore -exec mv -t /d/.pre-restore {} +
+if cp -a /x/. /d/; then
+    rm -rf /d/.pre-restore
+else
+    find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore -exec rm -rf {} +
+    find /d/.pre-restore -mindepth 1 -maxdepth 1 -exec mv -t /d {} +
+    rmdir /d/.pre-restore
+    exit 3
+fi
+'@
+
 $image = docker inspect --format '{{.Config.Image}}' $Container 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $image) { Write-Error "container $Container not found; is the stack deployed?" }
 docker volume inspect $Volume *> $null
@@ -22,11 +46,8 @@ if ($Restore) {
     $dir = Split-Path $full -Parent; $leaf = Split-Path $full -Leaf
     # The name reaches the shell only as a quoted env var, and only in the form this script writes.
     if ($leaf -notmatch '^open-webui-\d{8}-\d{6}\.tgz$') { Write-Error "unexpected archive name: $leaf" }
-    # Unpack into container scratch first; the volume is wiped only after the archive extracted cleanly,
-    # so a missing or corrupt archive leaves the existing data untouched. ./cache re-downloads on start.
-    $restore = 'mkdir /x && tar xzf "/b/$ARCHIVE" -C /x && find /d -mindepth 1 -delete && cp -a /x/. /d/'
-    docker run --rm --entrypoint sh -e "ARCHIVE=$leaf" -v "${Volume}:/d" -v "${dir}:/b:ro" $image -c $restore
-    if ($LASTEXITCODE -ne 0) { Write-Error 'restore failed; the volume was not changed unless extraction had succeeded' }
+    docker run --rm --entrypoint sh -e "ARCHIVE=$leaf" -v "${Volume}:/d" -v "${dir}:/b:ro" $image -c $RestoreSh
+    if ($LASTEXITCODE -ne 0) { Write-Error "restore failed (exit $LASTEXITCODE); the previous contents were kept or rolled back" }
     Write-Output "restored $leaf into $Volume; start the stack again"
     exit 0
 }
@@ -53,4 +74,10 @@ try {
 if ($restartFailed) { Write-Error "backup written but $Container failed to restart; start it manually" }
 $file = Join-Path $OutDir $name
 Write-Output ("backup: {0} ({1:N1} MB, sha256 {2})" -f $file, ((Get-Item $file).Length / 1MB), (Get-FileHash $file).Hash)
+
+# Retention: only after a successful backup, and only files this script names, keep the newest $Keep.
+$old = @(Get-ChildItem -LiteralPath $OutDir -File | Where-Object Name -match '^open-webui-\d{8}-\d{6}\.tgz$' |
+    Sort-Object Name -Descending | Select-Object -Skip $Keep)
+foreach ($f in $old) { Remove-Item -LiteralPath $f.FullName -Force }
+if ($old.Count) { Write-Output "pruned $($old.Count) archive(s) older than the newest $Keep" }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:12 UTC | END]]

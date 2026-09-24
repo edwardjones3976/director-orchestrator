@@ -9,6 +9,32 @@ Run every command from this folder, in PowerShell. The env file is `C:\llm\secre
 $compose = 'docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env'
 ```
 
+## 0. Create the env file (once)
+
+`C:\llm\secrets` is created by `preflight.ps1 -Init` and restricted to you and SYSTEM. Create the env file there, not in the repo:
+
+1. Copy the template.
+
+   ```powershell
+   Copy-Item .env.homemade-llm.example C:\llm\secrets\open-webui.env
+   ```
+
+2. Pull the two images, then read their digests.
+
+   ```powershell
+   docker pull ghcr.io/open-webui/open-webui:main
+   docker pull searxng/searxng:latest
+   docker image inspect ghcr.io/open-webui/open-webui:main --format '{{index .RepoDigests 0}}'
+   docker image inspect searxng/searxng:latest --format '{{index .RepoDigests 0}}'
+   ```
+
+3. Put those digests into `OPEN_WEBUI_IMAGE` and `SEARXNG_IMAGE`.
+4. Generate one secret each for `WEBUI_SECRET_KEY` and `SEARXNG_SECRET`.
+
+   ```powershell
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+
 ## 1. First boot and closing signup
 
 1. Start the stack.
@@ -67,6 +93,8 @@ The chats, users and memory live in the Docker volume `homemade-llm_open-webui-d
 - The mirror copies that folder to `G:\llm-mirror`.
 - It stops Open WebUI for a few seconds to take a consistent SQLite copy.
 - It skips the re-downloadable model cache (about 1 GB).
+- It keeps the newest 14 archives, pruning older ones only after a successful backup.
+- A restore never leaves the volume empty. The archive is extracted to scratch first, and the current contents are moved aside, then moved back if the copy fails.
 
 ```powershell
 ..\scripts\backup-openwebui.ps1
