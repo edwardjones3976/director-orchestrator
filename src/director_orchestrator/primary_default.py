@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -1503,10 +1504,14 @@ class DefaultDryRunServices:
         raw = application.get("task_record")
         if not isinstance(raw, Mapping):
             raise RuntimeError("primary recovery projection lacks its task record")
+        # The recovered label is kept exactly (an empty or blank string stays
+        # as it is and is held); only a missing or non-string label becomes
+        # ``unknown``. Hydration never takes the composition's default.
+        recovered = application.get("execution_mode", "unknown")
         return self._acquire_record(
             TaskRecord.model_validate(dict(raw)),
             effect_grant=application.get("effect_grant"),
-            execution_mode=application.get("execution_mode", "unknown"),
+            execution_mode=recovered if isinstance(recovered, str) else "unknown",
             exclusive=exclusive,
         )
 
@@ -1530,7 +1535,9 @@ class DefaultDryRunServices:
             self._effect_grants[task_id] = (
                 None if effect_grant is None else dict(effect_grant)
             )
-            self._execution_modes[task_id] = execution_mode or (
+            # Only a new record (execution_mode None) takes the composition's
+            # mode; any given value, falsy or not, is stored unchanged.
+            self._execution_modes[task_id] = execution_mode if execution_mode is not None else (
                 "offline_simulation"
                 if self.settings.langgraph_primary_offline_simulation_enabled
                 else "live" if self._live_composition else "paid_off"
@@ -3832,3 +3839,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

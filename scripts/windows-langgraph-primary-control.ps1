@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -1077,6 +1078,11 @@ if ($Action -in @("Activate", "ActivateOffline")) {
     # the chain is never re-recorded and intake still reopens last.
     $resume = (-not $offline) -and (Test-ActivatedChain)
     if ($resume) {
+        # Only the unwound failed-start state resumes: every intake surface is
+        # already stopped. A running ACTIVATED deployment is never stopped here,
+        # since that could interrupt provider I/O with no quiescence check.
+        try { Assert-AllIntakeStopped }
+        catch { throw "Activation refused: this generation is already ACTIVATED and its intake surfaces are running. Nothing was stopped or switched." }
         Assert-PrimaryOwnsIntake
         Stop-And-Prove-AllIntake
     }
@@ -1235,3 +1241,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

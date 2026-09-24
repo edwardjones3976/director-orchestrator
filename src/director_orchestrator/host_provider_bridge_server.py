@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -119,6 +120,10 @@ def _apply_pinned_process_environment() -> bool:
             raise ValueError("pinned environment directory is unavailable")
         if not (Path(pinned["COMSPEC"]).is_absolute() and Path(pinned["COMSPEC"]).is_file()):
             raise ValueError("pinned command interpreter is unavailable")
+        # Pinned TLS trust material must be an absolute existing file or directory.
+        for name, exists in (("SSL_CERT_FILE", Path.is_file), ("SSL_CERT_DIR", Path.is_dir)):
+            if name in pinned and not (Path(pinned[name]).is_absolute() and exists(Path(pinned[name]))):
+                raise ValueError("pinned TLS trust material is unavailable")
         lane_auth = frozenset().union(*_LANE_AUTH_ENV.values())
         from_profile = {name for name in os.environ.get(PROFILE_AUTH_NAMES, "").split(",") if name}
         if not from_profile <= lane_auth:
@@ -442,3 +447,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

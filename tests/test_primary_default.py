@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -610,6 +611,21 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                 with self.assertRaisesRegex(WorkloadAdmissionHold, "task_not_approved_for_live_dispatch"):
                     activation.application._parallel_dispatcher(reservation)
                 self.assertEqual(1, len(contexts))
+        # Hydration keeps a recovered label exactly: an explicit empty or blank
+        # label is never defaulted to this live composition's ``live``.
+        missing = object()
+        services = activation.services
+        for recovered, stored in (("", ""), ("  ", "  "), (None, "unknown"), (7, "unknown"),
+                                  (missing, "unknown"), ("live", "live")):
+            with self.subTest(recovered=recovered):
+                while services.occupied(record.task_id):
+                    services.discard(record.task_id)
+                application = {"task_record": record.model_dump(mode="json"), "effect_grant": None}
+                if recovered is not missing:
+                    application["execution_mode"] = recovered
+                self.assertTrue(services.try_hydrate_recovery(SimpleNamespace(projection={"application": application})))
+                self.assertEqual(services._execution_modes[record.task_id], stored)
+                self.assertEqual(services.paid_dispatch_allowed(record.task_id), stored == "live")
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -4225,3 +4241,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

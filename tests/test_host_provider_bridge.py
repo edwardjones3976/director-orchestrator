@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -917,6 +918,10 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             "relative COMSPEC": ({**self.pinned, "COMSPEC": os.path.join("system", "cmd.exe")}, None, None),
             "missing COMSPEC file": ({**self.pinned, "COMSPEC": str(self.root / "system" / "absent.exe")},
                                      None, None),
+            "relative SSL_CERT_FILE": ({**self.pinned, "SSL_CERT_FILE": os.path.join("system", "cmd.exe")},
+                                       None, None),
+            "missing SSL_CERT_FILE": ({**self.pinned, "SSL_CERT_FILE": str(self.root / "absent.pem")}, None, None),
+            "relative SSL_CERT_DIR": ({**self.pinned, "SSL_CERT_DIR": "system"}, None, None),
         }
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.root)
@@ -1033,3 +1038,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

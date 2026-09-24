@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -279,6 +280,28 @@ class ResponsesRouteTests(unittest.TestCase):
             # Registry-resolved proxies count even with no proxy variable set.
             with patch("urllib.request.getproxies", return_value={"https": "http://registry.invalid:8080"}):
                 self.assertNotEqual(responses_runtime_binding(), baseline)
+            # CA trust material is bound by content, not by path.
+            with tempfile.TemporaryDirectory() as directory:
+                bundle = Path(directory) / "ca.pem"
+                bundle.write_bytes(b"first trust anchor")
+                certs = Path(directory) / "certs"
+                certs.mkdir()
+                (certs / "a.pem").write_bytes(b"anchor a")
+                with patch.dict(os.environ, {"SSL_CERT_FILE": str(bundle)}):
+                    first = responses_runtime_binding()
+                    bundle.write_bytes(b"other trust anchor")
+                    self.assertNotEqual(responses_runtime_binding(), first)
+                with patch.dict(os.environ, {"SSL_CERT_DIR": str(certs)}):
+                    first = responses_runtime_binding()
+                    (certs / "a.pem").write_bytes(b"anchor b")
+                    self.assertNotEqual(responses_runtime_binding(), first)
+                    (certs / "b.pem").write_bytes(b"added")
+                    second = responses_runtime_binding()
+                    self.assertNotEqual(second, first)
+                for name, relative in (("SSL_CERT_FILE", "ca.pem"), ("SSL_CERT_DIR", "certs")):
+                    with self.subTest(relative=name), patch.dict(os.environ, {name: relative}):
+                        with self.assertRaisesRegex(ValidationError, "absolute path"):
+                            responses_runtime_binding()
             self.assertEqual(route.configuration_digest, digest_before)
 
     def test_configuration_digest_binds_the_timeout_ceiling(self):
@@ -745,3 +768,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

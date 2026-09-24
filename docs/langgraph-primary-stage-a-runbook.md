@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
@@ -251,9 +252,10 @@ quiescent (no unfinished dispatch, assignment, writer claim, reconciliation or
 claim), checked before they stop anything and again after the stop (waiting up
 to 75 seconds only for writer leases to lapse), so finish or reconcile the
 other mode's work first. A paid `Activate` that failed after recording
-`ACTIVATED` is resumed by running `Activate` again: it re-runs only the start
-steps behind the same readbacks and health proof, and refuses after a
-Rollback. `ActivateOffline` also applies the
+`ACTIVATED` is resumed by running `Activate` again while its intake surfaces
+are still stopped: it re-runs only the start steps behind the same readbacks
+and health proof, refuses after a Rollback, and refuses a running `ACTIVATED`
+deployment without stopping anything. `ActivateOffline` also applies the
 `PrepareOfflineHandoff` profile guard before anything stops. Live dispatch
 holds any task not labelled exactly `live`, and the offline dispatcher holds
 any task not labelled `offline_simulation` or `paid_off`.
@@ -439,3 +441,4 @@ closed.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->

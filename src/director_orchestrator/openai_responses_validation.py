@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -33,7 +34,9 @@ def responses_runtime_binding() -> str:
     replaced runtime or any changed dependency changes the route digest.
     Proxy/CA/key-log names are bound by value (only hashed), and so are the
     proxies urllib resolves, which on Windows fall back to the registry when
-    no proxy variable is set.
+    no proxy variable is set. The trust material httpx loads from
+    SSL_CERT_FILE or SSL_CERT_DIR is bound by content, rehashed on every call;
+    either path must be absolute.
     """
     import os
     import urllib.request
@@ -46,7 +49,27 @@ def responses_runtime_binding() -> str:
         "transport_environment": {key: value for key, value in sorted(os.environ.items())
                                   if key.upper() in _TRANSPORT_ENV},
         "resolved_proxies": dict(sorted(urllib.request.getproxies().items())),
+        "trust_material": _trust_material_digests(os.environ),
     }))
+
+
+def _trust_material_digests(environment) -> dict:
+    """Content digests of the CA file and every regular file in the CA dir."""
+    bound = {}
+    for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        value = environment.get(name)
+        if value is None:
+            continue
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValidationError(f"{name} must be an absolute path")
+        if name == "SSL_CERT_FILE":
+            bound[name] = digest(path.read_bytes()) if path.is_file() else "unavailable"
+        else:
+            bound[name] = ({entry.name: digest(entry.read_bytes())
+                            for entry in sorted(path.iterdir()) if entry.is_file()}
+                           if path.is_dir() else "unavailable")
+    return bound
 
 
 class OpenAIResponsesValidationRoute:
@@ -596,3 +619,4 @@ def responses_route_from_environment() -> OpenAIResponsesValidationRoute | None:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

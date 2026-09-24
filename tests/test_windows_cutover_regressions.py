@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -245,6 +246,8 @@ function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$Fact
     Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' }))
     if ($Command -eq 'require-activated' -and $Scenario -notlike 'activated*') { throw 'activation chain is not ACTIVATED' }
     if ($Scenario -eq "fail-$Command") { throw "evidence $Command refused" } }
+function Assert-AllIntakeStopped { Record-Event 'intake-proved-stopped'
+    if ($Scenario -eq 'activated-running') { throw 'Authenticated intake surface remains active: orchestrator' } }
 function Assert-PrimaryOwnsIntake { Record-Event 'primary-owns-intake'
     if ($Scenario -eq 'activated-rolled-back') { throw 'Activation resume refused: new intake is no longer owned by the primary' } }
 & ([scriptblock]::Create($block[0].Extent.Text))
@@ -712,7 +715,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             result, events, final, prior = self._activate(Path(temporary), scenario="activated")
             self.assertEqual(result.returncode, 0, result.stderr)
             names = [event["event"] for event in events]
-            self.assertEqual(names[:3], ["evidence-require-activated", "primary-owns-intake", "intake-stopped"])
+            self.assertEqual(names[:4], ["evidence-require-activated", "intake-proved-stopped",
+                                         "primary-owns-intake", "intake-stopped"])
             for skipped in ("quiescent-before-stop", "inventory", "evidence-bind-legacy-inventory",
                             "evidence-require-ready", "evidence-record-ACTIVATED"):
                 self.assertNotIn(skipped, names)
@@ -743,8 +747,24 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no longer owned by the primary", result.stderr)
             self.assertEqual([event["event"] for event in events],
-                             ["evidence-require-activated", "primary-owns-intake"])
+                             ["evidence-require-activated", "intake-proved-stopped", "primary-owns-intake"])
             self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_healthy_activated_deployment_is_refused_without_stopping_anything(self):
+        # A running ACTIVATED stack is not a failed start: re-running Activate
+        # must not stop it mid-task.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "fixture.env").write_text("".join(f"{name}=true\n" for name in SWITCHES)
+                                              + "DIRECTOR_PROVIDER_VALIDATION_ENABLED=false\nPRESERVED=fixture-value\n")
+            before = (root / "fixture.env").read_bytes()
+            result, events, final, _ = self._activate(root, scenario="activated-running")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("already ACTIVATED", result.stderr)
+            self.assertIn("Nothing was stopped", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["evidence-require-activated", "intake-proved-stopped"])
+            self.assertEqual((root / "fixture.env").read_bytes(), before)
 
     @unittest.skipUnless(PWSH, "PowerShell is required")
     def test_quiescence_check_runs_the_metrics_query_and_refuses_clearly(self):
@@ -1179,3 +1199,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
