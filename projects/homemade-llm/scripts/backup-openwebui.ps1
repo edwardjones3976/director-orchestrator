@@ -20,9 +20,13 @@ if ($Restore) {
     $full = (Resolve-Path -LiteralPath $Restore).Path
     if ((docker inspect --format '{{.State.Running}}' $Container) -eq 'true') { Write-Error "stop $Container before restoring" }
     $dir = Split-Path $full -Parent; $leaf = Split-Path $full -Leaf
-    # Wipe the volume's contents, then unpack; Open WebUI re-downloads ./cache on next start.
-    docker run --rm --entrypoint sh -v "${Volume}:/d" -v "${dir}:/b:ro" $image -c "find /d -mindepth 1 -delete && tar xzf /b/$leaf -C /d"
-    if ($LASTEXITCODE -ne 0) { Write-Error 'restore failed' }
+    # The name reaches the shell only as a quoted env var, and only in the form this script writes.
+    if ($leaf -notmatch '^open-webui-\d{8}-\d{6}\.tgz$') { Write-Error "unexpected archive name: $leaf" }
+    # Unpack into container scratch first; the volume is wiped only after the archive extracted cleanly,
+    # so a missing or corrupt archive leaves the existing data untouched. ./cache re-downloads on start.
+    $restore = 'mkdir /x && tar xzf "/b/$ARCHIVE" -C /x && find /d -mindepth 1 -delete && cp -a /x/. /d/'
+    docker run --rm --entrypoint sh -e "ARCHIVE=$leaf" -v "${Volume}:/d" -v "${dir}:/b:ro" $image -c $restore
+    if ($LASTEXITCODE -ne 0) { Write-Error 'restore failed; the volume was not changed unless extraction had succeeded' }
     Write-Output "restored $leaf into $Volume; start the stack again"
     exit 0
 }
@@ -30,14 +34,23 @@ if ($Restore) {
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $name = 'open-webui-{0}.tgz' -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
 $wasRunning = (docker inspect --format '{{.State.Running}}' $Container) -eq 'true'
-if ($wasRunning) { docker stop $Container | Out-Null }
+$restartFailed = $false
 try {
+    # A consistent SQLite copy needs the container stopped; if it will not stop, do not back up a live DB.
+    if ($wasRunning) {
+        docker stop $Container | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Error "could not stop $Container; no backup taken" }
+    }
     # ./cache holds re-downloadable embedding/speech models (about 1 GB); chats, users and memory are the rest.
     docker run --rm --entrypoint tar -v "${Volume}:/d:ro" -v "${OutDir}:/b" $image czf "/b/$name" --exclude=./cache -C /d .
     if ($LASTEXITCODE -ne 0) { Write-Error 'backup failed' }
 } finally {
-    if ($wasRunning) { docker start $Container | Out-Null }
+    if ($wasRunning) {
+        docker start $Container | Out-Null
+        $restartFailed = $LASTEXITCODE -ne 0
+    }
 }
+if ($restartFailed) { Write-Error "backup written but $Container failed to restart; start it manually" }
 $file = Join-Path $OutDir $name
 Write-Output ("backup: {0} ({1:N1} MB, sha256 {2})" -f $file, ((Get-Item $file).Length / 1MB), (Get-FileHash $file).Hash)
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:12 UTC | END]]
