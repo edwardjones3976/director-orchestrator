@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
@@ -226,8 +227,14 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                         row["signature_verified"] = _signed_budget(document, row["authority_digest"], owner)
                         budgets.append(row)
                 receipts = [_row(r) for r in connection.execute(_RECEIPTS.format(s=schema), {"tasks": tasks}).fetchall()]
+                # The persisted application record (task record, execution mode, effect grant): the scorecard
+                # re-renders approval prompts from it rather than from hand-picked fields.
+                applications = {r["task_id"]: r["application"] for r in connection.execute(
+                    f"SELECT task_id, projection->'application' AS application FROM {schema}.director_primary_task_projection"
+                    " WHERE task_id = ANY(%(tasks)s)", {"tasks": tasks}).fetchall()}
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
+                                         "application": applications.get(task_id),
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
@@ -360,3 +367,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
@@ -312,7 +313,7 @@ $matches=@($p | Where-Object { $_.CommandLine -match '(?i)(director_orchestrator
 @{inspected=$p.Count;unreadable=$missing;gateway_process_count=$matches.Count} | ConvertTo-Json -Compress
 """
 _UPSTREAM_HEALTH = """fetch('http://orchestrator:8080/health',{signal:AbortSignal.timeout(5000),redirect:'error'}).then(async r=>{if(!r.ok)throw Error('health'); const b=await r.text();if(b.length>1048576)throw Error('bound'); const h=JSON.parse(b);console.log(JSON.stringify({environment:h.environment}));}).catch(()=>{process.exitCode=1;});"""
-_ACTIVE_INTAKE = """BEGIN READ ONLY;
+_ACTIVE_INTAKE = """BEGIN READ ONLY; SET LOCAL search_path TO public;
 SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",'stored_version',h."versionId",
 'http_node_count',(SELECT count(*) FROM json_array_elements(h.nodes::json) n WHERE n->>'type'='n8n-nodes-base.httpRequest'),
 'static_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'url' LIKE 'http%' AND n->'parameters'->>'url' NOT LIKE '%{{%'),
@@ -324,7 +325,7 @@ FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
 # 72-hour retention window; the Slack node's response is read from its data.
-_STATUS_EXECUTION = """BEGIN READ ONLY;
+_STATUS_EXECUTION = """BEGIN READ ONLY; SET LOCAL search_path TO public;
 SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
  'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,e."startedAt",e."stoppedAt",d.data
    ,w.active AS workflow_active,w."activeVersionId" AS active_version,
@@ -342,23 +343,53 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
    ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# The in-process renderer checks 08 and 20 trust: they must be the running candidate's own files.
+_RENDERER_FILES = ("src/director_orchestrator/primary_slack_delivery.py", "src/director_orchestrator/contribution_tags.py",
+                   "src/director_orchestrator/models.py")
+
+
+def _candidate_blob(sha: str, path: str) -> bytes | None:
+    """A file exactly as the candidate commit holds it (read-only git show), or None when unavailable."""
+    try:
+        return _run_bytes(["git", "-C", str(_REPO_ROOT), "show", f"{_sha(sha)}:{path}"])
+    except _SOURCE_ERRORS:
+        return None
+
+
+def _candidate_renderer(sha: str) -> bool:
+    """The scorecard's own renderer files are byte-for-byte the candidate's (line endings aside)."""
+    for path in _RENDERER_FILES:
+        blob = _candidate_blob(sha, path)
+        try:
+            local = (_REPO_ROOT / path).read_bytes()
+        except OSError:
+            return False
+        if blob is None or blob.replace(b"\r\n", b"\n") != local.replace(b"\r\n", b"\n"):
+            return False
+    return True
+
+
 # Node fields n8n or the operator sets at deploy time and that never change behaviour. Everything else
 # (type, typeVersion, parameters, disabled, retry and error settings, credential types, the connection
 # graph and the node set) must equal the repository workflow.
 _WORKFLOW_DEPLOY_FIELDS = frozenset({"id", "position", "webhookId", "credentials"})
 
 
-def _workflow_matches(reference: str, nodes: Any, connections: Any,
+def _workflow_matches(sha: str, reference: str, nodes: Any, connections: Any,
                       bound: dict[str, tuple[tuple[str, ...], Any]] | None = None, *,
-                      settings: Any, pin_data: Any) -> bool:
+                      settings: Any, pin_data: Any) -> bool | None:
     """The active workflow version is exactly n8n/workflows/<reference>, node for node and edge for edge.
 
     Allowed to differ: node ids, canvas positions, webhookId, credential ids and names (the credential
     types must match), and the parameter values the collector binds separately (``bound``: node name ->
     (parameter path, expected value)), such as the project channel.
     """
-    document = json.loads((Path(__file__).resolve().parents[2] / "n8n" / "workflows" / reference)
-                          .read_text(encoding="utf-8"))
+    # The contract is the candidate commit's workflow file, never an unverified working tree.
+    blob = _candidate_blob(sha, "n8n/workflows/" + reference)
+    if blob is None:
+        return None
+    document = json.loads(blob.decode("utf-8"))
     if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
         return False
 
@@ -531,7 +562,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
         route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
     if isinstance(workflow, dict):
         # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
-        workflow["forwarding_contract"] = _workflow_matches("director-intake.json", workflow.pop("nodes", None),
+        workflow["forwarding_contract"] = _workflow_matches(runtime.runtime_sha, "director-intake.json",
+                                                            workflow.pop("nodes", None),
                                                             workflow.pop("connections", None),
                                                             settings=workflow.pop("settings", None),
                                                             pin_data=workflow.pop("pin_data", None))
@@ -540,6 +572,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
                                              "forwarding_contract": True})
     if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
         workflow_ok = None  # An unsupported expression is not a proven wrong destination.
+    if workflow and workflow.get("forwarding_contract") is None:
+        workflow_ok = None  # The candidate's workflow file could not be read: unproven, not wrong.
     if route_pass is True:
         route_pass = workflow_ok
         if route_pass is True:
@@ -988,7 +1022,9 @@ def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
     """From docker inspect only: n8n's own DB_* settings name the n8n/n8n PostgreSQL database on the
     queried container, which alone answers to that host on n8n's networks. No value is ever reported."""
     env = _environment(n8n or {})
-    if (env.get("DB_TYPE") != "postgresdb" or env.get("DB_POSTGRESDB_DATABASE") != "n8n"
+    # Only the default public schema is supported; both n8n queries pin search_path to it.
+    if (env.get("DB_POSTGRESDB_SCHEMA", "public") != "public"
+            or env.get("DB_TYPE") != "postgresdb" or env.get("DB_POSTGRESDB_DATABASE") != "n8n"
             or env.get("DB_POSTGRESDB_USER") != "n8n" or env.get("DB_POSTGRESDB_PORT", "5432") != "5432"
             or not env.get("DB_POSTGRESDB_HOST") or database is None):
         return False
@@ -1069,9 +1105,10 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
-    if not _workflow_matches("director-status.json", execution.get("active_nodes"), execution.get("active_connections"),
+    if _workflow_matches(runtime.runtime_sha, "director-status.json", execution.get("active_nodes"),
+                         execution.get("active_connections"),
                              {"Post Status": (("channelId", "value"), t.channel)},
-                             settings=execution.get("workflow_settings"), pin_data=execution.get("pin_data")):
+                         settings=execution.get("workflow_settings"), pin_data=execution.get("pin_data")) is not True:
         return _observation("04", None, "The active Director Status version is not exactly "
                             "n8n/workflows/director-status.json (every node, setting and edge), posting to the "
                             "project channel.",
@@ -1235,16 +1272,19 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     return result
 
 
-def _render(task: Any, projection: dict[str, Any], digest: str | None, created_at: datetime,
+def _render(sha: str, application: Any, projection: dict[str, Any], digest: str | None, created_at: datetime,
             channel: str, owner: str) -> dict[str, Any] | None:
-    """The Director's own Slack rendering (primary_slack_delivery.render_notification) of a task record."""
+    """The Director's own Slack rendering (primary_slack_delivery.render_notification) of a persisted
+    application record (task record, execution mode, effect grant, ...), only when the in-process renderer is
+    the candidate's own; otherwise None."""
     from types import SimpleNamespace
     from .primary_slack_delivery import render_notification
 
-    if not isinstance(task, dict):
+    if (not isinstance(application, dict) or not isinstance(application.get("task_record"), dict)
+            or not _candidate_renderer(sha)):
         return None
-    record = {key: value for key, value in task.items() if key != "qualification_evidence"}
-    row = {"projection": {**projection, "application": {**projection.get("application", {}), "task_record": record}},
+    record = {key: value for key, value in application["task_record"].items() if key != "qualification_evidence"}
+    row = {"projection": {**projection, "application": {**application, "task_record": record}},
            "projection_digest": digest, "created_at": created_at}
     try:
         return render_notification(row, SimpleNamespace(slack_channel_id=channel, slack_owner_user_id=owner))
@@ -1252,8 +1292,8 @@ def _render(task: Any, projection: dict[str, Any], digest: str | None, created_a
         return None
 
 
-def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], task: Any,
-                   execution_mode: Any, channel: str, owner: str) -> bool:
+def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], application: Any,
+                   sha: str, channel: str, owner: str) -> bool:
     """The delivered prompt is exactly the Director's canonical rendering of this request: the task record's
     complete proposed scope (plan outcome, every assignment, repository, limits and acceptance), the kind,
     and the approve button value, rendered by primary_slack_delivery.render_notification from the persisted
@@ -1277,9 +1317,8 @@ def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, An
     if not isinstance(kind, str) or value != {"task_id": task_id, "projection_digest": projection, "kind": kind,
                                                "request_digest": request}:
         return False
-    payload = _render(task, {"application": {"execution_mode": execution_mode},
-                             "pending_approval": {"kind": kind, "request_digest": request},
-                             "terminal_classification": None},
+    payload = _render(sha, application, {"pending_approval": {"kind": kind, "request_digest": request},
+                                         "terminal_classification": None},
                       projection, _when(delivery["created_at"]), channel, owner)
     try:
         return payload is not None and _visible_blocks(blocks) == _visible_blocks(payload["blocks"])
@@ -1369,8 +1408,9 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot
                   and t.m.unedited(m)]
         # The prompt the owner saw must show this request's scope and carry its exact button value.
-        scoped = len(native) == 1 and _prompt_scoped(native[0], task_id, delivery, task, readback.get("execution_mode"),
-                                                      t.channel, t.owner)
+        scoped = len(native) == 1 and _prompt_scoped(
+            native[0], task_id, delivery, entry.get("application") if isinstance(entry, dict) else None,
+            runtime.runtime_sha, t.channel, t.owner)
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         # The receipt must join the command authorization the webhook-verification path admitted: same
@@ -1510,19 +1550,27 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
                         _SLACK_SOURCE + " and conversations.history", observed.facts, at, **runtime.binding)
 
 
-def _paid_facts(t: _SlackThreads, thread: str) -> dict[str, Any]:
+def _paid_facts(t: _SlackThreads, thread: str, sha: str) -> dict[str, Any]:
     replies = t.replies(thread)
     task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
     facts = _task_facts(t, thread, task_id, replies)
     finals = {m.get("ts") for m in facts["row"].get("terminal_messages") or []}
     facts["finals_unedited"] = all(t.m.unedited(m) for m in replies[0] if m.get("ts") in finals)
-    # The Director's fixed terminal wrapper for this task: its rendering with every provider result removed.
+    # The Director's own terminal rendering of this task (truncation included) and its fixed wrapper (the same
+    # rendering with every provider result removed): only answer text that survived into it is gradable.
     readback = facts.get("readback") or {}
     task = facts.get("task") or {}
-    wrapper = _render({**task, "assignment_outcomes": []},
-                      {"application": {"execution_mode": readback.get("execution_mode")},
-                       "terminal_classification": "SUCCEEDED", "reason_code": "completion_passed"},
-                      None, datetime.now(timezone.utc), t.channel, t.owner)
+    terminal = [r for r in readback.get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+    rendered = wrapper = None
+    if len(terminal) == 1:
+        projection = {"terminal_classification": readback.get("terminal_classification"),
+                      "reason_code": readback.get("terminal_reason_code")}
+        created = _when(terminal[0]["created_at"])
+        application = {"task_record": task, "execution_mode": readback.get("execution_mode")}
+        rendered = _render(sha, application, projection, None, created, t.channel, t.owner)
+        wrapper = _render(sha, {**application, "task_record": {**task, "assignment_outcomes": []}},
+                          projection, None, created, t.channel, t.owner)
+    facts["terminal_render"] = html.unescape(rendered["text"]) if rendered else None
     facts["terminal_wrapper"] = html.unescape(wrapper["text"]) if wrapper else None
     return facts
 
@@ -1545,7 +1593,7 @@ def _load_paid_rubric(path: Path) -> tuple[dict[str, Any], str]:
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
+def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool | None:
     rubric, digest = _load_paid_rubric(rubric_path)
     row = paid["row"]
     markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((paid["task"].get("intake") or {}).get("text", "")))
@@ -1564,11 +1612,16 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
     answer = "\n".join(str(item.get("result", "")) for item in paid["task"].get("assignment_outcomes") or []
                        if isinstance(item, dict))
     question = html.unescape(str((paid["task"].get("intake") or {}).get("text", "")))
-    wrapper = paid.get("terminal_wrapper")
-    if not isinstance(wrapper, str) or any(item in question or item in wrapper
-                                           for item in rubric["expected_answer_substrings"]):
+    wrapper, rendered = paid.get("terminal_wrapper"), paid.get("terminal_render")
+    visible = html.unescape(str(final[0].get("text", "")))
+    # Unverifiable (renderer not the candidate's, or the native reply is not its rendering): unknown, not wrong.
+    if not isinstance(wrapper, str) or not isinstance(rendered, str) or visible not in (
+            rendered, rendered.replace("\n", " ")):
+        return None
+    if any(item in question or item in wrapper for item in rubric["expected_answer_substrings"]):
         return False
-    return bool(answer) and all(item in answer for item in rubric["expected_answer_substrings"])
+    # Graded text is provider answer that survived rendering: in the persisted results and in the reply.
+    return bool(answer) and all(item in answer and item in visible for item in rubric["expected_answer_substrings"])
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -1740,7 +1793,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
                         "n8n Director Status saved execution")
             if paid_thread is not None:
                 try:
-                    paid = _paid_facts(t, paid_thread)
+                    paid = _paid_facts(t, paid_thread, runtime.runtime_sha)
                 except _SOURCE_ERRORS:
                     paid = None
         task_ids = list(dict.fromkeys(x for x in ((paid or {}).get("task_id"), approval_task)
@@ -2494,3 +2547,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]

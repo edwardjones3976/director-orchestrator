@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
@@ -245,6 +246,16 @@ def captures_fixture():
                                             ("grok", "xai-grok-responses"))}}
 
 
+def fixture_render(application, projection, digest, created_at):
+    """The Director's renderer, applied directly: the fixture posts exactly what the Director would."""
+    from types import SimpleNamespace
+    from director_orchestrator.primary_slack_delivery import render_notification
+    record = {key: value for key, value in application["task_record"].items() if key != "qualification_evidence"}
+    return render_notification({"projection": {**projection, "application": {**application, "task_record": record}},
+                                "projection_digest": digest, "created_at": created_at},
+                               SimpleNamespace(slack_channel_id=CHANNEL_FIXTURE, slack_owner_user_id=OWNER))
+
+
 def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None, final_offset=30):
     """One task's API record, deliveries and Slack thread, re-keyed from the collector's fixtures."""
     task, deliveries, messages, _ = tf.sample()
@@ -273,10 +284,20 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
         blob = blob.replace(old, f"@@{index}@@")
     for index, (_, new) in enumerate(pairs):
         blob = blob.replace(f"@@{index}@@", new)
-    return json.loads(blob)
+    entry = json.loads(blob)
+    if answer is not None:
+        # The final reply is the Director's own terminal rendering of the persisted record.
+        readback = entry["task"]["qualification_evidence"]
+        terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
+        payload = fixture_render({"task_record": entry["task"], "execution_mode": readback["execution_mode"]},
+                                 {"terminal_classification": readback["terminal_classification"],
+                                  "reason_code": readback["terminal_reason_code"]},
+                                 None, datetime.fromisoformat(terminal["created_at"]))
+        entry["messages"][-1]["text"] = payload["text"]
+    return entry
 
 
-def approval_entry(decided=None):
+def approval_entry(decided=None, kind="tool_use", grant=None):
     entry = task_entry(APPROVAL_TASK, 30000, offline=False, text="approve then run")
     readback = entry["task"]["qualification_evidence"]
     readback["task_created_at"] = "2026-09-12T09:00:30+00:00"
@@ -291,11 +312,13 @@ def approval_entry(decided=None):
     readback["slack_deliveries"].append(delivery)
     entry["deliveries"].append({"task_id": APPROVAL_TASK, **{key: value for key, value in delivery.items()
                                                               if key not in ("created_at", "last_error")}})
-    # The prompt is the Director's own rendering of the persisted record and approval.
-    payload = sc._render(entry["task"], {"application": {"execution_mode": readback["execution_mode"]},
-                                         "pending_approval": {"kind": "tool_use", "request_digest": "sha256:" + "8" * 64},
-                                         "terminal_classification": None},
-                         projection, datetime(2026, 9, 12, 9, 20, tzinfo=timezone.utc), CHANNEL_FIXTURE, OWNER)
+    # The prompt is the Director's own rendering of the persisted application record and approval.
+    application = {"task_record": entry["task"], "execution_mode": readback["execution_mode"],
+                   **({"effect_grant": grant} if grant is not None else {})}
+    entry["application"] = application
+    payload = fixture_render(application, {"pending_approval": {"kind": kind, "request_digest": "sha256:" + "8" * 64},
+                                           "terminal_classification": None},
+                             projection, datetime(2026, 9, 12, 9, 20, tzinfo=timezone.utc))
     assert payload is not None, "the fixture task must render as the Director would"
     entry["messages"].insert(2, {"ts": prompt, "thread_ts": ts(30000), "user": BOT,
                                  "client_msg_id": "approval-client-1", "text": payload["text"],
@@ -376,7 +399,9 @@ class World:
         self.paid_rubric_path.write_bytes(raw)
         self.paid_text = "What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
         self.add(task_entry(PAID_TASK, 20000, offline=False, text=self.paid_text, answer="The audit answer is 42"))
-        self.add(approval_entry())
+        approval = self.add(approval_entry())
+        self.consistency["tasks"][APPROVAL_TASK]["application"] = approval["application"]
+        self.candidate_files = {}  # path -> bytes or Exception, overriding the candidate commit's blob
 
     def add(self, entry, thread=True):
         task_id = entry["task"]["task_id"]
@@ -416,6 +441,8 @@ class World:
                 return self.reply(self.captures)
         if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._STATUS_EXECUTION:
             return self.reply(self.status)
+        if args[:2] == ["git", "-C"] and args[3] == "show":
+            return candidate_blob(args[4], self.candidate_files)
         if args[:2] == ["gh", "api"] and args[2] == f"repos/{sc.REPOSITORY}/git/commits/{SHA}":
             return self.reply({"tree": self.commit_tree})
         raise ValueError("unrouted fixture command")
@@ -559,8 +586,21 @@ def topology():
     return [api, gateway, n8n, n8n_db]
 
 
+def candidate_blob(spec, overrides=None):
+    """The fixture candidate commit is this checkout: SHA:path is the working-tree file."""
+    sha, path = spec.split(":", 1)
+    override = (overrides or {}).get(path)
+    if isinstance(override, Exception):
+        raise override
+    if override is not None:
+        return override
+    if sha != SHA:
+        raise ValueError("unknown fixture commit")
+    return (Path(__file__).resolve().parents[1] / path).read_bytes()
+
+
 def collect_topology(rows, host=None, upstream="local", workflow=None, gateway=GATEWAY, later_rows=None,
-                     channel=CHANNEL_FIXTURE):
+                     channel=CHANNEL_FIXTURE, candidate_files=None):
     host = {"inspected": 5, "unreadable": 0, "gateway_process_count": 0} if host is None else host
     workflow = workflow_fixture() if workflow is None else workflow
     listings = [rows, rows if later_rows is None else later_rows]
@@ -569,6 +609,8 @@ def collect_topology(rows, host=None, upstream="local", workflow=None, gateway=G
             return "\n".join(row["Id"] for row in listings.pop(0)).encode()
         if args[:2] == ["docker", "inspect"]:
             return json.dumps(rows).encode()
+        if args[:2] == ["git", "-C"] and args[3] == "show":
+            return candidate_blob(args[4], candidate_files)
         if args[:2] == ["docker", "exec"]:
             if args[2] == N8N_DB_ID:
                 return json.dumps(workflow).encode()
@@ -1554,6 +1596,27 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(row(report, "01")["status"], "FAIL")
         self.assertNotIn("another-signing-secret", json.dumps(report))
 
+    def test_workflow_contracts_come_from_the_candidate_commit(self):
+        self.assertEqual(row(collect_topology(topology()), "01")["status"], "PASS")
+        other = json.loads(json.dumps(INTAKE_WORKFLOW))
+        next(n for n in other["nodes"] if n["name"] == "Accepted")["parameters"]["options"]["responseCode"] = 201
+        report = collect_topology(topology(), candidate_files={"n8n/workflows/director-intake.json":
+                                                               json.dumps(other).encode()})
+        self.assertEqual(row(report, "01")["status"], "FAIL")  # the active workflow is not the candidate's
+        missing = collect_topology(topology(), candidate_files={"n8n/workflows/director-intake.json":
+                                                                ValueError("no such blob")})
+        self.assertEqual(row(missing, "01")["status"], "UNKNOWN")
+        status_missing = World(self)
+        status_missing.candidate_files["n8n/workflows/director-status.json"] = ValueError("no such blob")
+        self.assertEqual(status_missing.state("04"), "UNKNOWN")
+
+    def test_n8n_schema_must_be_the_default_01(self):
+        for value, expected in (("public", "PASS"), ("other", "UNKNOWN")):
+            rows = topology()
+            rows[2]["Config"]["Env"].append("DB_POSTGRESDB_SCHEMA=" + value)
+            with self.subTest(value=value):
+                self.assertEqual(row(collect_topology(rows), "01")["status"], expected)
+
     def test_n8n_workflow_database_must_be_n8ns_own_store_01(self):
         # n8n must be able to authenticate to the queried database.
         for entry in ("POSTGRES_PASSWORD=rotated-db-secret", "POSTGRES_USER=postgres", "POSTGRES_DB=other"):
@@ -1899,6 +1962,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         assert "Approve or reject this exact request" in section["text"]
         section["text"] = section["text"].replace("Approve or reject this exact request", "Approve this request")
         self.assertEqual(reworded.state("08"), "UNKNOWN")
+        # An external-effect approval renders its persisted effect grant: equal with it, unknown without it.
+        grant = {"action": "github.pr.comment", "target": "edwardjones3976/director-orchestrator#1"}
+        effect = self.world()
+        effect_entry = effect.add(approval_entry(kind="external_effect", grant=grant))
+        effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
+        self.assertEqual(effect.state("08"), "PASS")
+        stripped = {key: value for key, value in effect_entry["application"].items() if key != "effect_grant"}
+        effect.consistency["tasks"][APPROVAL_TASK]["application"] = stripped
+        self.assertEqual(effect.state("08"), "UNKNOWN")
         partial = self.world()
         partial.incomplete.add(ts(30000))
         self.assertEqual(partial.state("08"), "UNKNOWN")
@@ -2435,7 +2507,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         wrapped = self.world()
         wrapped.add(task_entry(PAID_TASK, 20000, offline=False, text=wrapped.paid_text, answer="The audit answer is 42"))
         wrapped.tasks[PAID_TASK]["assignment_outcomes"][0]["result"] = "No idea"
-        self.assertEqual(wrapped.state("20"), "FAIL")
+        self.assertNotEqual(wrapped.state("20"), "PASS")  # the reply is no longer the record's rendering
+        # Answer text cut by the renderer's truncation never reached the owner: not graded.
+        truncated = self.world()
+        truncated.add(task_entry(PAID_TASK, 20000, offline=False, text=truncated.paid_text,
+                                 answer="x" * 2600 + " The audit answer is 42"))
+        self.assertEqual(truncated.state("20"), "FAIL")
+        # A renderer that is not the candidate's cannot certify the rendering: unknown.
+        foreign_renderer = self.world()
+        foreign_renderer.candidate_files["src/director_orchestrator/primary_slack_delivery.py"] = b"# other"
+        self.assertEqual(foreign_renderer.state("20"), "UNKNOWN")
+        self.assertEqual(foreign_renderer.state("08"), "UNKNOWN")
         # A rubric satisfied by the Director's fixed terminal wrapper verifies nothing.
         wrapper_rubric = {"schema": "director-paid-answer-rubric/v1", "rubric_id": "fixture-wrapper",
                           "declared_at": "2020-01-01T00:00:00+00:00", "expected_answer_substrings": ["Actual USD cost"]}
@@ -2553,3 +2635,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]

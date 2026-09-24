@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
@@ -519,8 +520,16 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
-                                             "approval_receipts": [],
+                                             "approval_receipts": [], "application": None,
                                              "verifier_secrets": {"route_verifier": False, "owner_authority": False}})
+        # The persisted application record comes back for the scorecard's re-rendering.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{application}', %s::jsonb) WHERE task_id = %s",
+                (json.dumps({"execution_mode": "live", "effect_grant": {"action": "fixture"}}), task_id))
+        self.assertEqual(self.report(tasks=[task_id])["tasks"][task_id]["application"],
+                         {"execution_mode": "live", "effect_grant": {"action": "fixture"}})
         rows = {row["attempt_digest"]: row for row in entry[task_id]["spend"]}
         self.assertEqual(len(rows), 2)
         # Correlated metering text without a verified usage receipt is not actual cost.
@@ -636,3 +645,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
