@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-22 | 00:38 UTC | BEGIN]]
@@ -49,6 +50,18 @@ class _AsyncByteStream(httpx.AsyncByteStream):
 
     async def aclose(self):
         await self._chunks.aclose()
+
+
+class PaidOffSlackWorkerTests(unittest.TestCase):
+    def test_paid_off_worker_makes_no_slack_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
+            delivery = Mock()
+            with (patch.object(main, "settings", SimpleNamespace(allow_paid_runs=False)),
+                  patch.object(main, "primary_slack_delivery", delivery)):
+                asyncio.run(asyncio.wait_for(main._primary_slack_delivery_loop(), 0.1))
+            delivery.run_once.assert_not_called()
 
 
 class PrimarySlackDeliveryTests(unittest.TestCase):
@@ -772,3 +785,4 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 00:52 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]

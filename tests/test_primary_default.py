@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # Codex QA aligned the existing reconciliation test double with the occupied() interface.
@@ -696,6 +697,32 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
             "ALLOW_PAID_RUNS is enabled.*LIVE_PROVIDER_DISPATCH_ENABLED is disabled",
         ):
             DefaultPrimaryActivation(settings)
+
+    def test_paid_off_startup_does_not_load_live_capture_enrollment(self):
+        settings = replace(Settings(), langgraph_primary_enabled=True,
+                           allow_paid_runs=False,
+                           langgraph_primary_live_provider_dispatch_enabled=False)
+        handle = SimpleNamespace(claim_store=object(), close=lambda: None)
+        services = SimpleNamespace(handlers=lambda: {}, application_projection=lambda *_: {})
+        provider_activation = object()
+        with (
+            patch("director_orchestrator.primary_default.resolve_default_primary_authority"),
+            patch("director_orchestrator.primary_default.build_typed_external_effect_grant"),
+            patch("director_orchestrator.acceptance_journal.require_runtime_acceptance", return_value=None),
+            patch("director_orchestrator.acceptance_journal.bind_runtime_database"),
+            patch("director_orchestrator.primary_default.open_postgres_control_plane", return_value=handle),
+            patch.object(Settings, "primary_provider_activation_bindings", return_value={"openai": object()}),
+            patch("director_orchestrator.primary_default.PrimaryProviderActivationService",
+                  return_value=provider_activation) as activation_service,
+            patch("director_orchestrator.provider_validation.capture_verifier_from_environment") as capture,
+            patch("director_orchestrator.primary_default.DefaultDryRunServices", return_value=services),
+            patch("director_orchestrator.primary_default.PrimaryTaskCoordinator"),
+            patch("director_orchestrator.primary_default.DefaultPrimaryApplication"),
+        ):
+            activation = DefaultPrimaryActivation(settings)
+        capture.assert_not_called()
+        self.assertIs(activation.provider_activation, provider_activation)
+        self.assertIsNone(activation_service.call_args.kwargs["capture_verifier"])
 
     def test_reconciliation_readiness_is_not_sticky_after_failed_pass(self):
         activation = object.__new__(DefaultPrimaryActivation)
@@ -4169,3 +4196,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]

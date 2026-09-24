@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
@@ -2610,9 +2611,13 @@ class DefaultPrimaryActivation:
                     store=handle.claim_store,
                     bindings=bindings,
                     required_providers=settings.langgraph_primary_required_providers,
-                    capture_verifier=capture_verifier_from_environment(
-                        candidate=settings.langgraph_primary_pinned_commit_sha,
-                        tree=settings.langgraph_primary_pinned_tree_sha,
+                    capture_verifier=(
+                        capture_verifier_from_environment(
+                            candidate=settings.langgraph_primary_pinned_commit_sha,
+                            tree=settings.langgraph_primary_pinned_tree_sha,
+                        )
+                        if settings.allow_paid_runs and live_requested
+                        else None
                     ),
                 )
                 if bindings
@@ -3790,3 +3795,4 @@ class DefaultPrimaryActivation:
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
