@@ -1,6 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | BEGIN]]
 # SearXNG for Open WebUI (M0.5). Defaults plus the JSON output format Open WebUI's searxng engine needs.
-# The secret comes from SEARXNG_SECRET in .env.homemade-llm, never from this file.
+# The secret comes from SEARXNG_SECRET in C:\llm\secrets\open-webui.env, never from this file.
 use_default_settings: true
 server:
   limiter: false          # local-only instance behind Open WebUI; no public clients to rate-limit
