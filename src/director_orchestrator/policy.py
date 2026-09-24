@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
@@ -587,13 +588,16 @@ def small_task_content_screened(text: str) -> bool:
     """Whether a file's text may not be shown to a small task's models.
 
     Refused when the sensitive-data or credential approval gate matches it,
-    as written or with identifiers split into words, or when it holds a
-    secret-shaped value.
+    when the request text's personal-data exclusion matches it (people a
+    record describes, identifying attributes, tabular files), each as written
+    and with identifiers split into words, or when it holds a secret-shaped
+    value.
     """
 
-    reasons = {*deterministic_approval_reasons(text),
-               *deterministic_approval_reasons(_identifier_words(text))}
+    forms = (text, _identifier_words(text))
+    reasons = {reason for form in forms for reason in deterministic_approval_reasons(form)}
     return (bool(reasons & {"sensitive data", "credential or permission change"})
+            or any(_PERSONAL_DATA.search(form) for form in forms)
             or _SECRET_SHAPED.search(text) is not None)
 
 
@@ -1937,3 +1941,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]

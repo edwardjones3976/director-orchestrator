@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]] -->
@@ -341,7 +342,9 @@ trip takes an explicit owner action, a new grant_id.
 **Bounded provider traffic.** Providers on the native CLI work-packet lanes,
 the OpenAI Responses lane, and the Claude and Grok host-bridge lanes receive a
 compact view of the work packet: its commit, digest, and file count, plus only
-the snapshot entries under owned paths or named in the objective. The view is
+the snapshot entries under owned paths or named in the objective; an
+attended assignment that names no path keeps the first 64 entries outside
+prohibited paths, as the full packet gave it. The view is
 defined by `docs/schemas/director-compact-work-view-v1.schema.json`, and every
 view is validated against it before any transport sends it. For a small
 read-only task the view also carries the text of every path the request names,
@@ -351,7 +354,9 @@ Responses can read them; the reviewer's objective names the same paths, so
 both models see the same text. Each file is at most 4 KB, the total at most
 8 KB, and at most eight files. A named path missing from the snapshot,
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
-credential approval gate, or holding a secret-shaped value keeps the task out
+credential approval gate or the request text's personal-data exclusion (as
+written or with identifiers split into words), or holding a secret-shaped
+value keeps the task out
 of the class: the grant is refused on `eligibility` at intake, and a dispatch
 fails with `small_task_named_contents_unavailable`. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
@@ -633,3 +638,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->

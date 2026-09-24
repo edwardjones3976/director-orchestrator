@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
@@ -833,7 +834,15 @@ class CompactProviderViewTests(unittest.TestCase):
             "secret": {"README.md": b"token: ghp_" + b"a" * 30 + b"\n"},
             "credential_gate": {"README.md": b"Rotate the api key here.\n"},
             "personal_gate": {"README.md": b"Their date of birth is listed.\n"},
-            "private_key": {"README.md": b"-----BEGIN RSA PRIVATE KEY-----\n"},
+            # Built at runtime: no committed file holds a credential shape.
+            "private_key": {"README.md": b"-" * 5 + b"BEGIN RSA " + b"PRIVATE KEY" + b"-" * 5 + b"\n"},
+            "customer_record": {"README.md": b"Customer: Alice Smith\nAddress: 123 Main St\n"},
+            "employee_list": {"README.md": b"Employees on the rota this week.\n"},
+            "user_email": {"README.md": b"Contact user_email for access.\n"},
+            "patient_note": {"README.md": b"patientName was recorded.\n"},
+            "phone_field": {"README.md": b"phoneNumber: listed\n"},
+            "tabular_file": {"README.md": b"Load export.csv into the sheet.\n"},
+            "genealogy": {"README.md": b"The ancestry chart goes back four generations.\n"},
         }
         for name, blobs in cases.items():
             with self.subTest(case=name), patch(
@@ -923,6 +932,30 @@ class CompactProviderViewTests(unittest.TestCase):
         self.assertEqual([_entry("src/pkg/a.py")], view["authority"]["entries"])
         self.assertEqual(3, view["authority"]["file_count"])
 
+    def test_an_attended_repository_wide_view_keeps_a_bounded_inventory(self) -> None:
+        """Outside the small class a view that names no path is not left empty."""
+
+        snapshot = [_entry(f"src/m{index}.py") for index in range(100)] + [
+            _entry("docs/private/secret.md")]
+        view = compact_provider_view({
+            "objective": "List repository files.",
+            "allowed_tools": ["READ_REPOSITORY", "RUN_TESTS"],
+            "allowed_external_effects": [],
+            "prohibited_paths": ["docs/private"],
+            "authority_snapshot": snapshot,
+        })
+        self.assertEqual(64, len(view["authority"]["entries"]))
+        self.assertEqual(snapshot[:64], view["authority"]["entries"])
+        self.assertNotIn(_entry("docs/private/secret.md"), view["authority"]["entries"])
+        # A small read-only packet stays on its named paths only.
+        small = compact_provider_view({
+            "objective": "List repository files.",
+            "allowed_tools": ["READ_REPOSITORY"],
+            "allowed_external_effects": [],
+            "authority_snapshot": snapshot,
+        })
+        self.assertEqual([], small["authority"]["entries"])
+
     def test_entries_are_capped(self) -> None:
         view = compact_provider_view(
             {
@@ -946,3 +979,4 @@ if __name__ == "__main__":
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]

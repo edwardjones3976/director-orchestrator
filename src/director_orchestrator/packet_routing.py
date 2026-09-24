@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -195,6 +196,13 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
         if (_under(entry["path"], owned) or entry["path"] in named)
         and not _under(entry["path"], prohibited)
     ][:_MAX_COMPACT_AUTHORITY_ENTRIES]
+    if not entries and not _read_only_packet(work):
+        # An attended assignment that names no path (a repository-wide
+        # request) keeps a bounded inventory, as the full packet gave it: a
+        # tool-less lane such as OpenAI Responses has no other way to see
+        # filenames. Small read-only tasks always name their paths.
+        entries = [dict(entry) for entry in snapshot
+                   if not _under(entry["path"], prohibited)][:_MAX_COMPACT_AUTHORITY_ENTRIES]
     view: dict[str, Any] = {"schema_version": COMPACT_PROVIDER_VIEW_SCHEMA}
     view.update({key: work[key] for key in _COMPACT_VIEW_FIELDS if key in work})
     view["authority"] = {
@@ -727,3 +735,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
