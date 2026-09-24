@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
@@ -816,6 +817,7 @@ class _SlackThreads:
             self.client.close()
             raise
         self.bot, self.owner, self.api, self.channel = auth["user_id"], self.env["SLACK_OWNER_USER_ID"], runtime.api_base, channel
+        self.runtime = runtime
 
     def replies(self, thread: str):
         return self.reads.replies(thread)
@@ -905,7 +907,9 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
     deliveries = t.deliveries(task_id)
     row = t.m.summarize(thread, task_id, task, deliveries, messages, complete, t.owner, t.bot, headers, t.channel)
     readback, latest, state, _ = t.m._readback(task_id, task)
-    collected = state == "collected"
+    # One read-time rule for every snapshot (consistency, captures, qualification readbacks): its own captured_at
+    # lies inside this collection, or it grades nothing here.
+    collected = state == "collected" and t.runtime.read_in_window((readback or {}).get("captured_at"))
     return {"task_id": task_id, "row": row, "task": task if isinstance(task, dict) else {}, "messages": messages,
             "complete": complete, "readback": readback if collected else None, "latest": latest if collected else None}
 
@@ -1304,7 +1308,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             "latest update.", source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if started > stopped or not _is_current(max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
+    if not _ordered(execution["startedAt"], execution["stoppedAt"]) or not _is_current(
+            max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
         return _observation("04", None, "The newest saved status execution started before the running Director "
                             "container or the running n8n was created, so it cannot attest them.",
                             source, facts, at, **binding)
@@ -1336,10 +1341,19 @@ def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] |
     and read back with its Slack ts, matching the native final message, whose text is the Director's own
     canonical terminal rendering (the check-20 rule): a correlated message with other text is not a final reply."""
     terminal = [r for r in (readback or {}).get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
-    return (len(terminal) == 1 and terminal[0].get("state") == "DELIVERED" and bool(terminal[0].get("delivered_at"))
-            and bool(terminal[0].get("slack_ts"))
+    return (len(terminal) == 1 and _delivery_settled(terminal[0]) and bool(terminal[0].get("slack_ts"))
             and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True
             and _final_is_rendering(snapshot or {}))
+
+
+def _delivery_settled(row: dict[str, Any]) -> bool:
+    """A DELIVERED row as PrimarySlackDelivery produces one: created (PENDING), claimed (POSTING), acknowledged when
+    Slack answered the post (null on the AMBIGUOUS recovery path), then DELIVERED only by readback, which counts one
+    or two attempts first; every present moment in that order."""
+    attempts = row.get("readback_attempts")
+    return (row.get("state") == "DELIVERED" and all(row.get(key) for key in ("created_at", "claimed_at", "delivered_at"))
+            and type(attempts) is int and 1 <= attempts <= 2
+            and _ordered(row["created_at"], row["claimed_at"], row.get("acknowledged_at"), row["delivered_at"]))
 
 
 def _final_is_rendering(facts: dict[str, Any]) -> bool:
@@ -1371,7 +1385,7 @@ def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
     and the terminal replies. All of them must fall inside the freshness bound."""
     readback = (snapshot or {}).get("readback") or {}
     row = (snapshot or {}).get("row") or {}
-    moments = [_when(readback[key]) for key in ("task_created_at", "task_updated_at") if readback.get(key)]
+    moments = [_when(readback[key]) for key in ("task_created_at", "task_updated_at", "captured_at") if readback.get(key)]
     for delivery in readback.get("slack_deliveries") or []:
         moments += [_when(delivery[key]) for key in ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
                                                      "owner_decision_at") if delivery.get(key)]
@@ -1681,7 +1695,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
             and runtime.until() is not None and decided <= runtime.until()
             for receipt in receipts)
-        if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
+        if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
                 and Decimal(slack_ts) <= Decimal(str(decided.timestamp()))
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
@@ -1756,8 +1770,9 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
                and counters["attempt_ordinals"] == 0 and len(finals) == 1 and finals[0].get("simulation_label_present") is True
                and _assignments_joined(snapshot, attempts=False) is True)
     states = {str(receipt.get("state")) for receipt in row.get("delivery_receipts") or []}
+    delivered = [item for item in (readback or {}).get("slack_deliveries") or [] if item.get("state") == "DELIVERED"]
     if (row.get("final_receipt_matches_native_message") is True and row.get("delivery_receipt_list_complete") is True
-            and states <= {"DELIVERED", "SUPERSEDED", "SUPPRESSED"}):
+            and states <= {"DELIVERED", "SUPERSEDED", "SUPPRESSED"} and all(_delivery_settled(item) for item in delivered)):
         delivery_ambiguous: bool | None = False
     else:
         delivery_ambiguous = True if "AMBIGUOUS" in states else None
@@ -1823,14 +1838,18 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
     for thread in trials:
         replies = t.replies(thread)
         task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
-        snapshot = _task_facts(t, thread, task_id, replies)
+        snapshot = _with_rendering(t, _task_facts(t, thread, task_id, replies), runtime.runtime_sha)
         row = snapshot["row"]
         markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
         row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
         # Owner ruling 2026-09-24: the committed structural rubric proves the pipeline, not the answer; the outcomes
         # graded must be the ones the durable ledger rows fix.
         structural, bound = t.m.evaluate_rubric(row, rubric, digest)["passed"], _offline_outcomes_bound(snapshot, t.m.LABEL)
-        correctness = False if False in (structural, bound) else None if bound is None else structural
+        # The final reply must be the candidate renderer's canonical terminal rendering (text and blocks), as for
+        # 09 and 20; an unavailable renderer is unknown, another reply is a mismatch.
+        rendered = None if snapshot.get("terminal_render") is None else _final_is_rendering(snapshot)
+        correctness = (False if False in (structural, bound, rendered)
+                       else None if None in (bound, rendered) else structural)
         records.append(_run_record(runtime, snapshot, correctness, t.m.LABEL))
     observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
     if observed.passed is not True:
@@ -2066,7 +2085,12 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
              and monitor.get("all_configured_have_recent_signal") is True)
     # Every budget and cost read must be a finite, non-negative number (JSON admits NaN and Infinity, which
     # compare false against everything); anything else is not monitored accounting.
-    monitored = ready and isinstance(accounting, dict) and bool(accounting) and all(
+    providers = monitor.get("providers")
+    # usage.py builds daily_accounting over exactly its configured providers: the key set must be that set.
+    listed = (isinstance(providers, list) and bool(providers)
+              and all(isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name) for name in providers)
+              and len(set(providers)) == len(providers))
+    monitored = ready and listed and isinstance(accounting, dict) and set(accounting) == set(providers) and all(
         isinstance(value, dict) and all(value.get(key) is None or _amount(value.get(key))
                                         for key in ("daily_budget_usd", "reported_cost_usd", "reserved_cost_usd"))
         for value in accounting.values())
@@ -3058,3 +3082,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]

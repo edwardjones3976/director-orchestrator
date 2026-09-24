@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]] -->
@@ -518,7 +519,17 @@ effect's lifecycle (reserved, started, bound, terminal) in chronological order.
 Every budget, cost, limit and run measurement read must be a finite, non-negative
 number. Every task-backed drill verdict (reserved-5xx, task-backed
 transport-failure, duplicate-input, ambiguous-post) needs the same correlation:
-`task_record_bound` and `task_api_gateway_attested`.
+`task_record_bound` and `task_api_gateway_attested`. One ordering helper serves
+every lifecycle (Slack delivery, effect, attempt, assignment, n8n execution): a
+DELIVERED row counts only as `PrimarySlackDelivery` produces it, created, claimed,
+acknowledged when Slack answered (null on the ambiguous recovery path) and then
+delivered by one or two readback attempts, in that order. One read-time rule
+serves every snapshot: the consistency snapshot, the captures report and each
+qualification readback carry their own read time, which must lie inside this
+collection. Check 10 also requires each offline final reply's text and blocks to
+be the candidate renderer's canonical rendering, and check 15 requires
+`daily_accounting` to cover exactly the monitor's configured `providers` (unique,
+valid names).
 
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
@@ -848,3 +859,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
@@ -82,7 +83,10 @@ def sample():
         **{field: [] for field in EMPTY_ATTEMPT_FIELDS},
     }
     deliveries = [{
+        # PrimarySlackDelivery.receipts row (primary_slack_delivery.py): every column the endpoint returns.
         "task_id": TASK_ID, "notification_key": "terminal", "projection_digest": PROJECTION,
+        "created_at": "2026-09-12T10:00:19+00:00", "last_error": None,
+        "owner_decision": None, "owner_decision_at": None, "owner_command_id": None,
         "client_msg_id": FINAL_ID, "state": "DELIVERED", "slack_ts": FINAL_TS,
         "claimed_at": "2026-09-12T10:00:20+00:00",
         "acknowledged_at": "2026-09-12T10:00:30+00:00",
@@ -1482,3 +1486,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
@@ -134,7 +135,7 @@ def health():
         "reconciliation_hold_reason": None,
         "primary_runtime_active": True, "effect_executor_ready": True,
         "provider_activation": {"combined_live_ready": True}},
-        "usage_monitor": {"enabled": True, "paid_run_gate_open": True, "gate_state": "open",
+        "usage_monitor": {"enabled": True, "paid_run_gate_open": True, "gate_state": "open", "providers": ["grok", "claude"],
                           "unsupported_providers": [], "missing_or_stale_providers": [],
                           "all_configured_have_recent_signal": True,
                           # usage.py _daily_accounting: an entry per configured provider; request_count counts
@@ -420,6 +421,7 @@ class World:
         self.commit_tree = "d" * 40
         self.now = WORLD_NOW
         self.until = None  # the collection's end; None means it ends when it starts
+        self.readback_captured = WORLD_NOW.isoformat()  # when the Director served each qualification readback
         self.payload = health()
         self.consistency = consistency_fixture()
         self.captures = captures_fixture()
@@ -556,7 +558,11 @@ class World:
                     if status == 200 else {"detail": "fixture"})
             return httpx.Response(status, json=body)
         if url.path.startswith("/v1/tasks/") and parts[3] in self.tasks:
-            return httpx.Response(200, json=self.tasks[parts[3]], headers={
+            task = json.loads(json.dumps(self.tasks[parts[3]]))
+            if isinstance(task.get("qualification_evidence"), dict) and self.readback_captured is not None:
+                # The readback is a live REPEATABLE READ snapshot taken when the API serves it (langgraph_postgres).
+                task["qualification_evidence"]["captured_at"] = self.readback_captured
+            return httpx.Response(200, json=task, headers={
                 "x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest"})
         if url.path.endswith("/deliveries") and parts[4] in self.deliveries:
             return httpx.Response(200, json=self.deliveries[parts[4]])
@@ -2478,11 +2484,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         # Usage-check probes alone are not paid attempts, even with no monitor budget.
         probed = self.world()
         probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4)
+        probed.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(probed.state("15"), "PASS")
         # Real spend on a provider with neither a monitor budget nor a signed enrolled budget is uncapped.
         spent = self.world()
         spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4,
                                                                                     reported_cost_usd=0.5)
+        spent.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(spent.state("15"), "UNKNOWN")
 
     def test_status_timestamps_are_read_with_an_offset(self):
@@ -2714,6 +2722,47 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(task_id=task_id):
                 self.assertNotEqual(case.state("09"), "PASS")
 
+    def test_offline_finals_are_the_canonical_rendering_10(self):
+        self.assertEqual(self.world().state("10"), "PASS")
+        first = self.world()
+        final = first.threads[ts(1000)][-1]
+        final["blocks"] = [{"type": "section", "text": {"type": "plain_text", "text": final["text"] + " (edited)"}}]
+        self.assertEqual(first.state("10"), "FAIL")
+        text = self.world()
+        text.threads[ts(1000)][-1]["text"] += "\nextra"
+        self.assertNotEqual(text.state("10"), "PASS")
+
+    def test_delivery_lifecycle_must_be_chronological_09_10_20(self):
+        for change in ({"delivered_at": "2026-09-12T10:00:18+00:00"}, {"claimed_at": "2026-09-12T10:00:32+00:00"},
+                       {"readback_attempts": 0}, {"claimed_at": None}):
+            for task_id, key in (("DIR-LG-A0", "09"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
+                case = self.world()
+                terminal = next(r for r in case.tasks[task_id]["qualification_evidence"]["slack_deliveries"]
+                                if r["notification_key"] == "terminal")
+                terminal.update(change)
+                with self.subTest(change=change, check=key):
+                    self.assertNotEqual(case.state(key), "PASS")
+        self.assertTrue(sc._delivery_settled({"state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
+                                              "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": None,
+                                              "delivered_at": "2026-09-12T10:01:31+00:00", "readback_attempts": 2}))
+
+    def test_readback_capture_time_is_inside_the_collection(self):
+        self.assertEqual(self.world().state("10"), "PASS")
+        for captured in ("2026-09-12T20:00:01+00:00", "2026-09-12T19:00:00+00:00"):
+            case = self.world()
+            case.readback_captured = captured  # after the collection's end, or before it began
+            with self.subTest(captured=captured):
+                self.assertEqual([case.state(key) for key in ("06", "10", "20")], ["UNKNOWN"] * 3)
+
+    def test_accounting_covers_exactly_the_configured_providers_15(self):
+        self.assertEqual(self.world().state("15"), "PASS")
+        for providers in (["grok", "claude", "gemini"], ["grok"], ["grok", "claude", "claude"], ["grok", "Claude!"],
+                          None):
+            case = self.world()
+            case.payload["usage_monitor"]["providers"] = providers
+            with self.subTest(providers=providers):
+                self.assertEqual(case.state("15"), "UNKNOWN")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2936,6 +2985,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         # Spend on a provider with no monitor budget and no signed enrolled budget (probes alone are not spend).
         uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=2,
                                                                                     reported_cost_usd=0.4)
+        uncapped.payload["usage_monitor"]["providers"].append("openai")
         self.assertEqual(uncapped.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
         for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
@@ -3252,3 +3302,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
