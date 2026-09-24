@@ -16,7 +16,16 @@ $ErrorActionPreference = 'Stop'
 
 # preflight's free-space floor and hot-tier cap gate drive C only, so the hot root must live there.
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
-if (-not $HotRoot.StartsWith('C:\',[StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
+if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
+# The path string says C:, but a junction or symlink on it (or on a mounted subfolder) could land on another
+# drive; refuse any link rather than trying to resolve it.
+foreach ($sub in '', 'hf', 'runs', 'models', 'models\smoke', 'reports') {
+    for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
+        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            Write-Error "$p is a junction or symbolic link; HotRoot and its mounted folders must be real folders on C:"
+        }
+    }
+}
 # The container's HF_HOME is the mounted <HotRoot>\hf, which is also Hugging Face's default token location:
 # refuse to hand a stored credential to the network-enabled third-party image.
 foreach ($t in 'token', 'stored_tokens') {

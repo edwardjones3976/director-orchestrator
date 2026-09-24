@@ -30,6 +30,7 @@ try {
 # Pre-preflight refusals (run the real script; both stop before preflight or Docker).
 $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("train-smoke-root-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory (Join-Path $tmpRoot 'hf') | Out-Null
+$links = @()
 try {
     Set-Content (Join-Path $tmpRoot 'hf\token') 'hf_dummy'
     # Error text arrives colored and wrapped to the console width: strip ANSI codes and collapse whitespace.
@@ -40,7 +41,16 @@ try {
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'stored Hugging Face credential') { $fail += "stored token: not refused (exit $LASTEXITCODE)" }
     $o = Run 'D:\llm'
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'HotRoot must be on C:') { $fail += "non-C HotRoot: not refused (exit $LASTEXITCODE)" }
+    # Links (junctions need no admin rights): on the root itself, and on a mounted subfolder of a real root.
+    $real = Join-Path $tmpRoot 'real'; $clean = Join-Path $tmpRoot 'clean'
+    New-Item -ItemType Directory $real, $clean | Out-Null
+    $links = @((New-Item -ItemType Junction (Join-Path $tmpRoot 'jroot') -Target $real), (New-Item -ItemType Junction (Join-Path $clean 'reports') -Target $real))
+    $o = Run (Join-Path $tmpRoot 'jroot')
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'junction or symbolic link') { $fail += "junction HotRoot: not refused (exit $LASTEXITCODE)" }
+    $o = Run $clean
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'junction or symbolic link') { $fail += "junction reports folder: not refused (exit $LASTEXITCODE)" }
 } finally {
+    foreach ($l in $links) { if ($l) { $l.Delete() } }   # remove the links themselves before the recursive delete
     Get-ChildItem -LiteralPath $tmpRoot -Recurse -Force -File | ForEach-Object { $_.Attributes = 'Normal' }   # HF marks some files read-only
     [IO.Directory]::Delete($tmpRoot, $true)
 }
@@ -48,6 +58,7 @@ try {
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
+Write-Output 'ok  junction as HotRoot, and as a mounted subfolder, refused'
 Write-Output "ok  hung docker CLI: cleanup call returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
