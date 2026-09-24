@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:12 UTC | BEGIN]]
 # Archive the Open WebUI data volume into C:\llm\state\open-webui so the nightly mirror (G:\llm-mirror) keeps it.
 #   .\backup-openwebui.ps1                 back up (stops open-webui briefly for a consistent SQLite copy)
@@ -133,3 +134,4 @@ try {
     $lock.ReleaseMutex(); $lock.Dispose()
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:12 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:05 UTC | END]]
