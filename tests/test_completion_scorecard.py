@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
@@ -162,8 +163,10 @@ STATUS_WORKFLOW = json.loads((Path(__file__).resolve().parents[1] / "n8n/workflo
 
 
 def status_nodes(channel=CHANNEL_FIXTURE):
-    nodes = json.loads(json.dumps([n for n in STATUS_WORKFLOW["nodes"] if n["name"] in ("Diff Readiness", "Post Status")]))
-    for node in nodes:
+    """The deployed status workflow: the repository's, with deploy-time ids, positions and credential ids."""
+    nodes = json.loads(json.dumps(STATUS_WORKFLOW["nodes"]))
+    for index, node in enumerate(nodes):
+        node.update(id=f"deployed-{index}", position=[index * 100, 0])
         if node["name"] == "Post Status":
             node["parameters"]["channelId"]["value"] = channel
             node["credentials"]["slackApi"] = {"id": "deployed-credential", "name": "Director Slack bot"}
@@ -174,8 +177,8 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
-                                          "workflow_active": True, "active_route_ok": True,
-                                          "status_nodes": status_nodes(), "disabled_nodes": [],
+                                          "workflow_active": True, "active_nodes": status_nodes(),
+                                          "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
                                           "active_version": "v-2", "execution_version": None,
                                           "active_version_at": "2026-09-12T09:00:00.000+00:00",
                                           "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
@@ -214,7 +217,9 @@ def consistency_fixture():
 
 def approval_receipt(recorded_at=None):
     return {"command_id_sha256": hashlib.sha256(b"owner-command-1").hexdigest(), "command_digest": "sha256:" + "6" * 64,
-            "resulting_projection_digest": "sha256:" + "7" * 64, "recorded_at": recorded_at or iso(1789210000 + 30010)}
+            "resulting_projection_digest": "sha256:" + "7" * 64, "recorded_at": recorded_at or iso(1789210000 + 30010),
+            "authorized": True, "authorized_command_digest": True, "authorized_fence": True, "proof_version": "v1",
+            "actor_id": OWNER}
 
 
 def captures_fixture():
@@ -293,11 +298,16 @@ INTAKE_WORKFLOW = json.loads((Path(__file__).resolve().parents[1] / "n8n/workflo
 
 
 def workflow_fixture():
-    parameters = next(n for n in INTAKE_WORKFLOW["nodes"] if n["name"] == "Create Director Task")["parameters"]
+    nodes = json.loads(json.dumps(INTAKE_WORKFLOW["nodes"]))
+    for index, node in enumerate(nodes):
+        node.update(id=f"deployed-{index}", position=[index * 100, 0])  # deploy-time fields may differ
     return {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
             "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True,
-            "create_task_parameters": json.loads(json.dumps(parameters)), "disabled_nodes": [],
-            "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"]))}
+            "nodes": nodes, "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"]))}
+
+
+def node(workflow_nodes, name):
+    return next(item for item in workflow_nodes if item["name"] == name)
 
 
 class World:
@@ -1479,23 +1489,32 @@ class ScorecardCollectorTests(unittest.TestCase):
                 report = collect_topology(rows)
                 self.assertEqual(row(report, "01")["status"], "FAIL")
                 self.assertNotIn("something-else", json.dumps(report))
-        workflow = workflow_fixture()
-        workflow["create_task_parameters"]["headerParameters"]["parameters"] = [
-            header for header in workflow["create_task_parameters"]["headerParameters"]["parameters"]
-            if header["name"] != "X-Director-Intake-Signature"]
-        self.assertEqual(row(collect_topology(topology(), workflow=workflow), "01")["status"], "FAIL")
+        # The whole active workflow must be the repository's: any node's settings, flags or edges.
+        def headerless(nodes):
+            params = node(nodes, "Create Director Task")["parameters"]["headerParameters"]
+            params["parameters"] = [h for h in params["parameters"] if h["name"] != "X-Director-Intake-Signature"]
+
+        for label, mutate in (
+                ("signature header dropped", headerless),
+                ("webhook basic auth", lambda nodes: node(nodes, "Slack Gateway Webhook")["parameters"].update(
+                    authentication="basicAuth")),
+                ("accepted not 202", lambda nodes: node(nodes, "Accepted")["parameters"]["options"].update(
+                    responseCode=200)),
+                ("node disabled", lambda nodes: node(nodes, "Create Director Task").update(disabled=True)),
+                ("typeVersion changed", lambda nodes: node(nodes, "Exactly 202").update(typeVersion=99)),
+                ("extra node", lambda nodes: nodes.append({"name": "Side Effect", "type": "n8n-nodes-base.noOp",
+                                                           "parameters": {}})),
+                ("node missing", lambda nodes: nodes.remove(node(nodes, "Intake Failed")))):
+            workflow = workflow_fixture()
+            mutate(workflow["nodes"])
+            with self.subTest(label=label):
+                self.assertEqual(row(collect_topology(topology(), workflow=workflow), "01")["status"], "FAIL")
         rewired = workflow_fixture()
         rewired["connections"]["Create Director Task"]["main"][0][0]["node"] = "Accepted"
         self.assertEqual(row(collect_topology(topology(), workflow=rewired), "01")["status"], "FAIL")
         unread = workflow_fixture()
-        del unread["create_task_parameters"]
+        del unread["nodes"]
         self.assertEqual(row(collect_topology(topology(), workflow=unread), "01")["status"], "FAIL")
-        # n8n skips a disabled node: every required intake node must be enabled.
-        for name in ("Slack Gateway Webhook", "Create Director Task", "Accepted"):
-            disabled = workflow_fixture()
-            disabled["disabled_nodes"] = [name]
-            with self.subTest(name=name):
-                self.assertEqual(row(collect_topology(topology(), workflow=disabled), "01")["status"], "FAIL")
 
     def test_gateway_identities_cover_every_gateway_secret(self):
         import re
@@ -1731,24 +1750,28 @@ class ScorecardCollectorTests(unittest.TestCase):
         new_n8n = self.world()
         new_n8n.rows[1]["Created"] = "2026-09-12T09:59:30Z"
         self.assertEqual(new_n8n.state("04"), "UNKNOWN")
-        # The active nodes themselves, not only their edges, must be the repository's status route.
-        for mutate in (lambda nodes: nodes[0]["parameters"].update(jsCode="return [{json: {text: '*STATUS — ok*'}}];")
-                       if nodes[0]["name"] == "Diff Readiness" else nodes[1]["parameters"].update(
-                           jsCode="return [{json: {text: '*STATUS — ok*'}}];"),
-                       lambda nodes: [n["parameters"].update(text="*STATUS — static*") for n in nodes
-                                      if n["name"] == "Post Status"],
-                       lambda nodes: [n["parameters"]["channelId"].update(value="COTHERCHAN1") for n in nodes
-                                      if n["name"] == "Post Status"],
-                       lambda nodes: nodes.pop()):
+        # The whole active status workflow must be the repository's (only deploy-time fields and the bound
+        # channel may differ): code, texts, the health response options, flags, credential type and edges.
+        for label, mutate in (
+                ("static diff code", lambda nodes: node(nodes, "Diff Readiness")["parameters"].update(
+                    jsCode="return [{json: {text: '*STATUS — ok*'}}];")),
+                ("static post text", lambda nodes: node(nodes, "Post Status")["parameters"].update(
+                    text="*STATUS — static*")),
+                ("other channel", lambda nodes: node(nodes, "Post Status")["parameters"]["channelId"].update(
+                    value="COTHERCHAN1")),
+                ("health without full response", lambda nodes: node(nodes, "Read Health")["parameters"]["options"].pop(
+                    "response")),
+                ("credential type", lambda nodes: node(nodes, "Post Status").update(
+                    credentials={"slackOAuth2Api": {"id": "x", "name": "y"}})),
+                ("disabled trigger", lambda nodes: node(nodes, "Every 5 minutes").update(disabled=True)),
+                ("node missing", lambda nodes: nodes.remove(node(nodes, "Diff Readiness")))):
             case = self.world()
-            mutate(case.status["execution"]["status_nodes"])
-            with self.subTest(mutate=mutate):
+            mutate(case.status["execution"]["active_nodes"])
+            with self.subTest(label=label):
                 self.assertEqual(case.state("04"), "UNKNOWN")
-        for name in ("Every 5 minutes", "Read Health", "Diff Readiness", "Post Status"):
-            case = self.world()
-            case.status["execution"]["disabled_nodes"] = [name]
-            with self.subTest(name=name):
-                self.assertEqual(case.state("04"), "UNKNOWN")
+        rewired = self.world()
+        rewired.status["execution"]["active_connections"]["Read Health"]["main"][0][0]["node"] = "Post Status"
+        self.assertEqual(rewired.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
         other_bot = self.world()
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
@@ -1769,11 +1792,6 @@ class ScorecardCollectorTests(unittest.TestCase):
         recorded = self.world()
         recorded.status["execution"]["execution_version"] = "v-2"
         self.assertEqual(recorded.state("04"), "PASS")
-        for route in (False, None):
-            case = self.world()
-            case.status["execution"]["active_route_ok"] = route
-            with self.subTest(route=route):
-                self.assertEqual(case.state("04"), "UNKNOWN")
         # n8n resolving orchestrator to another container cannot attest the selected Director.
         detached = self.world()
         detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
@@ -1850,6 +1868,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         retimed = self.world()
         retimed.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = [approval_receipt(iso(1789210000 + 30011))]
         self.assertEqual(retimed.state("08"), "UNKNOWN")
+        # The receipt must join the owner's durable, signature-verified command authorization.
+        for change in ({"authorized": False}, {"authorized_command_digest": False}, {"authorized_fence": False},
+                       {"proof_version": "v0"}, {"actor_id": "USOMEONEELSE"}):
+            case = self.world()
+            case.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("08"), "UNKNOWN")
         other_command = self.world()
         other_command.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["command_id_sha256"] = "0" * 64
         self.assertEqual(other_command.state("08"), "UNKNOWN")
@@ -2167,7 +2192,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(uncapped.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
         for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
-                       {"authority_digest": "e" * 64}):
+                       {"authority_digest": "e" * 64}, {"project_id": "other-project"}, {"day": "2026-09-11"},
+                       {"task_id": "DIR-LG-OTHER"}):
             case = self.world()
             case.consistency["tasks"][PAID_TASK]["budgets"][0].update(change)
             with self.subTest(change=change):
@@ -2437,3 +2463,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]

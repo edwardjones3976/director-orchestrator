@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]] -->
@@ -138,7 +139,11 @@ a container ID, never a name.
   (same network ID) on which n8n's aliases or DNS names include the relay
   host (on every network the source is attached to, no other container may
   answer to that name), that the active intake `Create Director Task` node
-  forwards exactly as `n8n/workflows/director-intake.json` (the gateway must
+  forwards exactly as `n8n/workflows/director-intake.json` (the whole active
+  workflow is compared with that file: every node's type, typeVersion,
+  parameters, disabled flag and credential types, the node set and the
+  connection graph; only node ids, positions, `webhookId` and credential ids
+  may differ; the gateway must
   hold the Director's bot token, owner, channel, bearer and intake signing
   secret `SLACK_GATEWAY_SECRET`, compared in constant time, since n8n forwards
   its Authorization and signature headers unchanged; a test derives the
@@ -171,7 +176,9 @@ a container ID, never a name.
   saved successful scheduled `Director Status` execution of a workflow that is
   active now, whose active version is the `Read Health` GET of
   `http://orchestrator:8080/health` -> `Diff Readiness` -> one Slack
-  `Post Status` route whose `Diff Readiness` code is exactly the repository's
+  `Post Status` route, the whole active version equal to
+  `n8n/workflows/director-status.json` under the same rule (the Post Status
+  channel is bound to `--channel`), whose `Diff Readiness` code is exactly the repository's
   and whose `Post Status` sends `$json.text` to the project channel through a
   Slack API credential, with no node of that workflow disabled, which ran its active version (the execution's recorded version
   where n8n stores one, otherwise a start after both that version's history
@@ -189,7 +196,9 @@ a container ID, never a name.
   database-derived live writer lease, not only the persisted owner row.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
-  08 needs a complete thread readback, and each prompt's approve button must
+  08 needs a complete thread readback, each `approval_resume` receipt joined to
+  its durable command authorization (same command digest and writer fence,
+  gateway proof version `v1`, the owner as actor), and each prompt's approve button must
   carry exactly this task, projection, request digest and kind while its
   visible text names that kind and decision scope (and the plan outcome when
   the task has a plan). An
@@ -538,8 +547,8 @@ by attempt digest to every attempt the task made. Check 15 fails when an
 enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
 provider exceeds its daily budget, and passes only when the paid task's budget
 rows, the usage-monitor accounting and a settled cost are all present. A
-budget row that fails that signed contract, or a charged attempt that does not
-join the signed budget of its own grant and provider, leaves 15 UNKNOWN, and an
+budget row that fails that signed contract, or a charged attempt whose task,
+project, budget day, provider and grant do not all match one signed budget, leaves 15 UNKNOWN, and an
 unverified usage receipt leaves 15 and 20 without actual cost (UNKNOWN). It is
 UNKNOWN when a budgeted usage-monitor provider has attempts today (a
 `request_count` that is not exactly zero), incomplete cost visibility and no
@@ -654,3 +663,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]] -->

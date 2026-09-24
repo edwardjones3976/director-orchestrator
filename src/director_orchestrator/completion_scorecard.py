@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
@@ -314,11 +315,7 @@ SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",
 'supported_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'method'='POST' AND n->'parameters'->>'url'='http://orchestrator:8080/v1/intake'),
 'supported_webhook',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Slack Gateway Webhook' AND n->>'type'='n8n-nodes-base.webhook' AND n->'parameters'->>'httpMethod'='POST' AND n->'parameters'->>'path'='director-intake'),
 'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task',
-'create_task_parameters',(SELECT n->'parameters' FROM json_array_elements(h.nodes::json) n
-   WHERE n->>'name'='Create Director Task' LIMIT 1),
-'connections',h.connections::json,
-'disabled_nodes',(SELECT coalesce(json_agg(n->>'name'),'[]'::json) FROM json_array_elements(h.nodes::json) n
-   WHERE coalesce((n->>'disabled')::boolean,false)))
+'nodes',h.nodes::json,'connections',h.connections::json)
 FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
@@ -330,69 +327,49 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
      to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt" AS workflow_updated_at,
      (SELECT h."createdAt" FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
        AS active_version_at,
-     (SELECT EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Read Health'
-               AND n->>'type'='n8n-nodes-base.httpRequest' AND coalesce(n->'parameters'->>'method','GET')='GET'
-               AND n->'parameters'->>'url'='http://orchestrator:8080/health')
-             AND (SELECT count(*) FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Post Status'
-                    AND n->>'type'='n8n-nodes-base.slack')=1
-             AND h.connections::json->'Read Health'->'main'->0->0->>'node'='Diff Readiness'
-             AND h.connections::json->'Diff Readiness'->'main'->0->0->>'node'='Post Status'
-        FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_route_ok,
-     (SELECT json_agg(n) FROM workflow_history h, json_array_elements(h.nodes::json) n
-        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
-          AND n->>'name' IN ('Diff Readiness','Post Status')) AS status_nodes,
-     (SELECT coalesce(json_agg(n->>'name'),'[]'::json) FROM workflow_history h, json_array_elements(h.nodes::json) n
-        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
-          AND coalesce((n->>'disabled')::boolean,false)) AS disabled_nodes
+     (SELECT h.nodes::json FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
+       AS active_nodes,
+     (SELECT h.connections::json FROM workflow_history h
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
    ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
 
 
-_INTAKE_FORWARDING = ("method", "url", "authentication", "sendHeaders", "specifyHeaders", "headerParameters",
-                      "sendBody", "contentType", "rawContentType", "body", "options")
+# Node fields n8n or the operator sets at deploy time and that never change behaviour. Everything else
+# (type, typeVersion, parameters, disabled, retry and error settings, credential types, the connection
+# graph and the node set) must equal the repository workflow.
+_WORKFLOW_DEPLOY_FIELDS = frozenset({"id", "position", "webhookId", "credentials"})
 
 
-def _intake_contract(parameters: Any, connections: Any, disabled: Any = None) -> bool:
-    """The active Create Director Task node forwards exactly as n8n/workflows/director-intake.json does:
-    Authorization and the three X-Director-Intake-* headers, the signed body, timeout, no redirects, the
-    full response, and the same 202 / refusal / ambiguous wiring."""
-    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-intake.json"
-    reference = json.loads(path.read_text(encoding="utf-8"))
-    node = next(item for item in reference["nodes"] if item["name"] == "Create Director Task")
-    # n8n skips a disabled node: no node of the reference workflow may be disabled in the active version.
-    return (isinstance(parameters, dict) and isinstance(disabled, list)
-            and not {item["name"] for item in reference["nodes"]} & set(map(str, disabled))
-            and all(parameters.get(key) == node["parameters"].get(key) for key in _INTAKE_FORWARDING)
-            and connections == reference["connections"])
+def _workflow_matches(reference: str, nodes: Any, connections: Any,
+                      bound: dict[str, tuple[tuple[str, ...], Any]] | None = None) -> bool:
+    """The active workflow version is exactly n8n/workflows/<reference>, node for node and edge for edge.
 
-
-def _no_disabled_status_nodes(disabled: Any) -> bool:
-    """No node of n8n/workflows/director-status.json (trigger, health read, diff, post) is disabled."""
-    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-status.json"
-    names = {node["name"] for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
-    return isinstance(disabled, list) and not names & set(map(str, disabled))
-
-
-def _status_nodes_match(nodes: Any, channel: str) -> bool:
-    """The active Diff Readiness code is exactly n8n/workflows/director-status.json's, and Post Status posts
-    that code's $json.text to the project channel through a Slack API credential, as the repository does."""
-    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-status.json"
-    reference = {node["name"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
-    active = {node.get("name"): node for node in nodes if isinstance(node, dict)} if isinstance(nodes, list) else {}
-    diff, post = active.get("Diff Readiness"), active.get("Post Status")
-    if len(nodes or []) != 2 or not isinstance(diff, dict) or not isinstance(post, dict):
+    Allowed to differ: node ids, canvas positions, webhookId, credential ids and names (the credential
+    types must match), and the parameter values the collector binds separately (``bound``: node name ->
+    (parameter path, expected value)), such as the project channel.
+    """
+    document = json.loads((Path(__file__).resolve().parents[2] / "n8n" / "workflows" / reference)
+                          .read_text(encoding="utf-8"))
+    if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
         return False
-    want = reference["Post Status"]["parameters"]
-    parameters = post.get("parameters") or {}
-    return (diff.get("type") == reference["Diff Readiness"]["type"]
-            and diff.get("parameters") == reference["Diff Readiness"]["parameters"]
-            and post.get("type") == reference["Post Status"]["type"]
-            and set(post.get("credentials") or {}) == set(reference["Post Status"]["credentials"])
-            and parameters.get("select") == want["select"] and parameters.get("text") == want["text"]
-            and parameters.get("otherOptions") == want["otherOptions"]
-            and parameters.get("channelId") == {**want["channelId"], "value": channel})
+
+    def normal(node: dict[str, Any]) -> dict[str, Any]:
+        out = {key: value for key, value in node.items() if key not in _WORKFLOW_DEPLOY_FIELDS}
+        out["disabled"] = node.get("disabled", False) is True  # n8n skips a disabled node
+        out["credentials"] = sorted(node.get("credentials") or {}) if isinstance(node.get("credentials") or {}, dict) else None
+        return out
+
+    expected = {node["name"]: normal(json.loads(json.dumps(node))) for node in document["nodes"]}
+    for name, (path, value) in (bound or {}).items():
+        target = expected[name]["parameters"]
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+    active = {node.get("name"): normal(node) for node in nodes}
+    return len(active) == len(nodes) and active == expected and connections == document["connections"]
 
 
 def _environment(container: dict[str, Any]) -> dict[str, str]:
@@ -414,6 +391,8 @@ def _container_name(value: str) -> str:
 # owner and channel). test_gateway_identities_cover_every_gateway_secret derives the gateway's secret and
 # identity reads from slack_bot.py and config.py, so a new one cannot be missed silently. SLACK_APP_TOKEN
 # is gateway-only; its app identity is check 02's.
+# The proof version the gateway's signed approval command carries (models.SlackGatewayProof).
+_APPROVAL_PROOF_VERSION = "v1"
 _GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET",
                        "SLACK_GATEWAY_SECRET")
 _GATEWAY_ONLY = ("SLACK_APP_TOKEN",)
@@ -542,9 +521,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
         route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
     if isinstance(workflow, dict):
         # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
-        workflow["forwarding_contract"] = _intake_contract(workflow.pop("create_task_parameters", None),
-                                                           workflow.pop("connections", None),
-                                                           workflow.pop("disabled_nodes", None))
+        workflow["forwarding_contract"] = _workflow_matches("director-intake.json", workflow.pop("nodes", None),
+                                                            workflow.pop("connections", None))
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
                                              "supported_webhook": True, "direct_connection": True,
                                              "forwarding_contract": True})
@@ -1066,11 +1044,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
-    if (execution.get("active_route_ok") is not True or not _status_nodes_match(execution.get("status_nodes"), t.channel)
-            or not _no_disabled_status_nodes(execution.get("disabled_nodes"))):
-        return _observation("04", None, "The active Director Status version is not the Read Health (GET "
-                            "orchestrator:8080/health) -> Diff Readiness -> Post Status route with the repository's "
-                            "Diff Readiness code and a Post Status of $json.text to the project channel.",
+    if not _workflow_matches("director-status.json", execution.get("active_nodes"), execution.get("active_connections"),
+                             {"Post Status": (("channelId", "value"), t.channel)}):
+        return _observation("04", None, "The active Director Status version is not exactly "
+                            "n8n/workflows/director-status.json (every node, setting and edge), posting to the "
+                            "project channel.",
                             source, {}, at, **binding)
     out = _flatted(execution["data"])["resultData"]["runData"]["Post Status"][-1]["data"]["main"][0][0]["json"]
     ts = out.get("ts") or (out.get("message") or {}).get("ts")
@@ -1337,9 +1315,14 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         scoped = len(native) == 1 and _prompt_scoped(native[0], task_id, delivery, task)
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
+        # The receipt must join the command authorization the webhook-verification path admitted: same
+        # command digest and writer fence, the gateway proof version, and the owner as actor.
         receipted = decided is not None and any(
             isinstance(receipt, dict) and _same(receipt.get("command_id_sha256"), command)
             and isinstance(receipt.get("recorded_at"), str) and _when(receipt["recorded_at"]) == decided
+            and receipt.get("authorized") is True and receipt.get("authorized_command_digest") is True
+            and receipt.get("authorized_fence") is True and receipt.get("proof_version") == _APPROVAL_PROOF_VERSION
+            and _same(receipt.get("actor_id"), runtime.env.get("SLACK_OWNER_USER_ID"))
             for receipt in receipts)
         if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
@@ -1579,7 +1562,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
         unsigned = any(row.get("signature_verified") is not True for row in budgets) or not all(
             any(_same(budget.get("authority_digest"), charge.get("grant_digest"))
-                and budget.get("provider_id") == charge.get("provider_id") for budget in budgets) for charge in spend)
+                and (budget.get("task_id"), budget.get("project_id"), budget.get("day"), budget.get("provider_id"))
+                == (charge.get("task_id"), charge.get("project_id"), charge.get("budget_day"), charge.get("provider_id"))
+                for budget in budgets) for charge in spend)
         budgets = [row for row in budgets if row.get("signature_verified") is True]
         for row in budgets:
             if not _counter(row["day_held_microusd"]) or not _counter(row["daily_limit_microusd"]):
@@ -2428,3 +2413,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]

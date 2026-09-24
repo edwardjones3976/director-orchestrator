@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
@@ -459,6 +460,36 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                          ("sha256:" + "6" * 64, "sha256:" + "7" * 64))
         self.assertNotIn("owner-command-1", json.dumps(receipts))
         datetime.fromisoformat(receipts[0]["recorded_at"])
+        # No durable command authorization joins it yet: not authorized.
+        self.assertEqual((receipts[0]["authorized"], receipts[0]["proof_version"], receipts[0]["actor_id"]),
+                         (False, None, None))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_command_authorization(nonce_digest, task_id, operation,"
+                " command_id, command_digest, proof_version, actor_id, writer_fencing_generation, proof_expires_at)"
+                " VALUES (%s, %s, 'approval_resume', 'owner-command-1', %s, 'v1', 'UOWNER1', 1, now())",
+                ("sha256:" + "9" * 64, task_id, "sha256:" + "6" * 64))
+        joined = self.report(tasks=[task_id])["tasks"][task_id]["approval_receipts"][0]
+        self.assertEqual({key: joined[key] for key in ("authorized", "authorized_command_digest", "authorized_fence",
+                                                        "proof_version", "actor_id")},
+                         {"authorized": True, "authorized_command_digest": True, "authorized_fence": True,
+                          "proof_version": "v1", "actor_id": "UOWNER1"})
+        # The table is append-only: a second command whose authorization names another digest and fence.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_command_receipt(task_id, operation, command_id,"
+                " command_digest, resulting_projection_digest, resulting_projection_version,"
+                " writer_fencing_generation) VALUES (%s, 'approval_resume', 'owner-command-3', %s, %s, 3, 1)",
+                (task_id, "sha256:" + "6" * 64, "sha256:" + "7" * 64))
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_command_authorization(nonce_digest, task_id, operation,"
+                " command_id, command_digest, proof_version, actor_id, writer_fencing_generation, proof_expires_at)"
+                " VALUES (%s, %s, 'approval_resume', 'owner-command-3', %s, 'v1', 'UOWNER1', 2, now())",
+                ("sha256:" + "8" * 64, task_id, "sha256:" + "0" * 64))
+        rows = self.report(tasks=[task_id])["tasks"][task_id]["approval_receipts"]
+        other = next(r for r in rows if r["command_id_sha256"] == hashlib.sha256(b"owner-command-3").hexdigest())
+        self.assertEqual((other["authorized"], other["authorized_command_digest"], other["authorized_fence"]),
+                         (True, False, False))
 
     def test_task_settlement_rows(self):
         task_id = self.intake()
@@ -595,3 +626,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
