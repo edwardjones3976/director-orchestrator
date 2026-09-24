@@ -3,7 +3,8 @@
 
 Runs inside unsloth/unsloth with C:\\llm mounted at /workspace (see scripts/train-smoke.ps1).
 20 QLoRA steps on 50 synthetic rows; this measures the pipeline, not model quality.
-Writes: /workspace/runs/<run>/adapter, /workspace/models/smoke/*.gguf, /workspace/reports/<run>.json
+Writes: /workspace/runs/<run>/adapter, /workspace/models/smoke/*.gguf, /workspace/reports/<run>.json,
+the Hugging Face cache at /workspace/hf (C:\\llm\\hf, the planned cache tier), and scratch under /tmp.
 """
 from __future__ import annotations
 
@@ -65,7 +66,11 @@ def main() -> None:
     t_train = time.time()
     result = trainer.train()
     train_s = time.time() - t_train
-    peak_gb = torch.cuda.max_memory_allocated() / 2**30
+    # PyTorch's own peaks: "allocated" is tensor memory, "reserved" includes the caching allocator's pool.
+    # Neither counts the CUDA context or other processes, so they understate device-wide VRAM use.
+    peak_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
+    peak_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
+    step_losses = [e["loss"] for e in trainer.state.log_history if "loss" in e]
 
     FastLanguageModel.for_inference(model)
     prompt = tok.apply_chat_template(rows()[0]["messages"][:2], tokenize=False, add_generation_prompt=True,
@@ -80,9 +85,12 @@ def main() -> None:
     report = {
         "run": RUN, "base": BASE, "steps": STEPS, "rows": ROWS, "batch": 2,
         "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
-        "peak_vram_gb": round(peak_gb, 2), "train_seconds": round(train_s, 1),
-        "tokens_per_second": round(STEPS * 2 * tokens_per_row / train_s, 1),
-        "final_loss": round(result.training_loss, 4), "sample_output": sample,
+        "peak_torch_allocated_gb": round(peak_alloc_gb, 2), "peak_torch_reserved_gb": round(peak_reserved_gb, 2),
+        "train_seconds": round(train_s, 1),
+        "tokens_per_second_approx": round(STEPS * 2 * tokens_per_row / train_s, 1),  # steps x batch x mean row tokens
+        "mean_train_loss": round(result.training_loss, 4),
+        "last_logged_loss": round(step_losses[-1], 4) if step_losses else None,
+        "sample_output": sample,
     }
     try:
         json.loads(sample)
