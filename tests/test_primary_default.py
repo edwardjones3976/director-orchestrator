@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -144,6 +145,8 @@ from director_orchestrator.primary_default import (
     small_pre_authorization_refusal,
     small_producer_result_refusal,
     small_review_bounds,
+    small_read_only_eligible,
+    small_task_packet_read_only,
     small_task_usage_refusal,
     typed_external_effect_grant_kinds,
     _small_producer_constraints,
@@ -163,13 +166,14 @@ class _FixedAuthorityResolver:
         return [{"path": "README.md", "commit_sha": SHA, "blob_sha": "c" * 40}]
 
 
-def packet_router(settings: Settings) -> DirectorPacketTaskRouter:
+def packet_router(settings: Settings, **options) -> DirectorPacketTaskRouter:
     return DirectorPacketTaskRouter(
         authority_snapshots=_FixedAuthorityResolver(),
         boundary_adapters={},
         writer_owner_id="langgraph-primary-default",
         writer_secret="default-primary-test-writer-secret",
         timeout_seconds=settings.provider_timeout_seconds,
+        **options,
     )
 
 
@@ -219,6 +223,26 @@ class SmallReviewBoundsTests(unittest.TestCase):
         packet = self.router.planned_work_packet(record, assignment)
         return small_review_bounds(
             record, self.settings, assignment, packet, compact_view_lanes=lanes)
+
+    def test_small_class_packets_carry_only_the_read_only_tool(self):
+        """No test execution, write or effect is granted to the small class."""
+
+        record = self.record("done")
+        read_only = packet_router(self.settings, read_only_tools=lambda item: small_read_only_eligible(
+            item, self.settings, compact_view_lanes=SMALL_LANES))
+        for assignment in record.plan.assignments:
+            with self.subTest(sequence=assignment.sequence):
+                packet = read_only.planned_work_packet(record, assignment)
+                self.assertEqual(["READ_REPOSITORY"], packet["allowed_tools"])
+                self.assertTrue(small_task_packet_read_only(packet))
+                # The router without the hook still grants RUN_TESTS, and the
+                # dispatch guard refuses such a packet for the class.
+                self.assertFalse(small_task_packet_read_only(
+                    self.router.planned_work_packet(record, assignment)))
+        # A task outside the class keeps its tools.
+        ineligible = self.record("done", text="Project: default\nCreate a bounded implementation plan.")
+        first = min(ineligible.plan.assignments, key=lambda item: item.sequence)
+        self.assertIn("RUN_TESTS", read_only.planned_work_packet(ineligible, first)["allowed_tools"])
 
     def test_an_oversized_review_packet_is_refused(self):
         self.assertEqual(
@@ -655,6 +679,18 @@ class StandingGrantExerciseTests(unittest.TestCase):
             # A small task needs a producer and an independent reviewer.
             "one_compact_lane": (self.application(lanes=frozenset({"claude"})), False),
             "one_family": (self.application(lanes=frozenset({"grok", "grok-bot"})), False),
+            # The pair must be lanes the live grant names, in its scope.
+            "grant_names_one_lane": (self.application(
+                delegation_grant_json=small_grant(providers=["claude"])), False),
+            "grant_lanes_not_compact": (self.application(
+                delegation_grant_json=small_grant(providers=["claude", "grok"])), False),
+            "grant_other_repository": (self.application(
+                delegation_grant_json=small_grant(repository="owner/other-repository")), False),
+            "grant_other_branch": (self.application(
+                delegation_grant_json=small_grant(branch_pattern="release/*")), False),
+            "grant_revoked": (self.application(
+                delegation_grant_json=small_grant(revoked=True)), False),
+            "no_grant": (self.application(delegation_grant_json=""), False),
             "paid_off": (self.application(
                 dispatcher=False,
                 langgraph_primary_offline_simulation_enabled=False,
@@ -733,6 +769,30 @@ class StandingGrantExerciseTests(unittest.TestCase):
         with patch.object(self.ledger, "delegation_audit_records",
                           side_effect=OSError("ledger unavailable")):
             self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # A readable ledger that lacks this task's own record: a fresh
+        # replacement, or one holding only another task's pre-authorization.
+        self.assertEqual("small_task_pre_authorization_unaudited",
+                         refusal(audit_ledger(self.directory)))
+        other_ledger = audit_ledger(self.directory)
+        other_application = self.application(other_ledger)
+        self.assertTrue(self.exercise(other_application, self.record()))
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(other_ledger))
+        # The record must be under the grant that is live now.
+        self.assertEqual("small_task_pre_authorization_unaudited", refusal(
+            self.ledger, replace(self.settings, delegation_grant_json=small_grant(
+                grant_id="grant-small-2"))))
+        for name, changes in {
+            "revoked": {"delegation_grant_json": small_grant(revoked=True)},
+            "expired": {"delegation_grant_json": small_grant(expires_at="2000-01-01T00:00:00+00:00")},
+            "other_class": {"delegation_grant_json": small_grant(
+                classes=["mark_pull_request_ready_for_review"])},
+            "absent": {"delegation_grant_json": ""},
+            "suspended": {"delegation_suspended": True},
+            "disabled": {"delegation_enabled": False},
+        }.items():
+            with self.subTest(grant=name):
+                self.assertEqual("small_task_pre_authorization_revoked",
+                                 refusal(self.ledger, replace(self.settings, **changes)))
         # A task whose graph keeps the button is never affected and never
         # reads the ledger, with or without one.
         with patch.object(self.ledger, "delegation_audit_records",
@@ -5289,3 +5349,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

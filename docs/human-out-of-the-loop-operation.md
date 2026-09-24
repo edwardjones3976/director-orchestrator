@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
@@ -241,7 +242,11 @@ lane; both lanes' configured transports show the model only the compact
 provider view described below; the producer is not implementation work; the
 intake and the producer's task are each a read-shaped request, meaning every
 sentence opens with a read verb (summarize, explain, describe, review, list,
-compare, answer, analyse) and no shell syntax, dotfile, home, parent or
+compare, answer, analyse), every clause of it does too (a sentence is split at
+commas, semicolons, colons and joining words such as and, then, so, but or or;
+a clause after a split may otherwise be only paths or identifiers, the second
+object of "compare A and B"), every "to ..." and "...ing it" names a read
+action, and no shell syntax, dotfile, home, parent or
 absolute path, secret-like word or variable name, write-shaped word, or outward
 or mutating verb appears (the gateway's `DIRECTOR` command word and a leading
 `Project:` value are not sentences, while every `Outcome:` and `Constraints:`
@@ -255,7 +260,10 @@ task; and the frozen plan total is at most $1 and within the task
 budget, with the reviewer inside its own cap.
 Model or plan output can only remove eligibility. Every plan, assignment, and
 intake model forbids extra fields, so nothing a model writes can assert it.
-"Read-only" means the packet grants no write tool and no effect. It does not
+"Read-only" means the packet grants only `READ_REPOSITORY`: no test
+execution, no write tool and no effect. The router grants the class only that
+tool, and a class packet carrying any other tool or effect is refused at
+dispatch (`small_task_packet_not_read_only`). It does not
 mean a sandboxed process: native and bridge CLIs still run in a host
 workspace. Membership is a lexical filter over the owner's words, not a
 semantic guarantee: a keyword scan cannot show that no tier-0 class is
@@ -339,10 +347,15 @@ outcome size that fits, and a producer result whose review would exceed 16 KB is
 refused when it is accepted, before it is recorded and before any reviewer
 work. A result refused there still spent the producer's attempt. A
 pre-authorized task, one whose persisted graph skips the execution button, is
-refused at dispatch when no audit ledger is configured or readable, or when it
-no longer qualifies, for example after a restart under a lower reviewer cap or
-different lanes, rather than run without the class's bounds; a task whose graph
-keeps the button is never affected. That failure trips the grant.
+refused at dispatch unless delegation is still enabled and unsuspended under a
+live grant for the class (`small_task_pre_authorization_revoked`), the verified
+audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
+grant_id (`small_task_pre_authorization_unaudited`; an absent, unreadable or
+replaced ledger has none), and it still qualifies
+(`small_task_pre_authorization_lapsed`, for example after a restart under a
+lower reviewer cap or different lanes), rather than run without the class's
+bounds; a task whose graph keeps the button is never affected. That failure
+trips the grant.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -556,3 +569,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | BEGIN]]
@@ -149,6 +150,7 @@ class DirectorPacketTaskRouter:
         extra_constraints: Callable[
             [DirectorPacketTaskRouter, TaskRecord, Assignment], Sequence[str]
         ] | None = None,
+        read_only_tools: Callable[[TaskRecord], bool] | None = None,
     ) -> None:
         if not writer_owner_id.strip():
             raise ValueError("writer_owner_id is required")
@@ -166,6 +168,9 @@ class DirectorPacketTaskRouter:
         # Deterministic, Director-side constraints derived from the frozen
         # record only; they can narrow what a provider is told, never widen it.
         self._extra_constraints = extra_constraints
+        # True for a task whose packets may carry only READ_REPOSITORY: no
+        # test execution, write or effect (the small read-only class).
+        self._read_only_tools = read_only_tools
         self._authority_snapshots = authority_snapshots
         self._boundary_adapters = dict(boundary_adapters)
         self._writer_owner_id = writer_owner_id
@@ -400,6 +405,8 @@ class DirectorPacketTaskRouter:
         allowed_tools = (
             ["PUBLIC_WEB_SEARCH"]
             if assignment.agent.value == "perplexity"
+            else ["READ_REPOSITORY"]
+            if self._read_only_tools is not None and self._read_only_tools(record)
             else ["READ_REPOSITORY", "RUN_TESTS"]
         )
         allowed_external_effects: list[str] = []
@@ -599,3 +606,4 @@ class DirectorPacketTaskRouter:
 # [[xAI Grok | grok-4.6 | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
@@ -21,7 +22,7 @@ from director_orchestrator.config import Settings
 from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
 from director_orchestrator.models import AssignmentOutcome, ProviderName, SlackIntake, TaskRecord, TaskStatus
 from director_orchestrator.packet_contracts import document_digest
-from director_orchestrator.policy import preview_plan
+from director_orchestrator.policy import preview_plan, small_read_only_eligible
 from director_orchestrator.primary_default import (
     DefaultPrimaryActivation, DefaultPrimaryAuthority,
     _live_assignment_attempt_budget, _live_parallel_plan,
@@ -277,6 +278,10 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
                    return_value=frozenset({"grok", "claude"})):
             super().setUp()
         self.adapter = self.activation.live_dependencies.adapter_for_format()
+        # The production router grants the class only READ_REPOSITORY.
+        self.activation.services._packet_router = packet_router(
+            self.settings, read_only_tools=lambda record: small_read_only_eligible(
+                record, self.settings, compact_view_lanes=frozenset({"grok", "claude"})))
         self.handle.claim_store.record_result_packet_artifact = Mock(side_effect=lambda **kw:
             SimpleNamespace(document_digest=document_digest(kw["packet"])))
 
@@ -308,6 +313,17 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertLess(self.dispatch_contexts[-1].total_token_limit, 400000)
 
     USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
+
+    def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
+        self.activation.services._packet_router = packet_router(self.settings)
+        reservation, _ = self.request(1)
+        with patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
+            outcome = self.dispatch(reservation)
+        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual("small_task_packet_not_read_only", outcome.reason_code)
+        admission.assert_not_called()
+        self.activation.coordinator.reserve_provider_attempt.assert_not_called()
+        self.assertEqual([], self.dispatch_contexts)
 
     def test_a_reviewer_transport_failure_is_not_retried(self):
         """Its usage is unknown, so it spent the reviewer's whole token allowance."""
@@ -362,3 +378,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

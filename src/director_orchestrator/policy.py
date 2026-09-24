@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -43,9 +44,10 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from .antigravity import (
@@ -478,6 +480,52 @@ _PERSONAL_DATA = re.compile(
 )
 
 
+# Inside a sentence, punctuation and the conjunctions that can join a second
+# requested action split it into clauses. Every clause must open with a read
+# verb or, after a split, be only paths or identifiers (the second object of
+# "Compare A and B"). "to <verb>" and "<verb>ing it" name an action too and
+# must be read verbs. Anything else is a second action and leaves the class.
+_CLAUSE_BREAK = re.compile(
+    r"[,;:]|\b(?:and|then|also|plus|but|so|or|while|after|before|afterwards|once)\b", re.I)
+_DETERMINER = r"(?:the|a|an|its|their|this|that|these|those|each|every|both|all)"
+_OBJECT_LIST = re.compile(rf"(?:{_DETERMINER}\s+)*[\w./-]*[./_][\w./-]*", re.I)
+_TO_ACTION = re.compile(rf"\bto\s+(?!{_DETERMINER}\b)([\w./-]+)", re.I)
+_GERUND_ACTION = re.compile(rf"\b(\w+ing)\s+(?:it|them|{_DETERMINER})\b", re.I)
+_READ_GERUND = re.compile(
+    r"(?:summari[sz]|explain|describ|review|list|compar|answer|analy[sz])ing"
+    r"|including|regarding|concerning|following|using|containing|matching",
+    re.I,
+)
+# The only tool a small read-only task's packets may carry.
+SMALL_TASK_ALLOWED_TOOLS = frozenset({"READ_REPOSITORY"})
+
+
+def small_task_packet_read_only(packet: Mapping[str, Any]) -> bool:
+    """Whether a work packet grants only the small class's read-only tool and no effect."""
+
+    tools = packet.get("allowed_tools")
+    effects = packet.get("allowed_external_effects")
+    return (
+        isinstance(tools, list) and bool(tools)
+        and set(tools) <= SMALL_TASK_ALLOWED_TOOLS
+        and effects == []
+    )
+
+
+def _read_only_sentence(sentence: str) -> bool:
+    clauses = [clause.strip() for clause in _CLAUSE_BREAK.split(sentence)]
+    if not _READ_VERB.match(clauses[0]):
+        return False
+    if any(clause and not (_READ_VERB.match(clause) or _OBJECT_LIST.fullmatch(clause))
+           for clause in clauses[1:]):
+        return False
+    if any(not (_READ_VERB.fullmatch(match.group(1)) or re.search(r"[./_]", match.group(1)))
+           for match in _TO_ACTION.finditer(sentence)):
+        return False
+    return all(_READ_GERUND.fullmatch(match.group(1))
+               for match in _GERUND_ACTION.finditer(sentence))
+
+
 def _read_only_request(text: str) -> bool:
     """Whether every sentence opens with a read verb and no outside term appears.
 
@@ -498,7 +546,7 @@ def _read_only_request(text: str) -> bool:
                  for part in re.split(r"[.!?]+(?:\s+|\Z)|\n+", chunk) if part.strip()]
     return (
         bool(sentences)
-        and all(_READ_VERB.match(part) for part in sentences)
+        and all(_read_only_sentence(part) for part in sentences)
         and not _OUTSIDE_READ_ONLY.search(body)
         and not _WRITE_SCOPE.search(body)
         and not _PERSONAL_DATA.search(body)
@@ -1796,3 +1844,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -309,8 +310,9 @@ def delegation_readiness(
     when the phase-4S pre-execution path is armed: delegation enabled and not
     suspended, a live grant naming ``execute_small_read_only_task``, and a
     primary application that could pre-authorize a task: an audit ledger
-    wired and not latched attended, two compact-view lanes from different
-    provider families, and a deployment that executes. Then ``phase`` reads ``"4S"``; otherwise it stays
+    wired and not latched attended, a grant whose repository and branch cover
+    the plan the deployment builds, two compact-view lanes that grant names
+    from different provider families, and a deployment that executes. Then ``phase`` reads ``"4S"``; otherwise it stays
     1 and nothing is resolved. A per-task check can still refuse an armed path,
     and a per-grant ``delegation_trip`` is not reflected here: it is visible
     only in the audit ledger, which this payload does not read.
@@ -353,3 +355,4 @@ def delegation_readiness(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -52,7 +53,9 @@ from director_orchestrator.policy import (
     enforce_plan,
     execution_policy_errors,
     preview_plan,
+    SMALL_TASK_ALLOWED_TOOLS,
     small_read_only_eligible,
+    small_task_packet_read_only,
 )
 from director_orchestrator.store import TaskStore
 
@@ -1229,6 +1232,64 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
                 self.assertTrue(self.eligible(self.record(text=f"Project: demo\n{text}")))
                 self.assertTrue(self.eligible(self.with_assignments({"task": text}, {})))
 
+    MUTATIONS = ['make it clearer', 'improve it', 'revise it', 'clean it up', 'tidy it', 'polish it', 'tweak the wording', 'adjust the tone', 'convert it to HTML', 'migrate it', 'bump the version', 'upgrade the dependencies', 'rewrite it', 'refactor it', 'rename it', 'format it', 'lint --fix it', 'generate docs', 'scaffold a module', 'set up CI', 'configure logging', 'enable the flag', 'disable the flag', 'turn on caching', 'turn off caching', 'deploy it', 'publish it', 'send it', 'post it', 'open a PR', 'file an issue', 'comment on the PR', 'reply to the thread', 'shorten it', 'expand it', 'correct the typos', 'reorganize the sections', 'restructure it', 'fill in the gaps', 'resolve the TODOs', 'sort the imports']
+
+    def test_every_clause_of_every_sentence_is_a_read_action(self) -> None:
+        """A second, non-read action anywhere in a sentence leaves the class."""
+
+        shapes = (
+            "Review README.md and {}.",
+            "Summarize README.md, then {}.",
+            "Review README.md; {}.",
+            "Explain README.md so we can {}.",
+            "Describe README.md but {}.",
+            "Review README.md to {}.",
+            "List the sections of README.md, {}.",
+            "Compare README.md and AGENTS.md, and {}.",
+        )
+        for mutation in self.MUTATIONS:
+            for shape in shapes:
+                text = shape.format(mutation)
+                with self.subTest(intake=text):
+                    self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+                    self.assertFalse(self.eligible(self.with_assignments({"task": text}, {})))
+        for text in (
+            "Review README.md making it clearer.",
+            "Summarize README.md, improving the wording.",
+            "Please review README.md.",
+            "Make README.md clearer.",
+            "Review and improve README.md.",
+            "Review README.md with a view to improving it.",
+            "Summarize README.md afterwards update it.",
+        ):
+            with self.subTest(intake=text):
+                self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+        for text in (
+            "Compare README.md and AGENTS.md.",
+            "Summarize README.md and describe AGENTS.md.",
+            "List the tests in tests/test_policy_and_store.py, then review them for gaps.",
+            "Explain how requests reach the provider.",
+            "Summarize the sections of README.md including the tables.",
+        ):
+            with self.subTest(read_shaped=text):
+                self.assertTrue(self.eligible(self.record(text=f"Project: demo\n{text}")))
+
+    def test_a_small_task_packet_may_grant_only_read_repository(self) -> None:
+        packet = {"allowed_tools": ["READ_REPOSITORY"], "allowed_external_effects": []}
+        self.assertTrue(small_task_packet_read_only(packet))
+        for changes in (
+            {"allowed_tools": ["READ_REPOSITORY", "RUN_TESTS"]},
+            {"allowed_tools": ["READ_REPOSITORY", "WRITE_ISOLATED_BRANCH"]},
+            {"allowed_tools": ["PUBLIC_WEB_SEARCH"]},
+            {"allowed_tools": []},
+            {"allowed_tools": None},
+            {"allowed_external_effects": ["OPEN_DRAFT_PULL_REQUEST"]},
+            {"allowed_external_effects": None},
+        ):
+            with self.subTest(changes=changes):
+                self.assertFalse(small_task_packet_read_only({**packet, **changes}))
+        self.assertEqual(frozenset({"READ_REPOSITORY"}), SMALL_TASK_ALLOWED_TOOLS)
+
     def test_personal_identifiers_are_a_deterministic_approval_reason(self) -> None:
         """Unambiguous personal-data wording stops every task, not only this class."""
 
@@ -1307,3 +1368,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]

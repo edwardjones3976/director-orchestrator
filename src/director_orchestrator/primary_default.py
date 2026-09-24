@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
@@ -180,6 +181,7 @@ from .policy import (
     canonical_repository,
     preview_plan,
     small_read_only_eligible,
+    small_task_packet_read_only,
     _canonical_prestage_record,
 )
 from .primary_coordinator import PrimaryTaskCoordinator
@@ -862,20 +864,46 @@ def small_pre_authorization_refusal(
     """Why a task a standing grant pre-authorized may not be dispatched, if at all.
 
     Its graph was persisted without the execution button, so nothing but this
-    check stands between a restart and an unbounded run. With no configured
-    or readable audit ledger it is refused: its trips could not be recorded.
-    If stricter settings or different lanes have taken it out of the class,
-    every bound tied to the class (the reviewer's byte and token caps, the
-    producer's result cap) would silently lapse, so it is refused too. A task
-    whose graph keeps the button is never affected and never reads the ledger.
+    check stands between a restart and an unbounded run. Delegation must still
+    be enabled and unsuspended, under a live grant for the class; the
+    verified audit chain must hold this task's own PRE_AUTHORIZED record under
+    that grant_id (an absent, unreadable or replaced ledger has none); and the
+    task must still qualify, or every bound tied to the class (the reviewer's
+    byte and token caps, the producer's result cap) would silently lapse. A
+    task whose graph keeps the button is never affected and never reads the
+    ledger.
     """
 
     if not approval_free:
         return None
     try:
-        ledger.delegation_audit_records(limit=1)
+        grant = parse_grant(settings.delegation_grant_json)
+    except DelegationConfigurationError:
+        grant = None
+    if (not settings.delegation_enabled or settings.delegation_suspended
+            or grant is None or not grant.live_at(datetime.now(timezone.utc))
+            or Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK not in grant.classes):
+        return "small_task_pre_authorization_revoked"
+    agent = f"director-langgraph:{record.task_id}"
+    try:
+        found, read, after, started = False, 0, None, monotonic()
+        while not found:
+            page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
+            read += len(page)
+            found = any(
+                item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+                and item.acting_agent == agent
+                and item.grant_id == grant.grant_id
+                for item in page)
+            if (len(page) < 1_000 or read >= _AUDIT_HISTORY_MAX_RECORDS
+                    or monotonic() - started > _AUDIT_HISTORY_MAX_SECONDS):
+                break
+            after = page[-1].digest
     except Exception:
         # None, unreadable, or failing verification alike.
+        found = False
+    if not found:
         return "small_task_pre_authorization_unaudited"
     if not small_read_only_eligible(
             record, settings, compact_view_lanes=compact_view_lanes):
@@ -1721,6 +1749,8 @@ class DefaultDryRunServices:
                     _small_producer_constraints(
                         settings, router, record, assignment,
                         compact_view_lanes=self.compact_view_lanes)),
+                read_only_tools=lambda record: small_read_only_eligible(
+                    record, settings, compact_view_lanes=self.compact_view_lanes),
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
@@ -2618,15 +2648,33 @@ class DefaultPrimaryApplication:
     def pre_execution_capable(self) -> bool:
         """Whether this process could pre-authorize any task, for /health.
 
-        A wired audit ledger not latched attended, two compact-view lanes from
-        different provider families (a small task needs a producer and an
-        independent reviewer), and a deployment that executes. A per-grant
-        delegation_trip is not reflected: it is visible only in the audit ledger.
+        A wired audit ledger not latched attended; a live grant naming the
+        class whose repository and branch cover the plan this deployment
+        builds; two compact-view lanes the grant names, from different
+        provider families (a small task needs a producer and an independent
+        reviewer); and a deployment that executes. A per-grant delegation_trip
+        is not reflected: it is visible only in the audit ledger.
         """
 
+        settings = self.settings
+        try:
+            grant = parse_grant(settings.delegation_grant_json)
+        except DelegationConfigurationError:
+            return False
+        if grant is None or not grant.live_at(datetime.now(timezone.utc)):
+            return False
+        # The repository and starting ref preview_plan gives every task.
+        commit, tree = settings.project_execution_authority_pins()
+        branch = commit if commit and tree else "main"
+        in_scope = bool(settings.repository_allowlist) and grant.covers(
+            Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            repository=canonical_repository(settings.repository_allowlist[0]),
+            branch=branch,
+        )
         return (self._delegation_ledger is not None
                 and not self._delegation_tripped
-                and _independent_lane_pair(self._compact_view_lanes)
+                and in_scope
+                and _independent_lane_pair(self._compact_view_lanes & grant.providers)
                 and self._executes())
 
     def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
@@ -3641,6 +3689,10 @@ class DefaultPrimaryActivation:
                             ParallelAssignmentStatus.FAILED, None, review_refusal)
                     small_class = small_read_only_eligible(
                         record, settings, compact_view_lanes=compact_view_lanes)
+                    if small_class and not small_task_packet_read_only(packet):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            "small_task_packet_not_read_only")
                     # A live lane needs a trusted positive per-lane and
                     # per-attempt limit bounded by the configured task budget
                     # before any attempt reservation or paid provider call.
@@ -4516,3 +4568,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
