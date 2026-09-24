@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | BEGIN]]
@@ -11,11 +19,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import hmac
 import os
 import ssl
 import secrets
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,7 +42,14 @@ from .host_provider_bridge import (
     bridge_challenge_signature,
     dispatch_bridge_request,
     _digest,
+    _LANE_AUTH_ENV,
+    _SAFE_OS_ENV,
+    _TRANSPORT_ENV,
 )
+
+PROCESS_ENVIRONMENT_VERSION = "director-native-process-environment/v1"
+# Set only by the launcher: the lane credentials it copied from the bridge profile.
+PROFILE_AUTH_NAMES = "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"
 
 
 def _required(name: str) -> str:
@@ -57,6 +74,109 @@ def _commands() -> dict[str, tuple[str, ...]]:
             raise RuntimeError("host provider command bindings must be string arrays")
         commands[provider] = tuple(argv)
     return commands
+
+
+def _apply_pinned_process_environment() -> bool:
+    """Pin every process name that host-command children and the digest read.
+
+    Host-command provider children and production_configuration_digest read
+    only _SAFE_OS_ENV and _LANE_AUTH_ENV names. The safe names come from the
+    pinned file. A lane credential survives only when the launcher copied it
+    from the bridge profile and listed it in PROFILE_AUTH_NAMES; every other
+    inherited credential is dropped, so neither the digest nor a host-command
+    provider's billing route depends on the launching shell. The openai lane's
+    native Codex child (codex_environment) also inherits HOME, PROGRAMDATA,
+    PROGRAMFILES, PROGRAMFILES(X86), LANG and LC_ALL, which are neither pinned
+    nor hashed. Inherited proxy/CA names (_TRANSPORT_ENV, any case) are dropped; the file
+    may set them, and the Responses route digest binds whatever remains.
+    Nothing from the file is echoed on refusal.
+    """
+    source = os.environ.get("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "").strip()
+    if not source:
+        return False
+    try:
+        path = Path(source)
+        if not path.is_absolute():
+            raise ValueError("relative pinned environment path")
+        raw = path.read_bytes()
+        if len(raw) > 65536:
+            raise ValueError("oversized pinned environment")
+        document = json.loads(raw)
+        if set(document) != {"version", "environment"} or document["version"] != PROCESS_ENVIRONMENT_VERSION:
+            raise ValueError("unknown pinned environment contract")
+        pinned = document["environment"]
+        # SSLKEYLOGFILE is never pinnable: a key log would expose TLS session
+        # secrets (and a relative one resolves into the runtime tree). An
+        # inherited one is still dropped below.
+        if not isinstance(pinned, dict) or not (
+                _SAFE_OS_ENV <= set(pinned) <= (_SAFE_OS_ENV | _TRANSPORT_ENV) - {"SSLKEYLOGFILE"}):
+            raise ValueError("pinned environment names differ")
+        if not all(isinstance(value, str) and value and not any(c in value for c in "\r\n\0")
+                   for value in pinned.values()):
+            raise ValueError("pinned environment value is invalid")
+        # Children run with another cwd, so a relative or empty entry (kept in
+        # the child's PATH) would resolve somewhere validation never checked.
+        directories = pinned["PATH"].split(os.pathsep)
+        # Every directory-valued name a host-command child receives.
+        directories += [pinned[name] for name in (
+            "TEMP", "TMP", "SYSTEMROOT", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA")]
+        if not all(directory and Path(directory).is_absolute() and Path(directory).is_dir()
+                   for directory in directories):
+            raise ValueError("pinned environment directory is unavailable")
+        if not (Path(pinned["COMSPEC"]).is_absolute() and Path(pinned["COMSPEC"]).is_file()):
+            raise ValueError("pinned command interpreter is unavailable")
+        # Pinned TLS trust material must be an absolute existing file or directory.
+        for name, exists in (("SSL_CERT_FILE", Path.is_file), ("SSL_CERT_DIR", Path.is_dir)):
+            if name in pinned and not (Path(pinned[name]).is_absolute() and exists(Path(pinned[name]))):
+                raise ValueError("pinned TLS trust material is unavailable")
+        lane_auth = frozenset().union(*_LANE_AUTH_ENV.values())
+        from_profile = {name for name in os.environ.get(PROFILE_AUTH_NAMES, "").split(",") if name}
+        if not from_profile <= lane_auth:
+            raise ValueError("unknown profile credential name")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise RuntimeError("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE is invalid") from None
+    preserved = {
+        key: value for key, value in os.environ.items()
+        if key.upper() not in _SAFE_OS_ENV | _TRANSPORT_ENV
+        and (key.upper() not in lane_auth or key in from_profile)
+    }
+    os.environ.clear()
+    os.environ.update(preserved)
+    os.environ.update(pinned)
+    return True
+
+
+def _account_files() -> dict[str, tuple[str, ...]]:
+    raw = os.environ.get("DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON", "").strip()
+    try:
+        account_files = json.loads(raw) if raw else {}
+    except ValueError:
+        account_files = None
+    if not isinstance(account_files, dict) or any(
+        not isinstance(values,list) or not all(isinstance(value,str) for value in values)
+        for values in account_files.values()
+    ):
+        raise RuntimeError("validation account-file bindings malformed")
+    return {key: tuple(values) for key, values in account_files.items()}
+
+
+def configuration_digests(executor, account_files, routed=None) -> dict[str, str]:
+    """Per-lane pins as ValidationBridgeService.run binds them; digests only.
+
+    antigravity is always team-routed and openai is Responses-routed when that
+    route is configured. ``routed`` maps a routed lane to its route digest, or
+    to None when the caller holds no route; a routed lane never reports the
+    native digest the bridge would not bind.
+    """
+    from .provider_validation import production_configuration_digest
+    routed = {"antigravity": None, **(routed or {})}
+    digests = {
+        lane: production_configuration_digest(executor, lane, account_files=tuple(files))
+        for lane, files in account_files.items()
+        if lane in executor.commands and files and lane not in routed
+    }
+    digests.update({lane: value for lane, value in routed.items() if value is not None})
+    return dict(sorted(digests.items()))
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -114,6 +234,33 @@ class _Handler(BaseHTTPRequestHandler):
                 })
             except (HostProviderBridgeError, ValueError):
                 self._json(403, {"ok": False})
+            return
+        if self.path == "/v1/provider/configuration-digest":
+            service = getattr(self.server, "validation_service", None)
+            if service is None:
+                self._json(503, {"ok": False, "reason": "validation_unconfigured"})
+                return
+            authorization = self.headers.get("Authorization", "")
+            if not authorization.startswith("Bearer ") or not hmac.compare_digest(
+                authorization.removeprefix("Bearer ").encode("utf-8"),
+                service.owner_token.encode("utf-8"),
+            ):
+                self._json(401, {"ok": False})
+                return
+            try:
+                routed = {}
+                if service.team_route is not None:
+                    routed["antigravity"] = service.team_route.configuration_digest()
+                if service.openai_responses_route is not None:
+                    routed["openai"] = service.openai_responses_route.configuration_digest
+                digests = configuration_digests(service.production, service.account_files, routed)
+            except Exception:
+                self._json(409, {"ok": False, "reason": "configuration_unavailable"})
+                return
+            self._json(200, {
+                "ok": True, "configuration_digests": digests,
+                "pinned_environment": bool(getattr(self.server, "pinned_environment", False)),
+            })
             return
         if self.path != "/health":
             self._json(404, {"ok": False})
@@ -213,7 +360,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(403, {"ok": False, "reason": "request_rejected"})
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="director_orchestrator.host_provider_bridge_server")
+    parser.add_argument("--check-environment", action="store_true")
+    # Never read sys.argv here: callers (and tests) pass arguments explicitly.
+    arguments = parser.parse_args([] if argv is None else argv)
+    pinned = _apply_pinned_process_environment()
+    if arguments.check_environment:
+        # No secret, store, database or server: print the pins this process would bind.
+        # Routes are never opened here, so routed lanes are omitted, not guessed.
+        executor = WindowsHostProviderExecutor(
+            _commands(), cwd=Path(_required("DIRECTOR_HOST_PROVIDER_WORKSPACE")).resolve(strict=True)
+        )
+        routed = {"openai": None} if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG") else {}
+        print(json.dumps({
+            "configuration_digests": configuration_digests(executor, _account_files(), routed),
+            "pinned_environment": pinned, "provider_calls": 0,
+        }, sort_keys=True))
+        return
     secret = _required("LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET")
     if len(secret) < 32:
         raise RuntimeError("LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET is too short")
@@ -243,14 +407,11 @@ def main() -> None:
     server.bridge_secret = secret  # type: ignore[attr-defined]
     server.claim_store = store  # type: ignore[attr-defined]
     server.executor = executor  # type: ignore[attr-defined]
+    server.pinned_environment = pinned  # type: ignore[attr-defined]
     if os.environ.get("DIRECTOR_PROVIDER_VALIDATION_ENABLED") == "true":
         from .provider_validation import PostgresValidationStore, ValidationBridgeService
-        account_files = json.loads(_required("DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON"))
-        if not isinstance(account_files, dict) or any(
-            not isinstance(values,list) or not all(isinstance(value,str) for value in values)
-            for values in account_files.values()
-        ):
-            raise RuntimeError("validation account-file bindings malformed")
+        _required("DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON")
+        account_files = _account_files()
         if any(hmac.compare_digest(secret, _required(name)) for name in (
             "DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY", "DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"
         )):
@@ -262,7 +423,7 @@ def main() -> None:
             production_executor=executor,
             capture_key=_required("DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY"),
             owner_token=_required("DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"),
-            account_files={key:tuple(values) for key,values in account_files.items()},
+            account_files=account_files,
             team_route=team_route_from_environment(),
             openai_responses_route=responses_route_from_environment(),
         )
@@ -270,7 +431,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
 
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 17:46 UTC | END]]
@@ -285,3 +446,11 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]

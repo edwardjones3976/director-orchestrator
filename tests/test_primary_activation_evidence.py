@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | BEGIN]]
@@ -198,7 +199,17 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             self.identity, inventory_digest="e" * 64, task_count=3
         )
         self.store.require_ready(self.identity)
+        with self.assertRaisesRegex(ActivationEvidenceError, "not ACTIVATED"):
+            self.store.require_activated(self.identity)
         self.record(ActivationStage.ACTIVATED)
+        # A resumable chain: ACTIVATED for this identity, never ready again.
+        self.store.require_activated(self.identity)
+        with self.assertRaisesRegex(ActivationEvidenceError, "prerequisites"):
+            self.store.require_ready(self.identity)
+        from dataclasses import replace
+        other = replace(self.identity, candidate_commit="f" * 40)
+        with self.assertRaisesRegex(ActivationEvidenceError, "stale"):
+            self.store.require_activated(other)
 
     def test_backup_requires_artifact_digest_and_corruption_fails_closed(self) -> None:
         self.record(ActivationStage.PREFLIGHT)
@@ -466,3 +477,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-02 | 08:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

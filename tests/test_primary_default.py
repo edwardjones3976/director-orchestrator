@@ -4,6 +4,10 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # Codex QA aligned the existing reconciliation test double with the occupied() interface.
@@ -1329,6 +1333,38 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                           {stage for stage, _bound in bounds})
         self.assertTrue(all(bound is not None and bound > 0 for _stage, bound in bounds), bounds)
         self.assertIsNotNone(contexts[0].deadline)
+        # A task approved as simulation or paid-off is never dispatched live,
+        # even when this live composition recovers it after a mode switch.
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        # Only an exact ``live`` label is eligible: unknown, missing and
+        # malformed labels are held like the other modes.
+        for label in ("offline_simulation", "paid_off", "unknown", None, "LIVE", "live ", ""):
+            with self.subTest(execution_mode=label):
+                activation.services._execution_modes.pop(record.task_id, None)
+                if label is not None:
+                    activation.services._execution_modes[record.task_id] = label
+                with self.assertRaises(PaidSetupHold):
+                    activation.application._parallel_dispatcher.preflight(
+                        reservation, writer=writer, connection=connection(), wave_budget_usage={})
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "task_not_approved_for_live_dispatch"):
+                    activation.application._parallel_dispatcher(reservation)
+                self.assertEqual(1, len(contexts))
+        # Hydration keeps a recovered label exactly: an explicit empty or blank
+        # label is never defaulted to this live composition's ``live``.
+        missing = object()
+        services = activation.services
+        for recovered, stored in (("", ""), ("  ", "  "), (None, "unknown"), (7, "unknown"),
+                                  (missing, "unknown"), ("live", "live")):
+            with self.subTest(recovered=recovered):
+                while services.occupied(record.task_id):
+                    services.discard(record.task_id)
+                application = {"task_record": record.model_dump(mode="json"), "effect_grant": None}
+                if recovered is not missing:
+                    application["execution_mode"] = recovered
+                self.assertTrue(services.try_hydrate_recovery(SimpleNamespace(projection={"application": application})))
+                self.assertEqual(services._execution_modes[record.task_id], stored)
+                self.assertEqual(services.paid_dispatch_allowed(record.task_id), stored == "live")
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -4186,6 +4222,37 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertFalse(aggregate.succeeded, aggregate)
         self.assertNotEqual(TaskStatus.DONE, completed.status)
 
+    def test_offline_dispatcher_refuses_a_task_not_approved_for_simulation(self):
+        """A live-approved (or unlabelled) task is never settled by a double."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        provider = sorted(settings.langgraph_primary_required_providers)[0]
+        for label in ("live", "unknown", None):
+            with self.subTest(execution_mode=label):
+                services._execution_modes.pop("DIR-LG-LIVE-APPROVED", None)
+                if label is not None:
+                    services._execution_modes["DIR-LG-LIVE-APPROVED"] = label
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "live_task_requires_live_dispatch"):
+                    dispatch(
+                        ParallelReservation(
+                            task_id="DIR-LG-LIVE-APPROVED",
+                            assignment_id="assignment-live",
+                            sequence=1,
+                            provider_id=provider,
+                            deployment_id="deployment-test",
+                            reservation_digest=digest("reservation:live"),
+                        )
+                    )
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+
     def test_unconfigured_lane_settles_failed_without_calling_a_double(self):
         """An unconfigured lane must settle FAILED, never AMBIGUOUS.
 
@@ -4202,6 +4269,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             settings, packet_router=packet_router(settings)
         )
         dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        # Labelled as simulation so only the missing double decides the outcome.
+        services._execution_modes["DIR-LG-UNCONFIGURED"] = "offline_simulation"
         outcome = dispatch(
             ParallelReservation(
                 task_id="DIR-LG-UNCONFIGURED",
@@ -5133,6 +5202,10 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]

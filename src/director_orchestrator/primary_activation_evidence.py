@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 07:03 UTC | BEGIN]]
@@ -1114,6 +1115,21 @@ class ActivationEvidenceStore:
             raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
         return current
 
+    def require_activated(self, identity: ActivationIdentity) -> dict[str, Any]:
+        """Validate that this exact identity's chain is complete and ACTIVATED.
+
+        Read-only; it lets a paid activation whose post-record start failed
+        resume the start steps without recording the terminal stage again.
+        """
+        current = self.load()
+        if current is None or current.get("identity_digest") != identity.digest or current.get("identity") != asdict(identity):
+            raise ActivationEvidenceError("activation evidence identity is unavailable or stale")
+        if [item.get("stage") for item in current.get("stages", [])] != [stage.value for stage in _ORDER]:
+            raise ActivationEvidenceError("activation chain is not ACTIVATED")
+        if not isinstance(current.get("legacy_inventory"), dict):
+            raise ActivationEvidenceError("pre-cutover legacy ownership inventory is unavailable")
+        return current
+
     def bind_legacy_inventory(
         self, identity: ActivationIdentity, *, inventory_digest: str, task_count: int
     ) -> dict[str, Any]:
@@ -1201,7 +1217,7 @@ def owner_local_adoption_from_environment() -> dict[str, Any] | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge"))
+    parser.add_argument("command", choices=("record", "require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup", "bind-legacy-inventory", "challenge"))
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--candidate-commit", required=True)
     parser.add_argument("--candidate-tree", required=True)
@@ -1222,7 +1238,7 @@ def main() -> None:
     store = ActivationEvidenceStore(
         arguments.artifact,
         acceptance_secrets=_acceptance_secrets_from_environment(),
-        read_only=arguments.command in {"require-ready", "require-staged", "require-accepted", "verify-backup"},
+        read_only=arguments.command in {"require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup"},
     )
     identity = _identity(arguments)
     if os.environ.get("LANGGRAPH_PRIMARY_ACCEPTANCE_MODE") == OWNER_LOCAL_EVIDENCE_ACCEPTANCE_MODE:
@@ -1242,6 +1258,10 @@ def main() -> None:
     if arguments.command == "require-ready":
         store.require_ready(identity)
         print("activation_prerequisites_ready=true")
+        return
+    if arguments.command == "require-activated":
+        store.require_activated(identity)
+        print("activation_recorded=true")
         return
     if arguments.command == "verify-backup":
         if arguments.backup_digest is None:
@@ -1310,3 +1330,4 @@ if __name__ == "__main__":
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

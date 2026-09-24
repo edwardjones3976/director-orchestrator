@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | BEGIN]]
@@ -56,7 +57,9 @@ class PrimaryGenerationTests(unittest.TestCase):
                 "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED": "false", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED": "false",
                 "LANGGRAPH_PARALLEL_KILL_SWITCH": "true", "DIRECTOR_RESOLVED_DEPLOYMENT_SHA256": "unverified"},
             "volumes": [{"type": "bind", "source": "/protected", "target": "/repository", "read_only": True}],
-            "networks": {"default": None}}}, "networks": {"default": {"name": "project_default"}}}
+            "networks": {"default": None}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}},
+            "networks": {"default": {"name": "project_default"}}}
         original = resolved_deployment_digest(document, image)
         for field, replacement in (("volumes", [{"type": "bind", "source": "/unapproved", "target": "/repository"}]), ("networks", {"host": None})):
             changed = copy.deepcopy(document)
@@ -74,6 +77,32 @@ class PrimaryGenerationTests(unittest.TestCase):
         service["environment"]["ALLOW_PAID_RUNS"] = "true"
         with self.assertRaises(ActivationEvidenceError):
             resolved_deployment_digest(staged, image)
+
+    def test_resolved_compose_binds_gateway_to_verified_image_id(self):
+        import copy
+        image = "sha256:" + "8" * 64
+        document = {"name": "project", "services": {"orchestrator": {
+            "image": image, "command": ["uvicorn", "director_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "environment": {"DIRECTOR_RUNTIME_IMAGE_ID": image, "DIRECTOR_RUNTIME_IMAGE": image,
+                "DIRECTOR_ASGI_APP": "director_orchestrator.main:app"}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}}}
+        original = resolved_deployment_digest(document, image)
+        self.assertRegex(original, r"^[0-9a-f]{64}$")
+        missing_service = copy.deepcopy(document)
+        del missing_service["services"]["slackbot"]
+        missing_image = copy.deepcopy(document)
+        del missing_image["services"]["slackbot"]["image"]
+        variants = [missing_service, missing_image]
+        for replacement in ("director-orchestrator-orchestrator", "edge-engine-director-slackbot", "sha256:" + "7" * 64):
+            changed = copy.deepcopy(document)
+            changed["services"]["slackbot"]["image"] = replacement
+            variants.append(changed)
+        for changed in variants:
+            with self.subTest(slackbot=changed["services"].get("slackbot")), self.assertRaises(ActivationEvidenceError):
+                resolved_deployment_digest(changed, image)
+        pulled = copy.deepcopy(document)
+        pulled["services"]["slackbot"]["pull_policy"] = "always"
+        self.assertNotEqual(resolved_deployment_digest(pulled, image), original)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -171,7 +200,10 @@ class PrimaryGenerationTests(unittest.TestCase):
                 "LANGGRAPH_PARALLEL_KILL_SWITCH": "true",
                 "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "a" * 64,
                 "DIRECTOR_PROVIDER_VALIDATION_GENERATION": "a" * 64},
-            "volumes": [], "networks": {"default": None}}}, "networks": {"default": {"name": "project_default"}}}
+            "volumes": [],
+            "networks": {"default": None}},
+            "slackbot": {"image": image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}},
+            "networks": {"default": {"name": "project_default"}}}
         without = copy.deepcopy(document)
         without["services"]["orchestrator"]["environment"].pop("DIRECTOR_PROVIDER_VALIDATION_GENERATION")
         self.assertEqual(resolved_deployment_digest(document, image), resolved_deployment_digest(without, image))
@@ -238,3 +270,4 @@ class PrimaryGenerationTests(unittest.TestCase):
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 00:52 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]

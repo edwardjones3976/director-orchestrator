@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | BEGIN]]
@@ -21,6 +29,7 @@ import tempfile
 import unittest
 
 from director_orchestrator.host_provider_bridge import (
+    _LANE_AUTH_ENV,
     SUPPORTED_HOST_LANES,
 )
 
@@ -85,7 +94,8 @@ Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
-foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose')) {
+foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
+    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages')) {
     $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
     if (@($node).Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -95,19 +105,36 @@ if (@($block).Count -ne 1) { throw 'expected one production rollback branch' }
 $script:environmentPath = $EnvironmentPath
 $script:values = @{}
 $script:ComposeProject = 'offline-cutover-test'
+$script:runtimeImageId = 'sha256:' + ('c' * 64)
+$script:images = @{ orchestrator = $script:runtimeImageId; slackbot = $script:runtimeImageId }
+$env:DIRECTOR_RUNTIME_IMAGE = $script:runtimeImageId
 $databaseIdentity = 'offline-identity'; $databaseInstanceId = 'offline-instance'
-function Record-Event($Event) {
+function Record-Event($Event, $Image) {
     $state = @{}
     foreach ($line in Get-Content -LiteralPath $EnvironmentPath) {
         $parts = $line.Split('=', 2); $state[$parts[0]] = $parts[1]
     }
-    @{event=$Event; state=$state} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
+    @{event=$Event; state=$state; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
 }
 function Stop-And-Prove-AllIntake { Record-Event 'stopped' }
 function Start-Sleep { param($Seconds) if($Seconds -ne 65){throw 'unexpected lease wait'}; Record-Event 'wait' }
 function Wait-Health { Record-Event 'health'; @{langgraph_primary=@{}} }
 function docker {
     $arguments = @($args)
+    if ($arguments[0] -eq 'ps') {
+        $selected = @($arguments | Where-Object { $_ -like 'label=com.docker.compose.service=*' })
+        if ($selected.Count -ne 1 -or $arguments -notcontains "label=com.docker.compose.project=$($script:ComposeProject)") {
+            throw 'unexpected container selection'
+        }
+        $global:LASTEXITCODE = 0
+        return $selected[0].Split('=')[-1] + '-container'
+    }
+    if ($arguments[0] -eq 'inspect') {
+        $service = ([string]$arguments[-1]).Replace('-container', '')
+        Record-Event "readback-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return $script:images[$service]
+    }
     if ($arguments[0] -ne 'compose') { throw 'unexpected Docker operation' }
     if ($arguments -contains 'run') {
         if ($arguments[-2] -ne '-c') { throw 'unexpected helper command' }
@@ -117,16 +144,113 @@ function docker {
         $global:LASTEXITCODE = $LASTEXITCODE
         return
     }
-    if ($arguments -contains 'up' -and $arguments[-1] -eq 'orchestrator') {
-        Record-Event 'restart'
-    } elseif ($arguments -contains 'up' -and $arguments[-1] -eq 'slackbot') {
-        Record-Event 'reopen'
-    } else {
-        throw 'unexpected Compose operation'
+    $service = [string]$arguments[-1]
+    if ($arguments -contains 'start') {
+        if ($service -ne 'slackbot') { throw 'unexpected Compose start' }
+        Record-Event 'reopen' $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return
+    }
+    $name = @{ orchestrator = 'restart'; n8n = 'n8n'; slackbot = 'create-slackbot' }[$service]
+    if ($arguments -notcontains 'up' -or -not $name) { throw 'unexpected Compose operation' }
+    if ($service -eq 'slackbot' -and $arguments -notcontains '--no-start') { throw 'gateway started before its readback' }
+    Record-Event $name $env:DIRECTOR_RUNTIME_IMAGE
+    if ($service -ne 'n8n' -and -not ($Scenario -eq "wrong-$service")) {
+        $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
     }
     $global:LASTEXITCODE = 0
 }
 $Action = 'Rollback'
+& ([scriptblock]::Create($block[0].Extent.Text))
+'''
+
+
+PRIOR_ORCHESTRATOR = "sha256:" + "a" * 64
+PRIOR_GATEWAY = "sha256:" + "b" * 64
+CANDIDATE_IMAGE = "sha256:" + "c" * 64
+
+# The production activation branch and every image helper execute; only intake
+# proofs, evidence, inventory, health and Docker are substituted, so no service,
+# database or provider is reachable.
+ACTIVATION_HARNESS = r'''
+param($Source, $EnvironmentPath, $EventsPath, $Action, $HealthJson, $ImagesJson, $Scenario)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
+    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages',
+    'Read-DotEnv', 'Assert-OfflineHandoffProfile', 'Test-ActivatedChain', 'Get-OfflineAttemptPath')) {
+    $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
+    if (@($node).Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$block = $ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$Action -in @("Activate", "ActivateOffline")'}, $true)
+if (@($block).Count -ne 1) { throw 'expected one production activation branch' }
+$script:environmentPath = $EnvironmentPath
+$script:values = Read-DotEnv $EnvironmentPath
+$script:acceptanceMode = if ($Scenario -like 'mode-*') { $Scenario.Substring(5) } else { 'provider-v2' }
+$script:ComposeProject = 'offline-activation-test'
+$script:runtimeImageId = 'sha256:' + ('c' * 64)
+$runtimeImageId = $script:runtimeImageId
+$env:DIRECTOR_RUNTIME_IMAGE = $script:runtimeImageId
+$script:images = @{}
+foreach ($entry in ($ImagesJson | ConvertFrom-Json).PSObject.Properties) { $script:images[$entry.Name] = [string]$entry.Value }
+function Record-Event($Event, $Image) {
+    @{event=$Event; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
+}
+function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
+function Assert-PrimaryQuiescent { param([switch]$AfterStop, [switch]$WritersOnly)
+    $event = if ($WritersOnly) { 'writers-idle-after-stop' } elseif ($AfterStop) { 'quiescent-after-stop' } else { 'quiescent-before-stop' }
+    Record-Event $event
+    if ($Scenario -like "*busy-$event") { throw "Activation refused: the primary plane is not quiescent" } }
+function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
+function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
+function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
+function docker {
+    $arguments = @($args)
+    if ($arguments[0] -eq 'ps') {
+        $selected = @($arguments | Where-Object { $_ -like 'label=com.docker.compose.service=*' })
+        if ($selected.Count -ne 1 -or $arguments -notcontains "label=com.docker.compose.project=$($script:ComposeProject)") {
+            throw 'unexpected container selection'
+        }
+        $global:LASTEXITCODE = 0
+        $service = $selected[0].Split('=')[-1]
+        # A service with no image entry has no container at all.
+        if (-not $script:images.ContainsKey($service)) { return }
+        return $service + '-container'
+    }
+    if ($arguments[0] -eq 'inspect') {
+        $service = ([string]$arguments[-1]).Replace('-container', '')
+        Record-Event "readback-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return $script:images[$service]
+    }
+    if (($arguments[0..4] -join '|') -cne "compose|--project-name|$($script:ComposeProject)|--env-file|$EnvironmentPath" -or
+        $arguments[5] -cnotin @('up', 'start')) { throw 'unexpected Docker operation' }
+    $service = [string]$arguments[-1]
+    if ($arguments[5] -ceq 'start') {
+        if ($service -ne 'slackbot') { throw 'unexpected Compose start' }
+        Record-Event "start-$service" $script:images[$service]
+        $global:LASTEXITCODE = 0
+        return
+    }
+    if ($service -eq 'slackbot' -and $arguments -notcontains '--no-start') { throw 'gateway started before its readback' }
+    Record-Event "up-$service" $env:DIRECTOR_RUNTIME_IMAGE
+    if ($service -ne 'n8n' -and -not ($Scenario -like '*wrong-gateway' -and $service -eq 'slackbot')) {
+        $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
+    }
+    $global:LASTEXITCODE = 0
+}
+function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$FactsJson, [int]$LegacyTaskCount, [string]$LegacyInventoryDigest)
+    Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' }))
+    if ($Command -eq 'require-activated' -and $Scenario -notlike 'activated*') { throw 'activation chain is not ACTIVATED' }
+    if ($Scenario -eq "fail-$Command") { throw "evidence $Command refused" } }
+function Assert-AllIntakeStopped { Record-Event 'intake-proved-stopped'
+    if ($Scenario -eq 'activated-running') { throw 'Authenticated intake surface remains active: orchestrator' } }
+function Assert-PrimaryOwnsIntake { Record-Event 'primary-owns-intake'
+    if ($Scenario -eq 'activated-rolled-back') { throw 'Activation resume refused: new intake is no longer owned by the primary' } }
 & ([scriptblock]::Create($block[0].Extent.Text))
 '''
 
@@ -356,6 +480,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
         source = (ROOT / "scripts/windows-host-provider-bridge.ps1").read_text(encoding="utf-8")
         for pattern, expected in (
             (r'\$provider -notin @\(([^)]+)\)', SUPPORTED_HOST_LANES),
+            # The launcher forwards only these lane credentials from the profile.
+            (r'\$laneAuthNames = @\(([^)]+)\)', frozenset().union(*_LANE_AUTH_ENV.values())),
         ):
             match = re.search(pattern, source)
             self.assertIsNotNone(match)
@@ -372,6 +498,15 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             initial["PRESERVED"] = "fixture-value"
             environment.write_text("".join(f"{key}={value}\n" for key, value in initial.items()))
             events = root / "events.jsonl"
+            events.write_text("")
+            prior = Path(str(environment) + ".prior-images.unselected." + "c" * 64 + ".json")
+            if scenario == "invalid-record":
+                prior.write_text(json.dumps({"version": "director-prior-images/v1"}))
+            elif scenario != "missing-record":
+                prior.write_text(json.dumps({
+                    "version": "director-prior-images/v1", "compose_project": "offline-cutover-test",
+                    "candidate_image_id": CANDIDATE_IMAGE, "orchestrator_image_id": PRIOR_ORCHESTRATOR,
+                    "gateway_image_id": PRIOR_GATEWAY}))
             harness = root / "rollback.ps1"
             harness.write_text(ROLLBACK_HARNESS, encoding="utf-8")
             runner = root / "database_stub.py"
@@ -393,8 +528,20 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             with self.subTest(simulation=simulation):
                 result, events, final = self._rollback(simulation=simulation, scenario="success")
                 self.assertEqual(result.returncode, 0, result.stderr)
+                # The gateway is created stopped and read back before n8n or Slack reopen.
                 self.assertEqual([event["event"] for event in events],
-                                 ["stopped", "wait", "database", "cas", "closed", "restart", "health", "reopen"])
+                                 ["stopped", "wait", "database", "cas", "closed", "restart",
+                                  "readback-orchestrator", "health", "create-slackbot", "readback-slackbot",
+                                  "n8n", "reopen"])
+                images = {event["event"]: event["image"] for event in events if event.get("image")}
+                # Each service returns to its own recorded prior image, not the candidate.
+                self.assertEqual(images["restart"], PRIOR_ORCHESTRATOR)
+                self.assertEqual(images["readback-orchestrator"], PRIOR_ORCHESTRATOR)
+                self.assertEqual(images["create-slackbot"], PRIOR_GATEWAY)
+                self.assertEqual(images["readback-slackbot"], PRIOR_GATEWAY)
+                self.assertEqual(images["reopen"], PRIOR_GATEWAY)
+                self.assertNotIn(CANDIDATE_IMAGE, {images["restart"], images["create-slackbot"]})
+                self.assertIn("recorded prior orchestrator and gateway images", result.stdout)
                 cas = next(event for event in events if event["event"] == "cas")
                 self.assertEqual(cas["arguments"], {
                     "intake_owner": "legacy", "owner_token": "offline-owner", "expected_generation": 7})
@@ -423,13 +570,462 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                     names = [event["event"] for event in events]
                     self.assertEqual(names[:3], ["stopped", "wait", "database"])
                     self.assertEqual("cas" in names, scenario == "cas_failure")
-                    self.assertTrue(set(names).isdisjoint({"restart", "health", "reopen"}))
+                    self.assertTrue(set(names).isdisjoint({"restart", "health", "create-slackbot", "n8n", "reopen"}))
                     self.assertEqual(final["LANGGRAPH_PRIMARY_ENABLED"], "true")
                     self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"],
                                      str(simulation).lower())
                     for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED",
                                  "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"):
                         self.assertEqual(final[name], "false")
+
+    def test_rollback_without_prior_image_record_still_returns_intake_to_legacy(self):
+        result, events, final = self._rollback(simulation=False, scenario="missing-record")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([event["event"] for event in events],
+                         ["stopped", "wait", "database", "cas", "closed", "restart",
+                          "readback-orchestrator", "health", "create-slackbot", "readback-slackbot",
+                          "n8n", "reopen"])
+        # No image restore: both services are verified on the candidate image.
+        for event in events:
+            if event.get("image"):
+                self.assertEqual(event["image"], CANDIDATE_IMAGE, event["event"])
+        self.assertIn("no image was restored", result.stdout)
+        for name in SWITCHES:
+            self.assertEqual(final[name], "false")
+
+    def test_rollback_with_an_invalid_prior_image_record_refuses_before_stopping(self):
+        result, events, final = self._rollback(simulation=False, scenario="invalid-record")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("prior-image record is invalid", result.stderr)
+        self.assertEqual(events, [])
+        self.assertEqual(final["ALLOW_PAID_RUNS"], "true")
+
+    def test_rollback_gateway_readback_mismatch_closes_all_intake(self):
+        result, events, final = self._rollback(simulation=False, scenario="wrong-slackbot")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("slackbot image differs", result.stderr)
+        self.assertIn("intake remain stopped", result.stderr)
+        names = [event["event"] for event in events]
+        self.assertEqual(names[-3:], ["create-slackbot", "readback-slackbot", "stopped"])
+        self.assertEqual(events[-2]["image"], CANDIDATE_IMAGE)
+        # The refused gateway was never started and n8n never reopened.
+        self.assertNotIn("reopen", names)
+        self.assertNotIn("n8n", names)
+        self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+
+    def test_rollback_orchestrator_readback_mismatch_closes_all_intake(self):
+        result, events, _ = self._rollback(simulation=False, scenario="wrong-orchestrator")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("orchestrator image differs", result.stderr)
+        self.assertIn("intake remain stopped", result.stderr)
+        names = [event["event"] for event in events]
+        self.assertEqual(names[-3:], ["restart", "readback-orchestrator", "stopped"])
+        self.assertTrue(set(names).isdisjoint({"health", "create-slackbot", "n8n", "reopen"}))
+
+    def _activate(self, root, *, action="Activate", health=None, images=None, scenario="success"):
+        environment = root / "fixture.env"
+        if not environment.exists():
+            environment.write_text("".join(f"{name}=false\n" for name in SWITCHES)
+                                   + "DIRECTOR_PROVIDER_VALIDATION_ENABLED=false\nPRESERVED=fixture-value\n")
+        primary = dict.fromkeys(("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres",
+            "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready",
+            "reconciliation_worker_ready", "primary_runtime_active", "paid_off_primary_intake_active",
+            "legacy_new_intake_disabled"), True)
+        primary.update(new_intake_owner="langgraph", ambiguous_effect_count=0, intake_fencing_generation=3,
+                       provider_activation={"combined_live_ready": True})
+        primary.update(health or {})
+        events = root / "events.jsonl"
+        events.write_text("")
+        harness = root / "activation.ps1"
+        harness.write_text(ACTIVATION_HARNESS, encoding="utf-8")
+        result = subprocess.run(
+            [PWSH, "-NoProfile", "-NonInteractive", "-File", str(harness),
+             str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), str(environment), str(events), action,
+             json.dumps(primary), json.dumps({"orchestrator": PRIOR_ORCHESTRATOR, "slackbot": PRIOR_GATEWAY} if images is None else images),
+             scenario],
+            capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+        )
+        observed = [json.loads(line) for line in events.read_text(encoding="utf-8-sig").splitlines()]
+        final = dict(line.split("=", 1) for line in environment.read_text().splitlines())
+        self.assertEqual(final["PRESERVED"], "fixture-value")
+        self.assertEqual(list(root.glob("*.tmp")), [])
+        prior = root / ("fixture.env.prior-images.unselected." + "c" * 64 + ".json")
+        return result, observed, final, prior
+
+    def test_paid_activation_records_activated_on_the_verified_gateway_before_reopening_intake(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:8], ["evidence-require-activated", "quiescent-before-stop",
+                                         "intake-stopped", "quiescent-after-stop",
+                                         "inventory", "evidence-bind-legacy-inventory",
+                                         "evidence-require-ready", "readback-orchestrator"])
+            self.assertLess(names.index("readback-slackbot"), names.index("up-orchestrator"))
+            # Created stopped, read back, ACTIVATED recorded, and only then n8n and Slack start.
+            self.assertEqual(names[-5:], ["up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED",
+                                          "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-4]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(events[-1]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(json.loads(prior.read_text())["orchestrator_image_id"], PRIOR_ORCHESTRATOR)
+            self.assertEqual(json.loads(prior.read_text())["gateway_image_id"], PRIOR_GATEWAY)
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED", "LANGGRAPH_PRIMARY_ENABLED"):
+                self.assertEqual(final[name], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+            self.assertIn("authenticated intake was reopened", result.stdout)
+
+    def test_paid_activation_without_provider_readiness_unwinds_before_intake(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(
+                Path(temporary), health={"provider_activation": {"combined_live_ready": False}})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertNotIn("up-slackbot", names)
+            self.assertEqual(names[-1], "intake-stopped")
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"):
+                self.assertEqual(final[name], "false")
+            self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
+
+    def test_paid_activation_refuses_a_busy_primary_plane_before_any_switch(self):
+        # Work approved under one mode must never be recovered by the other
+        # mode's dispatcher, so both activations refuse a busy plane.
+        for action in ("Activate", "ActivateOffline"):
+            for event, expected in (("quiescent-before-stop", ["quiescent-before-stop"]),
+                                    ("quiescent-after-stop",
+                                     ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop"])):
+                with self.subTest(action=action, event=event), tempfile.TemporaryDirectory() as temporary:
+                    self._assert_busy_plane_refused(Path(temporary), action, event, expected)
+
+    def _assert_busy_plane_refused(self, root, action, event, expected):
+                result, events, final, prior = self._activate(root, action=action, scenario=f"busy-{event}")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("not quiescent", result.stderr)
+                # Paid Activate first asks (read-only) whether the chain is resumable.
+                prefix = ["evidence-require-activated"] if action == "Activate" else []
+                self.assertEqual([item["event"] for item in events], prefix + expected)
+                self.assertFalse(prior.exists())
+                self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+                self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
+
+    def test_activated_chain_resumes_only_the_start_steps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), scenario="activated")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:5], ["evidence-require-activated", "intake-proved-stopped",
+                                         "primary-owns-intake", "intake-stopped", "writers-idle-after-stop"])
+            for skipped in ("quiescent-before-stop", "inventory", "evidence-bind-legacy-inventory",
+                            "evidence-require-ready", "evidence-record-ACTIVATED"):
+                self.assertNotIn(skipped, names)
+            # Same readbacks and health proof, then intake reopens last.
+            self.assertLess(names.index("up-orchestrator"), names.index("candidate-director_orchestrator.main:app"))
+            self.assertIn("health", names)
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-3]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "true")
+            self.assertFalse(prior.exists())
+            self.assertIn("Nothing was re-recorded", result.stdout)
+
+    def test_activated_chain_resume_still_refuses_a_mismatched_readback_or_rollback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="activated-wrong-gateway")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("slackbot image differs", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-3:], ["up-slackbot", "readback-slackbot", "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="activated-rolled-back")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no longer owned by the primary", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["evidence-require-activated", "intake-proved-stopped", "primary-owns-intake"])
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_activated_resume_refuses_a_foreign_live_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary),
+                                                      scenario="activated-busy-writers-idle-after-stop")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not quiescent", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-1], "writers-idle-after-stop")
+            self.assertNotIn("up-orchestrator", names)
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_failed_offline_activation_is_resumable_without_stranding_its_work(self):
+        offline_ok = {"provider_activation": {"combined_live_ready": False},
+                      "primary_runtime_active": False, "paid_off_primary_intake_active": True}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / ("fixture.env.offline-attempt.unselected." + "c" * 64 + ".json")
+            # The runtime starts with intake on and then fails its health proof.
+            result, _, final, _ = self._activate(root, action="ActivateOffline", health={
+                **offline_ok, "primary_runtime_active": True})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(marker.exists())
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+            # Its admitted offline work would fail full quiescence; the retry
+            # needs only no foreign live writer.
+            result, events, final, _ = self._activate(root, action="ActivateOffline", health=offline_ok,
+                                                      scenario="busy-quiescent-before-stop")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:2], ["intake-stopped", "writers-idle-after-stop"])
+            self.assertNotIn("quiescent-before-stop", names)
+            self.assertLess(names.index("evidence-require-ready"), names.index("up-orchestrator"))
+            self.assertFalse(marker.exists())
+            # A foreign live writer still refuses the retry.
+            marker.write_text("director-offline-attempt/v1")
+            result, events, _, _ = self._activate(root, action="ActivateOffline", health=offline_ok,
+                                                  scenario="busy-writers-idle-after-stop")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual([event["event"] for event in events], ["intake-stopped", "writers-idle-after-stop"])
+            # A paid Activate that proves quiescence ends the offline attempt.
+            result, _, _, _ = self._activate(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists())
+
+    def test_healthy_activated_deployment_is_refused_without_stopping_anything(self):
+        # A running ACTIVATED stack is not a failed start: re-running Activate
+        # must not stop it mid-task.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "fixture.env").write_text("".join(f"{name}=true\n" for name in SWITCHES)
+                                              + "DIRECTOR_PROVIDER_VALIDATION_ENABLED=false\nPRESERVED=fixture-value\n")
+            before = (root / "fixture.env").read_bytes()
+            result, events, final, _ = self._activate(root, scenario="activated-running")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("already ACTIVATED", result.stderr)
+            self.assertIn("Nothing was stopped", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["evidence-require-activated", "intake-proved-stopped"])
+            self.assertEqual((root / "fixture.env").read_bytes(), before)
+
+    @unittest.skipUnless(PWSH, "PowerShell is required")
+    def test_quiescence_check_runs_the_metrics_query_and_refuses_clearly(self):
+        harness = r"""
+param($Source, $Mode, $Fail, $CodePath)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-PrimaryQuiescent'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:databaseIdentity = 'storage-fixture'; $script:databaseInstanceId = 'instance-fixture'
+function Invoke-Compose { 'ARGS=' + ($args -join ' ')
+    if ($CodePath) { [IO.File]::WriteAllText($CodePath, [string]$args[-1]) }
+    if ($Fail -eq 'yes') { throw 'Docker Compose command failed.' } }
+if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop }
+elseif ($Mode -eq 'writers') { Assert-PrimaryQuiescent -AfterStop -WritersOnly }
+else { Assert-PrimaryQuiescent }
+'passed'
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "quiescence.ps1"
+            path.write_text(harness, encoding="utf-8")
+
+            def run(mode, fail, code_path=""):
+                return subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(path),
+                                       str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), mode, fail,
+                                       code_path],
+                                      capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+
+            before = run("before", "no")
+            self.assertEqual(before.returncode, 0, before.stderr)
+            self.assertIn("primary_quiescence_metrics", before.stdout)
+            self.assertIn("m.rollback_safe", before.stdout)
+            self.assertIn("accepted_instance_id='instance-fixture'", before.stdout)
+            after = run("after", "no")
+            self.assertEqual(after.returncode, 0, after.stderr)
+            # Writer leases stay in the post-stop predicate; only the wait differs.
+            self.assertIn("m.rollback_safe", after.stdout)
+            self.assertIn("end=time.monotonic()+75", after.stdout)
+            self.assertIn("end=time.monotonic()+0", before.stdout)
+            # Execute the exact generated program against a stub control plane.
+            stub = Path(temporary) / "stub" / "director_orchestrator"
+            stub.mkdir(parents=True)
+            (stub / "__init__.py").write_text("")
+            (stub / "config.py").write_text(
+                "class Settings:\n    langgraph_primary_postgres_dsn = 'stub'\n"
+                "    langgraph_primary_postgres_schema = 'stub'\n"
+                "    langgraph_primary_allow_insecure_local_postgres = True\n")
+            (stub / "langgraph_postgres.py").write_text(
+                "import json, os\nfrom types import SimpleNamespace\n"
+                "_rows = json.loads(os.environ['QUIESCENCE_ROWS'])\n"
+                "def _metrics():\n    row = _rows.pop(0) if len(_rows) > 1 else _rows[0]\n"
+                "    names = ('active_provider_dispatch_count', 'active_assignment_count', 'live_writer_claim_count',"
+                " 'unresolved_reconciliation_count', 'unsettled_claim_count')\n"
+                "    values = dict(zip(names, row))\n"
+                "    return SimpleNamespace(rollback_safe=not any(row), **values)\n"
+                "def open_postgres_control_plane(*args, **kwargs):\n"
+                "    return SimpleNamespace(claim_store=SimpleNamespace(primary_quiescence_metrics=_metrics),"
+                " close=lambda: None)\n")
+
+            def execute(mode, rows):
+                code = Path(temporary) / f"code-{mode}.py"
+                self.assertEqual(run(mode, "no", str(code)).returncode, 0)
+                return subprocess.run([sys.executable, "-c", code.read_text()], capture_output=True, text=True,
+                                      timeout=120, stdin=subprocess.DEVNULL,
+                                      env={**os.environ, "PYTHONPATH": str(stub.parent),
+                                           "QUIESCENCE_ROWS": json.dumps(rows)}).returncode
+
+            lease, clear, lease_and_claim = [0, 0, 1, 0, 0], [0, 0, 0, 0, 0], [0, 0, 1, 0, 1]
+            # Before the stop a live lease refuses at once; after it, a lease
+            # that lapses within the bound passes, and a lease beside any other
+            # unfinished work refuses without waiting.
+            self.assertEqual(execute("before", [lease]), 3)
+            self.assertEqual(execute("after", [lease, lease, clear]), 0)
+            self.assertEqual(execute("after", [lease_and_claim]), 3)
+            self.assertEqual(execute("before", [clear]), 0)
+            # A same-mode retry tolerates its own unfinished work but waits out,
+            # then refuses on, a live writer lease.
+            claim_only = [0, 0, 0, 0, 1]
+            self.assertEqual(execute("writers", [claim_only]), 0)
+            self.assertEqual(execute("writers", [lease_and_claim, claim_only]), 0)
+            for mode, state in (("before", "Nothing was stopped"), ("after", "Intake remains stopped")):
+                refused = run(mode, "yes")
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("not quiescent", refused.stderr)
+                self.assertIn(state, refused.stderr)
+                self.assertNotIn("passed", refused.stdout)
+
+    def test_offline_activation_requires_the_offline_handoff_profile_before_anything_stops(self):
+        # PrepareOfflineHandoff's profile guard also gates ActivateOffline.
+        health = {"provider_activation": {"combined_live_ready": False},
+                  "primary_runtime_active": False, "paid_off_primary_intake_active": True}
+        cases = {
+            "github-v1 acceptance": ("mode-github-v1", None, "provider-v2 generation"),
+            "paid runs on": ("success", ("ALLOW_PAID_RUNS", "true"), "explicit false"),
+            "validation on": ("success", ("DIRECTOR_PROVIDER_VALIDATION_ENABLED", "true"), "explicit false"),
+            "validation unset": ("success", ("DIRECTOR_PROVIDER_VALIDATION_ENABLED", None), "explicit false"),
+        }
+        for case, (scenario, override, message) in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                values = dict.fromkeys(SWITCHES, "false")
+                values.update(DIRECTOR_PROVIDER_VALIDATION_ENABLED="false", PRESERVED="fixture-value")
+                if override is not None:
+                    name, value = override
+                    if value is None:
+                        values.pop(name)
+                    else:
+                        values[name] = value
+                (root / "fixture.env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
+                result, events, final, prior = self._activate(root, action="ActivateOffline", health=health,
+                                                              scenario=scenario)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(events, [])
+                self.assertFalse(prior.exists())
+                self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+                self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_offline_activation_needs_no_provider_readiness_and_records_no_activated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), action="ActivateOffline", health={
+                "provider_activation": {"combined_live_ready": False},
+                "primary_runtime_active": False, "paid_off_primary_intake_active": True})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            # Offline activation keeps the ACCEPTED..RESTORE_PROVED gate before any start.
+            self.assertEqual(names[:6], ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+                                         "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
+            self.assertLess(names.index("evidence-require-ready"), names.index("up-orchestrator"))
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-3]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_ENABLED"], "true")
+            self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
+            self.assertTrue(prior.exists())
+            self.assertIn("no ACTIVATED stage was recorded", result.stdout)
+
+    def test_offline_activation_without_ready_evidence_starts_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), action="ActivateOffline",
+                                                          scenario="fail-require-ready")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence require-ready refused", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+                              "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
+            self.assertFalse(prior.exists())
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+
+    def test_paid_activation_failed_activated_write_unwinds_with_slack_and_n8n_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="fail-record")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "evidence-record-ACTIVATED",
+                                          "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
+            for name in ("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED",
+                         "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"):
+                self.assertEqual(final[name], "false")
+
+    def test_offline_activation_refuses_a_live_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), action="ActivateOffline", health={
+                "provider_activation": {"combined_live_ready": False}, "primary_runtime_active": True})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unwound", result.stderr)
+            self.assertNotIn("up-slackbot", [event["event"] for event in events])
+            self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_activation_gateway_readback_mismatch_closes_all_intake(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="wrong-gateway")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("slackbot image differs", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertEqual(names[-3:], ["up-slackbot", "readback-slackbot", "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+
+    def test_activation_without_prior_containers_proceeds_with_no_record(self):
+        # A fresh stack (or one after compose down) has no container to record;
+        # a re-run then sees candidate containers, which are not prior images.
+        for images in ({}, {"orchestrator": PRIOR_ORCHESTRATOR},
+                       {"orchestrator": CANDIDATE_IMAGE, "slackbot": CANDIDATE_IMAGE}):
+            with self.subTest(images=images), tempfile.TemporaryDirectory() as temporary:
+                result, events, _, prior = self._activate(Path(temporary), images=images)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(prior.exists())
+                self.assertEqual([event["event"] for event in events][-2:], ["up-n8n", "start-slackbot"])
+
+    def test_second_activation_keeps_the_first_prior_image_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, _, _, prior = self._activate(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            recorded = prior.read_bytes()
+            result, events, _, _ = self._activate(
+                root, images={"orchestrator": CANDIDATE_IMAGE, "slackbot": CANDIDATE_IMAGE})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(prior.read_bytes(), recorded)
+            self.assertEqual(json.loads(recorded)["gateway_image_id"], PRIOR_GATEWAY)
 
     def _preflight(self, commands):
         with tempfile.TemporaryDirectory() as temporary:
@@ -486,6 +1082,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             "DIRECTOR_PROVIDER_VALIDATION_OPENAI_RESPONSES_CONFIG",
             "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256",
             "DIRECTOR_HOST_PROVIDER_WORKSPACE",
+            "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES",
+            "XAI_API_KEY",
         ]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -528,6 +1126,8 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 "DIRECTOR_PROVIDER_VALIDATION_CANDIDATE": "f" * 40,
                 "DIRECTOR_PROVIDER_VALIDATION_TREE": "a" * 40,
                 "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": "b" * 64,
+                "DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "XAI_API_KEY",
+                "XAI_API_KEY": "profile-xai-fixture",
             }
             environment.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
             parent = dict.fromkeys(keys, "stale-parent-value")
@@ -560,6 +1160,9 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 observed = json.loads(capture.read_text(encoding="utf-8-sig"))
                 for name in keys:
                     expected = str(root.resolve()) if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE" else profile.get(name)
+                    if name == "XAI_API_KEY" and expected is None:
+                        # An unlisted credential is left for the Python pin to drop.
+                        expected = parent[name]
                     self.assertEqual(observed.get(name) or None, expected, name)
                 self.assertEqual(json.loads(restored.read_text(encoding="utf-8-sig")), parent)
 
@@ -603,6 +1206,9 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 {"DIRECTOR_PROVIDER_VALIDATION_GENERATION": "d" * 64},
                 {"DIRECTOR_PROVIDER_VALIDATION_CAPTURE_KEY": values["DIRECTOR_PROVIDER_VALIDATION_OWNER_TOKEN"]},
                 {"DIRECTOR_PROVIDER_VALIDATION_ACCOUNT_FILES_JSON": '{"claude":"not-an-array"}'},
+                # Only a known lane credential that this profile sets may be forwarded.
+                {"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "OPENAI_API_KEY", "OPENAI_API_KEY": "fixture"},
+                {"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES": "XAI_API_KEY"},
             )
             for change in malformed:
                 environment.write_text("".join(f"{k}={v}\n" for k, v in {**values, **change}.items()))
@@ -639,3 +1245,11 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 05:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 06:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
