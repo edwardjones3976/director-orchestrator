@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
 # Do not place secrets, credentials, tokens, or raw private source here.
@@ -29,7 +30,7 @@ source_context:
 
 outcomes:
   desired:
-    - value: "L1 DIRECTOR launch (end M3, target 2026-11-12): >=60 % of packets accepted as-is on both held-out sets; local lane in shadow mode"
+    - value: "L1 DIRECTOR launch (end M3, target 2026-11-12): >60 % of packets accepted as-is on both held-out sets; local lane in shadow mode"
       status: "confirmed"
     - value: "L2 COMPANION launch (end M5b, target 2026-12-17): hard-line suite 100 %, judge panel and owner daily-use rating >=4.3/5, memory recall >=8/10"
       status: "confirmed"
@@ -223,7 +224,7 @@ assumptions:
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
   provisional:
-    - "An 8-14B base can reach >=60 % field-level acceptance after QLoRA on 12 GB"
+    - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
   unknown:
     - "LM Studio reachability from a container when bound to 127.0.0.1"
@@ -247,3 +248,4 @@ next:
   responsible_party: "owner"
   expected_evidence: "main contains projects/homemade-llm/"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]

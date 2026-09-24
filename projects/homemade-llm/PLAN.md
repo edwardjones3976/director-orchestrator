@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — Plan v1.3
 
@@ -17,7 +18,7 @@ There are two staged launches, each with its own go/no-go checklist. **If a gate
 
 | Launch | End of | Target date | Headline bar |
 |---|---|---|---|
-| **L1 DIRECTOR** | M3 | **2026-11-12** | ≥ 60 % of packets accepted as-is on both held-out sets |
+| **L1 DIRECTOR** | M3 | **2026-11-12** | > 60 % of packets accepted as-is on both held-out sets |
 | **L2 COMPANION** | M5b | **2026-12-17** | hard-line suite 100 %; judge panel and owner daily-use rating ≥ 4.3/5 |
 
 Launch audience: the owner on blackbox, the owner from phone and other devices over Tailscale, and orchestrator agents via `/v1` (O-011, O-014).
@@ -25,7 +26,7 @@ Launch audience: the owner on blackbox, the owner from phone and other devices o
 ### 2.1 L1 — DIRECTOR go/no-go
 
 - **Quality**
-  - ≥ 60 % accepted as-is, field-level, on **both** held-out sets: the real-history answer key (~30 items) and ~50 packets reconstructed from PR bodies. Graded by two non-author providers.
+  - > 60 % accepted as-is, field-level, on **both** held-out sets: the real-history answer key (~30 items) and ~50 packets reconstructed from PR bodies. Graded by two non-author providers.
   - The remaining packets need ≤ 10 % of their text changed.
   - 100 % schema-valid via `response_format: json_schema`.
   - ≤ 3-point regression on full `ifeval` and `gsm8k`.
@@ -65,7 +66,7 @@ Launch audience: the owner on blackbox, the owner from phone and other devices o
 |---|---|---|---|
 | 1 (→ 10-01) | **M0** Foundation, plus spend meter, gitleaks, and Tailscale/Open WebUI — see [`workstream-plan.md`](workstream-plan.md) | state report; every number [verified] | merge PR-0; Go clicks |
 | 2 (→ 10-08) | **M1** base shootout: Qwen3-8B, Qwen3-14B, Phi-4 14B, Mistral Nemo 12B (control); base model + schema-constrained decoding on both held-out sets | winner by field-level acceptance; license check | pick the winner |
-| 3–5 (→ 10-29) | **M2** DIRECTOR data v1 (~800 rows, tier-tagged, scrubbed); adapter v0.1 → v0.3 | **wk-4 early warning: v0.1 < 45 % → stop.** Exit: ≥ 60 % on both sets; ≤ 3-point regression | ~1 h/wk |
+| 3–5 (→ 10-29) | **M2** DIRECTOR data v1 (~800 rows, tier-tagged, scrubbed); adapter v0.1 → v0.3 | **wk-4 early warning: v0.1 < 45 % → stop.** Exit: > 60 % on both sets; ≤ 3-point regression | ~1 h/wk |
 | 6–7 (→ 11-12) | **M3** local lane: `OWNER_DECISION_REQUIRED` record, after PRs #263/#264; OpenAI-compatible chat adapter; 1 week of shadow mode | **L1 checklist** | L1 go/no-go |
 | 8–9 (→ 11-26) | **M4** Persona Bible (friend/conversational); hard-line suite written by hand; memory rung 1 | Bible and suite approved | approve Bible |
 | 10–11 (→ 12-10) | **M5a/b** COMPANION Stage B/C plus memory | suite 100 %; judge panel ≥ 4.3 | — |
@@ -163,7 +164,7 @@ Base licenses:
    - M0.3's smoke base is now an ungated Qwen3-class model, in line with the M1 shortlist. v1.2 named Qwen2.5-0.5B or Llama-3.2-1B.
 10. **v1.3.**
     - §2–§5 added.
-    - M2's gate changes from "format compliance ≥ 90 %", which constrained decoding now makes trivial, to field-level acceptance ≥ 60 % with the week-4 early warning.
+    - M2's gate changes from "format compliance ≥ 90 %", which constrained decoding now makes trivial, to field-level acceptance > 60 % (the owner's words, O-015) with the week-4 early warning.
 
 ## 7. Risks
 
@@ -192,3 +193,4 @@ Base licenses:
 - Anything outside `projects/homemade-llm/`, including the live stack and PRs #263–#265
 - Any merge
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->

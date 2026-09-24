@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Project rollout packet — homemade-llm
 
@@ -49,7 +50,7 @@ are borrowed from another deployment. No secret values appear here.
 - **Budget and timeout:** USD 25 per milestone; three attempts per provider contact; 20-minute review timeout
 - **n8n/workflow identity:** not_applicable
 - **Callback and internal-secret status:** not_applicable (no runtime instance)
-- **Usage-monitor status:** disabled (ledger kept by the Director in `PLAN.md` §9)
+- **Usage-monitor status:** disabled (ledger kept by the Director; envelope and rules in `PLAN.md` §5 "Resources", spend lines in each gate's `project-state-report.md`)
 
 ## Activation evidence
 
@@ -91,3 +92,4 @@ used as a fallback.
 - **Next responsible party:** owner (merge PR-0)
 - **Next bounded action:** merge PR-0, then M0.1 (`scripts/preflight.ps1`)
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
