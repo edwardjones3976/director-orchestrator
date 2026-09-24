@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -922,6 +923,9 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
                                        None, None),
             "missing SSL_CERT_FILE": ({**self.pinned, "SSL_CERT_FILE": str(self.root / "absent.pem")}, None, None),
             "relative SSL_CERT_DIR": ({**self.pinned, "SSL_CERT_DIR": "system"}, None, None),
+            "pinned SSLKEYLOGFILE": ({**self.pinned, "SSLKEYLOGFILE": str(self.root / "temp" / "keys.log")},
+                                     None, None),
+            "relative SSLKEYLOGFILE": ({**self.pinned, "SSLKEYLOGFILE": "scripts/launcher.ps1"}, None, None),
         }
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.root)
@@ -1039,3 +1043,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]

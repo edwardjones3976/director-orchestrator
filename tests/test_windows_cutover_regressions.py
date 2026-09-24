@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -180,7 +181,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens,
 if ($errors.Count) { throw 'control script parse failed' }
 foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
     'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages',
-    'Read-DotEnv', 'Assert-OfflineHandoffProfile', 'Test-ActivatedChain')) {
+    'Read-DotEnv', 'Assert-OfflineHandoffProfile', 'Test-ActivatedChain', 'Get-OfflineAttemptPath')) {
     $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
     if (@($node).Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -200,10 +201,10 @@ function Record-Event($Event, $Image) {
     @{event=$Event; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
 }
 function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
-function Assert-PrimaryQuiescent { param([switch]$AfterStop)
-    $event = if ($AfterStop) { 'quiescent-after-stop' } else { 'quiescent-before-stop' }
+function Assert-PrimaryQuiescent { param([switch]$AfterStop, [switch]$WritersOnly)
+    $event = if ($WritersOnly) { 'writers-idle-after-stop' } elseif ($AfterStop) { 'quiescent-after-stop' } else { 'quiescent-before-stop' }
     Record-Event $event
-    if ($Scenario -eq "busy-$event") { throw "Activation refused: the primary plane is not quiescent" } }
+    if ($Scenario -like "*busy-$event") { throw "Activation refused: the primary plane is not quiescent" } }
 function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
 function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
 function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
@@ -715,8 +716,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             result, events, final, prior = self._activate(Path(temporary), scenario="activated")
             self.assertEqual(result.returncode, 0, result.stderr)
             names = [event["event"] for event in events]
-            self.assertEqual(names[:4], ["evidence-require-activated", "intake-proved-stopped",
-                                         "primary-owns-intake", "intake-stopped"])
+            self.assertEqual(names[:5], ["evidence-require-activated", "intake-proved-stopped",
+                                         "primary-owns-intake", "intake-stopped", "writers-idle-after-stop"])
             for skipped in ("quiescent-before-stop", "inventory", "evidence-bind-legacy-inventory",
                             "evidence-require-ready", "evidence-record-ACTIVATED"):
                 self.assertNotIn(skipped, names)
@@ -750,6 +751,50 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                              ["evidence-require-activated", "intake-proved-stopped", "primary-owns-intake"])
             self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
 
+    def test_activated_resume_refuses_a_foreign_live_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary),
+                                                      scenario="activated-busy-writers-idle-after-stop")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not quiescent", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-1], "writers-idle-after-stop")
+            self.assertNotIn("up-orchestrator", names)
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
+    def test_failed_offline_activation_is_resumable_without_stranding_its_work(self):
+        offline_ok = {"provider_activation": {"combined_live_ready": False},
+                      "primary_runtime_active": False, "paid_off_primary_intake_active": True}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / ("fixture.env.offline-attempt.unselected." + "c" * 64 + ".json")
+            # The runtime starts with intake on and then fails its health proof.
+            result, _, final, _ = self._activate(root, action="ActivateOffline", health={
+                **offline_ok, "primary_runtime_active": True})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(marker.exists())
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+            # Its admitted offline work would fail full quiescence; the retry
+            # needs only no foreign live writer.
+            result, events, final, _ = self._activate(root, action="ActivateOffline", health=offline_ok,
+                                                      scenario="busy-quiescent-before-stop")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:2], ["intake-stopped", "writers-idle-after-stop"])
+            self.assertNotIn("quiescent-before-stop", names)
+            self.assertLess(names.index("evidence-require-ready"), names.index("up-orchestrator"))
+            self.assertFalse(marker.exists())
+            # A foreign live writer still refuses the retry.
+            marker.write_text("director-offline-attempt/v1")
+            result, events, _, _ = self._activate(root, action="ActivateOffline", health=offline_ok,
+                                                  scenario="busy-writers-idle-after-stop")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual([event["event"] for event in events], ["intake-stopped", "writers-idle-after-stop"])
+            # A paid Activate that proves quiescence ends the offline attempt.
+            result, _, _, _ = self._activate(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists())
+
     def test_healthy_activated_deployment_is_refused_without_stopping_anything(self):
         # A running ACTIVATED stack is not a failed start: re-running Activate
         # must not stop it mid-task.
@@ -782,7 +827,9 @@ $script:databaseIdentity = 'storage-fixture'; $script:databaseInstanceId = 'inst
 function Invoke-Compose { 'ARGS=' + ($args -join ' ')
     if ($CodePath) { [IO.File]::WriteAllText($CodePath, [string]$args[-1]) }
     if ($Fail -eq 'yes') { throw 'Docker Compose command failed.' } }
-if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-PrimaryQuiescent }
+if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop }
+elseif ($Mode -eq 'writers') { Assert-PrimaryQuiescent -AfterStop -WritersOnly }
+else { Assert-PrimaryQuiescent }
 'passed'
 """
         with tempfile.TemporaryDirectory() as temporary:
@@ -842,6 +889,11 @@ if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-Prim
             self.assertEqual(execute("after", [lease, lease, clear]), 0)
             self.assertEqual(execute("after", [lease_and_claim]), 3)
             self.assertEqual(execute("before", [clear]), 0)
+            # A same-mode retry tolerates its own unfinished work but waits out,
+            # then refuses on, a live writer lease.
+            claim_only = [0, 0, 0, 0, 1]
+            self.assertEqual(execute("writers", [claim_only]), 0)
+            self.assertEqual(execute("writers", [lease_and_claim, claim_only]), 0)
             for mode, state in (("before", "Nothing was stopped"), ("after", "Intake remains stopped")):
                 refused = run(mode, "yes")
                 self.assertNotEqual(refused.returncode, 0)
@@ -1200,3 +1252,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]

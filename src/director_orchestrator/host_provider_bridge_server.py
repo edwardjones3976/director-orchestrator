@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -104,7 +105,11 @@ def _apply_pinned_process_environment() -> bool:
         if set(document) != {"version", "environment"} or document["version"] != PROCESS_ENVIRONMENT_VERSION:
             raise ValueError("unknown pinned environment contract")
         pinned = document["environment"]
-        if not isinstance(pinned, dict) or not _SAFE_OS_ENV <= set(pinned) <= _SAFE_OS_ENV | _TRANSPORT_ENV:
+        # SSLKEYLOGFILE is never pinnable: a key log would expose TLS session
+        # secrets (and a relative one resolves into the runtime tree). An
+        # inherited one is still dropped below.
+        if not isinstance(pinned, dict) or not (
+                _SAFE_OS_ENV <= set(pinned) <= (_SAFE_OS_ENV | _TRANSPORT_ENV) - {"SSLKEYLOGFILE"}):
             raise ValueError("pinned environment names differ")
         if not all(isinstance(value, str) and value and not any(c in value for c in "\r\n\0")
                    for value in pinned.values()):
@@ -448,3 +453,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]

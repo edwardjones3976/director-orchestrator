@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
@@ -672,7 +673,13 @@ refused as already activated and nothing is stopped), and a proof that the
 primary still owns new intake (Rollback forces a new generation) replace the
 quiescence, inventory and `require-ready` steps, and the same switches, image
 readbacks and health proof precede reopening intake. `ACTIVATED` is never
-recorded twice. A recovered task keeps its persisted `execution_mode` exactly;
+recorded twice; before reopening, the resume also waits (bounded, as above) for
+no writer lease to be live, so it never runs beside a foreign writer. A failed
+`ActivateOffline` leaves a marker beside the profile; the next `ActivateOffline`
+then requires only that no writer lease is live (its runtime took intake before
+its health proof could pass, so it may have admitted offline work), and paid
+`Activate` clears the marker once it proves quiescence. `SSLKEYLOGFILE` is
+refused in the pinned file. A recovered task keeps its persisted `execution_mode` exactly;
 an empty or blank label is held, never defaulted. Independently, live dispatch holds any task whose persisted
 `execution_mode` is not exactly `live` (including `unknown`, missing or
 malformed labels), and the offline dispatcher holds any task not labelled
@@ -889,3 +896,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->

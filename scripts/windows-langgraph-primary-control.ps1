@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -205,6 +206,12 @@ function Get-PriorImagesPath {
     $generation = [string]$script:values["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
     if ($generation -cnotmatch '^[0-9a-f]{64}$') { $generation = "unselected" }
     return "$script:environmentPath.prior-images.$generation.$($script:runtimeImageId.Substring(7)).json"
+}
+
+function Get-OfflineAttemptPath {
+    # Beside the profile, like the prior-image record: an ActivateOffline that
+    # started the runtime from a proved-quiescent plane and has not finished.
+    return (Get-PriorImagesPath) -replace '\.prior-images\.', '.offline-attempt.'
 }
 
 function Read-PriorImages {
@@ -519,11 +526,16 @@ function Assert-PrimaryQuiescent {
     # writer leases are the sole blocker, so the stopped process's leases can
     # lapse; any other unfinished work refuses at once, and a lease still live
     # after the bound refuses too, since another engine may hold it.
-    param([switch]$AfterStop)
+    # -WritersOnly (with -AfterStop) proves only that no writer lease is live
+    # after the same bounded wait: a same-mode retry recovers its own work, but
+    # never beside a foreign live writer.
+    param([switch]$AfterStop, [switch]$WritersOnly)
     $leaseWaitSeconds = if ($AfterStop) { 75 } else { 0 }
+    $otherWork = if ($WritersOnly) { "False" } else { "(m.active_provider_dispatch_count or m.active_assignment_count or m.unresolved_reconciliation_count or m.unsettled_claim_count)" }
+    $passes = if ($WritersOnly) { "not m.live_writer_claim_count" } else { "m.rollback_safe" }
     try {
         Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
-            "import time; from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); metrics=h.claim_store.primary_quiescence_metrics; end=time.monotonic()+$leaseWaitSeconds; m=metrics(); exec('while m.live_writer_claim_count and not (m.active_provider_dispatch_count or m.active_assignment_count or m.unresolved_reconciliation_count or m.unsettled_claim_count) and time.monotonic() < end:\n    time.sleep(2); m=metrics()'); h.close(); raise SystemExit(0 if m.rollback_safe else 3)"
+            "import time; from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); metrics=h.claim_store.primary_quiescence_metrics; end=time.monotonic()+$leaseWaitSeconds; m=metrics(); exec('while m.live_writer_claim_count and not $otherWork and time.monotonic() < end:\n    time.sleep(2); m=metrics()'); h.close(); raise SystemExit(0 if $passes else 3)"
     }
     catch {
         $state = if ($AfterStop) { "Intake remains stopped and no switch was changed." } else { "Nothing was stopped or switched." }
@@ -1085,24 +1097,41 @@ if ($Action -in @("Activate", "ActivateOffline")) {
         catch { throw "Activation refused: this generation is already ACTIVATED and its intake surfaces are running. Nothing was stopped or switched." }
         Assert-PrimaryOwnsIntake
         Stop-And-Prove-AllIntake
+        Assert-PrimaryQuiescent -AfterStop -WritersOnly
     }
     else {
         # Offline activation needs the same profile PrepareOfflineHandoff requires,
         # checked before anything stops.
         if ($offline) { Assert-OfflineHandoffProfile }
-        # Both directions need a quiescent plane: work approved under one mode must
-        # never be recovered by the other mode's dispatcher. Checked before the stop
-        # (nothing touched on refusal) and again after it, since the running service
-        # could admit work in between.
-        Assert-PrimaryQuiescent
-        Stop-And-Prove-AllIntake
-        Assert-PrimaryQuiescent -AfterStop
+        if ($offline -and (Test-Path -LiteralPath (Get-OfflineAttemptPath) -PathType Leaf)) {
+            # Same-mode retry of a failed ActivateOffline. Its runtime serves the
+            # API with intake on before the health proof can pass (the proof
+            # requires active offline intake), so it may have admitted offline
+            # work that full quiescence would strand. That attempt started from a
+            # proved-quiescent plane and paid Activate clears the marker, so any
+            # unfinished work is offline (the offline dispatcher holds any other
+            # label); only a foreign live writer lease refuses.
+            Stop-And-Prove-AllIntake
+            Assert-PrimaryQuiescent -AfterStop -WritersOnly
+        }
+        else {
+            # Both directions need a quiescent plane: work approved under one mode must
+            # never be recovered by the other mode's dispatcher. Checked before the stop
+            # (nothing touched on refusal) and again after it, since the running service
+            # could admit work in between.
+            Assert-PrimaryQuiescent
+            Stop-And-Prove-AllIntake
+            Assert-PrimaryQuiescent -AfterStop
+            # A proved-quiescent plane ends any earlier offline attempt.
+            if (-not $offline) { Remove-Item -LiteralPath (Get-OfflineAttemptPath) -Force -ErrorAction SilentlyContinue }
+        }
         $legacyInventory = Get-LegacyInventory
         Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
         # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
         # a separate health gate that only paid activation requires.
         Invoke-Evidence -Command require-ready
         Save-PriorImages
+        if ($offline) { [IO.File]::WriteAllText((Get-OfflineAttemptPath), "director-offline-attempt/v1") }
     }
     try {
         if ($offline) {
@@ -1147,6 +1176,7 @@ if ($Action -in @("Activate", "ActivateOffline")) {
             Write-Host "Primary activation health passed and authenticated intake was reopened."
         }
         else {
+            Remove-Item -LiteralPath (Get-OfflineAttemptPath) -Force
             Write-Host "Offline primary activation passed with paid runs and live dispatch off; intake reopened on the verified gateway image; no ACTIVATED stage was recorded."
         }
         return
@@ -1242,3 +1272,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
