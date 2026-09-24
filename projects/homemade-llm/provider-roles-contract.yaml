@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Canonical project-local provider roles contract (director-provider-roles/v1).
 #
 # This template records project-local role scope only. It grants no authority.
@@ -91,7 +92,7 @@ allocation_and_selection:
       - "rejected supplemental-review finding"
 
 project_leadership:
-  acting_director: "openai"
+  acting_director: "claude" # project-local; see project_local_bindings.deviations
   default_runtime_director: "openai"
   role_change_activates_provider: false
   history: "preserve_actual_provider_model_and_receipt_identity"
@@ -339,11 +340,16 @@ this_template_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 project_local_bindings:
-  project_id: "<short-stable-project-id>"
-  recorded_at: "<ISO-8601 timestamp>"
-  lanes_in_use: []          # subset of providers above actually staffed this project
+  project_id: "homemade-llm"
+  recorded_at: "2026-09-24T07:55:00Z"
+  lanes_in_use: ["claude", "grok", "openai", "perplexity"]
   deviations:
-    - area: "<responsibility area>"
-      provider: "<provider>"
-      justification: "<why this project deviates from default routing>"
-      owner_authorization: "<exact stored authorization or none>"
+    - area: "project_leadership"
+      provider: "claude"
+      justification: "Owner appointed Claude as acting Director of this project only; the repository-level default_runtime_director stays openai and repository leadership docs are unchanged."
+      owner_authorization: "decision-log.md O-001 (owner chat 2026-09-24 ~06:05 UTC, relayed): 'You will lead this specific project; that doesn't mean you'll lead any other project outside it.'"
+    - area: "training_data_generation"
+      provider: "grok"
+      justification: "xAI acceptable-use terms restrict training models on outputs; xAI, Z.ai, Google consumer Gemini and Antigravity grade only (decision-log.md O-026)."
+      owner_authorization: "decision-log.md O-026"
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
