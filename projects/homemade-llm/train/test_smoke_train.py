@@ -76,6 +76,20 @@ class SmokeTrainTests(unittest.TestCase):
                     smoke_train.publish(src, dest)
             self.assertEqual(list(dest.parent.iterdir()), [])
 
+    def test_publish_all_removes_ggufs_when_the_final_report_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out, rep = Path(tmp, "export"), Path(tmp, "models"), Path(tmp, "reports", "r.json")
+            src.mkdir()
+            Path(src, "m.Q4_K_M.gguf").write_bytes(b"g" * 4096)
+            with mock.patch.object(smoke_train, "write_report", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    smoke_train.publish_all(src, out, {}, rep)
+            self.assertEqual(list(out.iterdir()), [])  # no orphan GGUF without its report
+            report = {}
+            smoke_train.publish_all(src, out, report, rep)
+            self.assertEqual(len(list(out.glob("*.gguf"))), 1)
+            self.assertEqual(json.loads(rep.read_text())["gguf"][0]["bytes"], 4096)
+
     def test_hf_cache_refs_reads_refs_main(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp, "hub", "models--org--name", "refs")

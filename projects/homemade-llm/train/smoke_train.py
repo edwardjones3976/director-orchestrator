@@ -131,6 +131,26 @@ def publish(src: Path, dest: Path) -> None:
     os.replace(part, dest)
 
 
+def publish_all(src_dir: Path, model_dir: Path, report: dict, report_path: Path) -> None:
+    """Publish every exported GGUF, then write the final report. If anything fails before the report is written,
+    remove the GGUFs published so far: a GGUF without its final report (provenance, merge source) must not be
+    left for serve-smoke, which picks the newest *.gguf, to validate."""
+    model_dir.mkdir(parents=True, exist_ok=True)
+    report["gguf"] = []
+    published = []
+    try:
+        for f in sorted(src_dir.rglob("*.gguf")):
+            dest = model_dir / f"{RUN}-{f.name}"
+            publish(f, dest)
+            published.append(dest)
+            report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
+        write_report(report_path, report)
+    except BaseException:
+        for dest in published:
+            dest.unlink(missing_ok=True)
+        raise
+
+
 def main() -> None:
     t0 = time.time()
     # docker stop sends SIGTERM to this process (PID 1, which ignores it without a handler): exit via SystemExit
@@ -212,15 +232,9 @@ def main() -> None:
     report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
     report["merge_source"], report["merge_revision"] = MERGE_SOURCE, MERGE_REVISION  # bound: offline, local snapshot
     export_dir = Path("/tmp") / RUN / "gguf"
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    report["gguf"] = []
-    for f in export_dir.parent.rglob("*.gguf"):
-        dest = MODEL_DIR / f"{RUN}-{f.name}"
-        publish(f, dest)
-        report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
     report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_revision
     report["wall_seconds"] = round(time.time() - t0, 1)
-    write_report(REPORT, report)
+    publish_all(export_dir.parent, MODEL_DIR, report, REPORT)
     print(json.dumps(report, indent=2))
     if not report["gguf"]:
         raise SystemExit("no GGUF produced")

@@ -9,7 +9,7 @@ param(
     [string]$Gguf,
     [string]$HotRoot = 'C:\llm',   # same default and meaning as train-smoke.ps1 -HotRoot
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
-    [int]$TtlSeconds = 900,
+    [ValidateRange(1, 86400)][int]$TtlSeconds = 900,   # must be positive: 0 would mean no GPU-release deadline
     [string]$LmsModelsDir = (Join-Path $env:USERPROFILE '.lmstudio\models')
 )
 $ErrorActionPreference = 'Stop'
@@ -32,7 +32,8 @@ function Test-LmStudioOwner($Processes) {
 # requested TTL; this is what proves the reload happened and the GPU-release bound is in force.
 function Test-LoadedModel($Loaded, [string]$Path, [int]$TtlSeconds) {
     $smoke = @($Loaded | Where-Object { $_.identifier -eq 'smoke' })
-    ($smoke.Count -eq 1) -and ($smoke[0].path -eq $Path) -and ([long]$smoke[0].ttlMs -eq [long]$TtlSeconds * 1000)
+    ($smoke.Count -eq 1) -and ($smoke[0].path -eq $Path) -and ($null -ne $smoke[0].ttlMs) -and
+        ([long]$smoke[0].ttlMs -eq [long]$TtlSeconds * 1000)
 }
 
 # True only when both files have identical content (the import is a hard link, so this is normally instant
@@ -64,9 +65,13 @@ try {
     }
 
     Invoke-Lms @('server', 'start') | Out-Null
-    if ($lmsExit -ne 0) { Write-Error "lms server start failed (exit $lmsExit); is another service using port 1234?" }
-    $status = (Invoke-Lms @('server', 'status', '--json')) -join "`n" | ConvertFrom-Json
-    if (-not ($status.running -eq $true -and $status.port -eq 1234)) { Write-Error "lms server status is not running on 1234: $($status | ConvertTo-Json -Compress)" }
+    # Any failure to confirm the server stops it before aborting: it may already be listening, even beyond loopback.
+    if ($lmsExit -ne 0) { Invoke-Lms @('server', 'stop') | Out-Null; Write-Error "lms server start failed (exit $lmsExit; server stopped); is another service using port 1234?" }
+    $status = try { (Invoke-Lms @('server', 'status', '--json')) -join "`n" | ConvertFrom-Json } catch { $null }
+    if (-not ($status.running -eq $true -and $status.port -eq 1234)) {
+        Invoke-Lms @('server', 'stop') | Out-Null
+        Write-Error "lms server status did not confirm running on 1234 (server stopped): $($status | ConvertTo-Json -Compress)"
+    }
     # Refuse before anything is loaded if the API is reachable beyond loopback ("serve on local network").
     $preLoad = Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue
     if (-not (Test-LoopbackOnly $preLoad)) {

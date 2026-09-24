@@ -25,6 +25,14 @@ try {
     if ($r[-1] -ne '__EXIT__timeout') { $fail += "hung docker: expected __EXIT__timeout, got '$($r[-1])'" }
     if ($t.Elapsed.TotalSeconds -gt 15) { $fail += "hung docker: returned after $([int]$t.Elapsed.TotalSeconds) s (bound 3 s)" }
     if ($orphans) { $fail += "hung docker: $orphans child process(es) still running after the timeout" }
+    # Cancellation (Ctrl+C or a stopped pipeline) while waiting must also kill the command's tree.
+    $rs = [powershell]::Create()
+    $null = $rs.AddScript(". '$(Join-Path $PSScriptRoot 'invoke-bounded.ps1')'; `$env:PATH = '$shim;' + `$env:PATH; Invoke-Bounded 'docker' @('stop', 'y') 600")
+    $h = $rs.BeginInvoke()
+    for ($i = 0; $i -lt 50 -and -not (Get-ShimPing).Count; $i++) { Start-Sleep -Milliseconds 200 }
+    $rs.Stop(); $rs.Dispose()
+    Start-Sleep 1
+    if ((Get-ShimPing).Count) { $fail += "cancelled wait: child process still running after PowerShell.Stop()" }
     # Output shape: one line, several lines, and none must all end in a separate exit marker.
     $one = @(Invoke-Bounded 'cmd' @('/c', 'echo one-line') 10)
     if ($one.Count -ne 2 -or $one[0] -ne 'one-line' -or $one[1] -ne '__EXIT__0') { $fail += "one-line output: got $($one | ConvertTo-Json -Compress)" }
@@ -99,6 +107,7 @@ Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside
 Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
 Write-Output 'ok  both scripts release the GPU mutex in a finally block'
 Write-Output 'ok  GPU lock held by another process refused'
+Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
 exit 0

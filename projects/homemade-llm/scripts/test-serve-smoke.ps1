@@ -39,6 +39,7 @@ $p = 'homemade-llm/smoke/new.gguf'
 $m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }
 Assert-Equal (Test-LoadedModel @(& $m $p 900000) $p 900) $true 'load: right model with requested TTL passes'
 Assert-Equal (Test-LoadedModel @(& $m $p $null) $p 900) $false 'load: model without TTL (reload skipped) fails'
+Assert-Equal (Test-LoadedModel @(& $m $p $null) $p 0) $false 'load: missing TTL fails even when 0 is requested'
 Assert-Equal (Test-LoadedModel @(& $m $p 600000) $p 900) $false 'load: stale TTL from an earlier load fails'
 Assert-Equal (Test-LoadedModel @(& $m 'homemade-llm/smoke/old.gguf' 900000) $p 900) $false 'load: older build still loaded fails'
 Assert-Equal (Test-LoadedModel @() $p 900) $false 'load: nothing loaded fails'
