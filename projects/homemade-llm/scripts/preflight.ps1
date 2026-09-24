@@ -9,11 +9,11 @@ param(
     [switch]$Init,
     [switch]$Report,
     [double]$FloorGB = 150,   # refuse jobs when C: free space is below this (plan D-003)
-    [double]$HotCapGB = 120   # C:\llm size cap
+    [double]$HotCapGB = 120,  # C:\llm size cap
+    [string]$HotRoot = 'C:\llm'  # overridable so test-preflight.ps1 can use a scratch root
 )
 $ErrorActionPreference = 'Stop'
 
-$HotRoot = 'C:\llm'
 $HotDirs = 'hf', 'datasets', 'runs', 'models', 'seeds', 'secrets', 'reports'
 $Mirror  = 'G:\llm-mirror'
 $Archive = 'E:\llm-archive'
@@ -23,8 +23,13 @@ $rows = [System.Collections.Generic.List[object]]::new()
 function Add-Row([string]$Check, [ValidateSet('OK', 'WARN', 'FAIL', 'INFO')][string]$Status, [string]$Detail) {
     $rows.Add([pscustomobject]@{ check = $Check; status = $Status; detail = $Detail })
 }
+# Native tools rarely throw; a nonzero exit code discards any partial stdout so it cannot read as OK.
 function Invoke-Quiet([scriptblock]$Block) {
-    try { (& $Block 2>$null | Out-String).Trim() } catch { $null }
+    try {
+        $global:LASTEXITCODE = 0
+        $out = (& $Block 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { $null } else { $out }
+    } catch { $null }
 }
 
 if ($Init) {
@@ -64,9 +69,9 @@ if (Test-Path $HotRoot) {
     $scanErrors = $null
     $bytes = [double](Get-ChildItem $HotRoot -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors | Measure-Object Length -Sum).Sum
     $detail = "$([math]::Round($bytes / 1GB, 2)) GB of $HotCapGB GB cap"
-    # Over the cap is FAIL even on a partial scan; an incomplete scan under the cap cannot claim OK.
+    # Fail closed: unreadable entries could hold enough to break the cap, so an incomplete scan is FAIL.
     if ($bytes -gt $HotCapGB * 1GB) { Add-Row 'C:\llm size' 'FAIL' $detail }
-    elseif ($scanErrors) { Add-Row 'C:\llm size' 'WARN' "$detail (incomplete: $($scanErrors.Count) unreadable entries)" }
+    elseif ($scanErrors) { Add-Row 'C:\llm size' 'FAIL' "$detail (incomplete: $($scanErrors.Count) unreadable entries; cap not established)" }
     else { Add-Row 'C:\llm size' 'OK' $detail }
 }
 
@@ -113,12 +118,15 @@ foreach ($entry in $Ports.GetEnumerator()) {
     } else { Add-Row "port $p" 'INFO' "free (planned: $($entry.Value))" }
 }
 
+$reports = Join-Path $HotRoot 'reports'
+$writeReport = ($Report -or $Init) -and (Test-Path $reports)
+if (($Report -or $Init) -and -not $writeReport) { Add-Row 'report' 'FAIL' "requested but $reports does not exist (run -Init)" }
+
 $rows | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
 $fails = @($rows | Where-Object status -eq 'FAIL').Count
 Write-Output "preflight: $($rows.Count) checks, $fails FAIL, $(@($rows | Where-Object status -eq 'WARN').Count) WARN"
 
-$reports = Join-Path $HotRoot 'reports'
-if (($Report -or $Init) -and (Test-Path $reports)) {
+if ($writeReport) {
     $file = Join-Path $reports ("preflight-{0}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss'))
     [pscustomobject]@{ generated_utc = (Get-Date).ToUniversalTime().ToString('o'); init = [bool]$Init; checks = $rows } |
         ConvertTo-Json -Depth 4 | Set-Content -Path $file -Encoding utf8
