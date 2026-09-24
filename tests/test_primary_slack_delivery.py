@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:58 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
@@ -58,7 +59,9 @@ class _AsyncByteStream(httpx.AsyncByteStream):
 
 class PaidOffSlackWorkerTests(unittest.TestCase):
     def test_non_edge_paid_off_worker_keeps_offline_slack_delivery(self):
-        main = importlib.import_module("director_orchestrator.main")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SQLITE_PATH": directory + "/legacy.db"}, clear=True):
+                main = importlib.import_module("director_orchestrator.main")
         delivery = SimpleNamespace(run_once=AsyncMock())
         with (patch.object(main, "settings", SimpleNamespace(app_env="local", allow_paid_runs=False)),
               patch.object(main, "primary_slack_delivery", delivery)):
@@ -816,3 +819,4 @@ if __name__ == "__main__":
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:45 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:58 UTC | END]]
