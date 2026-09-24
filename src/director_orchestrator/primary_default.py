@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -941,13 +943,34 @@ def small_pre_authorization_refusal(
         # None, unreadable, or failing verification alike.
         history = None
     # The whole bounded history is read: an unread tail could hold a trip.
-    if history is None or not any(
-            item.outcome is RecordedOutcome.PRE_AUTHORIZED
-            and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
-            and item.acting_agent == agent
-            and item.grant_id == grant.grant_id
-            for item in history):
+    records = [] if history is None else [
+        item for item in history
+        if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+        and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+        and item.acting_agent == agent
+        and item.grant_id == grant.grant_id]
+    if not records:
         return "small_task_pre_authorization_unaudited"
+    # The grant that authorized it, not merely one with its grant_id: the
+    # recorded snapshot must be the current grant's canonical document, and
+    # that grant must still cover this task's repository, branch and lanes.
+    current = json.dumps(json.loads(settings.delegation_grant_json), ensure_ascii=True,
+                         sort_keys=True, separators=(",", ":"))
+    plan = record.plan
+    try:
+        producer = min(plan.assignments, key=lambda item: item.sequence)
+        covered = plan.prestage is not None and grant.covers(
+            Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            repository=canonical_repository(plan.prestage.repository),
+            branch=DirectorPacketTaskRouter._authority_base_ref(producer),
+        )
+    except (ValueError, AttributeError):
+        covered = False
+    if (any(item.grant_snapshot != current for item in records)
+            or not covered
+            or not {_assignment_provider_lane(item) for item in plan.assignments}
+            <= grant.providers):
+        return "small_task_pre_authorization_revoked"
     if any(item.grant_id == grant.grant_id
            and item.outcome is RecordedOutcome.REFUSED
            and any(gate.gate == "delegation_trip" for gate in item.gate_results)
@@ -4616,3 +4639,5 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]

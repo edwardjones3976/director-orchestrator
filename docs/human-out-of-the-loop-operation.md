@@ -1,3 +1,5 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
@@ -252,7 +254,9 @@ dash, bracket, quote or bullet, and at joining words such as and, then, so,
 but or or;
 a clause after a split may otherwise be only paths or identifiers, the second
 object of "compare A and B"), every "to ..." and "...ing it" names a read
-action, no verb that asks for a change (improve, revise, make, fix, update,
+action (every term check below also reads identifiers split into words, so
+`openai_api_key`, `db-password`, `auth.token` or `authToken` count as their
+words), no verb that asks for a change (improve, revise, make, fix, update,
 rename, format, set, open, file, post and a long list more, in any
 inflection) appears anywhere in it, it names at least one path (a
 repository-wide request would reach the model with an empty inventory), and
@@ -383,7 +387,9 @@ refused when it is accepted, before it is recorded and before any reviewer
 work. A result refused there still spent the producer's attempt. A
 pre-authorized task, one whose persisted graph skips the execution button, is
 refused at dispatch unless delegation is still enabled and unsuspended under a
-live grant for the class (`small_task_pre_authorization_revoked`), the verified
+live grant for the class whose canonical document is the snapshot recorded
+when the task was pre-authorized and which still covers the task's repository,
+branch and both lanes (`small_task_pre_authorization_revoked`), the verified
 audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
 grant_id (`small_task_pre_authorization_unaudited`; an absent, unreadable or
 replaced ledger has none, and a history past its bound counts as unread),
@@ -610,3 +616,5 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->

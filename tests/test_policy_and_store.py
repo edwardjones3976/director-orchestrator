@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
@@ -1226,7 +1227,7 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
             "Explain how the retry loop in src/director_orchestrator/policy.py works.",
             "Compare README.md and AGENTS.md.",
             "Describe the retry_policy helper in policy.py.",
-            "List the tests in tests/test_policy_and_store.py. Review them for gaps.",
+            "List the tests in tests/test_hotl_execution.py. Review them for gaps.",
             "Analyse docs/hotl-execution-predicate.md.",
         ):
             with self.subTest(read_shaped=text):
@@ -1268,7 +1269,7 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
         for text in (
             "Compare README.md and AGENTS.md.",
             "Summarize README.md and describe AGENTS.md.",
-            "List the tests in tests/test_policy_and_store.py, then review them for gaps.",
+            "List the tests in tests/test_hotl_execution.py, then review them for gaps.",
             "Summarize the sections of README.md including the tables.",
         ):
             with self.subTest(read_shaped=text):
@@ -1298,6 +1299,31 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
         ):
             with self.subTest(intake=text):
                 self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+
+    def test_identifier_joins_never_hide_a_sensitive_or_change_term(self) -> None:
+        """snake_case, kebab-case, dotted.path, camelCase and UPPER_CASE alike."""
+
+        names = (
+            "openai_api_key", "db_password", "auth_token", "github-token", "api-key",
+            "secrets.env_file", "config.password", "authToken", "dbPassword",
+            "OpenAIApiKey", "OPENAI_API_KEY", "Db_Password", "session_cookie",
+            "private-key", "ssh_config", "customer_email", "user-address",
+            "patient.records", "employeeSalary", "date_of_birth", "phoneNumber",
+            "credit_card_number", "bank-account", "ssn_list", "passport_scans",
+            "genealogy_notes", "health_data", "update_readme", "rename-module",
+            "make_it_clearer", "fixTypos", "deploy.sh", "publish_docs",
+        )
+        for name in names:
+            for text in (f"Summarize {name} in config.toml.", f"List {name} from docs/notes.md.",
+                         f"Review README.md and {name}."):
+                with self.subTest(intake=text):
+                    self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+                    self.assertFalse(self.eligible(self.with_assignments({"task": text}, {})))
+        # The approval gate reads the split form too.
+        for name in ("db_password", "authToken", "api-key", "date_of_birth", "phoneNumbers"):
+            with self.subTest(gate=name):
+                self.assertFalse(self.eligible(self.record(
+                    text=f"Project: demo\nSummarize {name} in README.md.")))
 
     def test_a_request_must_name_a_path(self) -> None:
         """A repository-wide request would get an empty compact inventory."""
@@ -1412,3 +1438,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]

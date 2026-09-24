@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
@@ -790,6 +791,26 @@ class StandingGrantExerciseTests(unittest.TestCase):
         # record merely be found: a history past its bound refuses.
         with patch("director_orchestrator.primary_default._AUDIT_HISTORY_MAX_SECONDS", -1.0):
             self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # The grant keeps its grant_id but its document changed (narrowed
+        # repository, branch or lanes, or a new expiry): not the grant that
+        # authorized this task.
+        for name, changes in {
+            "repository": {"repository": "owner/other-repository"},
+            "branch": {"branch_pattern": "release/*"},
+            "providers": {"providers": ["claude", "grok"]},
+            "expiry": {"expires_at": "2098-01-01T00:00:00+00:00"},
+        }.items():
+            with self.subTest(narrowed=name):
+                narrowed = replace(self.settings, delegation_grant_json=small_grant(**changes))
+                fresh = audit_ledger(self.directory)
+                self.assertEqual("small_task_pre_authorization_unaudited", refusal(fresh, narrowed))
+                self.assertEqual("small_task_pre_authorization_revoked", refusal(self.ledger, narrowed))
+        # Same grant document, but the task itself no longer falls under it.
+        moved = record.model_copy(deep=True)
+        moved.plan = moved.plan.model_copy(update={"prestage": moved.plan.prestage.model_copy(
+            update={"repository": "owner/other-repository"})})
+        self.assertEqual("small_task_pre_authorization_revoked", small_pre_authorization_refusal(
+            moved, self.settings, self.ledger, approval_free=True, compact_view_lanes=SMALL_LANES))
         # A readable ledger that lacks this task's own record: a fresh
         # replacement, or one holding only another task's pre-authorization.
         self.assertEqual("small_task_pre_authorization_unaudited",
@@ -5391,3 +5412,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]

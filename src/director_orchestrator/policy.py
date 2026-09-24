@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
@@ -559,6 +560,19 @@ def small_task_packet_read_only(packet: Mapping[str, Any]) -> bool:
     )
 
 
+def _identifier_words(text: str) -> str:
+    """The text with identifier joins made word boundaries.
+
+    ``\b`` never separates ``openai_api_key``, ``db-password``, ``auth.token``
+    or ``authToken`` into words, so every sensitive-term, write and
+    change-verb check also reads this form: underscores, hyphens and dots
+    between word characters, and camelCase humps, become spaces.
+    """
+
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", text)
+    return re.sub(r"(?<=[A-Za-z0-9])[_.-]+(?=[A-Za-z0-9])|_+", " ", text)
+
+
 def _read_only_sentence(sentence: str) -> bool:
     clauses = [clause.strip() for clause in _CLAUSE_BREAK.split(sentence)]
     if not _READ_VERB.match(clauses[0]):
@@ -594,10 +608,10 @@ def _read_only_request(text: str) -> bool:
     return (
         bool(sentences)
         and all(_read_only_sentence(part) for part in sentences)
-        and not _OUTSIDE_READ_ONLY.search(body)
-        and not _WRITE_SCOPE.search(body)
-        and not _PERSONAL_DATA.search(body)
-        and not _MUTATION_VERB.search(body)
+        and not any(
+            pattern.search(form)
+            for pattern in (_OUTSIDE_READ_ONLY, _WRITE_SCOPE, _PERSONAL_DATA, _MUTATION_VERB)
+            for form in (body, _identifier_words(body)))
         and any(_NAMED_PATH.search(chunk) for chunk in request)
     )
 
@@ -648,9 +662,11 @@ def small_read_only_eligible(
         or plan.risk_level is not RiskLevel.LOW
         or plan.debate is not None
         or deterministic_approval_reasons(record.intake.text)
+        or deterministic_approval_reasons(_identifier_words(record.intake.text))
         or any(
-            deterministic_approval_reasons(part)
+            deterministic_approval_reasons(form)
             for part in _generated_plan_gate_strings(plan)
+            for form in (part, _identifier_words(part))
         )
         or record.intake.primary_public_research_query is not None
         or record.intake.primary_required_capabilities
@@ -1895,3 +1911,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
