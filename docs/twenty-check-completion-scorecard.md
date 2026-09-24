@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]] -->
@@ -197,7 +198,10 @@ a container ID, never a name.
   database-derived live writer lease, not only the persisted owner row.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
-  08 needs a complete thread readback, each `approval_resume` receipt joined to
+  08 needs a complete thread readback, each prompt's visible blocks equal to the
+  Director's own rendering (`primary_slack_delivery.render_notification`) of
+  the persisted task record for that approval's kind, request and projection
+  digests (the complete proposed scope and button value), each `approval_resume` receipt joined to
   its durable command authorization (same command digest and writer fence,
   gateway proof version `v1`, the owner as actor), and each prompt's approve button must
   carry exactly this task, projection, request digest and kind while its
@@ -218,6 +222,10 @@ a container ID, never a name.
   with any subtype, shows neither the simulation label nor the cost text, so it
   is neither offline nor rubric-correct.
 - 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
+  12 requires the captured lanes to equal the generation's required providers
+  exactly. 03 and 09 treat an edited or subtyped owner post in a drill thread
+  like an altered bot reply (UNKNOWN), and 04 requires the read-back status
+  text to equal the text the execution's Slack response says it posted.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`, only when
   the monitor is enabled with its paid gate open (`gate_state` `open`) and no
@@ -346,8 +354,10 @@ non-zero and the dependent checks read UNKNOWN.
 
 The owner's paid Slack input must carry `rubric-sha256:<sha256 of the file's
 bytes>`, `declared_at` must not follow the input, the task must be `DONE` with
-exactly one final reply, and every substring must appear in that reply and
-none in the owner's question (a quoted question would otherwise satisfy it). A
+exactly one final reply, and every substring must appear in the persisted
+provider results that reply rendered, and none in the owner's question or in
+the Director's fixed terminal wrapper (header, completion and cost lines,
+contribution tags), which would otherwise satisfy it. A
 paid thread with any bot reply Slack reports as edited, or with any subtype,
 is UNKNOWN (the task receipt lookup refuses it), and such a final reply is
 never graded correct: Slack keeps its original timestamp, which the wall time
@@ -673,3 +683,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]] -->

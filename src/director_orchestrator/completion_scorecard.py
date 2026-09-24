@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
@@ -713,8 +714,11 @@ def _thread_counts(t: _SlackThreads, thread: str,
                        and (m.get("ts") == thread or m.get("thread_ts") == thread))
     replies = [m for m in messages if m.get("user") == t.bot and m.get("thread_ts") == thread]
     # The bot never edits its replies: an edited or subtyped one no longer shows what was
-    # posted, so its text is never parsed and the caller grades nothing in that thread.
-    altered = sum(1 for m in replies if not t.m.unedited(m))
+    # posted, so its text is never parsed and the caller grades nothing in that thread. An edited
+    # or subtyped owner post is a second, altered input the drill did not isolate: same rule.
+    posts = [m for m in messages if m.get("user") == t.owner and not m.get("bot_id")
+             and (m.get("ts") == thread or m.get("thread_ts") == thread)]
+    altered = sum(1 for m in replies + posts if not t.m.unedited(m))
     bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
     # At most one receipt per reply, and only as its header: a quoted or repeated receipt is not another.
     receipts = [match.group(1) for text in bot if (match := _RECEIPT.fullmatch(_header(text)))]
@@ -804,6 +808,10 @@ def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[b
     lanes = captures.get("lanes")
     if not isinstance(lanes, dict) or not lanes:
         return None, "No activation lanes were reported.", {}
+    required = captures.get("required_providers")
+    if not isinstance(required, list) or set(lanes) != set(required):
+        return False, "The captured lanes are not exactly the generation's required providers.", {
+            "required_providers": required if isinstance(required, list) else None, "captured_lanes": sorted(lanes)}
     facts, stale = {}, []
     for lane, value in sorted(lanes.items()):
         surfaces = value["surfaces"]
@@ -1099,8 +1107,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if any(not t.m.unedited(m) for m in posted):
         return _observation("04", None, "The message at the execution's posted timestamp was edited or has a subtype, "
                             "so its text is not what the execution posted.", source, facts, at, **binding)
-    status = [m for m in posted if m.get("bot_id") and m.get("user") == t.bot
-              and html.unescape(str(m.get("text", ""))).startswith("*STATUS —")]
+    # The read-back text is exactly what the execution's Slack response says it posted.
+    sent = (out.get("message") or {}).get("text")
+    status = [m for m in posted if m.get("bot_id") and m.get("user") == t.bot and isinstance(sent, str)
+              and html.unescape(str(m.get("text", ""))) == html.unescape(sent)
+              and html.unescape(sent).startswith("*STATUS —")]
     if complete and len(posted) == 1 and len(status) == 1:
         return _observation("04", True, "A saved successful scheduled execution's Slack post was read back as the bot's "
                             "STATUS message in the project channel.", source, facts, at, **binding)
@@ -1224,10 +1235,30 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     return result
 
 
-def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], task: Any) -> bool:
-    """The delivered prompt shows this request: its approve button carries exactly this task, projection,
-    request digest and kind (as primary_slack_delivery.approval_value renders it), its visible text names
-    that kind and decision scope, and it shows the plan's outcome when the task has a plan."""
+def _render(task: Any, projection: dict[str, Any], digest: str | None, created_at: datetime,
+            channel: str, owner: str) -> dict[str, Any] | None:
+    """The Director's own Slack rendering (primary_slack_delivery.render_notification) of a task record."""
+    from types import SimpleNamespace
+    from .primary_slack_delivery import render_notification
+
+    if not isinstance(task, dict):
+        return None
+    record = {key: value for key, value in task.items() if key != "qualification_evidence"}
+    row = {"projection": {**projection, "application": {**projection.get("application", {}), "task_record": record}},
+           "projection_digest": digest, "created_at": created_at}
+    try:
+        return render_notification(row, SimpleNamespace(slack_channel_id=channel, slack_owner_user_id=owner))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], task: Any,
+                   execution_mode: Any, channel: str, owner: str) -> bool:
+    """The delivered prompt is exactly the Director's canonical rendering of this request: the task record's
+    complete proposed scope (plan outcome, every assignment, repository, limits and acceptance), the kind,
+    and the approve button value, rendered by primary_slack_delivery.render_notification from the persisted
+    record and the approval's kind, request and projection digests; compared on every visible block."""
+    from .primary_slack_delivery import _visible_blocks
     key, projection = str(delivery.get("notification_key", "")), str(delivery.get("projection_digest"))
     if not key.startswith("approval:") or not key.endswith(":" + projection):
         return False
@@ -1246,11 +1277,14 @@ def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, An
     if not isinstance(kind, str) or value != {"task_id": task_id, "projection_digest": projection, "kind": kind,
                                                "request_digest": request}:
         return False
-    text = "\n".join(str((block.get("text") or {}).get("text", "")) for block in blocks
-                     if isinstance(block, dict) and block.get("type") == "section")
-    outcome = ((task or {}).get("plan") or {}).get("normalized_outcome") if isinstance(task, dict) else None
-    return (f"Owner decision required for {kind}." in text and f"Decision scope: {kind}." in text
-            and (outcome is None or str(outcome) in text))
+    payload = _render(task, {"application": {"execution_mode": execution_mode},
+                             "pending_approval": {"kind": kind, "request_digest": request},
+                             "terminal_classification": None},
+                      projection, _when(delivery["created_at"]), channel, owner)
+    try:
+        return payload is not None and _visible_blocks(blocks) == _visible_blocks(payload["blocks"])
+    except ValueError:
+        return False
 
 
 def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str,
@@ -1335,7 +1369,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot
                   and t.m.unedited(m)]
         # The prompt the owner saw must show this request's scope and carry its exact button value.
-        scoped = len(native) == 1 and _prompt_scoped(native[0], task_id, delivery, task)
+        scoped = len(native) == 1 and _prompt_scoped(native[0], task_id, delivery, task, readback.get("execution_mode"),
+                                                      t.channel, t.owner)
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         # The receipt must join the command authorization the webhook-verification path admitted: same
@@ -1481,6 +1516,14 @@ def _paid_facts(t: _SlackThreads, thread: str) -> dict[str, Any]:
     facts = _task_facts(t, thread, task_id, replies)
     finals = {m.get("ts") for m in facts["row"].get("terminal_messages") or []}
     facts["finals_unedited"] = all(t.m.unedited(m) for m in replies[0] if m.get("ts") in finals)
+    # The Director's fixed terminal wrapper for this task: its rendering with every provider result removed.
+    readback = facts.get("readback") or {}
+    task = facts.get("task") or {}
+    wrapper = _render({**task, "assignment_outcomes": []},
+                      {"application": {"execution_mode": readback.get("execution_mode")},
+                       "terminal_classification": "SUCCEEDED", "reason_code": "completion_passed"},
+                      None, datetime.now(timezone.utc), t.channel, t.owner)
+    facts["terminal_wrapper"] = html.unescape(wrapper["text"]) if wrapper else None
     return facts
 
 
@@ -1516,12 +1559,16 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
     # Slack keeps an edited message's ts but returns its new text: grade only the unedited reply.
     if len(final) != 1 or paid.get("finals_unedited") is not True:
         return False
-    text = html.unescape(str(final[0].get("text", "")))
-    # An expected substring the owner's question already contains is satisfied by quoting the question.
+    # Grade the provider answer only: the persisted results the delivered final reply rendered, never the
+    # Director's fixed wrapper (header, completion line, cost line, contribution tags) or the question.
+    answer = "\n".join(str(item.get("result", "")) for item in paid["task"].get("assignment_outcomes") or []
+                       if isinstance(item, dict))
     question = html.unescape(str((paid["task"].get("intake") or {}).get("text", "")))
-    if any(item in question for item in rubric["expected_answer_substrings"]):
+    wrapper = paid.get("terminal_wrapper")
+    if not isinstance(wrapper, str) or any(item in question or item in wrapper
+                                           for item in rubric["expected_answer_substrings"]):
         return False
-    return all(item in text for item in rubric["expected_answer_substrings"])
+    return bool(answer) and all(item in answer for item in rubric["expected_answer_substrings"])
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -2446,3 +2493,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]

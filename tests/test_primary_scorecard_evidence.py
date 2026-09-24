@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
@@ -180,6 +181,7 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         self.assertEqual(report["version"], "director-activation-captures/v1")
         self.assertEqual(report["generation_manifest_sha256"], PIN)
         self.assertEqual(report["provider_bindings_sha256"], "d" * 64)
+        self.assertEqual(report["required_providers"], ["claude"])
         self.assertEqual(report["lanes"]["claude"]["product"], "anthropic-claude")
         self.assertTrue(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"])
         with self.capture_sources(store, output=b'{"type":"assistant"}'), \
@@ -633,3 +635,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]

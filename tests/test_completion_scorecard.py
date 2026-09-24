@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
@@ -179,7 +180,8 @@ def status_nodes(channel=CHANNEL_FIXTURE):
 
 def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
-        "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
+        "ok": ok, "channel": channel, "ts": ts_value,
+        "message": {"text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_nodes": status_nodes(),
                                           "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
@@ -236,6 +238,7 @@ def captures_fixture():
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
             "observed_at": "2026-09-12T09:59:59+00:00",
+            "required_providers": ["claude", "grok", "openai"],
             "lanes": {lane: {"binding_digest": "b" * 64, "product": product,
                              "surfaces": {"app": dict(surface), "runtime_adapter": dict(surface)}}
                       for lane, product in (("openai", "openai-responses"), ("claude", "anthropic-claude"),
@@ -250,7 +253,9 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
         readback.update(assignments=[], provider_attempts=[], provider_usage=[])
         tf.recount(readback)
     else:
-        task["assignment_outcomes"] = [{"run_id": "provider-run-1", "result": "provider answer", "provider": "claude"}]
+        task["assignment_outcomes"] = [{"run_id": "provider-run-1", "result": answer or "provider answer",
+                                        "provider": "claude", "assignment_sequence": 1,
+                                        "review_summary": "fixture review"}]
     task["assignment_outcomes"][0]["provider_result_digest"] = "a" * 64
     task.update(status="DONE", qualification_evidence=readback)
     task["intake"]["text"] = text
@@ -286,17 +291,15 @@ def approval_entry(decided=None):
     readback["slack_deliveries"].append(delivery)
     entry["deliveries"].append({"task_id": APPROVAL_TASK, **{key: value for key, value in delivery.items()
                                                               if key not in ("created_at", "last_error")}})
-    value = json.dumps({"task_id": APPROVAL_TASK, "projection_digest": projection, "kind": "tool_use",
-                        "request_digest": "sha256:" + "8" * 64}, separators=(",", ":"), sort_keys=True)
-    scope = (f"{APPROVAL_TASK} — OWNER DECISION REQUIRED\nOwner decision required for tool_use. Review the complete "
-             "proposed scope below:\nDecision scope: tool_use. Other safety gates still apply.")
+    # The prompt is the Director's own rendering of the persisted record and approval.
+    payload = sc._render(entry["task"], {"application": {"execution_mode": readback["execution_mode"]},
+                                         "pending_approval": {"kind": "tool_use", "request_digest": "sha256:" + "8" * 64},
+                                         "terminal_classification": None},
+                         projection, datetime(2026, 9, 12, 9, 20, tzinfo=timezone.utc), CHANNEL_FIXTURE, OWNER)
+    assert payload is not None, "the fixture task must render as the Director would"
     entry["messages"].insert(2, {"ts": prompt, "thread_ts": ts(30000), "user": BOT,
-                                 "client_msg_id": "approval-client-1", "text": scope,
-                                 "blocks": [{"type": "section", "text": {"type": "plain_text", "text": scope}},
-                                            {"type": "actions", "elements": [
-                                                {"type": "button", "action_id": "director_primary_approve",
-                                                 "text": {"type": "plain_text", "text": "Approve this request"},
-                                                 "value": value}]}]})
+                                 "client_msg_id": "approval-client-1", "text": payload["text"],
+                                 "blocks": json.loads(json.dumps(payload["blocks"]))})
     return entry
 
 
@@ -1657,6 +1660,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         tagged.threads[ts(100)][1]["text"] = ("*[[Director Gateway | fixture | 2026-09-12 | 10:00 UTC | BEGIN]]*\n\n"
                                               + tagged.threads[ts(100)][1]["text"])
         self.assertEqual(tagged.state("03"), "PASS")
+        # An edited or subtyped owner post is an altered second input: the drill grades nothing.
+        edited_input = self.world()
+        edited_input.threads[ts(100)].append({"ts": ts(103), "thread_ts": ts(100), "user": OWNER, "text": "again",
+                                              "edited": {"user": OWNER, "ts": ts(104)}})
+        self.assertEqual(edited_input.state("03"), "UNKNOWN")
+        edited_duplicate = self.world()
+        edited_duplicate.threads[ts(300)].append({"ts": ts(305), "thread_ts": ts(300), "user": OWNER, "text": "dup",
+                                                  "subtype": "thread_broadcast"})
+        self.assertEqual(edited_duplicate.state("09"), "UNKNOWN")
         # A receipt quoted inside another reply is not a second receipt.
         quoted_receipt = self.world()
         thread = quoted_receipt.threads[ts(300)]
@@ -1751,6 +1763,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         wrong_message = self.world()
         wrong_message.threads[STATUS_TS][0]["text"] = "an unrelated post"
         self.assertEqual(wrong_message.state("04"), "FAIL")
+        other_text = self.world()
+        run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
+            "ok": True, "channel": CHANNEL_FIXTURE, "ts": STATUS_TS,
+            "message": {"text": "*STATUS — something else*"}}}]]}}]}}}
+        other_text.status["execution"]["data"] = flatted(run)
+        self.assertEqual(other_text.state("04"), "FAIL")
         human = self.world()
         del human.threads[STATUS_TS][0]["bot_id"]
         self.assertEqual(human.state("04"), "FAIL")
@@ -1875,6 +1893,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         stale_impostor.threads[ts(30000)][2]["user"] = OWNER
         stale_impostor.rows[-1]["Created"] = "2026-09-12T09:10:00Z"
         self.assertEqual([row(stale_impostor.report(), key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
+        reworded = self.world()
+        section = reworded.threads[ts(30000)][2]["blocks"][0]["text"]
+        # A line no stock phrase covers: only the exact rendering catches it.
+        assert "Approve or reject this exact request" in section["text"]
+        section["text"] = section["text"].replace("Approve or reject this exact request", "Approve this request")
+        self.assertEqual(reworded.state("08"), "UNKNOWN")
         partial = self.world()
         partial.incomplete.add(ts(30000))
         self.assertEqual(partial.state("08"), "UNKNOWN")
@@ -2113,6 +2137,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
+        for required in (["claude", "grok", "openai", "cursor"], ["claude", "grok"], None):
+            case = self.world()
+            case.captures["required_providers"] = required
+            with self.subTest(required=required):
+                self.assertEqual(case.state("12"), "FAIL")
         future_capture = self.world()
         for lane in future_capture.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T21:00:00+00:00"
@@ -2402,6 +2431,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited_receipt = self.world()
         edited_receipt.threads[ts(20000)][1]["edited"] = {"user": BOT, "ts": ts(20090)}
         self.assertEqual(edited_receipt.state("20"), "UNKNOWN")
+        # Only the persisted provider answer is graded: the Slack text around it is not.
+        wrapped = self.world()
+        wrapped.add(task_entry(PAID_TASK, 20000, offline=False, text=wrapped.paid_text, answer="The audit answer is 42"))
+        wrapped.tasks[PAID_TASK]["assignment_outcomes"][0]["result"] = "No idea"
+        self.assertEqual(wrapped.state("20"), "FAIL")
+        # A rubric satisfied by the Director's fixed terminal wrapper verifies nothing.
+        wrapper_rubric = {"schema": "director-paid-answer-rubric/v1", "rubric_id": "fixture-wrapper",
+                          "declared_at": "2020-01-01T00:00:00+00:00", "expected_answer_substrings": ["Actual USD cost"]}
+        raw = json.dumps(wrapper_rubric).encode()
+        wrapper_world = self.world()
+        wrapper_world.paid_rubric_path.write_bytes(raw)
+        text = "What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
+        wrapper_world.add(task_entry(PAID_TASK, 20000, offline=False, text=text,
+                                     answer="Actual USD cost: not recorded"))
+        self.assertEqual(wrapper_world.state("20"), "FAIL")
         # A rubric the question already answers is satisfied by quoting it: not correctness.
         quoted = self.world()
         quoted.add(task_entry(PAID_TASK, 20000, offline=False, text=quoted.paid_text + " Is the answer is 42?",
@@ -2508,3 +2552,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]

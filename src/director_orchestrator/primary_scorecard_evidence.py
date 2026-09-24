@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
@@ -345,7 +346,9 @@ def activation_capture_report(settings, identity, manifest) -> dict:
                                                              identity.postgres_schema, provider, surface["evidence_digest"])
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
-            "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes}
+            "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes,
+            # The generation's required providers: the scorecard requires a lane for each, and no other.
+            "required_providers": sorted(settings.langgraph_primary_required_providers)}
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:28 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
@@ -356,3 +359,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
