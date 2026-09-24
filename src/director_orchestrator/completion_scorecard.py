@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
@@ -327,6 +328,10 @@ WHERE w.id='directorIntake'; COMMIT;"""
 # 72-hour retention window; the Slack node's response is read from its data.
 _STATUS_EXECUTION = """BEGIN READ ONLY; SET LOCAL search_path TO public;
 SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
+ 'latest',(SELECT row_to_json(y) FROM (SELECT e.id,e.status,e.finished,e."startedAt",e."stoppedAt"
+   FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id
+   WHERE w.name='Director Status' AND e.mode='trigger' AND e."startedAt" > now()-interval '72 hours'
+   ORDER BY e."startedAt" DESC, e.id DESC LIMIT 1) y),
  'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,e."startedAt",e."stoppedAt",d.data
    ,w.active AS workflow_active,w."activeVersionId" AS active_version,
      to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt" AS workflow_updated_at,
@@ -467,6 +472,18 @@ def _hop(source: dict[str, Any] | None, target: dict[str, Any] | None, host: str
     other container, answers to host. None when either shows no network attachments."""
     ours, theirs = _networks(source), _networks(target)
     if not ours or not theirs:
+        return None
+    # /etc/hosts wins over network DNS: an ExtraHosts entry for the name sends the hop elsewhere.
+    config = (source or {}).get("HostConfig") or {}
+    extra = config.get("ExtraHosts") or []
+    if not isinstance(extra, list) or any(str(entry).split(":", 1)[0].split("=", 1)[0].strip() == host
+                                          for entry in extra):
+        return False
+    # Host networking, replaced hosts or resolver files, and custom resolvers or search domains change
+    # resolution in ways inspect cannot prove: unproven, not wrong.
+    mounts = (source or {}).get("Mounts") or []
+    if (config.get("NetworkMode") == "host" or config.get("Dns") or config.get("DnsSearch")
+            or any(isinstance(m, dict) and m.get("Destination") in ("/etc/hosts", "/etc/resolv.conf") for m in mounts)):
         return None
     reachable = {attach["NetworkID"] for attach in ours}
 
@@ -1102,6 +1119,17 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
         return _observation("04", None, "No single Director Status workflow has a saved successful posting execution "
                             "in the last 72 hours.", source, {}, at, **binding)
     execution = found["execution"]
+    # The newest scheduled run, of any outcome, is graded first: a retained older success behind newer
+    # failures is not operational delivery. (Runs post only on a readiness change, so the graded post
+    # may be older than a newer successful run that had nothing to post.)
+    latest = found.get("latest") if isinstance(found.get("latest"), dict) else {}
+    if latest.get("status") in ("error", "crashed", "failed", "canceled"):
+        return _observation("04", False, "The newest scheduled Director Status run did not succeed.",
+                            source, {"latest_execution_id": latest.get("id")}, at, **binding)
+    if (latest.get("status") != "success" or latest.get("finished") is not True
+            or not isinstance(latest.get("startedAt"), str) or _when(latest["startedAt"]) < _when(execution["startedAt"])):
+        return _observation("04", None, "The newest scheduled Director Status run is unfinished or not shown to "
+                            "have succeeded.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
@@ -1292,13 +1320,27 @@ def _render(sha: str, application: Any, projection: dict[str, Any], digest: str 
         return None
 
 
+def _slack_blocks(value: Any) -> Any:
+    """Blocks exactly as rendered, minus only what Slack adds itself: block_id, and emoji: true on plain_text.
+
+    Every other field (text, fields, accessories, elements, confirm dialogs, URLs, values, styles) is
+    compared, so nothing the owner could see or act on is projected away.
+    """
+    if isinstance(value, list):
+        return [_slack_blocks(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _slack_blocks(item) for key, item in value.items()
+                if key != "block_id" and not (key == "emoji" and item is True and value.get("type") == "plain_text")}
+    return value
+
+
 def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], application: Any,
                    sha: str, channel: str, owner: str) -> bool:
     """The delivered prompt is exactly the Director's canonical rendering of this request: the task record's
     complete proposed scope (plan outcome, every assignment, repository, limits and acceptance), the kind,
     and the approve button value, rendered by primary_slack_delivery.render_notification from the persisted
     record and the approval's kind, request and projection digests; compared on every visible block."""
-    from .primary_slack_delivery import _visible_blocks
+
     key, projection = str(delivery.get("notification_key", "")), str(delivery.get("projection_digest"))
     if not key.startswith("approval:") or not key.endswith(":" + projection):
         return False
@@ -1321,7 +1363,7 @@ def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, An
                                          "terminal_classification": None},
                       projection, _when(delivery["created_at"]), channel, owner)
     try:
-        return payload is not None and _visible_blocks(blocks) == _visible_blocks(payload["blocks"])
+        return payload is not None and _slack_blocks(blocks) == _slack_blocks(payload["blocks"])
     except ValueError:
         return False
 
@@ -2548,3 +2590,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]

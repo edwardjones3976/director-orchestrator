@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]] -->
@@ -141,7 +142,9 @@ a container ID, never a name.
   from `docker inspect` alone, that the gateway and n8n share a Docker network
   (same network ID) on which n8n's aliases or DNS names include the relay
   host (on every network the source is attached to, no other container may
-  answer to that name), that the active intake `Create Director Task` node
+  answer to that name; an `ExtraHosts` entry for the name on the source FAILs
+  the hop, and host networking, custom `Dns`/`DnsSearch` or a mounted
+  `/etc/hosts` or `/etc/resolv.conf` leave it unproven), that the active intake `Create Director Task` node
   forwards exactly as `n8n/workflows/director-intake.json` (the whole active
   workflow is compared with that file: every node's type, typeVersion,
   parameters, disabled flag and credential types, the node set and the
@@ -174,7 +177,9 @@ a container ID, never a name.
   UNKNOWN before anything in it is graded, and such a reply's text is never
   parsed: the bot never edits, so its receipts and `BLOCKED` text are no longer
   what was posted.
-- 04: only when, from `docker inspect`, the deployment's n8n reaches the
+- 04: the newest scheduled `Director Status` run of any outcome is graded
+  first (a failed one FAILs 04, an unfinished one leaves it UNKNOWN); then,
+  only when, from `docker inspect`, the deployment's n8n reaches the
   selected Director (and no other container) as `orchestrator`, the newest
   saved successful scheduled `Director Status` execution of a workflow that is
   active now, whose active version is the `Read Health` GET of
@@ -199,7 +204,9 @@ a container ID, never a name.
   database-derived live writer lease, not only the persisted owner row.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
-  08 needs a complete thread readback, each prompt's visible blocks equal to the
+  08 needs a complete thread readback, each prompt's complete blocks (every
+  field, accessory, element, confirm dialog, URL, value and style; only Slack's
+  own `block_id` and plain-text `emoji` flag ignored) equal to the
   Director's own rendering (`primary_slack_delivery.render_notification`) of
   the persisted application record `consistency` returns (task record,
   execution mode, effect grant) for that approval's kind, request and
@@ -696,3 +703,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]] -->

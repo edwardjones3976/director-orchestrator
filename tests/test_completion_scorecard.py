@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
@@ -183,7 +184,10 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value,
         "message": {"text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}}}]]}}]}}}
-    return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
+    return {"workflows": 1,
+            "latest": {"id": "4411", "status": "success", "finished": True,
+                       "startedAt": "2026-09-12T09:59:00.000+00:00", "stoppedAt": "2026-09-12T09:59:02.000+00:00"},
+            "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_nodes": status_nodes(),
                                           "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
                                           "workflow_settings": json.loads(json.dumps(STATUS_WORKFLOW["settings"])),
@@ -1610,6 +1614,28 @@ class ScorecardCollectorTests(unittest.TestCase):
         status_missing.candidate_files["n8n/workflows/director-status.json"] = ValueError("no such blob")
         self.assertEqual(status_missing.state("04"), "UNKNOWN")
 
+    def test_host_file_and_resolver_overrides_break_hops(self):
+        extra = topology()
+        extra[1].setdefault("HostConfig", {})["ExtraHosts"] = ["n8n:10.0.0.9"]
+        self.assertEqual(row(collect_topology(extra), "01")["status"], "FAIL")
+        extra_orchestrator = topology()
+        extra_orchestrator[2].setdefault("HostConfig", {})["ExtraHosts"] = ["orchestrator:10.0.0.8"]
+        self.assertEqual(row(collect_topology(extra_orchestrator), "01")["status"], "FAIL")
+        unrelated = topology()
+        unrelated[1].setdefault("HostConfig", {})["ExtraHosts"] = ["host.docker.internal:host-gateway"]
+        self.assertEqual(row(collect_topology(unrelated), "01")["status"], "PASS")
+        for change in ({"NetworkMode": "host"}, {"Dns": ["1.1.1.1"]}, {"DnsSearch": ["example.test"]}):
+            rows = topology()
+            rows[1].setdefault("HostConfig", {}).update(change)
+            with self.subTest(change=change):
+                self.assertEqual(row(collect_topology(rows), "01")["status"], "UNKNOWN")
+        mounted = topology()
+        mounted[1]["Mounts"] = [{"Destination": "/etc/hosts", "Source": "/tmp/hosts"}]
+        self.assertEqual(row(collect_topology(mounted), "01")["status"], "UNKNOWN")
+        world = World(self)
+        world.rows[1].setdefault("HostConfig", {})["ExtraHosts"] = ["orchestrator:10.0.0.8"]
+        self.assertEqual(world.state("04"), "UNKNOWN")
+
     def test_n8n_schema_must_be_the_default_01(self):
         for value, expected in (("public", "PASS"), ("other", "UNKNOWN")):
             rows = topology()
@@ -1826,6 +1852,21 @@ class ScorecardCollectorTests(unittest.TestCase):
         wrong_message = self.world()
         wrong_message.threads[STATUS_TS][0]["text"] = "an unrelated post"
         self.assertEqual(wrong_message.state("04"), "FAIL")
+        # The newest scheduled run is graded before any older successful post.
+        failing_now = self.world()
+        failing_now.status["latest"] = {"id": "4420", "status": "error", "finished": True,
+                                        "startedAt": "2026-09-12T09:59:30.000+00:00",
+                                        "stoppedAt": "2026-09-12T09:59:31.000+00:00"}
+        self.assertEqual(failing_now.state("04"), "FAIL")
+        running = self.world()
+        running.status["latest"] = {"id": "4421", "status": "running", "finished": False,
+                                    "startedAt": "2026-09-12T09:59:30.000+00:00", "stoppedAt": None}
+        self.assertEqual(running.state("04"), "UNKNOWN")
+        quiet_success = self.world()
+        quiet_success.status["latest"] = {"id": "4422", "status": "success", "finished": True,
+                                          "startedAt": "2026-09-12T09:59:30.000+00:00",
+                                          "stoppedAt": "2026-09-12T09:59:31.000+00:00"}
+        self.assertEqual(quiet_success.state("04"), "PASS")  # nothing to post, but the workflow is healthy
         other_text = self.world()
         run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
             "ok": True, "channel": CHANNEL_FIXTURE, "ts": STATUS_TS,
@@ -1971,6 +2012,26 @@ class ScorecardCollectorTests(unittest.TestCase):
         stripped = {key: value for key, value in effect_entry["application"].items() if key != "effect_grant"}
         effect.consistency["tasks"][APPROVAL_TASK]["application"] = stripped
         self.assertEqual(effect.state("08"), "UNKNOWN")
+        # Every block field counts; only Slack's own block_id and plain_text emoji flag are ignored.
+        slack_added = self.world()
+        blocks = slack_added.threads[ts(30000)][2]["blocks"]
+        for index, block in enumerate(blocks):
+            block["block_id"] = f"slack-{index}"
+            if block.get("type") == "section":
+                block["text"]["emoji"] = True
+        self.assertEqual(slack_added.state("08"), "PASS")
+        for label, mutate in (
+                ("section fields", lambda b: b[0].update(fields=[{"type": "mrkdwn", "text": "extra scope"}])),
+                ("accessory", lambda b: b[0].update(accessory={"type": "button", "text": {"type": "plain_text",
+                                                                                          "text": "More"}})),
+                ("confirm dialog", lambda b: b[-1]["elements"][0].update(confirm={"title": {"type": "plain_text",
+                                                                                            "text": "Sure?"}})),
+                ("button url", lambda b: b[-1]["elements"][0].update(url="https://example.test")),
+                ("button style", lambda b: b[-1]["elements"][0].update(style="danger"))):
+            case = self.world()
+            mutate(case.threads[ts(30000)][2]["blocks"])
+            with self.subTest(label=label):
+                self.assertEqual(case.state("08"), "UNKNOWN")
         partial = self.world()
         partial.incomplete.add(ts(30000))
         self.assertEqual(partial.state("08"), "UNKNOWN")
@@ -2636,3 +2697,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
