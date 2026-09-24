@@ -70,10 +70,10 @@ try {
     In-Volume 'find /d -mindepth 1 -delete; echo only > /d/sentinel.txt; printf moving > /d/.restore-state; mkdir /d/.pre-restore' | Out-Null
     Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
     Assert-Equal (In-Volume $list) './sentinel.txt' 'interrupted before any move: original kept'
-    # (d) Left by an older version of this script (no journal): treated as mid-move, so nothing is deleted.
-    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo a > /d/.pre-restore/x.txt; echo b > /d/y.txt' | Out-Null
-    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
-    Assert-Equal (In-Volume $list) './x.txt ./y.txt' 'legacy leftover without journal: nothing deleted'
+    # (d) Left by an older version (no journal), including a directory name on both sides: refused, untouched.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir -p /d/.pre-restore/sub /d/sub; echo a > /d/.pre-restore/x.txt; echo old > /d/.pre-restore/sub/o.txt; echo b > /d/y.txt; echo new > /d/sub/n.txt' | Out-Null
+    Assert-Equal (Invoke-Backup ($common + @('-Restore', $bad))) 1 'legacy leftover without journal: restore refused'
+    Assert-Equal (In-Volume $list) './.pre-restore ./.pre-restore/sub ./.pre-restore/sub/o.txt ./.pre-restore/x.txt ./sub ./sub/n.txt ./y.txt' 'legacy leftover without journal: both trees untouched'
     # (e) Interrupted during rollback after the journal switched back to moving: finish moving, delete nothing.
     In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo back > /d/already-back.txt; echo in > /d/.pre-restore/still-in.txt; printf moving > /d/.restore-state' | Out-Null
     Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
@@ -83,15 +83,12 @@ try {
     Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
     Assert-Equal (In-Volume $list) './restored.txt' 'interrupted during cleanup after a completed copy: new copy kept'
     Remove-Item $bad
-    # Backups never capture restore bookkeeping.
-    In-Volume 'find /d -mindepth 1 -delete; echo v > /d/sentinel.txt; mkdir /d/.pre-restore; printf moving > /d/.restore-state' | Out-Null
-    $before = @(Get-ChildItem $out -Filter 'open-webui-*.tgz').Name
-    Invoke-Backup $common | Out-Null
-    $new = Get-ChildItem $out -Filter 'open-webui-*.tgz' | Where-Object Name -notin $before | Select-Object -First 1
-    $newList = (docker run --rm --entrypoint tar -v "${out}:/b:ro" $Image tzf "/b/$($new.Name)" | Out-String)
-    Assert-Equal ([bool]($newList -match 'pre-restore|restore-state')) $false 'backup: restore bookkeeping excluded'
+    # Backups are refused while an interrupted restore is pending: the root may be a partial tree.
+    In-Volume 'find /d -mindepth 1 -delete; echo partial > /d/half.txt; mkdir /d/.pre-restore; echo v > /d/.pre-restore/sentinel.txt; printf copying > /d/.restore-state' | Out-Null
+    $before = @(Get-ChildItem $out).Name
+    Assert-Equal (Invoke-Backup $common) 1 'backup: refused while a restore is pending'
+    Assert-Equal (@(Get-ChildItem $out | Where-Object Name -notin $before).Count) 0 'backup: pending restore writes no archive'
     In-Volume 'rm -rf /d/.pre-restore /d/.restore-state' | Out-Null
-    Remove-Item $new.FullName
 
     # Fail closed on unreadable state: load Get-ContainerRunning and shadow docker with a fake.
     $tokens0 = $null; $errs0 = $null

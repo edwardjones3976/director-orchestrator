@@ -24,7 +24,13 @@ $ArchiveName = '^open-webui-\d{8}-\d{6}\.tgz$'
 #             recovery deletes that copy, then switches to 'moving' before moving the originals back.
 #   done    - the copy completed: what is beside .pre-restore is the full new copy and .pre-restore is only
 #             the rollback copy being dropped; recovery finishes dropping it and keeps the new copy.
-# No journal but a .pre-restore (an older version of this script): treated as 'moving', the safe case.
+# Guarantee: recovery never loses the originals and never deletes a copy journaled 'done'. A crash between
+# cp finishing and 'journal done' is recovered as 'copying' (rolled back to the originals); the archive is
+# untouched, so re-running the restore completes it.
+# No journal but a .pre-restore (left by an older version of this script): which tree is which cannot be
+# told, and same-named entries on both sides would collide, so nothing is touched and the restore exits 4
+# for manual resolution. (This version always journals 'moving' before creating .pre-restore.)
+# Backups are refused while any of this bookkeeping is present: the volume root may hold a partial tree.
 # Steps: recover any interrupted run; extract into container scratch (/x), so a missing or corrupt archive
 # stops before the volume changes; move the current contents aside; copy in; drop the rollback copy.
 # ./cache, .pre-restore and .restore-state are never in archives; Open WebUI re-downloads ./cache on start.
@@ -46,7 +52,8 @@ if [ -d /d/.pre-restore ]; then
     case "$(cat /d/.restore-state 2>/dev/null)" in
         copying) undo_copy ;;
         done) echo "(the previous restore had completed; finishing its cleanup)"; rm -rf /d/.pre-restore ;;
-        *) undo_move ;;
+        moving) undo_move ;;
+        *) echo "unjournaled /d/.pre-restore from an older version: resolve it by hand (nothing changed)" >&2; exit 4 ;;
     esac
 fi
 rm -f /d/.restore-state /d/.restore-state.tmp
@@ -102,6 +109,13 @@ try {
     $final = Join-Path $OutDir $name
     $part = "$final.part"
     $wasRunning = Get-ContainerRunning $Container
+    # An interrupted restore leaves the volume root possibly partial (the originals sit in .pre-restore, which
+    # archives exclude): refuse rather than archive it and let retention prune good recovery points.
+    # Fail closed: only an explicit 'clean' from the probe counts.
+    $probe = docker run --rm --entrypoint sh -v "${Volume}:/d:ro" $image -c 'if [ -e /d/.pre-restore ] || [ -e /d/.restore-state ]; then echo pending; else echo clean; fi' 2>$null
+    if ($LASTEXITCODE -ne 0 -or $probe -ne 'clean') {
+        Write-Error "an interrupted restore is pending in $Volume (or its state could not be read); no backup taken. Run -Restore <archive> with $Container stopped to recover it first."
+    }
     $restartFailed = $false
     try {
         # A consistent SQLite copy needs the container stopped; if it will not stop, do not back up a live DB.
