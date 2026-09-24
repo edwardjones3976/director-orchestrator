@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | BEGIN]]
@@ -98,6 +99,8 @@ class TeamValidationRoute:
             if len(calls)!=1:
                 raise ValidationError("worker did not obtain immediate execution admission")
             service.store.verify_fence(fence)
+            from .provider_validation import rehash_runtime_scope
+            rehash_runtime_scope()
             if self.configuration_digest()!=admission["configuration_digest"]:
                 raise ValidationError("team configuration changed during execution")
             raw=canonical_json_bytes(dict(prepared=prepared,capture=capture,challenge=challenge,attempt_digest=attempt))
@@ -150,3 +153,4 @@ def team_route_from_environment():
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

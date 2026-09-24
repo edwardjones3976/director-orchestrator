@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -512,19 +513,38 @@ function Assert-PrimaryQuiescent {
     # Activation in either mode would recover the other mode's unfinished work
     # (simulated under live dispatch, or live under simulation), so the primary
     # plane must hold none.
-    # -AfterStop ignores writer leases the just-stopped process leaves to expire;
-    # dispatches, assignments, reconciliation and claims must still be zero.
+    # Both checks require the full rollback_safe set, writer leases included.
+    # -AfterStop waits (bounded: the 60 s default lease plus margin) only while
+    # writer leases are the sole blocker, so the stopped process's leases can
+    # lapse; any other unfinished work refuses at once, and a lease still live
+    # after the bound refuses too, since another engine may hold it.
     param([switch]$AfterStop)
-    $predicate = if ($AfterStop) {
-        "(q.active_provider_dispatch_count, q.active_assignment_count, q.unresolved_reconciliation_count, q.unsettled_claim_count) == (0, 0, 0, 0)"
-    } else { "q.rollback_safe" }
+    $leaseWaitSeconds = if ($AfterStop) { 75 } else { 0 }
     try {
         Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
-            "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); q=h.claim_store.primary_quiescence_metrics(); h.close(); raise SystemExit(0 if $predicate else 3)"
+            "import time; from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); metrics=h.claim_store.primary_quiescence_metrics; end=time.monotonic()+$leaseWaitSeconds; m=metrics(); exec('while m.live_writer_claim_count and not (m.active_provider_dispatch_count or m.active_assignment_count or m.unresolved_reconciliation_count or m.unsettled_claim_count) and time.monotonic() < end:\n    time.sleep(2); m=metrics()'); h.close(); raise SystemExit(0 if m.rollback_safe else 3)"
     }
     catch {
         $state = if ($AfterStop) { "Intake remains stopped and no switch was changed." } else { "Nothing was stopped or switched." }
         throw "Activation refused: the primary plane is not quiescent (unfinished dispatches, assignments, writer claims, reconciliation or claims, possibly from another execution mode). Finish or reconcile that work first. $state"
+    }
+}
+
+function Test-ActivatedChain {
+    # Read-only: true only when this exact identity's chain already ends in ACTIVATED.
+    try { $null = Invoke-Evidence -Command require-activated; return $true }
+    catch { return $false }
+}
+
+function Assert-PrimaryOwnsIntake {
+    # Resume is same-mode only. After Rollback returned new intake to legacy,
+    # legacy work may exist that no inventory bound, so a new generation is required.
+    try {
+        Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+            "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); c=h.claim_store.current_intake_authority(); h.close(); raise SystemExit(0 if c.intake_owner == 'langgraph' else 3)"
+    }
+    catch {
+        throw "Activation resume refused: new intake is no longer owned by the primary (for example after Rollback); a new generation is required. Nothing was stopped or switched."
     }
 }
 
@@ -555,7 +575,7 @@ function Assert-AllIntakeStopped {
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
+        [ValidateSet("record", "require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
         [string]$Stage,
         [string]$FactsJson = "{}",
         [string]$AcceptanceArtifactPath,
@@ -1051,22 +1071,33 @@ if ($Action -eq "PrepareOfflineHandoff") {
 }
 if ($Action -in @("Activate", "ActivateOffline")) {
     $offline = $Action -eq "ActivateOffline"
-    # Offline activation needs the same profile PrepareOfflineHandoff requires,
-    # checked before anything stops.
-    if ($offline) { Assert-OfflineHandoffProfile }
-    # Both directions need a quiescent plane: work approved under one mode must
-    # never be recovered by the other mode's dispatcher. Checked before the stop
-    # (nothing touched on refusal) and again after it, since the running service
-    # could admit work in between.
-    Assert-PrimaryQuiescent
-    Stop-And-Prove-AllIntake
-    Assert-PrimaryQuiescent -AfterStop
-    $legacyInventory = Get-LegacyInventory
-    Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
-    # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
-    # a separate health gate that only paid activation requires.
-    Invoke-Evidence -Command require-ready
-    Save-PriorImages
+    # Paid resume: ACTIVATED is already recorded for this exact identity (a
+    # post-record n8n or Slack start failed and was unwound). Only the start
+    # steps are retried, behind the same switches, readbacks and health proof;
+    # the chain is never re-recorded and intake still reopens last.
+    $resume = (-not $offline) -and (Test-ActivatedChain)
+    if ($resume) {
+        Assert-PrimaryOwnsIntake
+        Stop-And-Prove-AllIntake
+    }
+    else {
+        # Offline activation needs the same profile PrepareOfflineHandoff requires,
+        # checked before anything stops.
+        if ($offline) { Assert-OfflineHandoffProfile }
+        # Both directions need a quiescent plane: work approved under one mode must
+        # never be recovered by the other mode's dispatcher. Checked before the stop
+        # (nothing touched on refusal) and again after it, since the running service
+        # could admit work in between.
+        Assert-PrimaryQuiescent
+        Stop-And-Prove-AllIntake
+        Assert-PrimaryQuiescent -AfterStop
+        $legacyInventory = Get-LegacyInventory
+        Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
+        # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
+        # a separate health gate that only paid activation requires.
+        Invoke-Evidence -Command require-ready
+        Save-PriorImages
+    }
     try {
         if ($offline) {
             # Simulated providers only: offline simulation excludes live dispatch
@@ -1098,12 +1129,15 @@ if ($Action -in @("Activate", "ActivateOffline")) {
         # paid Activate's require-ready needs; runtime acceptance already accepts
         # the stages without ACTIVATED. It is recorded before n8n and Slack reopen,
         # so a failed evidence write unwinds with that intake still closed.
-        if (-not $offline) {
+        if (-not $offline -and -not $resume) {
             Invoke-Evidence -Command record -Stage ACTIVATED -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
         }
         Invoke-Compose up -d n8n
         Invoke-Compose start slackbot
-        if (-not $offline) {
+        if ($resume) {
+            Write-Host "Activation resumed on the already-ACTIVATED chain; health and image readbacks passed and authenticated intake was reopened. Nothing was re-recorded."
+        }
+        elseif (-not $offline) {
             Write-Host "Primary activation health passed and authenticated intake was reopened."
         }
         else {
@@ -1200,3 +1234,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

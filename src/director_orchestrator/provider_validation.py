@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -28,6 +29,7 @@ an explicit operator action; constructing a store or verifying evidence does no 
 """
 from __future__ import annotations
 
+import contextvars
 from dataclasses import asdict, dataclass
 import hashlib
 import hmac
@@ -698,12 +700,31 @@ def pinned_path_manifest(value: str) -> dict:
             raise ValidationError("pinned runtime contains a special file or hardlink")
     return manifest
 
-_RUNTIME_PACKAGE_DIGESTS: dict = {}
+# Set for one validation request by ValidationBridgeService.run: bytes are
+# hashed at the pre-admission point and rehashed at each post-execution point,
+# never trusted from file metadata.
+# The value is a per-request holder, so a security point outside a request
+# never leaves a sticky digest behind.
+_RUNTIME_SCOPE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "director_runtime_digest", default=None)
 # The trees Install copies (Get-BridgeRuntimeManifest in
 # scripts/windows-host-provider-bridge.ps1): code plus every non-Python asset
 # the runtime reads (packet and profile schemas, provider profiles, prompts).
 _RUNTIME_TREES = ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts")
 _RUNTIME_LAUNCHER = "scripts/windows-host-provider-bridge.ps1"
+
+
+def _hash_runtime(root) -> str:
+    """Hash every runtime byte now; no metadata shortcut."""
+    from pathlib import Path
+    root = Path(root)
+    files = [path for tree in _RUNTIME_TREES if (root / tree).is_dir()
+             for path in (root / tree).rglob("*")
+             if path.is_file() and "__pycache__" not in path.relative_to(root).parts]
+    if (root / _RUNTIME_LAUNCHER).is_file():
+        files.append(root / _RUNTIME_LAUNCHER)
+    lines = sorted(f"{digest(path.read_bytes())}  {path.relative_to(root).as_posix()}" for path in files)
+    return digest(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def runtime_package_digest(root=None) -> str:
@@ -713,26 +734,31 @@ def runtime_package_digest(root=None) -> str:
     the launcher, bytecode caches excluded, as sorted ``sha256  path`` lines
     hashed together, so an installed copy's digest equals its directory name.
     Each lane's configuration digest binds it, so a change to any code or
-    runtime-read asset is configuration drift. Bytes are rehashed only when a
-    file's name, size or mtime changes, so repeated digests inside a bounded
-    validation deadline cost a directory stat.
+    runtime-read asset is configuration drift. Outside a validation request
+    every call rehashes the bytes. Inside one, the value bytes-hashed at the
+    request's latest security point (pre-admission, then each post-execution
+    check via rehash_runtime_scope) is returned, so the checks between those
+    points cost nothing and none trusts file metadata.
     """
     from pathlib import Path
-    root = Path(__file__).resolve().parents[2] if root is None else Path(root)
-    files = [path for tree in _RUNTIME_TREES if (root / tree).is_dir()
-             for path in (root / tree).rglob("*")
-             if path.is_file() and "__pycache__" not in path.relative_to(root).parts]
-    if (root / _RUNTIME_LAUNCHER).is_file():
-        files.append(root / _RUNTIME_LAUNCHER)
-    files.sort(key=lambda path: path.relative_to(root).as_posix())
-    signature = tuple((path.relative_to(root).as_posix(), path.stat().st_size, path.stat().st_mtime_ns)
-                      for path in files)
-    cached = _RUNTIME_PACKAGE_DIGESTS.get(str(root))
-    if cached is not None and cached[0] == signature:
-        return cached[1]
-    lines = sorted(f"{digest(path.read_bytes())}  {path.relative_to(root).as_posix()}" for path in files)
-    value = digest(("\n".join(lines) + "\n").encode("utf-8"))
-    _RUNTIME_PACKAGE_DIGESTS[str(root)] = (signature, value)
+    default = Path(__file__).resolve().parents[2]
+    root = default if root is None else Path(root)
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None and scope.get("digest") is not None and root == default:
+        return scope["digest"]
+    return _hash_runtime(root)
+
+
+def rehash_runtime_scope() -> str:
+    """Security point: rehash every runtime byte and bind it for the request.
+
+    Outside a request the fresh value is returned and nothing is retained.
+    """
+    from pathlib import Path
+    value = _hash_runtime(Path(__file__).resolve().parents[2])
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None:
+        scope["digest"] = value
     return value
 
 
@@ -786,6 +812,16 @@ class ValidationBridgeService:
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
+        # One request scope: runtime bytes are hashed here, before admission,
+        # and rehashed at each post-execution check.
+        scope = _RUNTIME_SCOPE.set({"digest": None})
+        try:
+            rehash_runtime_scope()
+            return self._run_lane(request, owner_token)
+        finally:
+            _RUNTIME_SCOPE.reset(scope)
+
+    def _run_lane(self, request: ValidationRequest, owner_token: str) -> dict:
         if request.provider == "antigravity":
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
@@ -819,6 +855,7 @@ class ValidationBridgeService:
             executor.execute(bridge,execution_observer=observe)
             if len(raw_captures)!=1:
                 raise ValidationError("native transport discarded its execution capture")
+            rehash_runtime_scope()
             if pin!=production_configuration_digest(self.production,request.provider,
                     account_files=self.account_files.get(request.provider,())):
                 raise ValidationError("native configuration changed during execution")
@@ -969,6 +1006,7 @@ class ValidationBridgeService:
             if len(raw_captures) != 1:
                 raise ValidationError("Responses transport discarded its execution capture")
             self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
+            rehash_runtime_scope()
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration changed during execution")
             remaining_seconds()
@@ -1113,3 +1151,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

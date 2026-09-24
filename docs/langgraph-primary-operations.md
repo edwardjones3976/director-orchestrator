@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
@@ -465,7 +466,10 @@ their mere presence:
   (native, team and Responses) also binds the runtime content address: every
   file Install copies (code, `docs/schemas`, `docs/provider-profiles`,
   `prompts` and the launcher), which for an installed copy equals its
-  directory name. The Responses digest also binds the proxies urllib resolves,
+  directory name. Each validation request hashes those bytes before
+  admission and rehashes them at every post-execution check, never trusting
+  file size or modification time. The Responses digest also binds the proxies
+  urllib resolves,
   which on Windows fall back to the registry when no proxy variable is set, and
   `SSLKEYLOGFILE` joins the proxy and CA names dropped under a pin.
   Install is persistent host configuration and needs owner
@@ -652,9 +656,17 @@ for `ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and
 `DIRECTOR_PROVIDER_VALIDATION_ENABLED`) before anything stops. Both `Activate`
 and `ActivateOffline` require a quiescent primary plane
 (`primary_quiescence_metrics().rollback_safe`) before they stop anything, and
-again after the stop (writer leases excepted), so unfinished work approved in
-one mode is never recovered by the other mode's dispatcher; on refusal nothing
-is switched. Independently, live dispatch holds any task whose persisted
+again after the stop, so unfinished work approved in one mode is never
+recovered by the other mode's dispatcher; on refusal nothing is switched. The
+post-stop check keeps writer leases: it waits up to 75 seconds (the 60-second
+default lease plus margin) only while leases are the sole blocker, refuses at
+once on any other unfinished work, and refuses a lease still live after the
+wait. If paid `Activate` fails after recording `ACTIVATED` (for example an n8n
+or Slack start), the next `Activate` on the same identity resumes: a read-only
+`require-activated` check and a proof that the primary still owns new intake
+(Rollback forces a new generation) replace the quiescence, inventory and
+`require-ready` steps, and the same switches, image readbacks and health proof
+precede reopening intake. `ACTIVATED` is never recorded twice. Independently, live dispatch holds any task whose persisted
 `execution_mode` is not exactly `live` (including `unknown`, missing or
 malformed labels), and the offline dispatcher holds any task not labelled
 `offline_simulation` or `paid_off`.
@@ -868,3 +880,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->

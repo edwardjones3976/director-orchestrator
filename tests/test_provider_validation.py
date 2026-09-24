@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -1314,6 +1315,21 @@ class PostgresValidationTests(unittest.TestCase):
             if thread is not None:
                 thread.join(5)
 
+    def test_service_openai_responses_refuses_runtime_bytes_changed_during_execution(self):
+        """The post-execution check rehashes bytes; a change mid-request refuses."""
+        from director_orchestrator import provider_validation as module
+        fixture=self._responses_service_fixture()
+        real=module._hash_runtime(Path(module.__file__).resolve().parents[2])
+        hashes=iter((real,"f"*64))
+        with patch.object(module,"_hash_runtime",side_effect=lambda _root:next(hashes)):
+            with self.assertRaisesRegex(ValidationError,"changed during execution"):
+                fixture["service"].run(ValidationRequest(generation=fixture["generation"],provider="openai"),OWNER)
+        self.assertEqual(1,len(fixture["sends"]))
+        with self.store.connect() as db:
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s AND state='succeeded'",
+                                 (fixture["generation"],)).fetchone()[0]
+        self.assertEqual(0,succeeded)
+
     def test_service_openai_responses_control_uncontended_success(self):
         """The C3 control case: an uncontended run through the real service,
         store and capture verifier reaches 'succeeded' with exactly one
@@ -1480,6 +1496,43 @@ class RuntimePackageDigestTests(unittest.TestCase):
                         handle.write("\n")
                     self.assertNotEqual(module.runtime_package_digest(root), previous)
 
+    def test_same_size_same_mtime_replacement_changes_the_digest(self):
+        from director_orchestrator import provider_validation as module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "docs" / "schemas" / "packet.json"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b'{"a":1}')
+            stamp = target.stat()
+            before = module.runtime_package_digest(root)
+            target.write_bytes(b'{"a":2}')
+            os.utime(target, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            self.assertEqual((target.stat().st_size, target.stat().st_mtime_ns),
+                             (stamp.st_size, stamp.st_mtime_ns))
+            self.assertNotEqual(module.runtime_package_digest(root), before)
+
+    def test_request_scope_rehashes_bytes_at_each_security_point(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64, "c" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            token = module._RUNTIME_SCOPE.set({"digest": None})
+            try:
+                self.assertEqual(module.rehash_runtime_scope(), "a" * 64)  # pre-admission
+                self.assertEqual(module.runtime_package_digest(), "a" * 64)  # between points
+                self.assertEqual(module.rehash_runtime_scope(), "b" * 64)  # post-execution
+                self.assertEqual(module.runtime_package_digest(), "b" * 64)
+            finally:
+                module._RUNTIME_SCOPE.reset(token)
+            # Outside a request every call hashes the bytes again.
+            self.assertEqual(module.runtime_package_digest(), "c" * 64)
+
+    def test_security_point_outside_a_request_retains_nothing(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            self.assertEqual(module.rehash_runtime_scope(), "a" * 64)
+            self.assertEqual(module.runtime_package_digest(), "b" * 64)
+
     def test_native_and_team_digests_bind_the_runtime_package(self):
         from director_orchestrator import provider_validation_team as team
         from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
@@ -1532,3 +1585,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

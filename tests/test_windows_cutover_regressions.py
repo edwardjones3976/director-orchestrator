@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -178,7 +179,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens,
 if ($errors.Count) { throw 'control script parse failed' }
 foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
     'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages',
-    'Read-DotEnv', 'Assert-OfflineHandoffProfile')) {
+    'Read-DotEnv', 'Assert-OfflineHandoffProfile', 'Test-ActivatedChain')) {
     $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
     if (@($node).Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -235,14 +236,17 @@ function docker {
     }
     if ($service -eq 'slackbot' -and $arguments -notcontains '--no-start') { throw 'gateway started before its readback' }
     Record-Event "up-$service" $env:DIRECTOR_RUNTIME_IMAGE
-    if ($service -ne 'n8n' -and -not ($Scenario -eq 'wrong-gateway' -and $service -eq 'slackbot')) {
+    if ($service -ne 'n8n' -and -not ($Scenario -like '*wrong-gateway' -and $service -eq 'slackbot')) {
         $script:images[$service] = $env:DIRECTOR_RUNTIME_IMAGE
     }
     $global:LASTEXITCODE = 0
 }
 function Invoke-Evidence { param([string]$Command, [string]$Stage, [string]$FactsJson, [int]$LegacyTaskCount, [string]$LegacyInventoryDigest)
     Record-Event ("evidence-$Command" + $(if ($Stage) { "-$Stage" } else { '' }))
+    if ($Command -eq 'require-activated' -and $Scenario -notlike 'activated*') { throw 'activation chain is not ACTIVATED' }
     if ($Scenario -eq "fail-$Command") { throw "evidence $Command refused" } }
+function Assert-PrimaryOwnsIntake { Record-Event 'primary-owns-intake'
+    if ($Scenario -eq 'activated-rolled-back') { throw 'Activation resume refused: new intake is no longer owned by the primary' } }
 & ([scriptblock]::Create($block[0].Extent.Text))
 '''
 
@@ -649,7 +653,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             result, events, final, prior = self._activate(Path(temporary))
             self.assertEqual(result.returncode, 0, result.stderr)
             names = [event["event"] for event in events]
-            self.assertEqual(names[:7], ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+            self.assertEqual(names[:8], ["evidence-require-activated", "quiescent-before-stop",
+                                         "intake-stopped", "quiescent-after-stop",
                                          "inventory", "evidence-bind-legacy-inventory",
                                          "evidence-require-ready", "readback-orchestrator"])
             self.assertLess(names.index("readback-slackbot"), names.index("up-orchestrator"))
@@ -695,15 +700,56 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                 result, events, final, prior = self._activate(root, action=action, scenario=f"busy-{event}")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("not quiescent", result.stderr)
-                self.assertEqual([item["event"] for item in events], expected)
+                # Paid Activate first asks (read-only) whether the chain is resumable.
+                prefix = ["evidence-require-activated"] if action == "Activate" else []
+                self.assertEqual([item["event"] for item in events], prefix + expected)
                 self.assertFalse(prior.exists())
                 self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
                 self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
 
+    def test_activated_chain_resumes_only_the_start_steps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, prior = self._activate(Path(temporary), scenario="activated")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[:3], ["evidence-require-activated", "primary-owns-intake", "intake-stopped"])
+            for skipped in ("quiescent-before-stop", "inventory", "evidence-bind-legacy-inventory",
+                            "evidence-require-ready", "evidence-record-ACTIVATED"):
+                self.assertNotIn(skipped, names)
+            # Same readbacks and health proof, then intake reopens last.
+            self.assertLess(names.index("up-orchestrator"), names.index("candidate-director_orchestrator.main:app"))
+            self.assertIn("health", names)
+            self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "up-n8n", "start-slackbot"])
+            self.assertEqual(events[-3]["image"], CANDIDATE_IMAGE)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "true")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "true")
+            self.assertFalse(prior.exists())
+            self.assertIn("Nothing was re-recorded", result.stdout)
+
+    def test_activated_chain_resume_still_refuses_a_mismatched_readback_or_rollback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="activated-wrong-gateway")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("slackbot image differs", result.stderr)
+            names = [event["event"] for event in events]
+            self.assertEqual(names[-3:], ["up-slackbot", "readback-slackbot", "intake-stopped"])
+            self.assertNotIn("up-n8n", names)
+            self.assertNotIn("start-slackbot", names)
+            self.assertNotIn("evidence-record-ACTIVATED", names)
+            self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+        with tempfile.TemporaryDirectory() as temporary:
+            result, events, final, _ = self._activate(Path(temporary), scenario="activated-rolled-back")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no longer owned by the primary", result.stderr)
+            self.assertEqual([event["event"] for event in events],
+                             ["evidence-require-activated", "primary-owns-intake"])
+            self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
     @unittest.skipUnless(PWSH, "PowerShell is required")
     def test_quiescence_check_runs_the_metrics_query_and_refuses_clearly(self):
         harness = r"""
-param($Source, $Mode, $Fail)
+param($Source, $Mode, $Fail, $CodePath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
@@ -713,7 +759,9 @@ $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.Functio
 if ($node.Count -ne 1) { throw 'expected one production helper' }
 . ([scriptblock]::Create($node[0].Extent.Text))
 $script:databaseIdentity = 'storage-fixture'; $script:databaseInstanceId = 'instance-fixture'
-function Invoke-Compose { 'ARGS=' + ($args -join ' '); if ($Fail -eq 'yes') { throw 'Docker Compose command failed.' } }
+function Invoke-Compose { 'ARGS=' + ($args -join ' ')
+    if ($CodePath) { [IO.File]::WriteAllText($CodePath, [string]$args[-1]) }
+    if ($Fail -eq 'yes') { throw 'Docker Compose command failed.' } }
 if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-PrimaryQuiescent }
 'passed'
 """
@@ -721,20 +769,59 @@ if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-Prim
             path = Path(temporary) / "quiescence.ps1"
             path.write_text(harness, encoding="utf-8")
 
-            def run(mode, fail):
+            def run(mode, fail, code_path=""):
                 return subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(path),
-                                       str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), mode, fail],
+                                       str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), mode, fail,
+                                       code_path],
                                       capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
 
             before = run("before", "no")
             self.assertEqual(before.returncode, 0, before.stderr)
-            self.assertIn("primary_quiescence_metrics()", before.stdout)
-            self.assertIn("q.rollback_safe", before.stdout)
+            self.assertIn("primary_quiescence_metrics", before.stdout)
+            self.assertIn("m.rollback_safe", before.stdout)
             self.assertIn("accepted_instance_id='instance-fixture'", before.stdout)
             after = run("after", "no")
             self.assertEqual(after.returncode, 0, after.stderr)
-            self.assertNotIn("rollback_safe", after.stdout)
-            self.assertIn("q.unsettled_claim_count) == (0, 0, 0, 0)", after.stdout)
+            # Writer leases stay in the post-stop predicate; only the wait differs.
+            self.assertIn("m.rollback_safe", after.stdout)
+            self.assertIn("end=time.monotonic()+75", after.stdout)
+            self.assertIn("end=time.monotonic()+0", before.stdout)
+            # Execute the exact generated program against a stub control plane.
+            stub = Path(temporary) / "stub" / "director_orchestrator"
+            stub.mkdir(parents=True)
+            (stub / "__init__.py").write_text("")
+            (stub / "config.py").write_text(
+                "class Settings:\n    langgraph_primary_postgres_dsn = 'stub'\n"
+                "    langgraph_primary_postgres_schema = 'stub'\n"
+                "    langgraph_primary_allow_insecure_local_postgres = True\n")
+            (stub / "langgraph_postgres.py").write_text(
+                "import json, os\nfrom types import SimpleNamespace\n"
+                "_rows = json.loads(os.environ['QUIESCENCE_ROWS'])\n"
+                "def _metrics():\n    row = _rows.pop(0) if len(_rows) > 1 else _rows[0]\n"
+                "    names = ('active_provider_dispatch_count', 'active_assignment_count', 'live_writer_claim_count',"
+                " 'unresolved_reconciliation_count', 'unsettled_claim_count')\n"
+                "    values = dict(zip(names, row))\n"
+                "    return SimpleNamespace(rollback_safe=not any(row), **values)\n"
+                "def open_postgres_control_plane(*args, **kwargs):\n"
+                "    return SimpleNamespace(claim_store=SimpleNamespace(primary_quiescence_metrics=_metrics),"
+                " close=lambda: None)\n")
+
+            def execute(mode, rows):
+                code = Path(temporary) / f"code-{mode}.py"
+                self.assertEqual(run(mode, "no", str(code)).returncode, 0)
+                return subprocess.run([sys.executable, "-c", code.read_text()], capture_output=True, text=True,
+                                      timeout=120, stdin=subprocess.DEVNULL,
+                                      env={**os.environ, "PYTHONPATH": str(stub.parent),
+                                           "QUIESCENCE_ROWS": json.dumps(rows)}).returncode
+
+            lease, clear, lease_and_claim = [0, 0, 1, 0, 0], [0, 0, 0, 0, 0], [0, 0, 1, 0, 1]
+            # Before the stop a live lease refuses at once; after it, a lease
+            # that lapses within the bound passes, and a lease beside any other
+            # unfinished work refuses without waiting.
+            self.assertEqual(execute("before", [lease]), 3)
+            self.assertEqual(execute("after", [lease, lease, clear]), 0)
+            self.assertEqual(execute("after", [lease_and_claim]), 3)
+            self.assertEqual(execute("before", [clear]), 0)
             for mode, state in (("before", "Nothing was stopped"), ("after", "Intake remains stopped")):
                 refused = run(mode, "yes")
                 self.assertNotEqual(refused.returncode, 0)
@@ -1091,3 +1178,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
