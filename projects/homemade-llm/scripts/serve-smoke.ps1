@@ -47,34 +47,43 @@ $request = @{
         properties = @{ task_id = @{ type = 'string' }; objective = @{ type = 'string' } } } } }
 } | ConvertTo-Json -Depth 8 -Compress
 $reqFile = Join-Path 'C:\llm\reports' ("serve-smoke-request-{0}.json" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
-[IO.File]::WriteAllText($reqFile, $request)
 
-function Test-Reply([string]$Label, [string]$Body, [string]$Status) {
-    $ok = $false; $content = ''
+# PASS needs curl exit 0, HTTP 200, exactly the two keys, and both values non-empty strings (the schema's types).
+function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
+    $ok = $false; $content = ''; $status = if ($Lines.Count) { $Lines[-1] } else { '' }
     try {
-        $content = ($Body | ConvertFrom-Json).choices[0].message.content
+        $body = $Lines[0..($Lines.Count - 2)] -join "`n"
+        $content = ($body | ConvertFrom-Json).choices[0].message.content
         $obj = $content | ConvertFrom-Json
-        $ok = ($Status -eq '200') -and (@($obj.PSObject.Properties.Name | Sort-Object) -join ',') -eq 'objective,task_id'
+        $keys = (@($obj.PSObject.Properties.Name | Sort-Object) -join ',') -eq 'objective,task_id'
+        $types = ($obj.task_id -is [string]) -and ($obj.objective -is [string]) -and $obj.task_id -and $obj.objective
+        $ok = ($CurlExit -eq 0) -and ($status -eq '200') -and $keys -and $types
     } catch { $ok = $false }
-    [pscustomobject]@{ caller = $Label; http = $Status; schema_valid = $ok; content = $content }
+    [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $content }
 }
 
 try {
-    $hostOut = curl.exe -s -w "`n%{http_code}" --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile"
-    $hostLines = @($hostOut); $results = @(Test-Reply 'windows' ($hostLines[0..($hostLines.Count - 2)] -join "`n") $hostLines[-1])
+    [IO.File]::WriteAllText($reqFile, $request)   # inside try so a partial write is still cleaned up
+    $hostLines = @(curl.exe -s -w "`n%{http_code}" --max-time 120 http://127.0.0.1:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@$reqFile")
+    $results = @(Test-Reply 'windows' $hostLines $LASTEXITCODE)
 
     # From a container: Docker Desktop forwards host.docker.internal to the host loopback, so LM Studio
     # can stay bound to 127.0.0.1 (no "serve on local network").
     $leaf = Split-Path $reqFile -Leaf
-    $ctrOut = docker run --rm -v 'C:\llm\reports:/r:ro' --entrypoint curl $Image -s -w "`n%{http_code}" --max-time 120 `
-        http://host.docker.internal:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@/r/$leaf"
-    $ctrLines = @($ctrOut); $results += Test-Reply 'container' ($ctrLines[0..($ctrLines.Count - 2)] -join "`n") $ctrLines[-1]
+    $ctrLines = @(docker run --rm -v 'C:\llm\reports:/r:ro' --entrypoint curl $Image -s -w "`n%{http_code}" --max-time 120 `
+        http://host.docker.internal:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@/r/$leaf")
+    $results += Test-Reply 'container' $ctrLines $LASTEXITCODE
 } finally {
-    [IO.File]::Delete($reqFile)
+    if (Test-Path -LiteralPath $reqFile) { [IO.File]::Delete($reqFile) }
 }
 
+# The API must not be reachable from the network: every listener on 1234 has to be loopback.
+$listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue)
+$exposed = @($listeners | Where-Object { $_.LocalAddress -notin '127.0.0.1', '::1' })
+$loopbackOnly = $listeners.Count -gt 0 -and $exposed.Count -eq 0
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
-$pass = @($results | Where-Object schema_valid).Count -eq 2
+Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"
+$pass = (@($results | Where-Object schema_valid).Count -eq 2) -and $loopbackOnly
 Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
 exit ([int](-not $pass))
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
