@@ -16,6 +16,7 @@ param(
     [double]$TimeoutMinutes = 30   # whole container: download + training + export (a normal run is ~5 min)
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
 
 # The merge source belongs to the base: overriding one without the other would record (or fail on) the default
 # Qwen pin. Revisions must be full commits, so every input the GGUF is built from is immutable.
@@ -56,15 +57,15 @@ $gpuLock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $gpuLock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
 
-& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'preflight.ps1') -HotRoot $HotRoot | Out-Host
-if ($LASTEXITCODE -ne 0) { Write-Error 'preflight reported a FAIL; not starting training' }
+# Bounded, because the GPU lock is already held: a stalled docker or lms probe inside preflight must not keep it.
+$pf = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
+$pf | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+if ($pf[-1] -ne '__EXIT__0') { Write-Error "preflight did not pass ($($pf[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
 
 # Free the 12 GB before training; a failed unload means the GPU may still be shared, so stop.
 # Bounded: a stalled LM Studio daemon must not hang this run while it holds the GPU lock.
 if (Get-Command lms -ErrorAction SilentlyContinue) {
-    $j = Start-Job { lms unload --all 2>&1; "__EXIT__$LASTEXITCODE" }
-    $r = if (Wait-Job $j -Timeout 60) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
-    Remove-Job $j -Force
+    $r = @(Invoke-Bounded 'lms' @('unload', '--all') 60)
     $r | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
     if ($r[-1] -ne '__EXIT__0') { Write-Error "lms unload --all failed ($($r[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
 }
@@ -84,19 +85,13 @@ $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '
     '-e', "SMOKE_MERGE_SOURCE=$MergeSource", '-e', "SMOKE_MERGE_REVISION=$MergeRevision",
     '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
-# Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them):
-# each runs in its own job with a deadline. Stop-Smoke returns the container's final state.
-function Invoke-Bounded([string[]]$A, [int]$Seconds) {
-    $j = Start-Job { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
-    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
-    Remove-Job $j -Force
-    $r
-}
+# Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
+# Stop-Smoke returns the container's final state.
 function Stop-Smoke {
-    if (@(Invoke-Bounded @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded @('kill', $name) 20 | Out-Null }
+    if (@(Invoke-Bounded 'docker' @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded 'docker' @('kill', $name) 20 | Out-Null }
     if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
     Remove-Job $job -Force
-    $ps = @(Invoke-Bounded @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
+    $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
     if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
     elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
     else { 'stopped and removed' }

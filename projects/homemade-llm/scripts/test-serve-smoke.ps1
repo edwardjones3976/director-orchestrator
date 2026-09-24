@@ -30,6 +30,10 @@ Assert-Equal (Test-Reply 'x' @('not json', '200') 0).schema_valid $false 'reply:
 Assert-Equal (Test-Reply 'x' @((Body '{"Task_ID":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: differently-cased keys fail'
 Assert-Equal (Test-Reply 'x' @((Body '{"task_id":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: one differently-cased key fails'
 Assert-Equal (Test-Reply 'x' @((Body '[{"task_id":"a","objective":"b"}]'), '200') 0).schema_valid $false 'reply: one-element array fails'
+$esc = [string][char]27 + ']0;owned' + [char]7 + [char]27 + '[31mred'
+$shown = (Test-Reply 'x' @((Body $esc), '200') 0).content
+Assert-Equal ([regex]::IsMatch($shown, '\p{Cc}')) $false 'reply: control characters in model output are escaped for display'
+Assert-Equal ($shown -like '\u001b]0;owned\u0007*') $true 'reply: escaped form stays readable'
 
 $p = 'homemade-llm/smoke/new.gguf'
 $m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }

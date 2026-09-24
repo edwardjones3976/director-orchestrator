@@ -52,14 +52,7 @@ $lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
 
-# Runs an executable with a host-side deadline (a stalled LM Studio daemon or Docker must not hang the smoke
-# while it holds the GPU lock); the last element is __EXIT__<code>, or __EXIT__timeout.
-function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
-    $j = Start-Job { param($e, $a) & $e @a 2>$null; "__EXIT__$LASTEXITCODE" } -ArgumentList $Exe, $A
-    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
-    Remove-Job $j -Force
-    $r
-}
+. (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
 # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
 function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
     $r = @(Invoke-Bounded 'lms' $A $Seconds)
@@ -136,7 +129,9 @@ function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
         $types = ($tid -is [string]) -and ($obv -is [string]) -and $tid -and $obv
         $ok = ($CurlExit -eq 0) -and ($status -eq '200') -and $keys -and $types
     } catch { $ok = $false }
-    [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $content }
+    # Model output is untrusted: escape control characters (ANSI/OSC sequences) before it reaches a terminal.
+    $shown = [regex]::Replace([string]$content, '\p{Cc}', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+    [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $shown }
 }
 
 try {
