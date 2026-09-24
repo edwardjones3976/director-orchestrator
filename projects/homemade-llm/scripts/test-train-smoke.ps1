@@ -67,6 +67,8 @@ try {
     $plain = Join-Path $tmpRoot 'plain'; New-Item -ItemType Directory $plain | Out-Null
     $o = Run $plain @('-Base', 'org/other-4bit', '-Revision', ('a' * 40))
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'needs a matching -MergeSource') { $fail += "base override without merge pin: not refused (exit $LASTEXITCODE)" }
+    $o = Run $plain @('-Revision', ('b' * 40))
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'needs a matching -MergeSource') { $fail += "revision override without merge pin: not refused (exit $LASTEXITCODE)" }
     $o = Run $plain @('-MergeRevision', 'main')
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'not a full 40-hex commit') { $fail += "moving merge revision: not refused (exit $LASTEXITCODE)" }
     # The shared GPU lock: while another process holds it, training must not start.
@@ -83,11 +85,19 @@ try {
     [IO.Directory]::Delete($tmpRoot, $true)
 }
 
+# Both scripts release the GPU lock in a finally block, so a run inside a long-lived session cannot keep it.
+foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
+    $a = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $f), [ref]$null, [ref]$null)
+    $release = @($a.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally -and $n.Finally.Extent.Text -match 'ReleaseMutex\(\)' }, $true))
+    if ($release.Count -ne 1) { $fail += "$f`: expected one finally that releases the GPU mutex, found $($release.Count)" }
+}
+
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
-Write-Output 'ok  base override without a merge pin, and a non-commit revision, refused'
+Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
+Write-Output 'ok  both scripts release the GPU mutex in a finally block'
 Write-Output 'ok  GPU lock held by another process refused'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"

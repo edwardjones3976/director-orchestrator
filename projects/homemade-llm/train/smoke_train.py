@@ -90,7 +90,8 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
 def pinned_ref(repo: str, revision: str):
     """While active, the cache's refs/main for repo points at revision, which must already be a cached snapshot;
     offline (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot. The
-    shared cache's previous ref is restored on exit (or removed if there was none), even on failure."""
+    shared cache's previous ref is restored on exit (or removed if there was none), even on failure, but only if
+    the ref still holds our pin: a newer value written meanwhile by another cache user is left alone."""
     d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--"))
     if not (d / "snapshots" / revision).is_dir():
         raise SystemExit(f"{repo}@{revision} is not in the cache; cannot pin it for the offline export")
@@ -101,10 +102,11 @@ def pinned_ref(repo: str, revision: str):
     try:
         yield
     finally:
-        if previous is None:
-            ref.unlink(missing_ok=True)
-        else:
-            ref.write_text(previous)
+        if ref.exists() and ref.read_text() == revision:
+            if previous is None:
+                ref.unlink()
+            else:
+                ref.write_text(previous)
 
 
 def write_report(path: Path, report: dict) -> None:
@@ -119,10 +121,13 @@ def write_report(path: Path, report: dict) -> None:
 def publish(src: Path, dest: Path) -> None:
     """Copy under a .part name and rename only after the size matches, so no truncated .gguf is ever visible."""
     part = dest.with_name(dest.name + ".part")
-    shutil.copy2(src, part)
-    if part.stat().st_size != src.stat().st_size:
-        part.unlink()
-        raise SystemExit(f"short copy of {src.name}")
+    try:
+        shutil.copy2(src, part)
+        if part.stat().st_size != src.stat().st_size:
+            raise SystemExit(f"short copy of {src.name}")
+    except BaseException:  # includes a full volume, an I/O error and cancellation: never leave a large .part behind
+        part.unlink(missing_ok=True)
+        raise
     os.replace(part, dest)
 
 

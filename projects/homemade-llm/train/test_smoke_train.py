@@ -63,6 +63,19 @@ class SmokeTrainTests(unittest.TestCase):
             self.assertFalse(dest.exists())
             self.assertFalse(dest.with_name("b.gguf.part").exists())
 
+    def test_publish_copy_error_leaves_no_part_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dest = Path(tmp, "a.gguf"), Path(tmp, "out", "b.gguf")
+            dest.parent.mkdir()
+            src.write_bytes(b"x" * 4096)
+            def partial_then_fail(s, d):
+                Path(d).write_bytes(b"x" * 100)
+                raise OSError("No space left on device")
+            with mock.patch.object(smoke_train.shutil, "copy2", partial_then_fail):
+                with self.assertRaises(OSError):
+                    smoke_train.publish(src, dest)
+            self.assertEqual(list(dest.parent.iterdir()), [])
+
     def test_hf_cache_refs_reads_refs_main(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp, "hub", "models--org--name", "refs")
@@ -109,6 +122,9 @@ class SmokeTrainTests(unittest.TestCase):
                         self.assertEqual(ref.read_text(), pin)
                         raise RuntimeError("export failed")
                 self.assertEqual(ref.read_text(), "e" * 40)  # restored even though the export failed
+                with smoke_train.pinned_ref("org/src", pin):
+                    ref.write_text("f" * 40)  # another cache user updates the ref during the export
+                self.assertEqual(ref.read_text(), "f" * 40)  # their newer value is not overwritten
 
     def test_write_report_failure_keeps_previous_report(self):
         with tempfile.TemporaryDirectory() as tmp:
