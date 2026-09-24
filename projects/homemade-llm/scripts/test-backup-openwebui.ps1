@@ -20,7 +20,7 @@ function Seed([string]$Sentinel) { In-Volume "find /d -mindepth 1 -delete; echo 
 
 # Durability ordering cannot be exercised without a power cut; assert the flushes stay in place.
 $src = Get-Content -Raw $script
-Assert-Equal ([bool]($src -match "mv -f /d/\.restore-state\.tmp /d/\.restore-state && sync; \}")) $true 'durability: each journal change is synced'
+Assert-Equal ([bool]($src -match "journal\(\) \{ sync && printf .*mv -f /d/\.restore-state\.tmp /d/\.restore-state && sync; \}")) $true 'durability: each journal change is synced before and after'
 Assert-Equal ([bool]($src -match "cp -a /x/\. /d/ && sync; then")) $true 'durability: restored tree synced before it is marked done'
 
 New-Item -ItemType Directory -Force $out | Out-Null
