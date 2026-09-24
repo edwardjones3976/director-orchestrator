@@ -29,8 +29,15 @@ function Assert-Equal($Actual, $Expected, [string]$Case) {
 
 try {
     $tokens = $null; $errors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors) | Out-Null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
     Assert-Equal $errors.Count 0 'parser: no errors'
+
+    # Load the real floor comparison from the script's syntax tree, so the rounding
+    # boundary is pinned without depending on live C: free space.
+    $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-BelowFloor' }, $true) | Select-Object -First 1
+    . ([scriptblock]::Create($fn.Extent.Text))
+    Assert-Equal (Test-BelowFloor (149.96 * 1GB) 150) $true 'floor: 149.96 GB is below a 150 GB floor (no rounding)'
+    Assert-Equal (Test-BelowFloor (150 * 1GB) 150) $false 'floor: exactly 150 GB meets the floor'
 
     $r = New-Root -WithReports
     Invoke-Preflight $r | Out-Null
@@ -66,6 +73,11 @@ try {
     $res = Invoke-Preflight $r @('-Report')
     Assert-Equal ([bool]($res.out -match 'report\s+FAIL')) $true '-Report without reports dir shows a FAIL row'
     Assert-Equal $res.exit 1 '-Report without reports dir exits 1'
+
+    $r = New-Root -WithReports
+    Set-Content (Join-Path $r 'models') 'not a directory'
+    $res = Invoke-Preflight $r @('-Report')
+    Assert-Equal (Get-Row $r 'layout C:\llm') 'FAIL' 'layout: a file where a directory belongs is FAIL'
 
     # Incomplete scan: deny listing on one subtree of a scratch root, then restore it.
     $r = New-Root -WithReports

@@ -23,6 +23,9 @@ $rows = [System.Collections.Generic.List[object]]::new()
 function Add-Row([string]$Check, [ValidateSet('OK', 'WARN', 'FAIL', 'INFO')][string]$Status, [string]$Detail) {
     $rows.Add([pscustomobject]@{ check = $Check; status = $Status; detail = $Detail })
 }
+# Raw bytes against the floor; test-preflight.ps1 loads this function directly to pin the 149.96-vs-150 boundary.
+function Test-BelowFloor([double]$FreeBytes, [double]$FloorGB) { $FreeBytes -lt $FloorGB * 1GB }
+
 # Native tools rarely throw; a nonzero exit code discards any partial stdout so it cannot read as OK.
 function Invoke-Quiet([scriptblock]$Block) {
     try {
@@ -50,12 +53,14 @@ foreach ($letter in $roles.Keys) {
     $detail = "$($v.FileSystem), $([math]::Round($v.SizeRemaining / 1GB, 1)) GB free of $([math]::Round($v.Size / 1GB, 1)) GB"
     switch ($role) {
         'hot' {
-            $status = if ($v.SizeRemaining -lt $FloorGB * 1GB) { 'FAIL' } else { 'OK' }
+            $status = if (Test-BelowFloor $v.SizeRemaining $FloorGB) { 'FAIL' } else { 'OK' }
             Add-Row 'drive C (hot)' $status "$detail; floor $FloorGB GB"
         }
         'archive' {
             # exFAT is fine for cold copies but never for git, DVC, or HF caches (D-003).
-            Add-Row 'drive E (archive)' 'OK' "$detail; cold archive only$(if ($v.FileSystem -eq 'exFAT') { ' (exFAT: no git/DVC/HF cache)' })"
+            # FAT/FAT32 cannot hold files over 4 GB, and the archive receives multi-GB model blobs.
+            $status = if ($v.FileSystem -in 'exFAT', 'NTFS') { 'OK' } elseif ($v.FileSystem -match '^FAT') { 'FAIL' } else { 'WARN' }
+            Add-Row 'drive E (archive)' $status "$detail; cold archive only$(if ($v.FileSystem -eq 'exFAT') { ' (exFAT: no git/DVC/HF cache)' })"
         }
         default {
             # The mirror must be NTFS (D-003); D: is optional overflow, so a non-NTFS D: only warns.
@@ -77,11 +82,16 @@ if (Test-Path $HotRoot) {
 }
 
 # Layout.
+# A file sitting where a directory belongs is FAIL: nothing can be created beneath it.
+$notDirs = @($HotDirs | Where-Object { Test-Path (Join-Path $HotRoot $_) -PathType Leaf })
 $missing = @($HotDirs | Where-Object { -not (Test-Path (Join-Path $HotRoot $_)) })
-if ($missing.Count) { Add-Row 'layout C:\llm' 'WARN' "missing: $($missing -join ', ') (run -Init)" }
+if ($notDirs.Count) { Add-Row 'layout C:\llm' 'FAIL' "not directories: $($notDirs -join ', ')" }
+elseif ($missing.Count) { Add-Row 'layout C:\llm' 'WARN' "missing: $($missing -join ', ') (run -Init)" }
 else { Add-Row 'layout C:\llm' 'OK' 'all subdirectories present' }
 foreach ($d in $Mirror, $Archive) {
-    Add-Row "layout $d" ($(if (Test-Path $d) { 'OK' } else { 'WARN' })) ($(if (Test-Path $d) { 'present' } else { 'missing (run -Init)' }))
+    if (Test-Path $d -PathType Container) { Add-Row "layout $d" 'OK' 'present' }
+    elseif (Test-Path $d) { Add-Row "layout $d" 'FAIL' 'exists but is not a directory' }
+    else { Add-Row "layout $d" 'WARN' 'missing (run -Init)' }
 }
 
 # GPU and tools.
