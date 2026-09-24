@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Decision log — homemade-llm
 
@@ -41,6 +42,7 @@ something this project read or measured. Times are UTC.
 | 2026-09-24 ~07:45 | O-024 | (L-15) Serving is always-on with a one-command unload for gaming. | owner answer [relayed] |
 | 2026-09-24 ~07:45 | O-025 | (L-16) After launch: monthly retrain from feedback through the same gates. | owner answer [relayed] |
 | 2026-09-24 ~07:48 | O-026 | (T-1) Owner accepts residual terms risk: providers whose clause bars only *competing* models (Anthropic API, OpenAI, Gemini API, Cursor, Perplexity) may generate DIRECTOR exemplars for this private, never-distributed model. Z.ai, xAI, Google consumer Gemini and Antigravity grade only. Every row carries `source_provider` + `terms_tier`. Not legal advice; blocked-page clauses re-verified before the first M2 run. | owner answer [relayed] + web research |
-| 2026-09-24 ~07:48 | O-027 | (G-1 gold) The answer key is real history only (~30 items, held out), reported with a ~50-packet PR-reconstructed held-out set; L1 needs ≥ 60 % on both. | owner answer [relayed] |
+| 2026-09-24 ~07:48 | O-027 | (G-1 gold) The answer key is real history only (~30 items, held out), reported with a ~50-packet PR-reconstructed held-out set; L1 needs > 60 % on both (the owner's bar in O-015). | owner answer [relayed] |
 | 2026-09-24 ~07:48 | O-028 | (D-1) Target dates locked: L1 2026-11-12, L2 2026-12-17. | owner answer [relayed] |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Canonical project-local provider roles contract (director-provider-roles/v1).
 #
@@ -54,7 +55,7 @@ allocation_and_selection:
   zero_target: "ineligible"
   total_effort_status: "separate_telemetry_not_production_credit"
   normal_tolerance_percentage_points: 3
-  hard_ceiling_above_target_percentage_points: 5
+  hard_ceiling_above_target_percentage_points: null # retired by the owner 2026-09-21 (AGENTS.md rule 11); not a routing gate
   allocation_unit: "assignment_count"
   prospective_window_assignments: 20
   insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
@@ -353,3 +354,4 @@ project_local_bindings:
       justification: "xAI acceptable-use terms restrict training models on outputs; xAI, Z.ai, Google consumer Gemini and Antigravity grade only (decision-log.md O-026)."
       owner_authorization: "decision-log.md O-026"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
