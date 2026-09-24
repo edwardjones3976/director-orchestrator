@@ -45,6 +45,25 @@ Assert-Equal (Test-LoopbackOnly @((& $l '127.0.0.1'), (& $l '0.0.0.0'))) $false 
 Assert-Equal (Test-LoopbackOnly @(& $l '192.168.1.20')) $false 'bind: LAN address fails'
 Assert-Equal (Test-LoopbackOnly @()) $false 'bind: no listener fails'
 
+# Structural checks on serve-smoke.ps1 itself: the function tests above would still pass if a call site
+# were deleted or moved, so assert the script's top-level call order from its syntax tree.
+$fnSpans = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+    ForEach-Object { , @($_.Extent.StartOffset, $_.Extent.EndOffset) })
+$cmds = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) |
+    Where-Object { $o = $_.Extent.StartOffset; -not ($fnSpans | Where-Object { $o -ge $_[0] -and $o -lt $_[1] }) } |
+    Sort-Object { $_.Extent.StartOffset })
+function First-Offset([scriptblock]$Match) { ($cmds | Where-Object $Match | Select-Object -First 1).Extent.StartOffset }
+$start = First-Offset { $_.Extent.Text -match '^lms server start' }
+$preBind = First-Offset { $_.Extent.Text -match '^Test-LoopbackOnly' }
+$unload = First-Offset { $_.Extent.Text -match '^lms unload smoke' }
+$load = First-Offset { $_.Extent.Text -match '^lms load .*--ttl \$TtlSeconds' }
+$postLoad = First-Offset { $_.Extent.Text -match '^Test-LoadedModel' }
+$curl = First-Offset { $_.Extent.Text -match '^curl\.exe' }
+Assert-Equal ([bool]($start -and $preBind -and $start -lt $preBind -and $preBind -lt $load)) $true 'order: loopback check runs after server start and before any load'
+Assert-Equal ([bool]($unload -and $unload -lt $load)) $true 'order: an existing smoke model is unloaded before the reload'
+Assert-Equal ([bool]$load) $true 'order: the model is (re)loaded with --ttl $TtlSeconds'
+Assert-Equal ([bool]($postLoad -and $load -lt $postLoad -and $postLoad -lt $curl)) $true 'order: Test-LoadedModel verifies the load before any request'
+
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null
 try {

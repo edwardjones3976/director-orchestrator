@@ -103,6 +103,18 @@ class SmokeTrainTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), {"stage": "final"})
             self.assertFalse(path.with_name("r.json.tmp").exists())
 
+    def test_write_report_publishes_only_through_replace(self):
+        # If the rename is what fails, the old report must be untouched and the new content only in .tmp.
+        # A direct write to the report path (no tmp + os.replace) would overwrite the original and fail here.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "r.json")
+            smoke_train.write_report(path, {"stage": "pre-export"})
+            with mock.patch.object(smoke_train.os, "replace", side_effect=OSError("rename failed")):
+                with self.assertRaises(OSError):
+                    smoke_train.write_report(path, {"stage": "final"})
+            self.assertEqual(json.loads(path.read_text()), {"stage": "pre-export"})
+            self.assertEqual(json.loads(path.with_name("r.json.tmp").read_text()), {"stage": "final"})
+
     def test_hf_home_is_forced_not_defaulted(self):
         # The image sets its own HF_HOME; the module must override it, not setdefault.
         self.assertEqual(smoke_train.os.environ["HF_HOME"], "/workspace/hf")
