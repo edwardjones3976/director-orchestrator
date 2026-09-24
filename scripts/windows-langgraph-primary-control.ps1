@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -508,8 +509,9 @@ function Get-LegacyInventory {
 }
 
 function Assert-PrimaryQuiescent {
-    # Paid activation after ActivateOffline would recover unfinished simulated
-    # work under the live dispatcher, so the primary plane must hold none.
+    # Activation in either mode would recover the other mode's unfinished work
+    # (simulated under live dispatch, or live under simulation), so the primary
+    # plane must hold none.
     # -AfterStop ignores writer leases the just-stopped process leaves to expire;
     # dispatches, assignments, reconciliation and claims must still be zero.
     param([switch]$AfterStop)
@@ -522,7 +524,7 @@ function Assert-PrimaryQuiescent {
     }
     catch {
         $state = if ($AfterStop) { "Intake remains stopped and no switch was changed." } else { "Nothing was stopped or switched." }
-        throw "Paid activation refused: the primary plane is not quiescent (unfinished dispatches, assignments, writer claims, reconciliation or claims, possibly from offline simulation). Finish or reconcile that work first. $state"
+        throw "Activation refused: the primary plane is not quiescent (unfinished dispatches, assignments, writer claims, reconciliation or claims, possibly from another execution mode). Finish or reconcile that work first. $state"
     }
 }
 
@@ -533,11 +535,11 @@ function Stop-And-Prove-AllIntake {
 
 function Assert-OfflineHandoffProfile {
     if ($script:acceptanceMode -cnotin @("provider-v2", "provider-v3-two-party")) {
-        throw "PrepareOfflineHandoff requires a selected provider-v2 generation or provider-v3-two-party generation."
+        throw "The offline handoff requires a selected provider-v2 generation or provider-v3-two-party generation."
     }
     foreach ($name in @("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "DIRECTOR_PROVIDER_VALIDATION_ENABLED")) {
         if (-not $script:values.ContainsKey($name) -or [string]$script:values[$name] -cne "false") {
-            throw "PrepareOfflineHandoff requires explicit false in the initial generation-bound profile: $name."
+            throw "The offline handoff requires explicit false in the initial generation-bound profile: $name."
         }
     }
 }
@@ -1049,11 +1051,16 @@ if ($Action -eq "PrepareOfflineHandoff") {
 }
 if ($Action -in @("Activate", "ActivateOffline")) {
     $offline = $Action -eq "ActivateOffline"
-    # Checked before the stop (nothing touched on refusal) and again after it,
-    # since the running service could admit work in between.
-    if (-not $offline) { Assert-PrimaryQuiescent }
+    # Offline activation needs the same profile PrepareOfflineHandoff requires,
+    # checked before anything stops.
+    if ($offline) { Assert-OfflineHandoffProfile }
+    # Both directions need a quiescent plane: work approved under one mode must
+    # never be recovered by the other mode's dispatcher. Checked before the stop
+    # (nothing touched on refusal) and again after it, since the running service
+    # could admit work in between.
+    Assert-PrimaryQuiescent
     Stop-And-Prove-AllIntake
-    if (-not $offline) { Assert-PrimaryQuiescent -AfterStop }
+    Assert-PrimaryQuiescent -AfterStop
     $legacyInventory = Get-LegacyInventory
     Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
     # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
@@ -1192,3 +1199,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

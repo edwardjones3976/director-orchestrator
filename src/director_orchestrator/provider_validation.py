@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
@@ -696,6 +697,31 @@ def pinned_path_manifest(value: str) -> dict:
             raise ValidationError("pinned runtime contains a special file or hardlink")
     return manifest
 
+_RUNTIME_PACKAGE_DIGESTS: dict = {}
+
+
+def runtime_package_digest(package=None) -> str:
+    """Digest of every .py file in the running director_orchestrator package.
+
+    Each lane's configuration digest binds it, so any code change on any
+    validation path, imported directly or not, is configuration drift. Bytes
+    are rehashed only when a file's name, size or mtime changes, so repeated
+    digests inside a bounded validation deadline cost a directory stat.
+    """
+    from pathlib import Path
+    package = Path(__file__).resolve().parent if package is None else Path(package)
+    files = sorted(path for path in package.rglob("*.py") if "__pycache__" not in path.parts)
+    signature = tuple((path.relative_to(package).as_posix(), path.stat().st_size, path.stat().st_mtime_ns)
+                      for path in files)
+    cached = _RUNTIME_PACKAGE_DIGESTS.get(str(package))
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    value = digest(canonical_json_bytes({
+        path.relative_to(package).as_posix(): digest(path.read_bytes()) for path in files}))
+    _RUNTIME_PACKAGE_DIGESTS[str(package)] = (signature, value)
+    return value
+
+
 def production_configuration_digest(executor, provider: str, *, account_files: tuple[str,...]) -> str:
     """Pin the real executable, argv files, workspace, adapter and auth material.
 
@@ -723,7 +749,8 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
     from .host_provider_bridge import _SAFE_OS_ENV, _LANE_AUTH_ENV
     environment={k:v for k,v in os.environ.items() if k.upper() in _SAFE_OS_ENV or k in _LANE_AUTH_ENV[provider]}
     return digest(canonical_json_bytes({"argv":list(argv),"files":files,
-                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment))}))
+                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment)),
+                  "runtime":runtime_package_digest()}))
 
 
 class ValidationBridgeService:
@@ -1070,3 +1097,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

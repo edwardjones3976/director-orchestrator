@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
@@ -1454,6 +1455,16 @@ class DefaultDryRunServices:
         with self._lock:
             return self._execution_modes.get(task_id) not in {"offline_simulation", "paid_off"}
 
+    def offline_dispatch_allowed(self, task_id: str) -> bool:
+        """Fail closed for a task not approved as simulation or paid-off.
+
+        An offline composition may recover a live-approved task (for example
+        after a failed paid activation); simulated output must never settle it.
+        An unlabelled task is refused too.
+        """
+        with self._lock:
+            return self._execution_modes.get(task_id) in {"offline_simulation", "paid_off"}
+
     def discard(self, task_id: str) -> None:
         with self._lock:
             owners = self._owners.get(task_id, 0)
@@ -1903,6 +1914,11 @@ def build_offline_parallel_dispatcher(
         evidence.
         """
 
+        if not services.offline_dispatch_allowed(reservation.task_id):
+            # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never a simulated
+            # settlement of a task approved for live dispatch.
+            from .primary_workload import WorkloadAdmissionHold
+            raise WorkloadAdmissionHold("live_task_requires_live_dispatch")
         if not services.has_ledger_double(reservation.provider_id):
             # Settled, not raised. This failure is known before any execution
             # begins, and an exception would reach the ledger as AMBIGUOUS,
@@ -3812,3 +3828,4 @@ class DefaultPrimaryActivation:
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

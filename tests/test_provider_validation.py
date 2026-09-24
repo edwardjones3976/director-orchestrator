@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
@@ -1452,6 +1453,56 @@ class PostgresValidationTests(unittest.TestCase):
         self.assertIsNone(self.store.expected_configuration_digest(secrets.token_hex(32),"claude"))
 
 
+class RuntimePackageDigestTests(unittest.TestCase):
+    """Native and team digests bind every .py file in the running package."""
+
+    def test_runtime_package_digest_covers_every_module(self):
+        import shutil
+        from director_orchestrator import provider_validation as module
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory) / "director_orchestrator"
+            shutil.copytree(Path(module.__file__).resolve().parent, copy,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            before = module.runtime_package_digest(copy)
+            (copy / "__pycache__").mkdir()
+            (copy / "__pycache__" / "ignored.py").write_text("IGNORED = 1\n")
+            self.assertEqual(module.runtime_package_digest(copy), before)
+            with (copy / "response_meter.py").open("a") as handle:
+                handle.write("\n# replaced\n")
+            self.assertNotEqual(module.runtime_package_digest(copy), before)
+
+    def test_native_and_team_digests_bind_the_runtime_package(self):
+        from director_orchestrator import provider_validation_team as team
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        from tests.test_antigravity_team import grant
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            account = root / "account.json"
+            account.write_text("synthetic fixture account, not a credential")
+            python = str(Path(sys.executable).resolve(strict=True))
+            executor = WindowsHostProviderExecutor({"claude": (python, "-c", "pass")}, cwd=root)
+            names = ("owner_key_file", "worker_key_file", "ssh", "identity_file", "known_hosts")
+            config = {name: str(root / name) for name in names}
+            for name in names:
+                Path(config[name]).write_bytes(name.encode())
+            (root / "grant.json").write_text(grant().model_dump_json())
+            config.update(grant_file=str(root / "grant.json"), ssh_sha256="a" * 64, host="host.invalid",
+                          user="fixture", worker_command="worker")
+            (root / "team.json").write_text(json.dumps(config))
+            captured = {}
+            with patch.dict(os.environ, {"DIRECTOR_PROVIDER_VALIDATION_TEAM_CONFIG": str(root / "team.json")}), \
+                    patch.object(team, "TeamValidationRoute", side_effect=lambda **kwargs: captured.update(kwargs)):
+                team.team_route_from_environment()
+            observed = {}
+            for runtime in ("a" * 64, "b" * 64):
+                with patch("director_orchestrator.provider_validation.runtime_package_digest", return_value=runtime):
+                    observed[runtime] = (
+                        production_configuration_digest(executor, "claude", account_files=(str(account),)),
+                        captured["configuration_digest"]())
+            self.assertNotEqual(observed["a" * 64][0], observed["b" * 64][0])
+            self.assertNotEqual(observed["a" * 64][1], observed["b" * 64][1])
+
+
 if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
 
@@ -1470,3 +1521,4 @@ if __name__=="__main__":unittest.main()
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

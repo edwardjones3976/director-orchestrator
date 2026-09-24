@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
@@ -434,8 +435,9 @@ their mere presence:
   any case) from its inherited environment and uses only the file's; they reach
   the bridge's own HTTPS client, never a host-command child, and the Responses
   route digest binds them. Every value is a non-empty string without CR, LF
-  or NUL, and every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT` and
-  `USERPROFILE` directories must be absolute and exist; an empty `PATH` entry
+  or NUL, every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT`, `WINDIR`,
+  `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` directories must be absolute and
+  exist, `COMSPEC` must be an absolute existing file, and an empty `PATH` entry
   (including a trailing `;`) refuses. Any other file refuses startup without
   echoing its content.
   `-Action Install -InstallRoot <dir>` requires the pinned file and a clean
@@ -451,7 +453,12 @@ their mere presence:
   `-Python` interpreter and its packages are neither copied nor hashed: the task
   runs them in place, so Install requires an explicit absolute `-Python` path
   outside the source checkout and refuses the in-checkout `.venv-win` default
-  or any interpreter under the checkout, before copying anything.
+  or any interpreter under the checkout, before copying anything. Symlink and
+  junction components of the interpreter, the checkout and the install root are
+  resolved to their final targets before those containment checks (a reparse
+  point without a link target refuses), and the task registers the resolved
+  interpreter path. Every lane digest (native, team and Responses) also binds a
+  digest of every `.py` file in the running package.
   Install is persistent host configuration and needs owner
   approval. Generations must pin the digests printed by the installed copy,
   and for the routed `openai` and `antigravity` lanes the digests the running
@@ -630,12 +637,17 @@ intake still closed. `ActivateOffline` needs the same
 acceptance, migration and restore evidence but not provider readiness: it turns
 offline simulation on and paid runs and live dispatch off, requires the paid-off
 intake projection with the live runtime inactive, and records no `ACTIVATED`
-stage. Paid `Activate` first requires a quiescent primary plane
-(`primary_quiescence_metrics().rollback_safe`) before it stops anything, and
-again after the stop (writer leases excepted), so unfinished offline-simulated
-work is never recovered under live dispatch; on refusal nothing is switched.
-Independently, live dispatch refuses any task whose persisted
-`execution_mode` is `offline_simulation` or `paid_off`.
+stage. `ActivateOffline` first applies the `PrepareOfflineHandoff` profile
+guard (a provider-v2 or provider-v3-two-party generation, and explicit `false`
+for `ALLOW_PAID_RUNS`, `LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED` and
+`DIRECTOR_PROVIDER_VALIDATION_ENABLED`) before anything stops. Both `Activate`
+and `ActivateOffline` require a quiescent primary plane
+(`primary_quiescence_metrics().rollback_safe`) before they stop anything, and
+again after the stop (writer leases excepted), so unfinished work approved in
+one mode is never recovered by the other mode's dispatcher; on refusal nothing
+is switched. Independently, live dispatch refuses any task whose persisted
+`execution_mode` is `offline_simulation` or `paid_off`, and the offline
+dispatcher refuses any task not labelled `offline_simulation` or `paid_off`.
 A later paid `Activate` can reuse that evidence chain only while the
 legacy SQLite task ID/status inventory is unchanged: it binds the inventory
 again and refuses any difference as immutable. Legacy tasks stay live under
@@ -844,3 +856,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->

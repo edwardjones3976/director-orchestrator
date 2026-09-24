@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -69,12 +70,43 @@ function Get-CleanBridgeSource {
     return @($commit, $tree)
 }
 
+function Resolve-FinalPath {
+    # Follows every symlink or junction component to its final target (bounded
+    # hops); a reparse point with no link target (for example an app execution
+    # alias) refuses. A missing tail stays lexical.
+    param([string]$Path)
+    $current = [IO.Path]::GetFullPath($Path)
+    for ($hop = 0; $hop -lt 32; $hop++) {
+        $root = [IO.Path]::GetPathRoot($current)
+        $parts = @($current.Substring($root.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries))
+        $prefix = $root
+        $next = $null
+        for ($index = 0; $index -lt $parts.Count; $index++) {
+            $prefix = Join-Path $prefix $parts[$index]
+            $item = Get-Item -LiteralPath $prefix -Force -ErrorAction SilentlyContinue
+            if ($null -eq $item) { break }
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                $target = $item.ResolveLinkTarget($true)
+                if ($null -eq $target) { throw "A path component is a reparse point without a resolvable link target." }
+                $next = [IO.Path]::GetFullPath((@($target.FullName) + @($parts | Select-Object -Skip ($index + 1))) -join [IO.Path]::DirectorySeparatorChar)
+                break
+            }
+        }
+        if ($null -eq $next) { return $current }
+        $current = $next
+    }
+    throw "The path has too many link hops to resolve."
+}
+
 function Install-BridgeRuntime {
     # Content-addressed copy: the directory name is the SHA256 of the manifest text.
     param([string]$SourceRoot, [string]$InstallRoot)
     $source = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
     $target = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\', '/')
-    if ($target -eq $source -or $target.StartsWith($source + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    # Containment is decided on final targets, so a junction cannot alias the checkout.
+    $finalSource = (Resolve-FinalPath $source).TrimEnd('\', '/')
+    $finalTarget = (Resolve-FinalPath $target).TrimEnd('\', '/')
+    if ($finalTarget -eq $finalSource -or $finalTarget.StartsWith($finalSource + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
         throw "The bridge install root must be outside the source checkout."
     }
     $manifest = Get-BridgeRuntimeManifest -Root $source
@@ -115,16 +147,18 @@ function Assert-InstalledBridgeRuntime {
 
 function Assert-ExternalInterpreter {
     # The task runs -Python in place, so Install needs an explicit absolute
-    # interpreter that outlives the source checkout it copies from.
+    # interpreter that outlives the source checkout it copies from. Links are
+    # resolved first and the final target is returned for registration.
     param([string]$Requested, [string]$SourceRoot)
     if ([string]::IsNullOrWhiteSpace($Requested) -or -not [IO.Path]::IsPathFullyQualified($Requested)) {
         throw "Install requires an explicit absolute -Python interpreter path outside the source checkout."
     }
-    $source = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
-    $python = [IO.Path]::GetFullPath($Requested)
+    $source = (Resolve-FinalPath $SourceRoot).TrimEnd('\', '/')
+    $python = Resolve-FinalPath $Requested
     if ($python.StartsWith($source + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Install refuses a -Python interpreter inside the source checkout; removing the checkout would break the Scheduled Task."
     }
+    return $python
 }
 
 function Register-BridgeTask {
@@ -289,7 +323,8 @@ if ($Action -eq "Install") {
         throw "Install requires DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE in the bridge profile."
     }
     $sourceRoot = Split-Path -Parent $PSScriptRoot
-    Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python")) { $Python } else { "" }) -SourceRoot $sourceRoot
+    # The final target, not an alias, is what the task registers and runs.
+    $pythonPath = Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python")) { $Python } else { "" }) -SourceRoot $sourceRoot
     $source = Get-CleanBridgeSource -Root $sourceRoot
     $destination = Install-BridgeRuntime -SourceRoot $sourceRoot -InstallRoot $InstallRoot
     # Provenance sits beside, never inside, the content-addressed copy.
@@ -359,3 +394,4 @@ finally {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

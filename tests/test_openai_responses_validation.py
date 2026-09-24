@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
@@ -254,16 +255,19 @@ class ResponsesRouteTests(unittest.TestCase):
                 self.assertNotEqual(route.configuration_digest, digest_before)
             with tempfile.TemporaryDirectory() as directory:
                 copy = Path(directory) / ("a" * 64) / "director_orchestrator"
-                copy.mkdir(parents=True)
-                for name in module._RESPONSES_RUNTIME_MODULES:
-                    shutil.copyfile(package / name, copy / name)
+                shutil.copytree(package, copy, ignore=shutil.ignore_patterns("__pycache__"))
                 with patch.object(module, "__file__", str(copy / "openai_responses_validation.py")):
                     relocated = responses_runtime_binding()
                     self.assertNotEqual(relocated, baseline)
                     self.assertNotEqual(route.configuration_digest, digest_before)
-                    with (copy / "primary_transports.py").open("ab") as handle:
-                        handle.write(b"\n# replaced\n")
-                    self.assertNotEqual(responses_runtime_binding(), relocated)
+                    # Every package module counts, including ones the route
+                    # reaches only through imports (metering, admission).
+                    for name in ("primary_transports.py", "response_meter.py",
+                                 "entitlement_control_plane.py", "antigravity_team.py"):
+                        before = responses_runtime_binding()
+                        with (copy / name).open("ab") as handle:
+                            handle.write(b"\n# replaced\n")
+                        self.assertNotEqual(responses_runtime_binding(), before, name)
             self.assertEqual(route.configuration_digest, digest_before)
 
     def test_configuration_digest_binds_the_timeout_ceiling(self):
@@ -728,3 +732,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

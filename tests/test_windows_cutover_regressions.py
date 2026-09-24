@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -176,7 +177,8 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'control script parse failed' }
 foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-ServiceContainer',
-    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages')) {
+    'Get-ServiceImageId', 'Assert-ServiceImage', 'Get-PriorImagesPath', 'Read-PriorImages', 'Save-PriorImages',
+    'Read-DotEnv', 'Assert-OfflineHandoffProfile')) {
     $node = $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
     if (@($node).Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -184,7 +186,8 @@ foreach ($name in @('Set-DotEnvValue', 'Write-Switches', 'Invoke-Compose', 'Get-
 $block = $ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$Action -in @("Activate", "ActivateOffline")'}, $true)
 if (@($block).Count -ne 1) { throw 'expected one production activation branch' }
 $script:environmentPath = $EnvironmentPath
-$script:values = @{}
+$script:values = Read-DotEnv $EnvironmentPath
+$script:acceptanceMode = if ($Scenario -like 'mode-*') { $Scenario.Substring(5) } else { 'provider-v2' }
 $script:ComposeProject = 'offline-activation-test'
 $script:runtimeImageId = 'sha256:' + ('c' * 64)
 $runtimeImageId = $script:runtimeImageId
@@ -198,7 +201,7 @@ function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
 function Assert-PrimaryQuiescent { param([switch]$AfterStop)
     $event = if ($AfterStop) { 'quiescent-after-stop' } else { 'quiescent-before-stop' }
     Record-Event $event
-    if ($Scenario -eq "busy-$event") { throw "Paid activation refused: the primary plane is not quiescent" } }
+    if ($Scenario -eq "busy-$event") { throw "Activation refused: the primary plane is not quiescent" } }
 function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
 function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
 function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
@@ -614,7 +617,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
     def _activate(self, root, *, action="Activate", health=None, images=None, scenario="success"):
         environment = root / "fixture.env"
         if not environment.exists():
-            environment.write_text("".join(f"{name}=false\n" for name in SWITCHES) + "PRESERVED=fixture-value\n")
+            environment.write_text("".join(f"{name}=false\n" for name in SWITCHES)
+                                   + "DIRECTOR_PROVIDER_VALIDATION_ENABLED=false\nPRESERVED=fixture-value\n")
         primary = dict.fromkeys(("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres",
             "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready",
             "reconciliation_worker_ready", "primary_runtime_active", "paid_off_primary_intake_active",
@@ -678,13 +682,17 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
 
     def test_paid_activation_refuses_a_busy_primary_plane_before_any_switch(self):
-        # Offline-simulated work left in the plane must never reach live dispatch.
-        for event, expected in (("quiescent-before-stop", ["quiescent-before-stop"]),
-                                ("quiescent-after-stop",
-                                 ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop"])):
-            with self.subTest(event=event), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                result, events, final, prior = self._activate(root, scenario=f"busy-{event}")
+        # Work approved under one mode must never be recovered by the other
+        # mode's dispatcher, so both activations refuse a busy plane.
+        for action in ("Activate", "ActivateOffline"):
+            for event, expected in (("quiescent-before-stop", ["quiescent-before-stop"]),
+                                    ("quiescent-after-stop",
+                                     ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop"])):
+                with self.subTest(action=action, event=event), tempfile.TemporaryDirectory() as temporary:
+                    self._assert_busy_plane_refused(Path(temporary), action, event, expected)
+
+    def _assert_busy_plane_refused(self, root, action, event, expected):
+                result, events, final, prior = self._activate(root, action=action, scenario=f"busy-{event}")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("not quiescent", result.stderr)
                 self.assertEqual([item["event"] for item in events], expected)
@@ -734,6 +742,37 @@ if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-Prim
                 self.assertIn(state, refused.stderr)
                 self.assertNotIn("passed", refused.stdout)
 
+    def test_offline_activation_requires_the_offline_handoff_profile_before_anything_stops(self):
+        # PrepareOfflineHandoff's profile guard also gates ActivateOffline.
+        health = {"provider_activation": {"combined_live_ready": False},
+                  "primary_runtime_active": False, "paid_off_primary_intake_active": True}
+        cases = {
+            "github-v1 acceptance": ("mode-github-v1", None, "provider-v2 generation"),
+            "paid runs on": ("success", ("ALLOW_PAID_RUNS", "true"), "explicit false"),
+            "validation on": ("success", ("DIRECTOR_PROVIDER_VALIDATION_ENABLED", "true"), "explicit false"),
+            "validation unset": ("success", ("DIRECTOR_PROVIDER_VALIDATION_ENABLED", None), "explicit false"),
+        }
+        for case, (scenario, override, message) in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                values = dict.fromkeys(SWITCHES, "false")
+                values.update(DIRECTOR_PROVIDER_VALIDATION_ENABLED="false", PRESERVED="fixture-value")
+                if override is not None:
+                    name, value = override
+                    if value is None:
+                        values.pop(name)
+                    else:
+                        values[name] = value
+                (root / "fixture.env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
+                result, events, final, prior = self._activate(root, action="ActivateOffline", health=health,
+                                                              scenario=scenario)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(events, [])
+                self.assertFalse(prior.exists())
+                self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
+                self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
+
     def test_offline_activation_needs_no_provider_readiness_and_records_no_activated(self):
         with tempfile.TemporaryDirectory() as temporary:
             result, events, final, prior = self._activate(Path(temporary), action="ActivateOffline", health={
@@ -743,8 +782,8 @@ if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-Prim
             names = [event["event"] for event in events]
             self.assertNotIn("evidence-record-ACTIVATED", names)
             # Offline activation keeps the ACCEPTED..RESTORE_PROVED gate before any start.
-            self.assertEqual(names[:4], ["intake-stopped", "inventory", "evidence-bind-legacy-inventory",
-                                         "evidence-require-ready"])
+            self.assertEqual(names[:6], ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+                                         "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
             self.assertLess(names.index("evidence-require-ready"), names.index("up-orchestrator"))
             self.assertEqual(names[-4:], ["up-slackbot", "readback-slackbot", "up-n8n", "start-slackbot"])
             self.assertEqual(events[-3]["image"], CANDIDATE_IMAGE)
@@ -764,7 +803,8 @@ if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-Prim
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("evidence require-ready refused", result.stderr)
             self.assertEqual([event["event"] for event in events],
-                             ["intake-stopped", "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
+                             ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+                              "inventory", "evidence-bind-legacy-inventory", "evidence-require-ready"])
             self.assertFalse(prior.exists())
             self.assertEqual(final["LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"], "false")
             self.assertEqual(final["LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED"], "false")
@@ -1050,3 +1090,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

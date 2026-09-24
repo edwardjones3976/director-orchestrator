@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
@@ -798,6 +799,7 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             "COMSPEC": str(folders["system"] / "cmd.exe"), "LOCALAPPDATA": str(folders["local"]),
             "APPDATA": str(folders["roaming"]), "USERPROFILE": str(folders["profile"]),
         }
+        (folders["system"] / "cmd.exe").write_bytes(b"")
         self.file = self.root / "native-process-environment.json"
         self.write(self.pinned)
         self.account = self.root / "synthetic-account.json"
@@ -908,6 +910,13 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
                                     None, None),
             "relative TEMP directory": ({**self.pinned, "TEMP": "temp"}, None, None),
             "empty PATH entry": ({**self.pinned, "PATH": self.pinned["PATH"] + os.pathsep}, None, None),
+            "relative APPDATA": ({**self.pinned, "APPDATA": "roaming"}, None, None),
+            "relative LOCALAPPDATA": ({**self.pinned, "LOCALAPPDATA": "local"}, None, None),
+            "relative WINDIR": ({**self.pinned, "WINDIR": "system"}, None, None),
+            "missing APPDATA directory": ({**self.pinned, "APPDATA": str(self.root / "absent")}, None, None),
+            "relative COMSPEC": ({**self.pinned, "COMSPEC": os.path.join("system", "cmd.exe")}, None, None),
+            "missing COMSPEC file": ({**self.pinned, "COMSPEC": str(self.root / "system" / "absent.exe")},
+                                     None, None),
         }
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.root)
@@ -1023,3 +1032,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

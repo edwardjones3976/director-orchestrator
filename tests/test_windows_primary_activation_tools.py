@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import re
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -589,7 +591,7 @@ Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'bridge script parse failed' }
-foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime')) {
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime')) {
     $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
     if ($node.Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -672,10 +674,12 @@ Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'bridge script parse failed' }
-$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-ExternalInterpreter'}, $true))
-if ($node.Count -ne 1) { throw 'expected one production helper' }
-. ([scriptblock]::Create($node[0].Extent.Text))
-Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
+foreach ($name in @('Resolve-FinalPath', 'Assert-ExternalInterpreter')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$null = Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
 'accepted'
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -705,6 +709,56 @@ Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
                         self.assertIn(refusal, result.stderr)
                         self.assertNotIn("accepted", result.stdout)
 
+    @unittest.skipUnless(shutil.which("pwsh") and os.name == "nt", "PowerShell junctions on Windows are required")
+    def test_bridge_install_resolves_interpreter_and_checkout_aliases(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        self.assertIn("$pythonPath = Assert-ExternalInterpreter -Requested", install)
+        harness = r"""
+param($Source, $Root)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Resolve-FinalPath', 'Assert-ExternalInterpreter')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$checkout = Join-Path $Root 'checkout'; $external = Join-Path $Root 'external'
+$null = New-Item -ItemType Directory -Path (Join-Path $checkout 'venv'), $external
+Set-Content -LiteralPath (Join-Path $checkout 'venv\python.exe') -Value 'x'
+Set-Content -LiteralPath (Join-Path $external 'python.exe') -Value 'x'
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'alias-in') -Target (Join-Path $checkout 'venv')
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'alias-out') -Target $external
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'checkout-alias') -Target $checkout
+function Probe($Name, $Requested, $SourceRoot) {
+    try { "$Name=accepted:" + (Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot) }
+    catch { "$Name=refused:" + $_.Exception.Message }
+}
+Probe 'alias-in' (Join-Path $Root 'alias-in\python.exe') $checkout
+Probe 'alias-out' (Join-Path $Root 'alias-out\python.exe') $checkout
+Probe 'checkout-alias' (Join-Path $checkout 'venv\python.exe') (Join-Path $Root 'checkout-alias')
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(root / "work")],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            lines = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            self.assertTrue(lines["alias-in"].startswith("refused:"), lines)
+            self.assertIn("inside the source checkout", lines["alias-in"])
+            self.assertTrue(lines["checkout-alias"].startswith("refused:"), lines)
+            self.assertEqual(Path(lines["alias-out"].removeprefix("accepted:")),
+                             root / "work" / "external" / "python.exe")
+            for junction in ("alias-in", "alias-out", "checkout-alias"):
+                os.rmdir(root / "work" / junction)
+
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_installed_bridge_runtime_is_reverified_before_every_launch(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
@@ -718,7 +772,7 @@ Set-StrictMode -Version Latest
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'bridge script parse failed' }
-foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime', 'Assert-InstalledBridgeRuntime')) {
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime', 'Assert-InstalledBridgeRuntime')) {
     $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
     if ($node.Count -ne 1) { throw 'expected one production helper' }
     . ([scriptblock]::Create($node[0].Extent.Text))
@@ -990,3 +1044,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]

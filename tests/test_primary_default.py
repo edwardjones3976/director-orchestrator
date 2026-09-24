@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
@@ -3236,6 +3237,37 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertFalse(aggregate.succeeded, aggregate)
         self.assertNotEqual(TaskStatus.DONE, completed.status)
 
+    def test_offline_dispatcher_refuses_a_task_not_approved_for_simulation(self):
+        """A live-approved (or unlabelled) task is never settled by a double."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        settings = replace(
+            self.settings, langgraph_primary_offline_simulation_enabled=True
+        )
+        services = DefaultOfflineSimulationServices(
+            settings, packet_router=packet_router(settings)
+        )
+        dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        provider = sorted(settings.langgraph_primary_required_providers)[0]
+        for label in ("live", "unknown", None):
+            with self.subTest(execution_mode=label):
+                services._execution_modes.pop("DIR-LG-LIVE-APPROVED", None)
+                if label is not None:
+                    services._execution_modes["DIR-LG-LIVE-APPROVED"] = label
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "live_task_requires_live_dispatch"):
+                    dispatch(
+                        ParallelReservation(
+                            task_id="DIR-LG-LIVE-APPROVED",
+                            assignment_id="assignment-live",
+                            sequence=1,
+                            provider_id=provider,
+                            deployment_id="deployment-test",
+                            reservation_digest=digest("reservation:live"),
+                        )
+                    )
+        self.assertEqual(0, services.provider_calls, services.provider_call_counts)
+
     def test_unconfigured_lane_settles_failed_without_calling_a_double(self):
         """An unconfigured lane must settle FAILED, never AMBIGUOUS.
 
@@ -3252,6 +3284,8 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             settings, packet_router=packet_router(settings)
         )
         dispatch = build_offline_parallel_dispatcher(services, lambda: None)
+        # Labelled as simulation so only the missing double decides the outcome.
+        services._execution_modes["DIR-LG-UNCONFIGURED"] = "offline_simulation"
         outcome = dispatch(
             ParallelReservation(
                 task_id="DIR-LG-UNCONFIGURED",
@@ -4184,3 +4218,4 @@ if __name__ == "__main__":
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
