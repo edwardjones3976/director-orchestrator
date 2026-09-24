@@ -83,12 +83,23 @@ $request = @{
 $reqFile = Join-Path $reports ("serve-smoke-request-{0}.json" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 
 # PASS needs curl exit 0, HTTP 200, exactly the two keys, and both values non-empty strings (the schema's types).
+# Runs docker with a host-side deadline (a stalled daemon or image fetch must not hang the smoke); the last
+# element is __EXIT__<code>, or __EXIT__timeout.
+function Invoke-DockerBounded([string[]]$A, [int]$Seconds) {
+    $j = Start-Job { param($a) & docker @a 2>$null; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
+    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
+    Remove-Job $j -Force
+    $r
+}
+
 function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
     $ok = $false; $content = ''; $status = if ($Lines.Count) { $Lines[-1] } else { '' }
     try {
         $body = $Lines[0..($Lines.Count - 2)] -join "`n"
         $content = ($body | ConvertFrom-Json).choices[0].message.content
-        $obj = $content | ConvertFrom-Json
+        # -NoEnumerate keeps the top-level shape: a one-element array must not unwrap into a passing object.
+        $obj = ConvertFrom-Json -InputObject $content -NoEnumerate
+        if ($obj -isnot [System.Management.Automation.PSCustomObject]) { throw 'reply is not a JSON object' }
         # JSON property names are case-sensitive; PowerShell's -eq and member access are not, so compare
         # names with -ceq and read values by exact name.
         $names = @($obj.PSObject.Properties.Name | Sort-Object -CaseSensitive)
@@ -109,9 +120,13 @@ try {
     # From a container: Docker Desktop forwards host.docker.internal to the host loopback, so LM Studio
     # can stay bound to 127.0.0.1 (no "serve on local network").
     $leaf = Split-Path $reqFile -Leaf
-    $ctrLines = @(docker run --rm -v "${reports}:/r:ro" --entrypoint curl $Image -s -w "`n%{http_code}" --max-time 120 `
-        http://host.docker.internal:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@/r/$leaf")
-    $results += Test-Reply 'container' $ctrLines $LASTEXITCODE
+    $ctrName = 'hl-serve-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $r = @(Invoke-DockerBounded @('run', '--rm', '--name', $ctrName, '-v', "${reports}:/r:ro", '--entrypoint', 'curl', $Image,
+        '-s', '-w', "`n%{http_code}", '--max-time', '120', 'http://host.docker.internal:1234/v1/chat/completions',
+        '-H', 'Content-Type: application/json', '--data', "@/r/$leaf") 180)
+    if ($r[-1] -eq '__EXIT__timeout') { Invoke-DockerBounded @('kill', $ctrName) 20 | Out-Null }
+    $ctrExit = if ($r[-1] -match '^__EXIT__(\d+)$') { [int]$Matches[1] } else { 124 }
+    $results += Test-Reply 'container' @($r | Select-Object -SkipLast 1) $ctrExit
 } finally {
     if (Test-Path -LiteralPath $reqFile) { [IO.File]::Delete($reqFile) }
 }

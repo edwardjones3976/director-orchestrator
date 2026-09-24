@@ -29,6 +29,7 @@ Assert-Equal (Test-Reply 'x' @((Body $good), '200') 7).schema_valid $false 'repl
 Assert-Equal (Test-Reply 'x' @('not json', '200') 0).schema_valid $false 'reply: non-JSON body fails'
 Assert-Equal (Test-Reply 'x' @((Body '{"Task_ID":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: differently-cased keys fail'
 Assert-Equal (Test-Reply 'x' @((Body '{"task_id":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: one differently-cased key fails'
+Assert-Equal (Test-Reply 'x' @((Body '[{"task_id":"a","objective":"b"}]'), '200') 0).schema_valid $false 'reply: one-element array fails'
 
 $p = 'homemade-llm/smoke/new.gguf'
 $m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }
@@ -70,6 +71,10 @@ $finalBind = ($cmds | Where-Object { $_.Extent.Text -match '^Test-LoopbackOnly \
 $lateStop = ($cmds | Where-Object { $_.Extent.Text -match '^lms server stop' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
 $lateUnload = ($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
 Assert-Equal ([bool]($finalBind -and $lateUnload -and $lateStop)) $true 'order: a failed final loopback check unloads and stops the server'
+
+# Every docker call goes through Invoke-DockerBounded, so none can hang the run.
+$bareDocker = @($cmds | Where-Object { $_.GetCommandName() -eq 'docker' })
+Assert-Equal $bareDocker.Count 0 'bounded: no top-level docker call bypasses Invoke-DockerBounded'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null

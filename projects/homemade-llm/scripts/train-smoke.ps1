@@ -14,6 +14,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# preflight's free-space floor and hot-tier cap gate drive C only, so the hot root must live there.
+$HotRoot = [IO.Path]::GetFullPath($HotRoot)
+if (-not $HotRoot.StartsWith('C:\',[StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
+# The container's HF_HOME is the mounted <HotRoot>\hf, which is also Hugging Face's default token location:
+# refuse to hand a stored credential to the network-enabled third-party image.
+foreach ($t in 'token', 'stored_tokens') {
+    if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
+}
+
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'preflight.ps1') -HotRoot $HotRoot | Out-Host
 if ($LASTEXITCODE -ne 0) { Write-Error 'preflight reported a FAIL; not starting training' }
 
@@ -35,6 +44,7 @@ $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $name = 'hl-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
     '-v', "${code}:/code:ro", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
+    '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
 $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
 if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
