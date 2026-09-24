@@ -80,8 +80,8 @@ used as a fallback.
 
 ## Rollback
 
-- **Stop command or action:** `docker compose -p homemade-llm down` (Open WebUI + SearXNG only, once deployed); `lms unload --all`
-- **Configuration rollback:** `docker compose -p homemade-llm down` (never `-v`), then remove `C:\llm\secrets\open-webui.env`; nothing in the orchestrator runtime references this project
+- **Stop command or action:** from `projects/homemade-llm/compose/`, `docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env down` (Open WebUI + SearXNG only; see `compose/RUNBOOK.md` §4); `lms unload --all`
+- **Configuration rollback:** the same `down` command (never `-v`, which deletes the chat data volume), then remove `C:\llm\secrets\open-webui.env`; nothing in the orchestrator runtime references this project
 - **State restore:** `G:\llm-mirror` → `C:\llm` by robocopy; adapters and datasets also in `E:\llm-archive`
 - **Slack rollback:** not_applicable
 - **Evidence retained:** PR numbers, exact SHAs, dispatch receipts, `C:\llm\reports\`
