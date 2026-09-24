@@ -1,10 +1,13 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 """M0.3 smoke fine-tune: prove the Unsloth container trains on the RTX 5070 and exports a GGUF.
 
-Runs inside unsloth/unsloth with C:\\llm mounted at /workspace (see scripts/train-smoke.ps1).
+Runs inside unsloth/unsloth (see scripts/train-smoke.ps1). Only these C:\\llm folders are mounted:
+/workspace/hf (Hugging Face cache), /workspace/runs, /workspace/models/smoke, /workspace/reports.
 20 QLoRA steps on 50 synthetic rows; this measures the pipeline, not model quality.
-Writes: /workspace/runs/<run>/adapter, /workspace/models/smoke/*.gguf, /workspace/reports/<run>.json,
-the Hugging Face cache at /workspace/hf (C:\\llm\\hf, the planned cache tier), and scratch under /tmp.
+Writes: runs/<run>/adapter, models/smoke/*.gguf, reports/<run>.json, the HF cache, and scratch under /tmp.
+
+The base is Unsloth's pre-quantized mirror of Qwen/Qwen3-0.6B (Unsloth loads it even when asked for the
+Qwen repo), pinned by revision; every HF snapshot the run touched is recorded in the report.
 """
 from __future__ import annotations
 
@@ -14,15 +17,18 @@ import shutil
 import time
 from pathlib import Path
 
-os.environ.setdefault("HF_HOME", "/workspace/hf")
+# The image sets HF_HOME=/workspace/.cache/huggingface; override it so the cache lands in the mounted C:\llm\hf.
+os.environ["HF_HOME"] = "/workspace/hf"
 
 import torch  # noqa: E402  (HF_HOME must be set before the HF stack is imported)
 from unsloth import FastLanguageModel  # noqa: E402
 from datasets import Dataset  # noqa: E402
+from transformers import set_seed  # noqa: E402
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
-BASE = os.environ.get("SMOKE_BASE", "Qwen/Qwen3-0.6B")
-STEPS, ROWS, SEQ = 20, 50, 1024
+BASE = os.environ.get("SMOKE_BASE", "unsloth/qwen3-0.6b-unsloth-bnb-4bit")
+REVISION = os.environ.get("SMOKE_REVISION", "e86f5289a2ca40ab7114071959dc2079cf97cb3c")
+SEED, STEPS, ROWS, SEQ = 7, 20, 50, 1024
 RUN = "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
 WS = Path("/workspace")
 RUN_DIR, MODEL_DIR, REPORT = WS / "runs" / RUN, WS / "models" / "smoke", WS / "reports" / f"{RUN}.json"
@@ -44,13 +50,35 @@ def rows() -> list[dict]:
     return out
 
 
+def hf_snapshots() -> dict[str, str]:
+    """Every repo@revision in the HF cache, so the report names the exact weights used."""
+    hub = Path(os.environ["HF_HOME"]) / "hub"
+    return {d.name.removeprefix("models--").replace("--", "/"): (d / "refs" / "main").read_text().strip()
+            for d in sorted(hub.glob("models--*")) if (d / "refs" / "main").exists()}
+
+
+def publish(src: Path, dest: Path) -> None:
+    """Copy under a .part name and rename only after the size matches, so no truncated .gguf is ever visible."""
+    part = dest.with_name(dest.name + ".part")
+    shutil.copy2(src, part)
+    if part.stat().st_size != src.stat().st_size:
+        part.unlink()
+        raise SystemExit(f"short copy of {src.name}")
+    os.replace(part, dest)
+
+
 def main() -> None:
     t0 = time.time()
-    model, tok = FastLanguageModel.from_pretrained(BASE, max_seq_length=SEQ, load_in_4bit=True)
+    set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
+    torch.cuda.reset_peak_memory_stats()
+    model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
     model = FastLanguageModel.get_peft_model(
         model, r=16, lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        random_state=SEED,
     )
+    load_alloc_gb = torch.cuda.max_memory_allocated() / 2**30
+    load_reserved_gb = torch.cuda.max_memory_reserved() / 2**30
     # Qwen3 emits a <think> block unless the template disables it; strict JSON needs it off (M0.11 note).
     texts = [tok.apply_chat_template(r["messages"], tokenize=False, enable_thinking=False) for r in rows()]
     ds = Dataset.from_dict({"text": texts})
@@ -60,7 +88,7 @@ def main() -> None:
         model=model, processing_class=tok, train_dataset=ds,
         args=SFTConfig(output_dir=str(RUN_DIR / "trainer"), dataset_text_field="text", max_length=SEQ,
                        per_device_train_batch_size=2, gradient_accumulation_steps=1, max_steps=STEPS,
-                       learning_rate=2e-4, logging_steps=5, save_strategy="no", report_to="none", seed=7),
+                       learning_rate=2e-4, logging_steps=5, save_strategy="no", report_to="none", seed=SEED),
     )
     torch.cuda.reset_peak_memory_stats()
     t_train = time.time()
@@ -83,8 +111,9 @@ def main() -> None:
     tok.save_pretrained(str(RUN_DIR / "adapter"))
 
     report = {
-        "run": RUN, "base": BASE, "steps": STEPS, "rows": ROWS, "batch": 2,
+        "run": RUN, "base": BASE, "base_revision": REVISION, "seed": SEED, "steps": STEPS, "rows": ROWS, "batch": 2,
         "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
+        "load_peak_torch_allocated_gb": round(load_alloc_gb, 2), "load_peak_torch_reserved_gb": round(load_reserved_gb, 2),
         "peak_torch_allocated_gb": round(peak_alloc_gb, 2), "peak_torch_reserved_gb": round(peak_reserved_gb, 2),
         "train_seconds": round(train_s, 1),
         "tokens_per_second_approx": round(STEPS * 2 * tokens_per_row / train_s, 1),  # steps x batch x mean row tokens
@@ -110,8 +139,9 @@ def main() -> None:
     report["gguf"] = []
     for f in export_dir.parent.rglob("*.gguf"):
         dest = MODEL_DIR / f"{RUN}-{f.name}"
-        shutil.copy2(f, dest)
+        publish(f, dest)
         report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
+    report["hf_snapshots"] = hf_snapshots()  # includes the full-precision repo the merge step fetches
     report["wall_seconds"] = round(time.time() - t0, 1)
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
