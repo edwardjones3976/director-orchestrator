@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
@@ -178,6 +179,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         writes.assert_not_called()
         self.assertEqual(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"],
                          "2026-09-12T09:30:01+00:00")
+        self.assertEqual(report["lanes"]["claude"]["surfaces"]["app"]["recorded_at"], "2026-09-12T09:30:01+00:00")
+        self.assertEqual(sorted(call.args[4] for call in recorded.call_args_list), ["app", "runtime_adapter"])
         self.assertEqual(recorded.call_args.args[1:3], ("director_primary_v1", "claude"))
         self.assertEqual(report["version"], "director-activation-captures/v1")
         self.assertEqual(report["generation_manifest_sha256"], PIN)
@@ -631,6 +634,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "a" * 64)
         self.assertEqual(datetime.fromisoformat(recorded), datetime(2026, 9, 12, 10, 0, 10, tzinfo=timezone.utc))
         self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "b" * 64))
+        # The same digest on the other surface is another row.
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "a" * 64, "app"))
 
 
 if __name__ == "__main__":
@@ -646,3 +651,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]

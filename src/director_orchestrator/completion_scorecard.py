@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
@@ -345,7 +346,11 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
        AS active_nodes,
      (SELECT h.connections::json FROM workflow_history h
         WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections,
-     w.settings::json AS workflow_settings, w."pinData"::json AS pin_data
+     w.settings::json AS workflow_settings, w."pinData"::json AS pin_data,
+     (SELECT c."updatedAt" FROM credentials_entity c WHERE c.id = (
+        SELECT n->'credentials'->'slackApi'->>'id' FROM workflow_history h, json_array_elements(h.nodes::json) n
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId" AND n->>'name'='Post Status' LIMIT 1))
+       AS credential_updated_at
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
@@ -964,15 +969,19 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         products[lane] = value.get("product")
         times = [_when(event["recorded_at"]) for event in attempts if event["provider_id"] == lane]
         transports[lane] = sorted({str(event["transport_id"]) for event in attempts if event["provider_id"] == lane})
-        surface = (value.get("surfaces") or {}).get("runtime_adapter")
-        # A capture that does not verify now, was minted after the attempt or expired before it ended
-        # cannot attest the attempt: its missing product is unknown, not a substitution.
-        # observed_at is caller-supplied: the row's persisted recorded_at must also precede the attempts.
-        if (not isinstance(surface, dict) or surface.get("capture_verified") is not True or not times
-                or not surface.get("observed_at") or not surface.get("recorded_at")
-                or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
-                or not _when(surface["recorded_at"]) <= min(times)
-                or runtime.collected_at is None or max(times) > runtime.collected_at):
+        # provider_ready needs both the app and the runtime-adapter surface: each must have verified, been
+        # observed and persisted before the attempts, and stayed unexpired through them. A capture that fails
+        # that cannot attest the attempt: its missing product is unknown, not a substitution.
+        surfaces = value.get("surfaces") or {}
+
+        def gated(surface: Any) -> bool:
+            return (isinstance(surface, dict) and surface.get("capture_verified") is True
+                    and bool(surface.get("observed_at")) and bool(surface.get("recorded_at"))
+                    and _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
+                    and _when(surface["recorded_at"]) <= min(times))
+
+        if (not times or runtime.collected_at is None or max(times) > runtime.collected_at
+                or not all(gated(surfaces.get(name)) for name in ("app", "runtime_adapter"))):
             unbound.append(lane)
     facts = {"lanes_used": used, "products": products, "transports": transports}
     raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
@@ -1193,6 +1202,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if not current:
         return _observation("04", None, "The saved execution is not shown to have run the workflow's active version.",
                             source, facts, at, **binding)
+    # The post must have used the Post Status credential as it is now: only its update time is read, never its data.
+    credential_at = execution.get("credential_updated_at")
+    if not isinstance(credential_at, str) or started < _when(credential_at):
+        return _observation("04", None, "The posting execution is not shown to postdate the Post Status credential's "
+                            "latest update.", source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
     if not _is_current(max(runtime.created_at, n8n_created), runtime.collected_at, started, stopped):
@@ -1542,6 +1556,18 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     return [obs06, _observation("08", passed08, explanation08, _SLACK_SOURCE, facts08, at, **binding)]
 
 
+def _run_mode(offline: bool, counters: dict[str, Any] | None, readback: dict[str, Any] | None) -> str | None:
+    """The run's kind from its evidence, only when the persisted execution mode (the value paid_dispatch_allowed
+    and offline_dispatch_allowed decide by) agrees: offline needs offline_simulation or paid_off, paid needs live.
+    Inconsistent readback is unknown (None)."""
+    persisted = (readback or {}).get("execution_mode")
+    if offline:
+        return "offline" if persisted in ("offline_simulation", "paid_off") else None
+    if counters is not None and counters["attempt_ordinals"] >= 1:
+        return "paid" if persisted == "live" else None
+    return None
+
+
 def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, latest: Any) -> int | None:
     """1 for an ambiguous delivery effect; 0 only when every latest provider attempt is terminal (SUCCEEDED or
     FAILED) and every started external effect has a terminal disposition; otherwise unknown (None)."""
@@ -1574,7 +1600,7 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
     # the image that executed it; no producer records the executing image.
     bound = readback is not None and _is_current(runtime.created_at, runtime.collected_at, *_moments(snapshot))
     return {"run_id": row.get("task_id"),
-            "mode": "offline" if offline else ("paid" if counters is not None and counters["attempt_ordinals"] >= 1 else None),
+            "mode": _run_mode(offline, counters, readback),
             "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
                                    and row.get("task_record_bound") is True),
             "correctness_verified": correctness,
@@ -1739,7 +1765,38 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
         return None
     if any(item in question or item in wrapper for item in expected):
         return False
+    joined = _outcomes_joined(facts)
+    if joined is not True:
+        return joined
     return bool(answer) and all(item in answer and item in visible for item in expected)
+
+
+def _outcomes_joined(facts: dict[str, Any]) -> bool | None:
+    """Every graded outcome is the paid provider's result: its assignment sequence names a SUCCEEDED assignment
+    whose result digest, and whose latest attempt's SUCCEEDED result digest, equal the outcome's
+    provider_result_digest (as primary_default records them). Unreadable is unknown; a mismatch is not."""
+    readback = facts.get("readback")
+    latest = facts.get("latest") if isinstance(facts.get("latest"), dict) else {}
+    outcomes = facts["task"].get("assignment_outcomes") or []
+    if not isinstance(readback, dict) or not outcomes:
+        return None
+    for outcome in outcomes:
+        digest = "sha256:" + str((outcome or {}).get("provider_result_digest"))
+        assignments = [a for a in readback.get("assignments") or []
+                       if a.get("sequence") == (outcome or {}).get("assignment_sequence")]
+        if len(assignments) != 1:
+            return False
+        assignment = assignments[0]
+        # The latest event of the assignment's last attempt (latest is keyed per attempt).
+        attempts = sorted((event for event in latest.values() if isinstance(event, dict)
+                           and event.get("assignment_id") == assignment.get("assignment_id")),
+                          key=lambda event: event.get("attempt_ordinal") or 0)
+        attempt = attempts[-1] if attempts else None
+        if (assignment.get("status") != "SUCCEEDED" or not _same(assignment.get("result_digest"), digest)
+                or not isinstance(attempt, dict) or attempt.get("status") != "SUCCEEDED"
+                or not _same(attempt.get("result_digest"), digest)):
+            return False
+    return True
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -2033,7 +2090,9 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
         db.row_factory = sqlite3.Row
         row = db.execute("SELECT id,status,scan_dir,target_path,target_revision,mode,diff_base_revision,"
                          "diff_head_revision,seal_manifest_digest,completed_at FROM scans WHERE id=?", (scan_id,)).fetchone()
-        if row is None or row["status"] != "complete" or row["mode"] != "diff" or row["diff_head_revision"] != candidate_sha:
+        # The scanned checkout, not only the diff head, must be the candidate.
+        if (row is None or row["status"] != "complete" or row["mode"] != "diff" or row["diff_head_revision"] != candidate_sha
+                or row["target_revision"] != candidate_sha):
             raise ValueError("native index has no complete scan for this candidate")
         indexed = dict(row)
     root = Path(indexed["scan_dir"])
@@ -2679,3 +2738,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]

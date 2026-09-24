@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]] -->
@@ -245,6 +246,17 @@ a container ID, never a name.
   `models.py`, compared with that commit's blobs); otherwise 08 and 20 are
   UNKNOWN. n8n must use the default `public` schema (`DB_POSTGRESDB_SCHEMA`
   absent or `public`), and both n8n queries pin `search_path` to it.
+  11 requires both the app and the runtime-adapter capture of each lane used
+  (`provider_ready` needs both) to have verified, been observed and persisted
+  before the paid attempts and stayed unexpired through them. 04 requires the
+  posting execution to postdate the Post Status credential's latest update
+  (only `credentials_entity.updatedAt` is read, never credential data). 10 and
+  20 take a run's kind only when the persisted `execution_mode` agrees
+  (`offline_simulation` or `paid_off` for offline, `live` for paid);
+  inconsistent readback is UNKNOWN. 20 grades an outcome only when its
+  `provider_result_digest` and assignment sequence join a SUCCEEDED assignment
+  and its latest SUCCEEDED attempt with the same result digest. 18 requires the
+  indexed `target_revision`, not only the diff head, to be the candidate.
   12 requires the captured lanes to equal the generation's required providers
   exactly. 03 and 09 treat an edited or subtyped owner post in a drill thread
   like an altered bot reply (UNKNOWN), and 04 requires the read-back status
@@ -722,3 +734,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]] -->

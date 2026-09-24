@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
@@ -301,8 +302,10 @@ def _capture_product(provider, output: bytes):
     return None
 
 
-def _activation_recorded_at(dsn, schema, provider, digest):
-    """The database insertion time of the LIVE_OK runtime-adapter row carrying digest, or None."""
+def _activation_recorded_at(dsn, schema, provider, digest, surface="runtime_adapter"):
+    """The database insertion time of the LIVE_OK row of that surface carrying digest, or None."""
+    if surface not in ("app", "runtime_adapter"):
+        raise ValueError("unknown activation surface")
     import psycopg
     from psycopg.rows import dict_row
     from .langgraph_postgres import _require_schema
@@ -312,8 +315,8 @@ def _activation_recorded_at(dsn, schema, provider, digest):
                          options="-c default_transaction_read_only=on -c statement_timeout=10000") as connection:
         row = connection.execute(
             f"SELECT recorded_at FROM {schema}.director_provider_activation_evidence WHERE provider_id=%s"
-            " AND surface='runtime_adapter' AND stage='LIVE_OK' AND evidence_digest=%s"
-            " ORDER BY revision DESC LIMIT 1", (provider, digest)).fetchone()
+            " AND surface=%s AND stage='LIVE_OK' AND evidence_digest=%s"
+            " ORDER BY revision DESC LIMIT 1", (provider, surface, digest)).fetchone()
     return _plain(row["recorded_at"]) if row else None
 
 
@@ -347,10 +350,13 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             row = verifier.store.load_capture(surface["evidence_digest"])
             product = _capture_product(provider, bytes(row[2])) if row is not None else None
         lane["product"] = product
-        if surface is not None:
-            # The persisted insertion time, not the caller-supplied observed_at, says when it gated anything.
-            surface["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
-                                                             identity.postgres_schema, provider, surface["evidence_digest"])
+        # The persisted insertion time, not the caller-supplied observed_at, says when each surface gated anything;
+        # provider_ready needs both surfaces, so both are reported.
+        for name, each in lane["surfaces"].items():
+            if each is not None:
+                each["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
+                                                              identity.postgres_schema, provider,
+                                                              each["evidence_digest"], name)
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes,
@@ -368,3 +374,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]

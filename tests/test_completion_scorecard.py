@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
@@ -191,6 +192,7 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
                        "startedAt": "2026-09-12T09:59:00.000+00:00", "stoppedAt": "2026-09-12T09:59:02.000+00:00"},
             "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_nodes": status_nodes(),
+                                          "credential_updated_at": "2026-09-12T09:00:00.000+00:00",
                                           "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
                                           "workflow_settings": json.loads(json.dumps(STATUS_WORKFLOW["settings"])),
                                           "pin_data": None,
@@ -273,7 +275,10 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
         task["assignment_outcomes"] = [{"run_id": "provider-run-1", "result": answer or "provider answer",
                                         "provider": "claude", "assignment_sequence": 1,
                                         "review_summary": "fixture review"}]
-    task["assignment_outcomes"][0]["provider_result_digest"] = "a" * 64
+        readback["execution_mode"] = "live"  # a paid run's persisted mode
+    # The outcome's digest is its assignment's (and successful attempt's) result digest, as primary_default records it.
+    task["assignment_outcomes"][0]["provider_result_digest"] = (
+        "a" * 64 if offline else readback["assignments"][0]["result_digest"].removeprefix("sha256:"))
     for sequence, outcome in enumerate(task["assignment_outcomes"], 1):  # a TaskRecord the renderer accepts
         outcome.setdefault("assignment_sequence", sequence)
         outcome.setdefault("review_summary", "fixture review")
@@ -907,6 +912,17 @@ class CompletionScorecardTests(unittest.TestCase):
                 (root / "scan-manifest.json").write_text(json.dumps(manifest))
                 with self.assertRaisesRegex(ValueError, "indexed seal"):
                     sc._security_observation(scan_id, SHA, NOW)
+
+    def test_native_security_target_revision_must_be_the_candidate_18(self):
+        with tempfile.TemporaryDirectory() as folder:
+            scan_id, index, _ = native_security_fixture(folder)
+            with closing(sqlite3.connect(index)) as db:
+                db.execute("UPDATE scans SET target_revision=?", (OTHER,))
+                db.commit()
+            with patch.object(sc, "_native_security_index", return_value=index), \
+                    patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
+                    patch.object(sc, "_merge_base", return_value=OTHER), self.assertRaises(ValueError):
+                sc._security_observation(scan_id, SHA, NOW)
 
     def test_native_security_missing_changed_file_coverage_fails(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -1875,6 +1891,12 @@ class ScorecardCollectorTests(unittest.TestCase):
                                           "startedAt": "2026-09-12T09:59:30.000+00:00",
                                           "stoppedAt": "2026-09-12T09:59:31.000+00:00"}
         self.assertEqual(quiet_success.state("04"), "PASS")  # nothing to post, but the workflow is healthy
+        # The post must postdate the Post Status credential's latest update, which must be readable.
+        for credential_at in ("2026-09-12T09:59:30.000+00:00", None):
+            case = self.world()
+            case.status["execution"]["credential_updated_at"] = credential_at
+            with self.subTest(credential_at=credential_at):
+                self.assertEqual(case.state("04"), "UNKNOWN")
         other_text = self.world()
         run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
             "ok": True, "channel": CHANNEL_FIXTURE, "ts": STATUS_TS,
@@ -2273,6 +2295,22 @@ class ScorecardCollectorTests(unittest.TestCase):
         # Without the rubric, 10 is not graded.
         self.assertEqual(self.world().state("10", rubric_path=None), "UNKNOWN")
 
+    def test_persisted_execution_mode_decides_the_run_kind_10_20(self):
+        live_trial = self.world()
+        live_trial.tasks["DIR-LG-7A03"]["qualification_evidence"]["execution_mode"] = "live"
+        self.assertEqual(live_trial.state("10"), "UNKNOWN")
+        offline_paid = self.world()
+        offline_paid.tasks[PAID_TASK]["qualification_evidence"]["execution_mode"] = "paid_off"
+        self.assertEqual(offline_paid.state("20"), "UNKNOWN")
+
+    def test_graded_outcome_joins_the_paid_attempt_20(self):
+        forged = self.world()
+        forged.tasks[PAID_TASK]["assignment_outcomes"][0]["provider_result_digest"] = "e" * 64
+        self.assertEqual(forged.state("20"), "FAIL")
+        resequenced = self.world()
+        resequenced.tasks[PAID_TASK]["assignment_outcomes"][0]["assignment_sequence"] = 2
+        self.assertEqual(resequenced.state("20"), "FAIL")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2361,6 +2399,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         for lane in future_capture.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T21:00:00+00:00"
         self.assertNotEqual(future_capture.state("12"), "PASS")
+        # Both surfaces gate the attempt: an app capture persisted after it does not attest the lane.
+        late_app = self.world()
+        late_app.captures["lanes"]["claude"]["surfaces"]["app"]["recorded_at"] = "2026-09-12T10:00:10+00:00"
+        self.assertEqual(late_app.state("11"), "UNKNOWN")
         minted_later = self.world()
         minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = "2026-09-12T10:00:10+00:00"
         self.assertEqual(minted_later.state("11"), "UNKNOWN")
@@ -2782,3 +2824,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
