@@ -39,28 +39,42 @@ if (-not $Gguf) { $Gguf = (Get-ChildItem (Join-Path $HotRoot 'models\smoke\*.ggu
 if (-not $Gguf -or -not (Test-Path -LiteralPath $Gguf -PathType Leaf)) { Write-Error 'no smoke GGUF found; run train-smoke.ps1 first' }
 if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$reports does not exist (run preflight.ps1 -Init)" }
 
-# Every run manages the one global 'smoke' identifier, so overlapping runs could probe each other's GGUF:
-# one run at a time. The mutex is released when this process exits (including on error).
-$lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-serve-smoke')
+# One GPU job at a time, shared with train-smoke.ps1: overlapping serve runs could probe each other's GGUF
+# through the one 'smoke' identifier, and a training run needs the whole GPU. Released when this process exits.
+$lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
-if (-not $held) { Write-Error 'another serve-smoke run is in progress; not starting' }
+if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
 
-# lms prints status on stderr; native exit codes are checked explicitly.
-lms server start 2>&1 | Out-Null
+# Runs an executable with a host-side deadline (a stalled LM Studio daemon or Docker must not hang the smoke
+# while it holds the GPU lock); the last element is __EXIT__<code>, or __EXIT__timeout.
+function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+    $j = Start-Job { param($e, $a) & $e @a 2>$null; "__EXIT__$LASTEXITCODE" } -ArgumentList $Exe, $A
+    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
+    Remove-Job $j -Force
+    $r
+}
+# lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
+function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
+    $r = @(Invoke-Bounded 'lms' $A $Seconds)
+    $script:lmsExit = if ($r[-1] -match '^__EXIT__(\d+)$') { [int]$Matches[1] } else { 124 }
+    @($r | Select-Object -SkipLast 1)
+}
+
+Invoke-Lms @('server', 'start') | Out-Null
 # Refuse before anything is loaded if the API is reachable beyond loopback ("serve on local network").
 $preLoad = Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue
 if (-not (Test-LoopbackOnly $preLoad)) {
-    lms server stop 2>&1 | Out-Null
+    Invoke-Lms @('server', 'stop') | Out-Null
     Write-Error "LM Studio is listening beyond loopback on 1234 ($(($preLoad.LocalAddress | Sort-Object -Unique) -join ', ')); server stopped, nothing loaded. Turn off 'serve on local network'."
 }
-$known = (lms ls --json 2>$null | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
+$known = ((Invoke-Lms @('ls', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
 if (-not $known) {
-    lms import $Gguf -L -y --user-repo homemade-llm/smoke 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { Write-Error 'lms import failed' }
+    Invoke-Lms @('import', $Gguf, '-L', '-y', '--user-repo', 'homemade-llm/smoke') 300 | Out-Host
+    if ($lmsExit -ne 0) { Write-Error "lms import failed (exit $lmsExit)" }
     # LM Studio indexes a new import a few seconds later; poll instead of failing on the first look.
     for ($i = 0; $i -lt 20 -and -not $known; $i++) {
         Start-Sleep -Seconds 1
-        $known = (lms ls --json 2>$null | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
+        $known = ((Invoke-Lms @('ls', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
     }
 }
 if (-not $known) { Write-Error "imported model not listed by lms: $Gguf" }
@@ -68,12 +82,12 @@ if (-not $known) { Write-Error "imported model not listed by lms: $Gguf" }
 $imported = Join-Path $LmsModelsDir ($known.path -replace '/', '\')
 if (-not (Test-SameContent $Gguf $imported)) { Write-Error "LM Studio's $($known.path) is not the requested GGUF (content differs)" }
 # Always (re)load, so the requested TTL applies even when this model is already resident.
-if ((lms ps --json 2>$null | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { lms unload smoke 2>&1 | Out-Null }
-lms load $known.modelKey --identifier smoke --ttl $TtlSeconds -y 2>&1 | Out-Null
+if (((Invoke-Lms @('ps', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { Invoke-Lms @('unload', 'smoke') | Out-Null }
+Invoke-Lms @('load', $known.modelKey, '--identifier', 'smoke', '--ttl', $TtlSeconds, '-y') 300 | Out-Null
 # If the load or its TTL cannot be verified, the GPU-release deadline cannot be trusted: unload before failing.
-if ($LASTEXITCODE -ne 0) { lms unload smoke 2>&1 | Out-Null; Write-Error 'lms load failed (smoke unloaded)' }
-if (-not (Test-LoadedModel (lms ps --json 2>$null | ConvertFrom-Json) $known.path $TtlSeconds)) {
-    lms unload smoke 2>&1 | Out-Null
+if ($lmsExit -ne 0) { Invoke-Lms @('unload', 'smoke') | Out-Null; Write-Error "lms load failed (exit $lmsExit; smoke unloaded)" }
+if (-not (Test-LoadedModel ((Invoke-Lms @('ps', '--json')) -join "`n" | ConvertFrom-Json) $known.path $TtlSeconds)) {
+    Invoke-Lms @('unload', 'smoke') | Out-Null
     Write-Error "after loading, lms ps does not show 'smoke' = $($known.path) with ttl ${TtlSeconds}s (smoke unloaded)"
 }
 
@@ -91,15 +105,6 @@ $request = @{
 $reqFile = Join-Path $reports ("serve-smoke-request-{0}.json" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 
 # PASS needs curl exit 0, HTTP 200, exactly the two keys, and both values non-empty strings (the schema's types).
-# Runs docker with a host-side deadline (a stalled daemon or image fetch must not hang the smoke); the last
-# element is __EXIT__<code>, or __EXIT__timeout.
-function Invoke-DockerBounded([string[]]$A, [int]$Seconds) {
-    $j = Start-Job { param($a) & docker @a 2>$null; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
-    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
-    Remove-Job $j -Force
-    $r
-}
-
 function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
     $ok = $false; $content = ''; $status = if ($Lines.Count) { $Lines[-1] } else { '' }
     try {
@@ -129,10 +134,10 @@ try {
     # can stay bound to 127.0.0.1 (no "serve on local network").
     $leaf = Split-Path $reqFile -Leaf
     $ctrName = 'hl-serve-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $r = @(Invoke-DockerBounded @('run', '--rm', '--name', $ctrName, '-v', "${reports}:/r:ro", '--entrypoint', 'curl', $Image,
+    $r = @(Invoke-Bounded 'docker' @('run', '--rm', '--name', $ctrName, '-v', "${reports}:/r:ro", '--entrypoint', 'curl', $Image,
         '-s', '-w', "`n%{http_code}", '--max-time', '120', 'http://host.docker.internal:1234/v1/chat/completions',
         '-H', 'Content-Type: application/json', '--data', "@/r/$leaf") 180)
-    if ($r[-1] -eq '__EXIT__timeout') { Invoke-DockerBounded @('kill', $ctrName) 20 | Out-Null }
+    if ($r[-1] -eq '__EXIT__timeout') { Invoke-Bounded 'docker' @('kill', $ctrName) 20 | Out-Null }
     $ctrExit = if ($r[-1] -match '^__EXIT__(\d+)$') { [int]$Matches[1] } else { 124 }
     $results += Test-Reply 'container' @($r | Select-Object -SkipLast 1) $ctrExit
 } finally {
@@ -145,8 +150,8 @@ $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction S
 $loopbackOnly = Test-LoopbackOnly $listeners
 if (-not $loopbackOnly) {
     # Exposure appeared during the run: take the model and the server down now, not at TTL expiry.
-    lms unload smoke 2>&1 | Out-Null
-    lms server stop 2>&1 | Out-Null
+    Invoke-Lms @('unload', 'smoke') | Out-Null
+    Invoke-Lms @('server', 'stop') | Out-Null
 }
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
 Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"

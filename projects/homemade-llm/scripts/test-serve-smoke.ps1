@@ -56,10 +56,10 @@ $cmds = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language
     Where-Object { $o = $_.Extent.StartOffset; -not ($fnSpans | Where-Object { $o -ge $_[0] -and $o -lt $_[1] }) } |
     Sort-Object { $_.Extent.StartOffset })
 function First-Offset([scriptblock]$Match) { ($cmds | Where-Object $Match | Select-Object -First 1).Extent.StartOffset }
-$start = First-Offset { $_.Extent.Text -match '^lms server start' }
+$start = First-Offset { $_.Extent.Text -match "^Invoke-Lms @\('server', 'start'\)" }
 $preBind = First-Offset { $_.Extent.Text -match '^Test-LoopbackOnly' }
-$unload = First-Offset { $_.Extent.Text -match '^lms unload smoke' }
-$load = First-Offset { $_.Extent.Text -match '^lms load .*--ttl \$TtlSeconds' }
+$unload = First-Offset { $_.Extent.Text -match "^Invoke-Lms @\('unload', 'smoke'\)" }
+$load = First-Offset { $_.Extent.Text -match "^Invoke-Lms @\('load', .*'--ttl', \`$TtlSeconds" }
 $postLoad = First-Offset { $_.Extent.Text -match '^Test-LoadedModel' }
 $curl = First-Offset { $_.Extent.Text -match '^curl\.exe' }
 Assert-Equal ([bool]($start -and $preBind -and $start -lt $preBind -and $preBind -lt $load)) $true 'order: loopback check runs after server start and before any load'
@@ -68,20 +68,20 @@ Assert-Equal ([bool]$load) $true 'order: the model is (re)loaded with --ttl $Ttl
 Assert-Equal ([bool]($postLoad -and $load -lt $postLoad -and $postLoad -lt $curl)) $true 'order: Test-LoadedModel verifies the load before any request'
 # A late exposure must take the server down: after the final loopback check there is an unload and a stop.
 $finalBind = ($cmds | Where-Object { $_.Extent.Text -match '^Test-LoopbackOnly \$listeners' } | Select-Object -First 1).Extent.StartOffset
-$lateStop = ($cmds | Where-Object { $_.Extent.Text -match '^lms server stop' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
-$lateUnload = ($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
+$lateStop = ($cmds | Where-Object { $_.Extent.Text -match "^Invoke-Lms @\('server', 'stop'\)" -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
+$lateUnload = ($cmds | Where-Object { $_.Extent.Text -match "^Invoke-Lms @\('unload', 'smoke'\)" -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
 Assert-Equal ([bool]($finalBind -and $lateUnload -and $lateStop)) $true 'order: a failed final loopback check unloads and stops the server'
 
 # Both load-verification failures unload 'smoke' before failing (the TTL cannot be trusted then).
-$unloadsBeforeProbe = @($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $load -and $_.Extent.StartOffset -lt $curl })
+$unloadsBeforeProbe = @($cmds | Where-Object { $_.Extent.Text -match "^Invoke-Lms @\('unload', 'smoke'\)" -and $_.Extent.StartOffset -gt $load -and $_.Extent.StartOffset -lt $curl })
 Assert-Equal $unloadsBeforeProbe.Count 2 'cleanup: failed load and failed TTL check both unload smoke'
 # The cross-process lock is taken before the server is touched.
-$lockAt = $ast.Extent.Text.IndexOf("Mutex]::new(`$false, 'Global\homemade-llm-serve-smoke')")
-Assert-Equal ([bool]($lockAt -ge 0 -and $lockAt -lt $start)) $true 'lock: serve-smoke mutex taken before lms server start'
+$lockAt = $ast.Extent.Text.IndexOf("Mutex]::new(`$false, 'Global\homemade-llm-gpu')")
+Assert-Equal ([bool]($lockAt -ge 0 -and $lockAt -lt $start)) $true 'lock: shared GPU mutex taken before lms server start'
 
-# Every docker call goes through Invoke-DockerBounded, so none can hang the run.
-$bareDocker = @($cmds | Where-Object { $_.GetCommandName() -eq 'docker' })
-Assert-Equal $bareDocker.Count 0 'bounded: no top-level docker call bypasses Invoke-DockerBounded'
+# Every docker and lms call goes through Invoke-Bounded, so none can hang the run while it holds the GPU lock.
+$bare = @($cmds | Where-Object { $_.GetCommandName() -in 'docker', 'lms' })
+Assert-Equal $bare.Count 0 'bounded: no top-level docker or lms call bypasses Invoke-Bounded'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null

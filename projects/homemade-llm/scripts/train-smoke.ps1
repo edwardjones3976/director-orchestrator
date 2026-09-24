@@ -1,7 +1,8 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 # M0.3: run train/smoke_train.py inside the pinned Unsloth image.
 #   .\train-smoke.ps1                                   default pinned base
-#   .\train-smoke.ps1 -Base <hf repo> -Revision <sha>   override (both forwarded into the container)
+#   .\train-smoke.ps1 -Base <hf repo> -Revision <sha> -MergeSource <16-bit hf repo> -MergeRevision <sha>
+#                                                       override: a base comes with its own merge-source pin
 # Refuses to start when preflight reports a FAIL (C: floor, hot-tier cap, GPU, Docker) or when LM Studio
 # cannot release the GPU. Mounts only the four C:\llm folders the job needs: never secrets, seeds or datasets.
 [CmdletBinding()]
@@ -10,9 +11,18 @@ param(
     [string]$HotRoot = 'C:\llm',
     [string]$Base = 'unsloth/qwen3-0.6b-unsloth-bnb-4bit',
     [string]$Revision = 'e86f5289a2ca40ab7114071959dc2079cf97cb3c',
+    [string]$MergeSource = 'unsloth/qwen3-0.6b',                          # full-precision repo the GGUF merge uses
+    [string]$MergeRevision = 'db4e90b8359f816f09bf5c944797ce116f26da3c',
     [double]$TimeoutMinutes = 30   # whole container: download + training + export (a normal run is ~5 min)
 )
 $ErrorActionPreference = 'Stop'
+
+# The merge source belongs to the base: overriding one without the other would record (or fail on) the default
+# Qwen pin. Revisions must be full commits, so every input the GGUF is built from is immutable.
+if ($PSBoundParameters.ContainsKey('Base') -and -not ($PSBoundParameters.ContainsKey('MergeSource') -and $PSBoundParameters.ContainsKey('MergeRevision'))) {
+    Write-Error '-Base needs a matching -MergeSource and -MergeRevision (the full-precision repo its GGUF merge uses)'
+}
+foreach ($r in $Revision, $MergeRevision) { if ($r -notmatch '^[0-9a-f]{40}$') { Write-Error "revision '$r' is not a full 40-hex commit" } }
 
 # preflight's free-space floor and hot-tier cap gate drive C only, so the hot root must live there.
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
@@ -40,13 +50,23 @@ foreach ($t in 'token', 'stored_tokens') {
     if (Test-Path -LiteralPath (Join-Path $HotRoot "hf\$t")) { Write-Error "$HotRoot\hf\$t exists (a stored Hugging Face credential); move it out of the mounted cache before training" }
 }
 
+# One GPU job at a time, shared with serve-smoke.ps1, held from before the LM Studio unload until this process
+# exits (after container teardown), so no serve probe or second training run can start on the same GPU.
+$gpuLock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
+try { $held = $gpuLock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
+
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'preflight.ps1') -HotRoot $HotRoot | Out-Host
 if ($LASTEXITCODE -ne 0) { Write-Error 'preflight reported a FAIL; not starting training' }
 
 # Free the 12 GB before training; a failed unload means the GPU may still be shared, so stop.
+# Bounded: a stalled LM Studio daemon must not hang this run while it holds the GPU lock.
 if (Get-Command lms -ErrorAction SilentlyContinue) {
-    lms unload --all 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { Write-Error "lms unload --all failed (exit $LASTEXITCODE); not starting training" }
+    $j = Start-Job { lms unload --all 2>&1; "__EXIT__$LASTEXITCODE" }
+    $r = if (Wait-Job $j -Timeout 60) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
+    Remove-Job $j -Force
+    $r | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+    if ($r[-1] -ne '__EXIT__0') { Write-Error "lms unload --all failed ($($r[-1] -replace '^__EXIT__', 'exit ')); not starting training" }
 }
 
 $mounts = @()
@@ -61,6 +81,7 @@ $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $name = 'hl-smoke-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
     '-v', "${code}:/code:ro", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
+    '-e', "SMOKE_MERGE_SOURCE=$MergeSource", '-e', "SMOKE_MERGE_REVISION=$MergeRevision",
     '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
 # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them):
