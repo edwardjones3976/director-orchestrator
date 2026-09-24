@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
@@ -528,7 +529,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
-                                             "approval_receipts": [], "application": None,
+                                             "approval_receipts": [], "application": None, "result_artifacts": [],
                                              "verifier_secrets": {"route_verifier": False, "owner_authority": False}})
         # The persisted application record comes back for the scorecard's re-rendering.
         with self.handle.pool.connection() as connection:
@@ -551,6 +552,30 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                                                        "day_held_microusd": 700000, "provider_id": None,
                                                        "signature_verified": False, "authority_digest": "grant-fixture"}])
         json.dumps(entry, allow_nan=False)
+
+    def test_result_artifacts_are_revalidated_against_their_digest(self):
+        from director_orchestrator.langgraph_postgres import canonical_json_bytes, document_digest
+        task_id = self.intake()
+        packet = json.loads((Path(__file__).resolve().parents[1] / "docs/schemas/model-result-packet-v1.example.json")
+                            .read_text(encoding="utf-8"))
+        rows = []
+        for assignment, tampered in (("A1", None), ("A2", "a different stored result")):
+            document = {**packet, "task_id": task_id, "assignment_id": assignment,
+                        "idempotency_key": f"{task_id}:{assignment}:review"}
+            digest = document_digest(document)
+            if tampered:
+                document["outcome"] = tampered  # stored content no longer matches its recorded digest
+            rows.append((task_id, assignment, document["authority_snapshot_digest"], digest,
+                         canonical_json_bytes(document).decode("utf-8")))
+        with self.handle.pool.connection() as connection:
+            for values in rows:
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_result_packet_artifact(task_id, assignment_id,"
+                    " authority_snapshot_digest, document_digest, canonical_document, writer_fencing_generation)"
+                    " VALUES (%s, %s, %s, %s, %s, 1)", values)
+        self.assertEqual(self.report(tasks=[task_id])["tasks"][task_id]["result_artifacts"], [
+            {"assignment_id": "A1", "document_digest": rows[0][3], "outcome": packet["outcome"], "verified": True},
+            {"assignment_id": "A2", "document_digest": rows[1][3], "outcome": None, "verified": False}])
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -669,3 +694,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]

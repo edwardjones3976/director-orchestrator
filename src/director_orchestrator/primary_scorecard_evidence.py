@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
@@ -186,7 +187,7 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
     import psycopg
     from psycopg.rows import dict_row
-    from .langgraph_postgres import _require_schema
+    from .langgraph_postgres import PostgresControlPlaneError, _require_schema, _result_packet_artifact_from_row
 
     schema = _require_schema(settings.langgraph_primary_postgres_schema)
     tasks = list(tasks)
@@ -235,8 +236,23 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 applications = {r["task_id"]: r["application"] for r in connection.execute(
                     f"SELECT task_id, projection->'application' AS application FROM {schema}.director_primary_task_projection"
                     " WHERE task_id = ANY(%(tasks)s)", {"tasks": tasks}).fetchall()}
+                # Each persisted provider result packet, revalidated against its stored digest exactly as the
+                # Director reloads it; content that fails revalidation attests nothing and carries no outcome.
+                artifacts = []
+                for r in connection.execute(
+                        "SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,"
+                        f" writer_fencing_generation FROM {schema}.director_primary_result_packet_artifact"
+                        " WHERE task_id = ANY(%(tasks)s) ORDER BY task_id, assignment_id", {"tasks": tasks}).fetchall():
+                    try:
+                        outcome, verified = _result_packet_artifact_from_row(r).packet.get("outcome"), True
+                    except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
+                        outcome, verified = None, False
+                    artifacts.append({"task_id": r["task_id"], "assignment_id": r["assignment_id"],
+                                      "document_digest": r["document_digest"], "outcome": outcome, "verified": verified})
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
+                                         "result_artifacts": [{k: v for k, v in a.items() if k != "task_id"}
+                                                              for a in artifacts if a["task_id"] == task_id],
                                          "application": applications.get(task_id),
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
@@ -389,3 +405,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]

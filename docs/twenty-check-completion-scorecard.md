@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]] -->
@@ -470,8 +471,18 @@ are UNKNOWN). One final cutoff is frozen after every source (deployment,
 GitHub, ledger, Security) was read; every observation is stamped at it and a
 time-limited PASS (12's capture expiries) is revalidated against it. Upper
 bounds applied while grading use the time of that grading read, which is no
-later than the final cutoff. A drill's correlated final reply counts only when
-its text is the Director's canonical terminal rendering (the check-20 rule).
+later than the final cutoff. Just before that cutoff the Director, gateway
+and n8n containers are re-inspected (ID, image, creation, start time and
+running state); if any differs from the deployment probe, or cannot be read,
+every runtime-derived PASS or FAIL becomes UNKNOWN. A drill's (09) or the paid
+run's (20) correlated final reply counts only when its fallback text and its
+complete normalized blocks (compared as check 08 compares prompts) are the
+Director's canonical terminal rendering; 20 grades the answer on the blocks'
+content too. Check 20 also requires every settled assignment's persisted
+provider result packet (read by the in-image report and revalidated against
+its stored digest) to be the one its result digest names, with outcome text
+equal to the graded outcome's result: a mismatch FAILs, an unread or missing
+artifact is UNKNOWN.
 Every upper bound and expiry reference uses the collection's end: check 12's
 capture observation and `FRESH_FOR` validity, and the CI replica, workload
 journal and Security seal times. Check 04 dates the newest scheduled run inside
@@ -770,3 +781,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]] -->

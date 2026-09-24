@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
@@ -230,7 +231,10 @@ def consistency_fixture():
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture(), "image_id": IMAGE},
             "captured_at": "2026-09-12T20:00:00+00:00", "intake_fencing_generation": 83, "counts": counts,
             "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
-                                  "approval_receipts": []},
+                                  "approval_receipts": [],
+                                  "result_artifacts": [{"assignment_id": PAID_TASK + "-A1",
+                                                        "document_digest": "sha256:" + "2" * 64,
+                                                        "outcome": "The audit answer is 42", "verified": True}]},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -313,6 +317,7 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
                                   "reason_code": readback["terminal_reason_code"]},
                                  None, datetime.fromisoformat(terminal["created_at"]))
         entry["messages"][-1]["text"] = payload["text"]
+        entry["messages"][-1]["blocks"] = payload["blocks"]
     return entry
 
 
@@ -2418,6 +2423,43 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(thread=thread):
                 self.assertNotEqual(case.state("09"), "PASS")
 
+    def test_final_reply_blocks_must_be_the_canonical_rendering_09_20(self):
+        for thread, final, check in ((ts(300), ts(330), "09"), (ts(400), ts(430), "09"), (ts(20000), ts(20030), "20")):
+            case = self.world()
+            message = next(m for m in case.threads[thread] if m.get("ts") == final)
+            # Same fallback text, different visible blocks: Slack shows the blocks.
+            message["blocks"] = [{"type": "section", "text": {"type": "mrkdwn", "text": "Unrelated reply"}}]
+            with self.subTest(thread=thread):
+                self.assertNotEqual(case.state(check), "PASS")
+
+    def test_containers_changed_before_final_cutoff_are_unknown(self):
+        world = self.world()
+        real, states = sc._deployment_state, []
+
+        def restart(project, gateway):
+            states.append(real(project, gateway))
+            world.rows[0]["State"]["StartedAt"] = "2026-09-12T19:59:00Z"  # the Director restarts after the probe
+            return states[-1]
+
+        with patch.object(sc, "_deployment_state", side_effect=restart):
+            report = world.report(only_deployment=True)
+        self.assertEqual(len(states), 2)
+        self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
+        steady = self.world()
+        with patch.object(sc, "_deployment_state", side_effect=real) as probe:
+            report = steady.report(only_deployment=True)
+        self.assertEqual(probe.call_count, 2)
+        self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["PASS", "PASS"])
+
+    def test_paid_outcome_must_equal_the_persisted_result_artifact_20(self):
+        self.assertEqual(self.world().state("20"), "PASS")
+        edited = self.world()
+        edited.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["outcome"] = "The persisted answer is 41"
+        self.assertEqual(edited.state("20"), "FAIL")
+        missing = self.world()
+        missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
+        self.assertEqual(missing.state("20"), "UNKNOWN")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2949,3 +2991,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]

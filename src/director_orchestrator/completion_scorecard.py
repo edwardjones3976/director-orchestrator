@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
@@ -276,6 +277,34 @@ def _compose_ids(project: str, service: str) -> list[str]:
     if len(ids) > 16 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("Compose service inventory is malformed")
     return ids
+
+
+def _deployment_state(project: str, gateway: str | None) -> tuple:
+    """Identity and run state (Id, Image, Created, StartedAt, Running) of the deployment's Director and n8n
+    containers and the named gateway, compared whole between the deployment probe and the final cutoff."""
+    ids = _compose_ids(project, "orchestrator") + _compose_ids(project, "n8n")
+    rows = _run_json(["docker", "inspect", *ids, *([gateway] if gateway else [])])
+    return tuple(sorted((str(row.get("Id")), str(row.get("Image")), str(row.get("Created")),
+                         str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True)
+                        for row in rows))
+
+
+def _still_deployed(observations: list[Observation], state: tuple | None, project: str,
+                    gateway: str | None) -> list[Observation]:
+    """Re-inspect the containers after every source was read: if any changed (or could not be re-inspected), the
+    runtime evidence may describe a predecessor, so no runtime-derived PASS or FAIL is extended to the final cutoff."""
+    if state is None:  # no baseline (the probe itself failed): nothing to extend, and no retry
+        current = None
+    else:
+        try:
+            current = _deployment_state(project, gateway)
+        except _SOURCE_ERRORS:
+            current = None
+    if state is not None and current == state:
+        return observations
+    return [item if item.passed is None else replace(
+        item, passed=None, explanation="The Director, gateway or n8n containers changed, or could not be re-inspected, "
+        "between the deployment probe and the final cutoff: " + item.explanation) for item in observations]
 
 
 def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observation], _Runtime]:
@@ -1283,13 +1312,26 @@ def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] |
 
 
 def _final_is_rendering(facts: dict[str, Any]) -> bool:
-    """The single unedited final reply's text is the Director's canonical terminal rendering of the record."""
+    """The single unedited final reply is the Director's canonical terminal rendering of the record: its fallback
+    text and its complete blocks (normalized as check 08 compares them), since the blocks are what Slack shows."""
     finals = (facts.get("row") or {}).get("terminal_messages") or []
     final = [m for m in facts.get("messages") or [] if len(finals) == 1 and m.get("ts") == finals[0]["ts"]]
-    rendered = facts.get("terminal_render")
-    if len(final) != 1 or facts.get("finals_unedited") is not True or not isinstance(rendered, str):
+    rendered, blocks = facts.get("terminal_render"), facts.get("terminal_blocks")
+    if (len(final) != 1 or facts.get("finals_unedited") is not True or not isinstance(rendered, str)
+            or not isinstance(blocks, list)):
         return False
-    return html.unescape(str(final[0].get("text", ""))) in (rendered, rendered.replace("\n", " "))
+    return (html.unescape(str(final[0].get("text", ""))) in (rendered, rendered.replace("\n", " "))
+            and _slack_blocks(final[0].get("blocks")) == blocks)
+
+
+def _blocks_text(blocks: Any) -> str:
+    """Every text string in a block tree (each text object's text), one per line: the content the owner sees."""
+    if isinstance(blocks, list):
+        return "\n".join(_blocks_text(item) for item in blocks)
+    if isinstance(blocks, dict):
+        return "\n".join(value if key == "text" and isinstance(value, str) else _blocks_text(value)
+                         for key, value in blocks.items())
+    return ""
 
 
 def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
@@ -1768,6 +1810,8 @@ def _with_rendering(t: _SlackThreads, facts: dict[str, Any], sha: str) -> dict[s
                           projection, None, created, t.channel, t.owner)
     facts["terminal_render"] = html.unescape(rendered["text"]) if rendered else None
     facts["terminal_wrapper"] = html.unescape(wrapper["text"]) if wrapper else None
+    facts["terminal_blocks"] = _slack_blocks(rendered["blocks"]) if rendered and isinstance(rendered.get("blocks"), list) else None
+    facts["terminal_wrapper_blocks"] = _slack_blocks(wrapper.get("blocks")) if wrapper else None
     return facts
 
 
@@ -1789,7 +1833,7 @@ def _load_paid_rubric(path: Path) -> tuple[dict[str, Any], str]:
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool | None:
+def _paid_correct(paid: dict[str, Any], rubric_path: Path, consistency: dict | None = None) -> bool | None:
     rubric, digest = _load_paid_rubric(rubric_path)
     row = paid["row"]
     markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((paid["task"].get("intake") or {}).get("text", "")))
@@ -1799,7 +1843,10 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool | None:
             and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
             and row.get("task_status") == "DONE" and len(finals) == 1):
         return False
-    return _answer_verified(paid, rubric["expected_answer_substrings"])
+    answer = _answer_verified(paid, rubric["expected_answer_substrings"])
+    persisted = _artifacts_match(paid, consistency)
+    # The graded text must be the persisted provider result: a mismatch fails, an unread artifact is unknown.
+    return False if False in (answer, persisted) else None if None in (answer, persisted) else True
 
 
 def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
@@ -1814,18 +1861,43 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
     answer = "\n".join(str(item.get("result", "")) for item in facts["task"].get("assignment_outcomes") or []
                        if isinstance(item, dict))
     question = html.unescape(str((facts["task"].get("intake") or {}).get("text", "")))
-    wrapper, rendered = facts.get("terminal_wrapper"), facts.get("terminal_render")
+    wrapper = facts.get("terminal_wrapper")
     visible = html.unescape(str(final[0].get("text", "")))
-    # Unverifiable (renderer not the candidate's, or the native reply is not its rendering): unknown, not wrong.
-    if not isinstance(wrapper, str) or not isinstance(rendered, str) or visible not in (
-            rendered, rendered.replace("\n", " ")):
+    # Unverifiable (renderer not the candidate's, or the native reply's text or blocks are not its rendering):
+    # unknown, not wrong. The answer is graded on the canonical blocks' content too, which is what Slack shows.
+    if not isinstance(wrapper, str) or not _final_is_rendering(facts):
         return None
+    shown = _blocks_text(facts["terminal_blocks"])
+    wrapper += "\n" + _blocks_text(facts.get("terminal_wrapper_blocks"))
     if any(item in question or item in wrapper for item in expected):
         return False
     joined = _assignments_joined(facts, attempts=True)
     if joined is not True:
         return joined
-    return bool(answer) and all(item in answer and item in visible for item in expected)
+    return bool(answer) and all(item in answer and item in visible and item in shown for item in expected)
+
+
+def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | None:
+    """Check 20: each settled assignment's persisted provider result packet (read by the in-image report and
+    revalidated against its stored digest) is the one its result digest names, and its outcome text is the graded
+    outcome's result. Not read or not persisted is unknown; any other difference is a mismatch."""
+    entry = ((consistency or {}).get("tasks") or {}).get(facts.get("task_id"))
+    artifacts = entry.get("result_artifacts") if isinstance(entry, dict) else None
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or []
+    if not isinstance(artifacts, list) or not assignments:
+        return None
+    for assignment in assignments:
+        rows = [row for row in artifacts if row.get("assignment_id") == assignment.get("assignment_id")]
+        if not rows:
+            return None
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        if (len(rows) != 1 or rows[0].get("verified") is not True or len(matching) != 1
+                or not _same(rows[0].get("document_digest"), assignment.get("result_digest"))
+                or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
+            return False
+    return True
 
 
 def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None:
@@ -1880,7 +1952,7 @@ def _paid_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] | No
         return _observation("20", None, "A --paid-thread and its --paid-rubric are required.", _SLACK_SOURCE, {}, at,
                             **runtime.binding)
     cost, basis = _settled_cost(consistency, paid)
-    record = _run_record(runtime, paid, _paid_correct(paid, rubric_path), label)
+    record = _run_record(runtime, paid, _paid_correct(paid, rubric_path, consistency), label)
     if record["mode"] == "paid":
         record.update(actual_cost_usd=cost, cost_basis=basis)
     return _run_records_observation("20", "paid", at, runtime, [record], _SLACK_SOURCE + " and settled meter rows")
@@ -1967,12 +2039,19 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
-                             paid_rubric_path: Path | None, collection_end: Any = None) -> list[Observation]:
+                             paid_rubric_path: Path | None,
+                             collection_end: Any = None) -> tuple[list[Observation], tuple | None]:
     try:
         runtime_rows, runtime = _runtime(at, project, collection_end)
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
-                             "Docker Compose labels and Director /health", {}, at)]
+                             "Docker Compose labels and Director /health", {}, at)], None
+    try:  # the containers as the deployment probe saw them, re-inspected before the final cutoff
+        state: tuple | None = _deployment_state(project, gateway)
+        if not any(row[:2] == (runtime.container_id, runtime.image_id) for row in state):
+            state = None
+    except _SOURCE_ERRORS:
+        state = None
     binding = runtime.binding
     found: dict[str, Observation] = {item.check_id: item for item in runtime_rows}
 
@@ -2116,7 +2195,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     finally:
         if t is not None:
             t.close()
-    return list(found.values())
+    return list(found.values()), state
 
 
 def _native_security_index() -> Path:
@@ -2511,14 +2590,16 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         return end if end is not None else datetime.now(timezone.utc)
 
     result: list[Observation] = []
+    deployed: list[Observation] = []
+    state = None
     if deployment is None:
         result.append(_observation("19", None, "No --deployment was selected; no runtime was inspected.",
                                    "Docker Compose labels", {}, at))
     else:
-        result.extend(_deployment_observations(
+        deployed, state = _deployment_observations(
             at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path, collection_end=collection_end))
+            paid_rubric_path=paid_rubric_path, collection_end=collection_end)
     if github:
         try:
             result.append(_ci_observation(candidate_sha, collection_end(), ci_replica_receipt))
@@ -2537,7 +2618,9 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
-    return _finalize(result, collection_end())
+    if deployment is not None:
+        deployed = _still_deployed(deployed, state, deployment, gateway)
+    return _finalize(deployed + result, collection_end())
 
 
 def _finalize(observations: list[Observation], finished: datetime) -> list[Observation]:
@@ -2836,3 +2919,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
