@@ -40,11 +40,11 @@ foreach ($letter in $roles.Keys) {
     $v = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
     $role = $roles[$letter]
     if (-not $v) { Add-Row "drive $letter ($role)" ($(if ($letter -eq 'D') { 'WARN' } else { 'FAIL' })) 'not present'; continue }
-    $free = [math]::Round($v.SizeRemaining / 1GB, 1)
-    $detail = "$($v.FileSystem), $free GB free of $([math]::Round($v.Size / 1GB, 1)) GB"
+    # Compare raw bytes; round only for display, so 149.96 GB never passes a 150 GB floor.
+    $detail = "$($v.FileSystem), $([math]::Round($v.SizeRemaining / 1GB, 1)) GB free of $([math]::Round($v.Size / 1GB, 1)) GB"
     switch ($role) {
         'hot' {
-            $status = if ($free -lt $FloorGB) { 'FAIL' } else { 'OK' }
+            $status = if ($v.SizeRemaining -lt $FloorGB * 1GB) { 'FAIL' } else { 'OK' }
             Add-Row 'drive C (hot)' $status "$detail; floor $FloorGB GB"
         }
         'archive' {
@@ -60,9 +60,13 @@ foreach ($letter in $roles.Keys) {
 
 # Hot-tier size against the cap.
 if (Test-Path $HotRoot) {
-    $bytes = (Get-ChildItem $HotRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-    $gb = [math]::Round(([double]$bytes) / 1GB, 2)
-    Add-Row 'C:\llm size' ($(if ($gb -gt $HotCapGB) { 'FAIL' } else { 'OK' })) "$gb GB of $HotCapGB GB cap"
+    $scanErrors = $null
+    $bytes = [double](Get-ChildItem $HotRoot -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors | Measure-Object Length -Sum).Sum
+    $detail = "$([math]::Round($bytes / 1GB, 2)) GB of $HotCapGB GB cap"
+    # Over the cap is FAIL even on a partial scan; an incomplete scan under the cap cannot claim OK.
+    if ($bytes -gt $HotCapGB * 1GB) { Add-Row 'C:\llm size' 'FAIL' $detail }
+    elseif ($scanErrors) { Add-Row 'C:\llm size' 'WARN' "$detail (incomplete: $($scanErrors.Count) unreadable entries)" }
+    else { Add-Row 'C:\llm size' 'OK' $detail }
 }
 
 # Layout.
@@ -86,7 +90,9 @@ if ($dockerVer) {
 if (Get-Command lms -ErrorAction SilentlyContinue) {
     # lms prints its status line on stderr.
     $server = try { (lms server status 2>&1 | Out-String).Trim() } catch { $null }
-    Add-Row 'LM Studio (lms)' 'OK' ($(if ($server) { ($server -split "`n")[0] } else { 'installed; server status unknown' }))
+    $line = if ($server) { ($server -split "`r?`n")[0] } else { 'installed; server status unknown' }
+    # OK only on a positive "running" status; stopped or unreadable is WARN (M0.4 starts the server).
+    Add-Row 'LM Studio (lms)' ($(if ($line -match 'server is running') { 'OK' } else { 'WARN' })) $line
 } else { Add-Row 'LM Studio (lms)' 'FAIL' 'lms not on PATH' }
 
 # wsl.exe writes UTF-16; strip NULs before reading it.
