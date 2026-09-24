@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -159,6 +160,34 @@ function Assert-ExternalInterpreter {
         throw "Install refuses a -Python interpreter inside the source checkout; removing the checkout would break the Scheduled Task."
     }
     return $python
+}
+
+function Assert-InstalledMatchesCommit {
+    # Get-CleanBridgeSource and the copy are separate reads of the working tree,
+    # so the installed bytes are re-proved against the recorded commit's blobs
+    # (after this checkout's own line-ending conversion, via hash-object --path)
+    # before provenance is written or a task registered.
+    param([string]$Root, [string]$Destination, [string]$Commit)
+    $expected = @{}
+    $listing = @(& git -C $Root -c core.longpaths=true ls-tree -r --full-tree $Commit -- `
+        src/director_orchestrator docs/schemas docs/provider-profiles prompts scripts/windows-host-provider-bridge.ps1)
+    if ($LASTEXITCODE -ne 0) { throw "The recorded bridge commit cannot be listed." }
+    foreach ($line in $listing) {
+        if ($line -cnotmatch '^100(644|755) blob ([0-9a-f]{40})\t([A-Za-z0-9._/-]+)$') {
+            throw "The recorded bridge commit holds an unsupported runtime entry."
+        }
+        $expected[$matches[3]] = $matches[2]
+    }
+    $installed = @(foreach ($line in (Get-BridgeRuntimeManifest -Root $Destination)) { $line.Substring(66) })
+    if ((@($installed | Sort-Object) -join "`n") -cne (@($expected.Keys | Sort-Object) -join "`n")) {
+        throw "Installed bridge runtime does not match the recorded commit; no provenance was written and no task was registered."
+    }
+    foreach ($relative in $installed) {
+        $blob = [string](@(& git -C $Root -c core.longpaths=true hash-object --path $relative -- (Join-Path $Destination $relative)) | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or $blob -cne $expected[$relative]) {
+            throw "Installed bridge runtime does not match the recorded commit; no provenance was written and no task was registered."
+        }
+    }
 }
 
 function Register-BridgeTask {
@@ -327,6 +356,7 @@ if ($Action -eq "Install") {
     $pythonPath = Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python")) { $Python } else { "" }) -SourceRoot $sourceRoot
     $source = Get-CleanBridgeSource -Root $sourceRoot
     $destination = Install-BridgeRuntime -SourceRoot $sourceRoot -InstallRoot $InstallRoot
+    Assert-InstalledMatchesCommit -Root $sourceRoot -Destination $destination -Commit $source[0]
     # Provenance sits beside, never inside, the content-addressed copy.
     [IO.File]::WriteAllText("$destination.source.json", ([ordered]@{
         version = "director-bridge-runtime-source/v1"; commit = $source[0]; tree = $source[1]
@@ -395,3 +425,4 @@ finally {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
@@ -27,20 +28,24 @@ RESPONSES_VALIDATION_TRANSPORT = "responses-api"
 def responses_runtime_binding() -> str:
     """Digest of the code and transport environment executing this route.
 
-    The package directory carries an installed copy's content address and
-    every .py file in the package is hashed, so a replaced runtime or any
-    changed dependency changes the route digest. Proxy/CA names httpx honours
-    are bound by value (only hashed).
+    The runtime root carries an installed copy's content address and every
+    runtime file (code, schemas, profiles, prompts, launcher) is hashed, so a
+    replaced runtime or any changed dependency changes the route digest.
+    Proxy/CA/key-log names are bound by value (only hashed), and so are the
+    proxies urllib resolves, which on Windows fall back to the registry when
+    no proxy variable is set.
     """
     import os
+    import urllib.request
     from .host_provider_bridge import _TRANSPORT_ENV
     from .provider_validation import runtime_package_digest
-    package = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parents[2]
     return digest(canonical_json_bytes({
-        "package": str(package),
-        "modules": runtime_package_digest(package),
+        "package": str(root),
+        "modules": runtime_package_digest(root),
         "transport_environment": {key: value for key, value in sorted(os.environ.items())
                                   if key.upper() in _TRANSPORT_ENV},
+        "resolved_proxies": dict(sorted(urllib.request.getproxies().items())),
     }))
 
 
@@ -590,3 +595,4 @@ def responses_route_from_environment() -> OpenAIResponsesValidationRoute | None:
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

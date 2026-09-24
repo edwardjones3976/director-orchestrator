@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
@@ -1459,17 +1460,25 @@ class RuntimePackageDigestTests(unittest.TestCase):
     def test_runtime_package_digest_covers_every_module(self):
         import shutil
         from director_orchestrator import provider_validation as module
+        source = Path(module.__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as directory:
-            copy = Path(directory) / "director_orchestrator"
-            shutil.copytree(Path(module.__file__).resolve().parent, copy,
-                            ignore=shutil.ignore_patterns("__pycache__"))
-            before = module.runtime_package_digest(copy)
-            (copy / "__pycache__").mkdir()
-            (copy / "__pycache__" / "ignored.py").write_text("IGNORED = 1\n")
-            self.assertEqual(module.runtime_package_digest(copy), before)
-            with (copy / "response_meter.py").open("a") as handle:
-                handle.write("\n# replaced\n")
-            self.assertNotEqual(module.runtime_package_digest(copy), before)
+            root = Path(directory) / "runtime"
+            for tree in ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts"):
+                shutil.copytree(source / tree, root / tree, ignore=shutil.ignore_patterns("__pycache__"))
+            before = module.runtime_package_digest(root)
+            package = root / "src" / "director_orchestrator"
+            (package / "__pycache__").mkdir()
+            (package / "__pycache__" / "ignored.py").write_text("IGNORED = 1\n")
+            self.assertEqual(module.runtime_package_digest(root), before)
+            # Code, and every non-Python asset the runtime reads.
+            for relative in ("src/director_orchestrator/response_meter.py",
+                             "docs/schemas/model-work-packet-v1.schema.json",
+                             "docs/provider-profiles/routes.yaml", "prompts/director-system.md"):
+                with self.subTest(changed=relative):
+                    previous = module.runtime_package_digest(root)
+                    with (root / relative).open("a") as handle:
+                        handle.write("\n")
+                    self.assertNotEqual(module.runtime_package_digest(root), previous)
 
     def test_native_and_team_digests_bind_the_runtime_package(self):
         from director_orchestrator import provider_validation_team as team
@@ -1522,3 +1531,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

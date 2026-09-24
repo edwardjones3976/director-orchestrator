@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
@@ -596,13 +597,17 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
         # even when this live composition recovers it after a mode switch.
         from director_orchestrator.primary_parallel import PaidSetupHold
         from director_orchestrator.primary_workload import WorkloadAdmissionHold
-        for label in ("offline_simulation", "paid_off"):
+        # Only an exact ``live`` label is eligible: unknown, missing and
+        # malformed labels are held like the other modes.
+        for label in ("offline_simulation", "paid_off", "unknown", None, "LIVE", "live ", ""):
             with self.subTest(execution_mode=label):
-                activation.services._execution_modes[record.task_id] = label
+                activation.services._execution_modes.pop(record.task_id, None)
+                if label is not None:
+                    activation.services._execution_modes[record.task_id] = label
                 with self.assertRaises(PaidSetupHold):
                     activation.application._parallel_dispatcher.preflight(
                         reservation, writer=writer, connection=connection(), wave_budget_usage={})
-                with self.assertRaisesRegex(WorkloadAdmissionHold, "simulated_task_requires_live_approval"):
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "task_not_approved_for_live_dispatch"):
                     activation.application._parallel_dispatcher(reservation)
                 self.assertEqual(1, len(contexts))
 
@@ -4219,3 +4224,4 @@ if __name__ == "__main__":
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

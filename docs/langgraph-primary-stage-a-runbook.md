@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
@@ -249,8 +250,8 @@ quiescent (no unfinished dispatch, assignment, writer claim, reconciliation or
 claim), checked before they stop anything and again after the stop, so finish
 or reconcile the other mode's work first. `ActivateOffline` also applies the
 `PrepareOfflineHandoff` profile guard before anything stops. Live dispatch
-refuses any task labelled `offline_simulation` or `paid_off`, and the offline
-dispatcher refuses any task not labelled one of those.
+holds any task not labelled exactly `live`, and the offline dispatcher holds
+any task not labelled `offline_simulation` or `paid_off`.
 
 A later paid `Activate` on the same generation reuses this evidence chain only
 while the legacy inventory is unchanged: it binds the inventory again and
@@ -431,3 +432,4 @@ closed.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->

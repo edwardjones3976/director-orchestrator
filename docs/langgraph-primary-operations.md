@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
@@ -457,8 +458,16 @@ their mere presence:
   junction components of the interpreter, the checkout and the install root are
   resolved to their final targets before those containment checks (a reparse
   point without a link target refuses), and the task registers the resolved
-  interpreter path. Every lane digest (native, team and Responses) also binds a
-  digest of every `.py` file in the running package.
+  interpreter path. Before provenance is written or the task registered, every
+  installed file is re-proved against the recorded commit's blob (with this
+  checkout's line-ending conversion, via `git hash-object --path`), so a file
+  changed after the clean-source check cannot be attested. Every lane digest
+  (native, team and Responses) also binds the runtime content address: every
+  file Install copies (code, `docs/schemas`, `docs/provider-profiles`,
+  `prompts` and the launcher), which for an installed copy equals its
+  directory name. The Responses digest also binds the proxies urllib resolves,
+  which on Windows fall back to the registry when no proxy variable is set, and
+  `SSLKEYLOGFILE` joins the proxy and CA names dropped under a pin.
   Install is persistent host configuration and needs owner
   approval. Generations must pin the digests printed by the installed copy,
   and for the routed `openai` and `antigravity` lanes the digests the running
@@ -645,9 +654,10 @@ and `ActivateOffline` require a quiescent primary plane
 (`primary_quiescence_metrics().rollback_safe`) before they stop anything, and
 again after the stop (writer leases excepted), so unfinished work approved in
 one mode is never recovered by the other mode's dispatcher; on refusal nothing
-is switched. Independently, live dispatch refuses any task whose persisted
-`execution_mode` is `offline_simulation` or `paid_off`, and the offline
-dispatcher refuses any task not labelled `offline_simulation` or `paid_off`.
+is switched. Independently, live dispatch holds any task whose persisted
+`execution_mode` is not exactly `live` (including `unknown`, missing or
+malformed labels), and the offline dispatcher holds any task not labelled
+`offline_simulation` or `paid_off`.
 A later paid `Activate` can reuse that evidence chain only while the
 legacy SQLite task ID/status inventory is unchanged: it binds the inventory
 again and refuses any difference as immutable. Legacy tasks stay live under
@@ -857,3 +867,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->

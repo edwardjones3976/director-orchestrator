@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -637,6 +638,8 @@ foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-B
             result, first = install()
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(first, target / address(files))
+            from director_orchestrator.provider_validation import runtime_package_digest
+            self.assertEqual(runtime_package_digest(first), first.name)
             copied = {path.relative_to(first).as_posix(): path.read_bytes() for path in first.rglob("*") if path.is_file()}
             self.assertEqual(copied, files)
             self.assertFalse(any("__pycache__" in path.parts for path in first.rglob("*")))
@@ -708,6 +711,84 @@ $null = Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
                         self.assertNotEqual(0, result.returncode)
                         self.assertIn(refusal, result.stderr)
                         self.assertNotIn("accepted", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and git are required")
+    def test_bridge_install_reproves_installed_bytes_against_the_recorded_commit(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        proof = install.index("Assert-InstalledMatchesCommit -Root $sourceRoot -Destination $destination -Commit $source[0]")
+        self.assertLess(install.index("Install-BridgeRuntime -SourceRoot"), proof)
+        self.assertLess(proof, install.index('"$destination.source.json"'))
+        self.assertLess(proof, install.index("Register-BridgeTask"))
+        harness = r"""
+param($Source, $Repository, $InstallRoot, $Commit)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime', 'Assert-InstalledMatchesCommit')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$destination = Install-BridgeRuntime -SourceRoot $Repository -InstallRoot $InstallRoot
+Assert-InstalledMatchesCommit -Root $Repository -Destination $destination -Commit $Commit
+'proved'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repository = root / "repository"
+            files = {
+                "src/director_orchestrator/__init__.py": b"# package\n",
+                "docs/schemas/packet.json": b"{}\n",
+                "docs/provider-profiles/claude.md": b"profile\n",
+                "prompts/director-system.md": b"prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": b"# launcher\n",
+            }
+            for relative, content in files.items():
+                (repository / relative).parent.mkdir(parents=True, exist_ok=True)
+                (repository / relative).write_bytes(content)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def git(*arguments):
+                return subprocess.run(["git", "-C", str(repository), *arguments], capture_output=True,
+                                      text=True, check=True, stdin=subprocess.DEVNULL).stdout.strip()
+
+            git("init", "-q")
+            git("add", "-A")
+            git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture")
+            commit = git("rev-parse", "HEAD^{commit}")
+
+            def install(target):
+                return subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(repository),
+                     str(root / target), commit],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+
+            result = install("install-clean")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("proved", result.stdout)
+            # A runtime file changed after the clean-source check: the copy is
+            # self-consistent, but it is not the recorded commit.
+            for relative, content in (("prompts/director-system.md", b"raced prompt\n"),
+                                      ("src/director_orchestrator/extra.py", b"RACED = 1\n")):
+                with self.subTest(raced=relative):
+                    path = repository / relative
+                    original = path.read_bytes() if path.exists() else None
+                    path.write_bytes(content)
+                    try:
+                        result = install("install-" + path.stem)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("does not match the recorded commit", result.stderr)
+                        self.assertNotIn("proved", result.stdout)
+                    finally:
+                        if original is None:
+                            path.unlink()
+                        else:
+                            path.write_bytes(original)
 
     @unittest.skipUnless(shutil.which("pwsh") and os.name == "nt", "PowerShell junctions on Windows are required")
     def test_bridge_install_resolves_interpreter_and_checkout_aliases(self) -> None:
@@ -1045,3 +1126,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

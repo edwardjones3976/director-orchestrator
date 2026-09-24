@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -254,8 +255,10 @@ class ResponsesRouteTests(unittest.TestCase):
                 self.assertNotEqual(responses_runtime_binding(), baseline)
                 self.assertNotEqual(route.configuration_digest, digest_before)
             with tempfile.TemporaryDirectory() as directory:
-                copy = Path(directory) / ("a" * 64) / "director_orchestrator"
+                runtime = Path(directory) / ("a" * 64)
+                copy = runtime / "src" / "director_orchestrator"
                 shutil.copytree(package, copy, ignore=shutil.ignore_patterns("__pycache__"))
+                shutil.copytree(package.parents[1] / "docs" / "schemas", runtime / "docs" / "schemas")
                 with patch.object(module, "__file__", str(copy / "openai_responses_validation.py")):
                     relocated = responses_runtime_binding()
                     self.assertNotEqual(relocated, baseline)
@@ -268,6 +271,14 @@ class ResponsesRouteTests(unittest.TestCase):
                         with (copy / name).open("ab") as handle:
                             handle.write(b"\n# replaced\n")
                         self.assertNotEqual(responses_runtime_binding(), before, name)
+                    # A schema-only change is a packet-contract change.
+                    before = responses_runtime_binding()
+                    with (runtime / "docs" / "schemas" / "model-work-packet-v1.schema.json").open("ab") as handle:
+                        handle.write(b"\n")
+                    self.assertNotEqual(responses_runtime_binding(), before)
+            # Registry-resolved proxies count even with no proxy variable set.
+            with patch("urllib.request.getproxies", return_value={"https": "http://registry.invalid:8080"}):
+                self.assertNotEqual(responses_runtime_binding(), baseline)
             self.assertEqual(route.configuration_digest, digest_before)
 
     def test_configuration_digest_binds_the_timeout_ceiling(self):
@@ -733,3 +744,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

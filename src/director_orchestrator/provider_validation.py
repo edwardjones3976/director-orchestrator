@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
@@ -698,27 +699,40 @@ def pinned_path_manifest(value: str) -> dict:
     return manifest
 
 _RUNTIME_PACKAGE_DIGESTS: dict = {}
+# The trees Install copies (Get-BridgeRuntimeManifest in
+# scripts/windows-host-provider-bridge.ps1): code plus every non-Python asset
+# the runtime reads (packet and profile schemas, provider profiles, prompts).
+_RUNTIME_TREES = ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts")
+_RUNTIME_LAUNCHER = "scripts/windows-host-provider-bridge.ps1"
 
 
-def runtime_package_digest(package=None) -> str:
-    """Digest of every .py file in the running director_orchestrator package.
+def runtime_package_digest(root=None) -> str:
+    """Content address of the running bridge runtime.
 
-    Each lane's configuration digest binds it, so any code change on any
-    validation path, imported directly or not, is configuration drift. Bytes
-    are rehashed only when a file's name, size or mtime changes, so repeated
-    digests inside a bounded validation deadline cost a directory stat.
+    The same manifest Install copies: every file under the runtime trees plus
+    the launcher, bytecode caches excluded, as sorted ``sha256  path`` lines
+    hashed together, so an installed copy's digest equals its directory name.
+    Each lane's configuration digest binds it, so a change to any code or
+    runtime-read asset is configuration drift. Bytes are rehashed only when a
+    file's name, size or mtime changes, so repeated digests inside a bounded
+    validation deadline cost a directory stat.
     """
     from pathlib import Path
-    package = Path(__file__).resolve().parent if package is None else Path(package)
-    files = sorted(path for path in package.rglob("*.py") if "__pycache__" not in path.parts)
-    signature = tuple((path.relative_to(package).as_posix(), path.stat().st_size, path.stat().st_mtime_ns)
+    root = Path(__file__).resolve().parents[2] if root is None else Path(root)
+    files = [path for tree in _RUNTIME_TREES if (root / tree).is_dir()
+             for path in (root / tree).rglob("*")
+             if path.is_file() and "__pycache__" not in path.relative_to(root).parts]
+    if (root / _RUNTIME_LAUNCHER).is_file():
+        files.append(root / _RUNTIME_LAUNCHER)
+    files.sort(key=lambda path: path.relative_to(root).as_posix())
+    signature = tuple((path.relative_to(root).as_posix(), path.stat().st_size, path.stat().st_mtime_ns)
                       for path in files)
-    cached = _RUNTIME_PACKAGE_DIGESTS.get(str(package))
+    cached = _RUNTIME_PACKAGE_DIGESTS.get(str(root))
     if cached is not None and cached[0] == signature:
         return cached[1]
-    value = digest(canonical_json_bytes({
-        path.relative_to(package).as_posix(): digest(path.read_bytes()) for path in files}))
-    _RUNTIME_PACKAGE_DIGESTS[str(package)] = (signature, value)
+    lines = sorted(f"{digest(path.read_bytes())}  {path.relative_to(root).as_posix()}" for path in files)
+    value = digest(("\n".join(lines) + "\n").encode("utf-8"))
+    _RUNTIME_PACKAGE_DIGESTS[str(root)] = (signature, value)
     return value
 
 
@@ -1098,3 +1112,4 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
