@@ -11,9 +11,12 @@ Qwen repo), pinned by revision; the report records the commit transformers actua
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -29,14 +32,15 @@ from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 BASE = os.environ.get("SMOKE_BASE", "unsloth/qwen3-0.6b-unsloth-bnb-4bit")
 REVISION = os.environ.get("SMOKE_REVISION", "e86f5289a2ca40ab7114071959dc2079cf97cb3c")
-# The GGUF merge step fetches this full-precision repo itself, at its upstream main (Unsloth offers no revision
-# argument). It is pinned by verification: the run stops before training if main has moved, and the GGUF is
-# published only if the export resolved exactly this commit and fetched nothing else.
+# The GGUF merge merges the adapter onto this full-precision repo, which Unsloth would otherwise fetch at "main"
+# (it takes no revision). It is bound instead: the pinned commit is downloaded, and the export runs in a child
+# process with HF_HUB_OFFLINE=1 that points the merge at that snapshot's local directory. Offline, nothing
+# else can be fetched, so the GGUF can only be built from the pinned base and pinned merge source.
 MERGE_SOURCE = os.environ.get("SMOKE_MERGE_SOURCE", "unsloth/qwen3-0.6b")
 MERGE_REVISION = os.environ.get("SMOKE_MERGE_REVISION", "db4e90b8359f816f09bf5c944797ce116f26da3c")
 SEED, STEPS, ROWS, SEQ = 7, 20, 50, 1024
 # Timestamp for humans plus a random suffix, so two runs in the same second never share paths.
-RUN = "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
+RUN = os.environ.get("SMOKE_RUN") or "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
 WS = Path("/workspace")
 RUN_DIR, MODEL_DIR, REPORT = WS / "runs" / RUN, WS / "models" / "smoke", WS / "reports" / f"{RUN}.json"
 
@@ -80,15 +84,14 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
     return commit
 
 
-def check_merge_source(before: dict[str, str], after: dict[str, str], source: str, revision: str) -> str:
-    """Given the cache refs before and after the export, return the attested merge-source commit or raise:
-    the source must resolve to the pinned revision, and no other repo's ref may have changed."""
-    if after.get(source) != revision:
-        raise SystemExit(f"export used {source}@{after.get(source)}, not the pinned {revision}; GGUF not published")
-    other = sorted(r for r, c in after.items() if before.get(r) != c and r != source)
-    if other:
-        raise SystemExit(f"export also fetched {other}; its sources cannot be attested; GGUF not published")
-    return revision
+def pin_ref(repo: str, revision: str) -> None:
+    """Point the cache's refs/main for repo at revision, which must already be a cached snapshot. Offline
+    (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot."""
+    d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--"))
+    if not (d / "snapshots" / revision).is_dir():
+        raise SystemExit(f"{repo}@{revision} is not in the cache; cannot pin it for the offline export")
+    (d / "refs").mkdir(parents=True, exist_ok=True)
+    (d / "refs" / "main").write_text(revision)
 
 
 def write_report(path: Path, report: dict) -> None:
@@ -112,10 +115,6 @@ def publish(src: Path, dest: Path) -> None:
 
 def main() -> None:
     t0 = time.time()
-    from huggingface_hub import HfApi
-    upstream = HfApi().model_info(MERGE_SOURCE).sha
-    if upstream != MERGE_REVISION:  # fail before spending the training time on a GGUF we would not publish
-        raise SystemExit(f"{MERGE_SOURCE} main is {upstream}, not the pinned {MERGE_REVISION}; update the pin deliberately")
     set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
     torch.cuda.reset_peak_memory_stats()
     model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
@@ -178,22 +177,27 @@ def main() -> None:
         report["sample_is_json"] = False
     write_report(REPORT, report)  # training evidence survives a failed export
 
-    # Merge + GGUF export rewrite model.safetensors in place, which the Windows bind mount refuses
-    # (Errno 13), so export inside the container filesystem and copy only the finished GGUF out.
-    export_dir = Path("/tmp") / RUN / "gguf"
+    # Stage the export's inputs, then free this process's GPU memory: fetch the merge source at its pinned commit,
+    # and point the base's refs/main at its pin, because the offline child reloads the base by name via the adapter.
+    from huggingface_hub import snapshot_download
+    snapshot_download(MERGE_SOURCE, revision=MERGE_REVISION)
+    pin_ref(BASE, resolved)
+    del trainer, model
+    gc.collect()
+    torch.cuda.empty_cache()
     t_gguf = time.time()
-    refs_before = hf_cache_refs()
-    model.save_pretrained_gguf(str(export_dir), tok, quantization_method="q4_k_m")
+    subprocess.run([sys.executable, __file__, "export"], check=True,
+                   env={**os.environ, "SMOKE_RUN": RUN, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
     report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
-    report["merge_source"] = MERGE_SOURCE
-    report["merge_resolved_commit"] = check_merge_source(refs_before, hf_cache_refs(), MERGE_SOURCE, MERGE_REVISION)
+    report["merge_source"], report["merge_revision"] = MERGE_SOURCE, MERGE_REVISION  # bound: offline, local snapshot
+    export_dir = Path("/tmp") / RUN / "gguf"
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     report["gguf"] = []
     for f in export_dir.parent.rglob("*.gguf"):
         dest = MODEL_DIR / f"{RUN}-{f.name}"
         publish(f, dest)
         report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
-    report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_resolved_commit
+    report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_revision
     report["wall_seconds"] = round(time.time() - t0, 1)
     write_report(REPORT, report)
     print(json.dumps(report, indent=2))
@@ -201,6 +205,18 @@ def main() -> None:
         raise SystemExit("no GGUF produced")
 
 
+def export() -> None:
+    """Child process, started offline by main(): reload the adapter on its pinned base and write the GGUF.
+    Merge + GGUF export rewrite model.safetensors in place, which the Windows bind mount refuses (Errno 13),
+    so the export goes to the container filesystem and main() copies only the finished GGUF out."""
+    from huggingface_hub import snapshot_download
+    merge_dir = snapshot_download(MERGE_SOURCE, revision=MERGE_REVISION, local_files_only=True)
+    model, tok = FastLanguageModel.from_pretrained(str(RUN_DIR / "adapter"), max_seq_length=SEQ, load_in_4bit=True)
+    # Unsloth picks the merge source from config._name_or_path and merges a local directory's safetensors as-is.
+    model.config._name_or_path = merge_dir
+    model.save_pretrained_gguf(str(Path("/tmp") / RUN / "gguf"), tok, quantization_method="q4_k_m")
+
+
 if __name__ == "__main__":
-    main()
+    export() if sys.argv[1:] == ["export"] else main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]

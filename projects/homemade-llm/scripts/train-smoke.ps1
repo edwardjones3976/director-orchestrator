@@ -84,7 +84,8 @@ $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCO
 $done = $false
 try {
     if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
-        $state = Stop-Smoke; $done = $true
+        $done = $true   # set first: if cleanup itself throws, finally must not run it a second time
+        $state = Stop-Smoke
         Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
     }
     $done = $true
