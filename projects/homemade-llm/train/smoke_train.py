@@ -60,6 +60,30 @@ def hf_cache_refs() -> dict[str, str]:
             for d in sorted(hub.glob("models--*")) if (d / "refs" / "main").exists()}
 
 
+def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
+    """The commit the base was actually loaded from. Prefer the hash transformers stamps on the config;
+    fall back to the local snapshot the pinned revision resolves to. A pinned 40-hex revision must match.
+    Raises instead of returning None, so a report can never claim provenance it does not have."""
+    commit = config_commit
+    if not commit:
+        from huggingface_hub import snapshot_download
+        commit = Path(snapshot_download(repo, revision=revision, local_files_only=True)).name
+    if not commit:
+        raise SystemExit(f"could not resolve the commit for {repo}@{revision}")
+    if len(revision) == 40 and commit != revision:
+        raise SystemExit(f"{repo}: loaded commit {commit} does not match the pinned revision {revision}")
+    return commit
+
+
+def write_report(path: Path, report: dict) -> None:
+    """Write to a temp file and rename over the report, so an interrupted update never truncates the
+    earlier valid report (the pre-export training evidence)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def publish(src: Path, dest: Path) -> None:
     """Copy under a .part name and rename only after the size matches, so no truncated .gguf is ever visible."""
     part = dest.with_name(dest.name + ".part")
@@ -75,8 +99,8 @@ def main() -> None:
     set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
     torch.cuda.reset_peak_memory_stats()
     model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
-    # transformers stamps the commit it actually resolved onto the config: this run's real provenance.
-    resolved = getattr(model.config, "_commit_hash", None)
+    # This run's real provenance; fails the run (before any training) if it cannot be established.
+    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), BASE, REVISION)
     model = FastLanguageModel.get_peft_model(
         model, r=16, lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -132,8 +156,7 @@ def main() -> None:
         report["sample_is_json"] = True
     except ValueError:
         report["sample_is_json"] = False
-    REPORT.parent.mkdir(parents=True, exist_ok=True)
-    REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")  # training evidence survives a failed export
+    write_report(REPORT, report)  # training evidence survives a failed export
 
     # Merge + GGUF export rewrite model.safetensors in place, which the Windows bind mount refuses
     # (Errno 13), so export inside the container filesystem and copy only the finished GGUF out.
@@ -149,7 +172,7 @@ def main() -> None:
         report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
     report["hf_cache_refs"] = hf_cache_refs()  # context only (see docstring); provenance is base_resolved_commit
     report["wall_seconds"] = round(time.time() - t0, 1)
-    REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    write_report(REPORT, report)
     print(json.dumps(report, indent=2))
     if not report["gguf"]:
         raise SystemExit("no GGUF produced")

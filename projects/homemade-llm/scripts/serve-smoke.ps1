@@ -1,17 +1,32 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | BEGIN]]
 # M0.4: serve the M0.3 smoke GGUF through LM Studio and prove /v1 works from Windows and from a container.
-#   .\serve-smoke.ps1                      newest C:\llm\models\smoke\*.gguf
-#   .\serve-smoke.ps1 -Gguf <path>
+#   .\serve-smoke.ps1                      newest <HotRoot>\models\smoke\*.gguf
+#   .\serve-smoke.ps1 -Gguf <path> [-HotRoot <root>]
 # The model is imported as a hard link (no second copy) and loaded with a TTL so it frees the GPU itself.
-# Exit 0 = both calls returned HTTP 200 with schema-valid JSON; 1 otherwise.
+# Exit 0 = both calls returned HTTP 200 with schema-valid JSON and LM Studio is loopback-only; 1 otherwise.
 [CmdletBinding()]
 param(
     [string]$Gguf,
+    [string]$HotRoot = 'C:\llm',   # same default and meaning as train-smoke.ps1 -HotRoot
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
     [int]$TtlSeconds = 900,
     [string]$LmsModelsDir = (Join-Path $env:USERPROFILE '.lmstudio\models')
 )
 $ErrorActionPreference = 'Stop'
+$reports = Join-Path $HotRoot 'reports'
+
+# True only when every listener on the port is loopback, and there is at least one.
+function Test-LoopbackOnly($Listeners) {
+    $l = @($Listeners)
+    ($l.Count -gt 0) -and (@($l | Where-Object { $_.LocalAddress -notin '127.0.0.1', '::1' }).Count -eq 0)
+}
+
+# True only when `lms ps` shows exactly one 'smoke' model, loaded from the expected catalog path with the
+# requested TTL; this is what proves the reload happened and the GPU-release bound is in force.
+function Test-LoadedModel($Loaded, [string]$Path, [int]$TtlSeconds) {
+    $smoke = @($Loaded | Where-Object { $_.identifier -eq 'smoke' })
+    ($smoke.Count -eq 1) -and ($smoke[0].path -eq $Path) -and ([long]$smoke[0].ttlMs -eq [long]$TtlSeconds * 1000)
+}
 
 # True only when both files have identical content (the import is a hard link, so this is normally instant
 # to confirm; a same-named stale import with different bytes fails it).
@@ -20,11 +35,18 @@ function Test-SameContent([string]$A, [string]$B) {
     ((Get-Item -LiteralPath $A).Length -eq (Get-Item -LiteralPath $B).Length) -and
     ((Get-FileHash -LiteralPath $A).Hash -eq (Get-FileHash -LiteralPath $B).Hash)
 }
-if (-not $Gguf) { $Gguf = (Get-ChildItem 'C:\llm\models\smoke\*.gguf' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName }
+if (-not $Gguf) { $Gguf = (Get-ChildItem (Join-Path $HotRoot 'models\smoke\*.gguf') | Sort-Object LastWriteTime | Select-Object -Last 1).FullName }
 if (-not $Gguf -or -not (Test-Path -LiteralPath $Gguf -PathType Leaf)) { Write-Error 'no smoke GGUF found; run train-smoke.ps1 first' }
+if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$reports does not exist (run preflight.ps1 -Init)" }
 
 # lms prints status on stderr; native exit codes are checked explicitly.
 lms server start 2>&1 | Out-Null
+# Refuse before anything is loaded if the API is reachable beyond loopback ("serve on local network").
+$preLoad = Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue
+if (-not (Test-LoopbackOnly $preLoad)) {
+    lms server stop 2>&1 | Out-Null
+    Write-Error "LM Studio is listening beyond loopback on 1234 ($(($preLoad.LocalAddress | Sort-Object -Unique) -join ', ')); server stopped, nothing loaded. Turn off 'serve on local network'."
+}
 $known = (lms ls --json 2>$null | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
 if (-not $known) {
     lms import $Gguf -L -y --user-repo homemade-llm/smoke 2>&1 | Out-Host
@@ -43,6 +65,9 @@ if (-not (Test-SameContent $Gguf $imported)) { Write-Error "LM Studio's $($known
 if ((lms ps --json 2>$null | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { lms unload smoke 2>&1 | Out-Null }
 lms load $known.modelKey --identifier smoke --ttl $TtlSeconds -y 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error 'lms load failed' }
+if (-not (Test-LoadedModel (lms ps --json 2>$null | ConvertFrom-Json) $known.path $TtlSeconds)) {
+    Write-Error "after loading, lms ps does not show 'smoke' = $($known.path) with ttl ${TtlSeconds}s"
+}
 
 # The request pins the output to a JSON schema (LM Studio honours response_format on chat/completions).
 $request = @{
@@ -55,7 +80,7 @@ $request = @{
         type = 'object'; additionalProperties = $false; required = @('task_id', 'objective')
         properties = @{ task_id = @{ type = 'string' }; objective = @{ type = 'string' } } } } }
 } | ConvertTo-Json -Depth 8 -Compress
-$reqFile = Join-Path 'C:\llm\reports' ("serve-smoke-request-{0}.json" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
+$reqFile = Join-Path $reports ("serve-smoke-request-{0}.json" -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 
 # PASS needs curl exit 0, HTTP 200, exactly the two keys, and both values non-empty strings (the schema's types).
 function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
@@ -79,7 +104,7 @@ try {
     # From a container: Docker Desktop forwards host.docker.internal to the host loopback, so LM Studio
     # can stay bound to 127.0.0.1 (no "serve on local network").
     $leaf = Split-Path $reqFile -Leaf
-    $ctrLines = @(docker run --rm -v 'C:\llm\reports:/r:ro' --entrypoint curl $Image -s -w "`n%{http_code}" --max-time 120 `
+    $ctrLines = @(docker run --rm -v "${reports}:/r:ro" --entrypoint curl $Image -s -w "`n%{http_code}" --max-time 120 `
         http://host.docker.internal:1234/v1/chat/completions -H 'Content-Type: application/json' --data "@/r/$leaf")
     $results += Test-Reply 'container' $ctrLines $LASTEXITCODE
 } finally {
@@ -87,9 +112,9 @@ try {
 }
 
 # The API must not be reachable from the network: every listener on 1234 has to be loopback.
+# Checked again at the end in case the binding changed during the run.
 $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue)
-$exposed = @($listeners | Where-Object { $_.LocalAddress -notin '127.0.0.1', '::1' })
-$loopbackOnly = $listeners.Count -gt 0 -and $exposed.Count -eq 0
+$loopbackOnly = Test-LoopbackOnly $listeners
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
 Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"
 $pass = (@($results | Where-Object schema_valid).Count -eq 2) -and $loopbackOnly

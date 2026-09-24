@@ -11,7 +11,7 @@ function Assert-Equal($Actual, $Expected, [string]$Case) {
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
 Assert-Equal $errors.Count 0 'parser: no errors'
-foreach ($name in 'Test-Reply', 'Test-SameContent') {
+foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -27,6 +27,23 @@ Assert-Equal (Test-Reply 'x' @((Body '{"task_id":"a","objective":"b","x":1}'), '
 Assert-Equal (Test-Reply 'x' @((Body $good), '500') 0).schema_valid $false 'reply: HTTP 500 fails'
 Assert-Equal (Test-Reply 'x' @((Body $good), '200') 7).schema_valid $false 'reply: curl exit 7 fails'
 Assert-Equal (Test-Reply 'x' @('not json', '200') 0).schema_valid $false 'reply: non-JSON body fails'
+
+$p = 'homemade-llm/smoke/new.gguf'
+$m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }
+Assert-Equal (Test-LoadedModel @(& $m $p 900000) $p 900) $true 'load: right model with requested TTL passes'
+Assert-Equal (Test-LoadedModel @(& $m $p $null) $p 900) $false 'load: model without TTL (reload skipped) fails'
+Assert-Equal (Test-LoadedModel @(& $m $p 600000) $p 900) $false 'load: stale TTL from an earlier load fails'
+Assert-Equal (Test-LoadedModel @(& $m 'homemade-llm/smoke/old.gguf' 900000) $p 900) $false 'load: older build still loaded fails'
+Assert-Equal (Test-LoadedModel @() $p 900) $false 'load: nothing loaded fails'
+Assert-Equal (Test-LoadedModel @((& $m $p 900000), (& $m $p 900000)) $p 900) $false 'load: duplicate smoke identifiers fail'
+Assert-Equal (Test-LoadedModel @((& $m $p 900000), (& $m 'x' 1 'other')) $p 900) $true 'load: other loaded models are ignored'
+
+$l = { param($addr) [pscustomobject]@{ LocalAddress = $addr; LocalPort = 1234 } }
+Assert-Equal (Test-LoopbackOnly @(& $l '127.0.0.1')) $true 'bind: IPv4 loopback only passes'
+Assert-Equal (Test-LoopbackOnly @((& $l '127.0.0.1'), (& $l '::1'))) $true 'bind: IPv4 and IPv6 loopback passes'
+Assert-Equal (Test-LoopbackOnly @((& $l '127.0.0.1'), (& $l '0.0.0.0'))) $false 'bind: any extra non-loopback listener fails'
+Assert-Equal (Test-LoopbackOnly @(& $l '192.168.1.20')) $false 'bind: LAN address fails'
+Assert-Equal (Test-LoopbackOnly @()) $false 'bind: no listener fails'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null

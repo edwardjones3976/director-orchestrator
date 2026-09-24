@@ -72,6 +72,37 @@ class SmokeTrainTests(unittest.TestCase):
             with mock.patch.dict(smoke_train.os.environ, {"HF_HOME": tmp}):
                 self.assertEqual(smoke_train.hf_cache_refs(), {"org/name": "abc123"})
 
+    def test_resolve_commit_prefers_config_and_enforces_pin(self):
+        pin = "a" * 40
+        self.assertEqual(smoke_train.resolve_commit(pin, "org/m", pin), pin)
+        with self.assertRaises(SystemExit):
+            smoke_train.resolve_commit("b" * 40, "org/m", pin)  # loaded something other than the pin
+
+    def test_resolve_commit_falls_back_to_snapshot_and_never_returns_none(self):
+        pin = "c" * 40
+        hub = types.ModuleType("huggingface_hub")
+        hub.snapshot_download = lambda repo, revision, local_files_only: f"/cache/snapshots/{pin}"
+        with mock.patch.dict(sys.modules, {"huggingface_hub": hub}):
+            self.assertEqual(smoke_train.resolve_commit(None, "org/m", pin), pin)
+        hub.snapshot_download = lambda repo, revision, local_files_only: "/cache/snapshots/"
+        with mock.patch.dict(sys.modules, {"huggingface_hub": hub}):
+            with self.assertRaises(SystemExit):
+                smoke_train.resolve_commit(None, "org/m", pin)
+
+    def test_write_report_failure_keeps_previous_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "reports", "r.json")
+            smoke_train.write_report(path, {"stage": "pre-export"})
+            def boom(self, *a, **k):
+                raise OSError("disk full")
+            with mock.patch.object(Path, "write_text", boom):
+                with self.assertRaises(OSError):
+                    smoke_train.write_report(path, {"stage": "final"})
+            self.assertEqual(json.loads(path.read_text()), {"stage": "pre-export"})
+            smoke_train.write_report(path, {"stage": "final"})
+            self.assertEqual(json.loads(path.read_text()), {"stage": "final"})
+            self.assertFalse(path.with_name("r.json.tmp").exists())
+
     def test_hf_home_is_forced_not_defaulted(self):
         # The image sets its own HF_HOME; the module must override it, not setdefault.
         self.assertEqual(smoke_train.os.environ["HF_HOME"], "/workspace/hf")
