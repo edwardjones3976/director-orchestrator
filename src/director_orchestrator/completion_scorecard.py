@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
@@ -67,6 +68,9 @@ _TS = re.compile(r"\d{10,}\.\d{1,6}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "transport-failure", "duplicate-input", "ambiguous-post")
 # Owner decision 2026-09-23: every runtime lane actually used must be its real product.
+# The product transport IDs (primary_transports / primary_parallel) that run each OpenAI product.
+_OPENAI_TRANSPORTS = {"responses-api": "openai-responses", "native-cli": "openai-codex",
+                      "authenticated-windows-host-bridge": "openai-codex"}
 REAL_PRODUCTS = {"openai": {"openai-responses", "openai-codex"},
                  "grok": {"xai-grok-responses", "xai-grok-cli"},
                  "claude": {"anthropic-claude"}}
@@ -331,6 +335,12 @@ def _container_name(value: str) -> str:
     return value
 
 
+def _slack_app_id(token: str) -> str | None:
+    """The Slack app ID an app-level token names; never the token or any part of its secret."""
+    match = re.fullmatch(r"xapp-\d+-(A[A-Z0-9]{6,20})-\d+-[A-Za-z0-9]+", token or "")
+    return match.group(1) if match else None
+
+
 def _gateway_launch(container: dict[str, Any]) -> bool:
     command = (container.get("Config", {}).get("Entrypoint") or []) + (container.get("Config", {}).get("Cmd") or [])
     return ("director_orchestrator.slack_bot" in command
@@ -403,7 +413,9 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     in_deployment = None if gateway_project is None else gateway_project == runtime.project
     workflow = None
     upstream = {}
-    if n8n is not None and n8n_db is not None:
+    # Only n8n's own execution store says which intake workflow it runs.
+    store = _n8n_store(n8n, n8n_db, containers) if n8n is not None else None
+    if n8n is not None and n8n_db is not None and store is True:
         try:
             workflow = _run_json(["docker", "exec", n8n_db["Id"], "psql", "-U", "n8n", "-d", "n8n",
                                   "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
@@ -424,7 +436,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
              "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
              "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
-             "n8n_upstream_environment": upstream.get("environment"),
+             "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
              "active_intake": workflow,
              "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
                                        for row in (director, gateway, n8n))}
@@ -458,14 +470,21 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
         route_pass, explanation = None, "The expected gateway carries no Compose labels; deployment membership is unproven."
     result = [_observation("01", route_pass, explanation,
                            "Docker topology and n8n upstream GET /health", facts, at, **binding)]
-    app_token = gateway_env.get("SLACK_APP_TOKEN", "")
-    if not app_token:
+    # A Slack app-level token carries its app's ID (xapp-<n>-<APP_ID>-...): that, not one credential
+    # instance, is the gateway's identity, so a rotated or second token of the same app still matches.
+    app = _slack_app_id(gateway_env.get("SLACK_APP_TOKEN", ""))
+    if app is None:
         return result + [_observation("02", None, "Canonical gateway app identity unavailable.", "Docker gateway", gateway_identity, at, **binding)]
-    fingerprint = hashlib.sha256(app_token.encode()).digest()
     matches, unknown = [], 0
     for row in containers:
         token = _environment(row).get("SLACK_APP_TOKEN", "")
-        if not token or not hmac.compare_digest(hashlib.sha256(token.encode()).digest(), fingerprint):
+        if not token:
+            continue
+        other = _slack_app_id(token)
+        if other is None:
+            unknown += 1  # an app token whose app cannot be read may be this app's
+            continue
+        if other != app:
             continue
         command = (row.get("Config", {}).get("Entrypoint") or []) + (row.get("Config", {}).get("Cmd") or [])
         if _gateway_launch(row):
@@ -483,7 +502,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
             passed = True
     inventory = {**gateway_identity, "running_containers_inspected": len(containers),
                  "matching_docker_gateways": len(matches), "unclassified_same_app_containers": unknown, "host_inventory": host}
-    result.append(_observation("02", passed, "Compared app-token fingerprints in memory across all running containers and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
+    result.append(_observation("02", passed, "Compared the Slack app ID named by each running container's app token and inspected known Windows gateway launch signatures. Unreadable/unclassified or host gateway processes require reconciliation; custom or remote launches are not attested.",
                                "Docker running inventory and Windows Win32_Process", inventory, at, **binding))
     return result
 
@@ -629,6 +648,8 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
+                "succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
+                "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
@@ -775,12 +796,17 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
                             "its generation and provider bindings; they cannot attest that run.",
                             _CAPTURES_SOURCE, facts, at, **binding)
 
+    # The OpenAI lane has two real products; each attempt's transport must be a known one of them.
+    # A capture that is not a real OpenAI product is a substitution whatever the transport.
+    if ("openai" in used and "openai" not in unbound and products.get("openai") in REAL_PRODUCTS["openai"]
+            and not set(transports.get("openai", [])) <= set(_OPENAI_TRANSPORTS)):
+        unbound.append("openai")  # an unknown transport is unattested, never assumed to be Codex
+
     def attested(lane: str) -> bool:
         if lane not in REAL_PRODUCTS or products[lane] not in REAL_PRODUCTS[lane]:
             return False
-        # The OpenAI lane has two real products; the capture must be the one the attempts' transport used.
-        return lane != "openai" or {"openai-responses" if transport == "responses-api" else "openai-codex"
-                                    for transport in transports[lane]} == {products[lane]}
+        # The capture must be the product the attempts' transport used.
+        return lane != "openai" or {_OPENAI_TRANSPORTS[transport] for transport in transports[lane]} == {products[lane]}
 
     substituted = [lane for lane in used if lane not in REAL_PRODUCTS or (lane not in unbound and not attested(lane))]
     if substituted:
@@ -856,18 +882,35 @@ def _flatted(text: str) -> Any:
         raise ValueError("execution data nests beyond its bound") from None
 
 
-def _selected_director_hop(runtime: _Runtime) -> bool | None:
-    """From docker inspect only: the deployment's n8n reaches the selected Director as orchestrator."""
+def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
+               containers: list[dict[str, Any]]) -> bool | None:
+    """From docker inspect only: n8n's own DB_* settings name the n8n/n8n PostgreSQL database on the
+    queried container, which alone answers to that host on n8n's networks. No value is ever reported."""
+    env = _environment(n8n or {})
+    if (env.get("DB_TYPE") != "postgresdb" or env.get("DB_POSTGRESDB_DATABASE") != "n8n"
+            or env.get("DB_POSTGRESDB_USER") != "n8n" or env.get("DB_POSTGRESDB_PORT", "5432") != "5432"
+            or not env.get("DB_POSTGRESDB_HOST") or database is None):
+        return False
+    return _hop(n8n, database, env["DB_POSTGRESDB_HOST"], containers)
+
+
+def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | None]:
+    """(n8n reaches the selected Director as orchestrator, n8n's store is the queried n8n-db, that db's ID)."""
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("running container inventory unavailable or exceeds 128")
     containers = _run_json(["docker", "inspect", *ids])
-    n8n = [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
-           and _labels(row).get("com.docker.compose.service") == "n8n"]
+
+    def service(name: str) -> list[dict[str, Any]]:
+        return [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+                and _labels(row).get("com.docker.compose.service") == name]
+
+    n8n, databases = service("n8n"), service("n8n-db")
     director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
-    if len(n8n) != 1 or director is None:
-        return None
-    return _hop(n8n[0], director, "orchestrator", containers)
+    if len(n8n) != 1 or len(databases) != 1 or director is None:
+        return None, None, None
+    return (_hop(n8n[0], director, "orchestrator", containers), _n8n_store(n8n[0], databases[0], containers),
+            databases[0].get("Id"))
 
 
 def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
@@ -893,15 +936,18 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
     binding = runtime.binding
     source = "n8n Director Status saved execution (READ ONLY) and Slack conversations.replies"
-    databases = _compose_ids(runtime.project, "n8n-db")
-    if len(databases) != 1:
-        return _observation("04", None, "The selected deployment does not run exactly one n8n-db service.",
+    hop, store, database = _n8n_bindings(runtime)
+    if database is None:
+        return _observation("04", None, "The selected deployment does not run exactly one n8n and one n8n-db service.",
                             source, {}, at, **binding)
     # The status workflow reads health from orchestrator: timing alone cannot say which Director that was.
-    if _selected_director_hop(runtime) is not True:
+    if hop is not True:
         return _observation("04", None, "The deployment's n8n is not shown to reach the selected Director, and only "
                             "it, as orchestrator; its status posts cannot attest this runtime.", source, {}, at, **binding)
-    found = _run_json(["docker", "exec", databases[0], "psql", "-U", "n8n", "-d", "n8n",
+    if store is not True:
+        return _observation("04", None, "n8n's own database settings do not name the queried n8n-db as its only "
+                            "execution store; its saved executions cannot be read as n8n's.", source, {}, at, **binding)
+    found = _run_json(["docker", "exec", database, "psql", "-U", "n8n", "-d", "n8n",
                        "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _STATUS_EXECUTION])
     if not isinstance(found, dict) or found.get("workflows") != 1 or not isinstance(found.get("execution"), dict):
         return _observation("04", None, "No single Director Status workflow has a saved successful posting execution "
@@ -943,7 +989,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if any(not t.m.unedited(m) for m in posted):
         return _observation("04", None, "The message at the execution's posted timestamp was edited or has a subtype, "
                             "so its text is not what the execution posted.", source, facts, at, **binding)
-    status = [m for m in posted if m.get("bot_id") and html.unescape(str(m.get("text", ""))).startswith("*STATUS —")]
+    status = [m for m in posted if m.get("bot_id") and m.get("user") == t.bot
+              and html.unescape(str(m.get("text", ""))).startswith("*STATUS —")]
     if complete and len(posted) == 1 and len(status) == 1:
         return _observation("04", True, "A saved successful scheduled execution's Slack post was read back as the bot's "
                             "STATUS message in the project channel.", source, facts, at, **binding)
@@ -1006,7 +1053,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
         if ((replies or 0) > 1 or (tasks is not None and tasks > 1)
                 or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
             verdict = False
-        elif (status == 200 and tasks == 1 and row.get("state") == "DELIVERED" and row.get("acknowledged_at") is None
+        elif (status == 200 and complete and owner_inputs == 1 and tasks == 1 and row.get("state") == "DELIVERED"
+              and row.get("acknowledged_at") is None
               and row.get("delivered_at") and row.get("slack_ts") and replies == 1
               and snapshot["row"].get("final_receipt_matches_native_message") is True):
             verdict = True
@@ -2189,3 +2237,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]

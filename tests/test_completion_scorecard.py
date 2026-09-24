@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
@@ -67,7 +68,8 @@ OWNER, BOT = tf.OWNER, tf.BOT
 PIN = "e" * 64
 BINDINGS_JSON = '{"fixture":1}'
 DIRECTOR_ID, GATEWAY_ID, N8N_ID, N8N_DB_ID = "1" * 64, "2" * 64, "3" * 64, "5" * 64
-SECRETS = ("fixture-secret-bot", "fixture-director-secret", "fixture-app-token")
+APP_TOKEN = "xapp-1-A0FIXTUREAPP-1-fixtureappsecret"
+SECRETS = ("fixture-secret-bot", "fixture-director-secret", "fixtureappsecret", "fixture-n8n-db-secret")
 REAL_SLACK_THREADS = sc._SlackThreads
 PAID_TASK, APPROVAL_TASK = "DIR-LG-FA1D", "DIR-LG-AA01"
 STATUS_TS = f"{int(datetime(2026, 9, 12, 9, 59, 1, tzinfo=timezone.utc).timestamp())}.000100"
@@ -468,10 +470,10 @@ NETWORK = "edge-engine-director_default"
 
 def topology():
     api = containers()[0]
-    api["Config"].update(Cmd=["uvicorn", "director_orchestrator.main:app"], Env=["SLACK_APP_TOKEN=fixture-app-token"])
+    api["Config"].update(Cmd=["uvicorn", "director_orchestrator.main:app"], Env=["SLACK_APP_TOKEN=" + APP_TOKEN])
     gateway = {"Id": GATEWAY_ID, "Image": IMAGE, "Name": "/" + GATEWAY, "State": {"Running": True},
                "Config": {"Cmd": ["python", "-m", "director_orchestrator.slack_bot"], "Labels": compose_labels("slackbot"),
-                          "Env": ["SLACK_APP_TOKEN=fixture-app-token", "SLACK_BOT_TOKEN=fixture-secret-bot",
+                          "Env": ["SLACK_APP_TOKEN=" + APP_TOKEN, "SLACK_BOT_TOKEN=fixture-secret-bot",
                                   f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake"]},
                "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["slackbot"],
                                                           "DNSNames": ["edge-engine-director-slackbot-1", "slackbot"]}}}}
@@ -479,8 +481,12 @@ def topology():
            "NetworkSettings": {"Ports": {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "45678"}]},
                                "Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n"],
                                                       "DNSNames": ["edge-engine-director-n8n-1", "n8n"]}}},
-           "Config": {"Labels": compose_labels("n8n")}}
+           "Config": {"Labels": compose_labels("n8n"),
+                      "Env": ["DB_TYPE=postgresdb", "DB_POSTGRESDB_HOST=n8n-db", "DB_POSTGRESDB_PORT=5432",
+                              "DB_POSTGRESDB_DATABASE=n8n", "DB_POSTGRESDB_USER=n8n",
+                              "DB_POSTGRESDB_PASSWORD=fixture-n8n-db-secret"]}}
     n8n_db = {"Id": N8N_DB_ID, "Name": "/edge-engine-director-n8n-db-1", "State": {"Running": True},
+              "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n-db"]}}},
               "Config": {"Labels": compose_labels("n8n-db")}}
     return [api, gateway, n8n, n8n_db]
 
@@ -649,7 +655,8 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(row["evidence"][0]["facts"]["expected_gateway"], GATEWAY)
             self.assertEqual(row["evidence"][0]["facts"]["gateway_container_id"], "2" * 64)
             self.assertEqual(row["evidence"][0]["facts"]["gateway_image_id"], IMAGE)
-        self.assertNotIn("fixture-app-token", json.dumps(report))
+        self.assertNotIn("fixtureappsecret", json.dumps(report))
+        self.assertNotIn("fixture-n8n-db-secret", json.dumps(report))
         self.assertNotIn("fixture-secret-bot", json.dumps(report))
         self.assertNotIn("SLACK_APP_TOKEN", json.dumps(report))
 
@@ -1381,11 +1388,37 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--channel", row(report, "03")["explanation"])
 
-    def test_app_token_fingerprints_compare_in_constant_time_02(self):
-        import hmac
-        with patch.object(sc.hmac, "compare_digest", wraps=hmac.compare_digest) as spy:
-            self.assertEqual(row(collect_topology(topology()), "02")["status"], "PASS")
-        self.assertTrue(any(len(call.args[0]) == 32 and isinstance(call.args[0], bytes) for call in spy.call_args_list))
+    def test_duplicate_gateways_are_found_by_slack_app_not_token_02(self):
+        self.assertEqual(row(collect_topology(topology()), "02")["status"], "PASS")
+        # A second gateway of the same app with a rotated token is still a duplicate.
+        rotated = topology()
+        second = json.loads(json.dumps(rotated[1]))
+        second.update(Id="8" * 64, Name="/second-gateway")
+        second["Config"]["Env"][0] = "SLACK_APP_TOKEN=xapp-1-A0FIXTUREAPP-2-rotatedsecret"
+        rotated.append(second)
+        self.assertEqual(row(collect_topology(rotated), "02")["status"], "FAIL")
+        # Another app's gateway is not; an unreadable app token is unclassified.
+        other = topology()
+        stranger = json.loads(json.dumps(other[1]))
+        stranger.update(Id="9" * 64, Name="/other-app-gateway")
+        stranger["Config"]["Env"][0] = "SLACK_APP_TOKEN=xapp-1-A0OTHERAPP-1-othersecret"
+        other.append(stranger)
+        self.assertEqual(row(collect_topology(other), "02")["status"], "PASS")
+        opaque = topology()
+        opaque[0]["Config"]["Env"] = ["SLACK_APP_TOKEN=not-an-app-token"]
+        self.assertEqual(row(collect_topology(opaque), "02")["status"], "UNKNOWN")
+        malformed = topology()
+        malformed[1]["Config"]["Env"][0] = "SLACK_APP_TOKEN=fixture-app-token"
+        self.assertEqual(row(collect_topology(malformed), "02")["status"], "UNKNOWN")
+
+    def test_n8n_workflow_database_must_be_n8ns_own_store_01(self):
+        for change in ("DB_POSTGRESDB_HOST=external-db", "DB_TYPE=sqlite", "DB_POSTGRESDB_DATABASE=other"):
+            rows = topology()
+            key = change.split("=")[0]
+            rows[2]["Config"]["Env"] = [entry for entry in rows[2]["Config"]["Env"]
+                                        if not entry.startswith(key + "=")] + [change]
+            with self.subTest(change=change):
+                self.assertEqual(row(collect_topology(rows), "01")["status"], "UNKNOWN")
 
     def test_route_requires_cli_channel_and_gateway_in_deployment(self):
         self.assertEqual(row(collect_topology(topology()), "01")["status"], "PASS")
@@ -1571,6 +1604,16 @@ class ScorecardCollectorTests(unittest.TestCase):
         inactive = self.world()
         inactive.status["execution"]["workflow_active"] = False
         self.assertEqual(inactive.state("04"), "UNKNOWN")
+        # Another bot at the correlated ts is not the Director's status post.
+        other_bot = self.world()
+        other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
+        self.assertEqual(other_bot.state("04"), "FAIL")
+        # n8n's executions are read only from the store n8n itself is configured to use.
+        elsewhere = self.world()
+        n8n_row = next(item for item in elsewhere.rows if item["Id"] == N8N_ID)
+        n8n_row["Config"]["Env"] = [e for e in n8n_row["Config"]["Env"] if not e.startswith("DB_POSTGRESDB_HOST=")] \
+            + ["DB_POSTGRESDB_HOST=external-db"]
+        self.assertEqual(elsewhere.state("04"), "UNKNOWN")
         # The execution must have run the active version.
         for change in ({"execution_version": "v-1"}, {"active_version_at": "2026-09-12T09:59:30.000+00:00"},
                        {"workflow_updated_at": "2026-09-12T09:59:30.000+00:00"}, {"active_version_at": None}):
@@ -1703,6 +1746,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         held = self.world()
         held.consistency["counts"]["pending_owner_decisions"] = 1
         self.assertEqual(held.state("07"), "UNKNOWN")
+        for key in ("succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
+                    "batches_without_projection"):
+            case = self.world()
+            case.consistency["counts"][key] = 1
+            with self.subTest(key=key):
+                self.assertEqual(case.state("07"), "FAIL")
         for change in ({"generation": {**consistency_fixture()["generation"], "manifest_sha256": "0" * 64}},
                        {"intake_fencing_generation": 82}, {"counts": {"projection_batch_digest_conflicts": 0}}):
             case = self.world()
@@ -1736,6 +1785,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         duplicated = self.world()
         duplicated.tasks["DIR-LG-A0"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
         self.assertEqual(duplicated.state("09"), "FAIL")
+        crowded = self.world()
+        crowded.threads[ts(400)].append({"ts": ts(405), "thread_ts": ts(400), "user": OWNER, "text": "another input"})
+        self.assertEqual(crowded.state("09"), "UNKNOWN")
         edited_final = self.world()
         final = next(m for m in edited_final.threads[ts(400)] if m.get("ts") == ts(430))
         final["edited"] = {"user": BOT, "ts": ts(490)}
@@ -1811,8 +1863,12 @@ class ScorecardCollectorTests(unittest.TestCase):
             case.captures["lanes"]["openai"]["product"] = product
             return case.state("11")
         # The OpenAI capture must be the product the attempts' transport actually used.
-        self.assertEqual(openai_lane("openai-codex", "native-command"), "PASS")
-        self.assertEqual(openai_lane("openai-responses", "native-command"), "FAIL")
+        self.assertEqual(openai_lane("openai-codex", "native-cli"), "PASS")
+        self.assertEqual(openai_lane("openai-codex", "authenticated-windows-host-bridge"), "PASS")
+        self.assertEqual(openai_lane("openai-responses", "native-cli"), "FAIL")
+        # An unknown transport is unattested, never assumed to be Codex.
+        self.assertEqual(openai_lane("openai-codex", "native-command"), "UNKNOWN")
+        self.assertEqual(openai_lane("openai-codex", "some-proxy"), "UNKNOWN")
         self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
@@ -2184,3 +2240,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]

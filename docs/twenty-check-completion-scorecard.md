@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]] -->
@@ -133,7 +134,10 @@ a container ID, never a name.
   from `docker inspect` alone, that the gateway and n8n share a Docker network
   (same network ID) on which n8n's aliases or DNS names include the relay
   host (on every network the source is attached to, no other container may
-  answer to that name), and likewise that n8n and the selected Director share a network on
+  answer to that name), and that n8n's own `DB_*` settings name the queried
+  `n8n-db` (PostgreSQL, database and user `n8n`, port 5432, a host only that
+  container answers to) before its workflows or executions are read; setting
+  values are never reported, and likewise that n8n and the selected Director share a network on
   which the Director answers to `orchestrator` (the host n8n's health probe and
   intake request use). On that network no other container may answer to the
   same name. FAIL when a hop has no such network or the name has another
@@ -160,7 +164,12 @@ a container ID, never a name.
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
   started before the running Director container was created is UNKNOWN, and so
-  is a posted message Slack reports as edited or with a subtype.
+  is a posted message Slack reports as edited or with a subtype. The status
+  message must be posted by the authenticated Director bot user.
+- 02: the Slack app ID each running container's app-level token names
+  (`xapp-<n>-<APP_ID>-...`), so a rotated or second token of the same app is
+  still a duplicate gateway; a token whose app cannot be read is unclassified
+  and leaves 02 UNKNOWN.
 - 05, 19: the Director's `/health`.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`. An
@@ -204,7 +213,7 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 | `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, no receipt, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise |
 | `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
 | `duplicate-input` | one owner input, two or more receipts (distinct replies) naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
-| `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one thread task, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, several thread tasks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
+| `ambiguous-post` | a complete thread with one owner input, the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one thread task, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, several thread tasks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
 
 Check 03 combines `refusal-4xx`, `reserved-5xx` and `transport-failure`; check
 09 combines `duplicate-input` and `ambiguous-post`. Any FAIL fails the check,
@@ -237,7 +246,9 @@ runtime and write nothing.
   `default_transaction_read_only` set and counts unresolved reconciliation
   claims, ambiguous assignments, tasks requiring reconciliation, terminal
   tasks with open assignments or effects, projection/batch plan-digest
-  conflicts, projections ahead of the intake fence, and in-flight work (open
+  conflicts, projections ahead of the intake fence, `SUCCEEDED` projections
+  with any assignment not `SUCCEEDED`, projections naming a plan digest with
+  no batch row, batch rows with no projection, and in-flight work (open
   effect reservations, active assignments, live writer claims, batches pending
   projection binding, and `OWNER_DECISION_REQUIRED` holds with a pending
   approval, which are in flight even with no open assignment or lease). For each `--task` it adds the spend rows with their
@@ -277,7 +288,10 @@ runtime and write nothing.
   `observed_at` is supplied by whoever published the capture. The
   product comes from the capture's own dialect and model: an OpenAI Responses
   envelope needs an OpenAI model (`gpt-`, `o<digit>`, `codex`, `chatgpt-`), a
-  Codex capture needs a native Codex JSONL turn, a Grok Responses envelope a
+  Codex capture needs a native Codex JSONL turn (and check 11 maps each OpenAI
+  attempt's transport by allowlist: `responses-api` to the Responses product,
+  `native-cli` and `authenticated-windows-host-bridge` to Codex; any other
+  transport is unattested), a Grok Responses envelope a
   `grok` model, a Grok CLI envelope `stopReason` with an integer `num_turns`
   and a Grok model, and a Claude result envelope a non-empty `modelUsage`
   whose keys are all `claude` models. An envelope that names no model has no
@@ -600,3 +614,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
@@ -351,6 +352,20 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.classify(connection, task_id, "DONE")
         self.assertEqual(self.report()["counts"]["terminal_tasks_open_assignments"], 0)
 
+    def test_contradictory_projection_states_are_counted(self):
+        task_id = self.intake()
+        # SUCCEEDED over a FAILED assignment contradicts the authoritative assignment outcome.
+        self.plan(task_id, "SUCCEEDED", [("a1", "SUCCEEDED", []), ("a2", "FAILED", [])])
+        self.assertEqual(self.report()["counts"]["succeeded_projections_with_unsucceeded_assignments"], 1)
+        other = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        self.coordinator.create_intake(self.coordinator_fixtures.request(other))
+        # A projection naming a plan digest whose batch row is absent.
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, other, "SUCCEEDED", "sha256:" + "5" * 64)
+        counts = self.report()["counts"]
+        self.assertEqual(counts["projections_missing_batch"], 1)
+        self.assertEqual(counts["batches_without_projection"], 0)
+
     def test_owner_held_assignment_with_pending_approval_is_in_flight(self):
         task_id = self.intake()
         # The held assignment is not PENDING/ACTIVE and its dependent is BLOCKED, so only the hold shows it.
@@ -579,3 +594,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]

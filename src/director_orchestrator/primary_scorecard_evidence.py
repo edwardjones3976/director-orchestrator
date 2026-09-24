@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | BEGIN]]
@@ -27,6 +28,8 @@ _PIN = "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"
 _ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", "independent_reviewer",
                     "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
 _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
+               "succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
+               "batches_without_projection",
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
@@ -79,7 +82,13 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM {s}.director_primary_task_writer WHERE lease_expires_at>now()) AS live_writer_claims,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding,
- (SELECT count(*) FROM p WHERE NOT p.settled AND p.tc='OWNER_DECISION_REQUIRED') AS pending_owner_decisions"""
+ (SELECT count(*) FROM p WHERE NOT p.settled AND p.tc='OWNER_DECISION_REQUIRED') AS pending_owner_decisions,
+ (SELECT count(*) FROM p WHERE p.tc='SUCCEEDED' AND EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
+    WHERE x.task_id=p.task_id AND x.status<>'SUCCEEDED')) AS succeeded_projections_with_unsucceeded_assignments,
+ (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id)) AS projections_missing_batch,
+ (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
+    (SELECT 1 FROM p WHERE p.task_id=b.task_id)) AS batches_without_projection"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
@@ -335,3 +344,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
