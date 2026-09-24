@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
@@ -1356,6 +1357,12 @@ class ScorecardCollectorTests(unittest.TestCase):
                 with self.subTest(path=path.name, legacy=legacy):
                     self.assertNotIn(legacy, text)
 
+    def test_app_token_fingerprints_compare_in_constant_time_02(self):
+        import hmac
+        with patch.object(sc.hmac, "compare_digest", wraps=hmac.compare_digest) as spy:
+            self.assertEqual(row(collect_topology(topology()), "02")["status"], "PASS")
+        self.assertTrue(any(len(call.args[0]) == 32 and isinstance(call.args[0], bytes) for call in spy.call_args_list))
+
     def test_route_requires_cli_channel_and_gateway_in_deployment(self):
         self.assertEqual(row(collect_topology(topology()), "01")["status"], "PASS")
         report = collect_topology(topology(), channel=None)
@@ -1425,6 +1432,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         receipted_5xx.threads[ts(200)].append({"ts": ts(202), "thread_ts": ts(200), "user": BOT,
                                                "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(receipted_5xx.state("03"), "UNKNOWN")
+        # One reply repeating its receipt text is one receipt: duplicate input was not exercised.
+        repeated = self.world()
+        thread = repeated.threads[ts(300)]
+        thread.remove(next(m for m in thread if m.get("ts") == ts(302)))
+        receipt = next(m for m in thread if m.get("ts") == ts(301))
+        receipt["text"] = receipt["text"] + "\n" + receipt["text"]
+        self.assertEqual(repeated.state("09"), "UNKNOWN")
         edited_refusal = self.world()
         edited_refusal.threads[ts(100)][1]["edited"] = {"user": BOT, "ts": ts(190)}
         self.assertEqual(edited_refusal.state("03"), "UNKNOWN")
@@ -1494,6 +1508,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited = self.world()
         edited.threads[STATUS_TS][0]["edited"] = {"user": BOT, "ts": ts(90)}
         self.assertEqual(edited.state("04"), "UNKNOWN")
+        # n8n resolving orchestrator to another container cannot attest the selected Director.
+        detached = self.world()
+        detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
+                                                                             "Aliases": ["orchestrator"]}}
+        self.assertEqual(detached.state("04"), "UNKNOWN")
         # The execution started at 09:59:00; a container created after it was not the poster.
         recreated = self.world()
         recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:59:30Z"
@@ -1574,6 +1593,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
+
+    def test_generation_commit_must_match_the_runtime_label(self):
+        world = self.world()
+        world.consistency["generation"]["candidate_commit"] = OTHER
+        report = world.report()
+        for key in ("07", "11", "12", "17"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+        self.assertIn("runtime image label", row(report, "07")["explanation"])
 
     def test_consistency_07(self):
         self.assertEqual(self.world().state("07"), "PASS")
@@ -2047,3 +2074,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]

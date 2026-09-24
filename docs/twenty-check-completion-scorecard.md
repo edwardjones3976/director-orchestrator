@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | BEGIN]] -->
@@ -140,7 +141,9 @@ a container ID, never a name.
   UNKNOWN before anything in it is graded, and such a reply's text is never
   parsed: the bot never edits, so its receipts and `BLOCKED` text are no longer
   what was posted.
-- 04: the newest saved successful scheduled `Director Status` execution in the
+- 04: only when, from `docker inspect`, the deployment's n8n reaches the
+  selected Director (and no other container) as `orchestrator`, the newest
+  saved successful scheduled `Director Status` execution in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
   started before the running Director container was created is UNKNOWN, and so
@@ -150,7 +153,10 @@ a container ID, never a name.
   08 also the task's `approval_resume` command receipts from `consistency`. An
   approval prompt Slack reports as edited or with a subtype is not the native
   prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
-- 07, 17, 15 (budget and meter rows): the in-image `consistency` command. 17
+- 07, 17, 15 (budget and meter rows): the in-image `consistency` command. Its
+  verified generation commit must equal the runtime image label; when it is
+  unverified or differs, 07, 08, 11, 12, 15, 17 and 20 are UNKNOWN, because
+  the in-image evidence belongs to that generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
@@ -182,7 +188,7 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 | `refusal-4xx` | complete thread, one owner input, a `DIRECTOR — BLOCKED` reply, no receipt, binding 404 | a bound task (200) or ambiguous binding (409), or any receipt | otherwise |
 | `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, no receipt, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise |
 | `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
-| `duplicate-input` | one owner input, two or more receipts naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
+| `duplicate-input` | one owner input, two or more receipts (distinct replies) naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
 | `ambiguous-post` | the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one thread task, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, several thread tasks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
 
 Check 03 combines `refusal-4xx`, `reserved-5xx` and `transport-failure`; check
@@ -348,6 +354,10 @@ Check 10 reads only what Slack still shows: a deleted post leaves a tombstone,
 which 10 treats as a break, but a deleted post with no replies leaves nothing.
 
 ## Evidence and limits
+
+Secrets and digests (the app-token fingerprint, generation and binding pins,
+command-ID digests, seal and artifact hashes, rubric digests) are compared in
+constant time with `hmac.compare_digest`.
 
 Only observations produced by the module's fixed read-only collectors in the
 current process can earn points. JSON containing `verified: true`, a copied
@@ -552,3 +562,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]] -->

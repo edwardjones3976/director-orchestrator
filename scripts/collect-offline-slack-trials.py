@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
@@ -17,6 +18,7 @@ import base64
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+import hmac
 import html
 import csv
 import json
@@ -1123,7 +1125,8 @@ def evaluate_rubric(row, rubric, rubric_digest):
         declared_before = (datetime.fromisoformat(rubric["declared_at"]).timestamp()
                            <= float(row["input_message_ts"]))
     checks = {
-        "predeclared": declared_before and row.get("input_rubric_sha256") == rubric_digest,
+        "predeclared": declared_before and isinstance(row.get("input_rubric_sha256"), str)
+            and hmac.compare_digest(row["input_rubric_sha256"].encode(), str(rubric_digest).encode()),
         "task_bound": row.get("task_record_bound") is True,
         "one_terminal": type(row.get("terminal_reply_count")) is int and row["terminal_reply_count"] == 1,
         "task_done": row.get("task_status") == "DONE",
@@ -1294,3 +1297,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
@@ -28,6 +29,7 @@ running in the same process, nor an attestation of an uncompromised local host.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import html
 import importlib.util
 import json
@@ -200,6 +202,11 @@ class _Runtime:
     @property
     def binding(self) -> dict[str, str]:
         return {"runtime_sha": self.runtime_sha, "image_id": self.image_id}
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Constant-time equality for secrets and digests; anything but two strings never matches."""
+    return isinstance(a, str) and isinstance(b, str) and hmac.compare_digest(a.encode(), b.encode())
 
 
 def _labels(container: dict[str, Any] | None) -> dict[str, str]:
@@ -440,7 +447,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     matches, unknown = [], 0
     for row in containers:
         token = _environment(row).get("SLACK_APP_TOKEN", "")
-        if not token or hashlib.sha256(token.encode()).digest() != fingerprint:
+        if not token or not hmac.compare_digest(hashlib.sha256(token.encode()).digest(), fingerprint):
             continue
         command = (row.get("Config", {}).get("Entrypoint") or []) + (row.get("Config", {}).get("Cmd") or [])
         if _gateway_launch(row):
@@ -572,7 +579,8 @@ def _thread_counts(t: _SlackThreads, thread: str,
     # posted, so its text is never parsed and the caller grades nothing in that thread.
     altered = sum(1 for m in replies if not t.m.unedited(m))
     bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
-    receipts = [match.group(1) for text in bot for match in _RECEIPT.finditer(text)]
+    # One receipt per distinct reply and task: a reply repeating its receipt text is still one receipt.
+    receipts = [task for text in bot for task in dict.fromkeys(m.group(1) for m in _RECEIPT.finditer(text))]
     blocked = sum(1 for text in bot if "DIRECTOR — BLOCKED" in text)
     return owner_inputs, receipts, blocked, altered
 
@@ -631,7 +639,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
                             _CONSISTENCY_SOURCE, facts, at, **binding)
     pin = generation.get("manifest_sha256")
     if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
-            or pin != runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
+            or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
             or type(fence) is not int or fence != primary.get("intake_fencing_generation")):
         return _observation("07", None, "The consistency snapshot is not bound to the running generation pin and intake fence.",
                             _CONSISTENCY_SOURCE, facts, at, **binding)
@@ -645,12 +653,12 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
 
 def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[bool | None, str, dict]:
     pin = runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
-    if not pin or captures.get("generation_manifest_sha256") != pin:
+    if not pin or not _same(captures.get("generation_manifest_sha256"), pin):
         return None, "The captures are not bound to the running generation pin.", {}
     raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
     if raw is None:
         return None, "The running provider bindings are unavailable.", {}
-    if captures.get("provider_bindings_sha256") != hashlib.sha256(raw.encode()).hexdigest():
+    if not _same(captures.get("provider_bindings_sha256"), hashlib.sha256(raw.encode()).hexdigest()):
         return False, "The captures are bound to other provider bindings than the running ones.", {}
     lanes = captures.get("lanes")
     if not isinstance(lanes, dict) or not lanes:
@@ -727,8 +735,9 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
     facts = {"lanes_used": used, "products": products, "transports": transports}
     raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
     if (runtime.created_at > _when(paid["readback"]["task_created_at"]) or raw is None
-            or captures.get("generation_manifest_sha256") != runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
-            or captures.get("provider_bindings_sha256") != hashlib.sha256(raw.encode()).hexdigest()):
+            or not _same(captures.get("generation_manifest_sha256"),
+                         runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
+            or not _same(captures.get("provider_bindings_sha256"), hashlib.sha256(raw.encode()).hexdigest())):
         return _observation("11", None, "The paid task predates the running container, or the captures are not bound to "
                             "its generation and provider bindings; they cannot attest that run.",
                             _CAPTURES_SOURCE, facts, at, **binding)
@@ -814,6 +823,20 @@ def _flatted(text: str) -> Any:
         raise ValueError("execution data nests beyond its bound") from None
 
 
+def _selected_director_hop(runtime: _Runtime) -> bool | None:
+    """From docker inspect only: the deployment's n8n reaches the selected Director as orchestrator."""
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        raise ValueError("running container inventory unavailable or exceeds 128")
+    containers = _run_json(["docker", "inspect", *ids])
+    n8n = [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+           and _labels(row).get("com.docker.compose.service") == "n8n"]
+    director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
+    if len(n8n) != 1 or director is None:
+        return None
+    return _hop(n8n[0], director, "orchestrator", containers)
+
+
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
     binding = runtime.binding
     source = "n8n Director Status saved execution (READ ONLY) and Slack conversations.replies"
@@ -821,6 +844,10 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if len(databases) != 1:
         return _observation("04", None, "The selected deployment does not run exactly one n8n-db service.",
                             source, {}, at, **binding)
+    # The status workflow reads health from orchestrator: timing alone cannot say which Director that was.
+    if _selected_director_hop(runtime) is not True:
+        return _observation("04", None, "The deployment's n8n is not shown to reach the selected Director, and only "
+                            "it, as orchestrator; its status posts cannot attest this runtime.", source, {}, at, **binding)
     found = _run_json(["docker", "exec", databases[0], "psql", "-U", "n8n", "-d", "n8n",
                        "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _STATUS_EXECUTION])
     if not isinstance(found, dict) or found.get("workflows") != 1 or not isinstance(found.get("execution"), dict):
@@ -1027,7 +1054,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         receipted = decided is not None and any(
-            isinstance(receipt, dict) and receipt.get("command_id_sha256") == command
+            isinstance(receipt, dict) and _same(receipt.get("command_id_sha256"), command)
             and isinstance(receipt.get("recorded_at"), str) and _when(receipt["recorded_at"]) == decided
             for receipt in receipts)
         if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
@@ -1182,7 +1209,8 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
     row = paid["row"]
     markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((paid["task"].get("intake") or {}).get("text", "")))
     finals = row.get("terminal_messages") or []
-    if not (row.get("task_record_bound") is True and markers == [digest] and row.get("input_message_ts")
+    if not (row.get("task_record_bound") is True and len(markers) == 1 and _same(markers[0], digest)
+            and row.get("input_message_ts")
             and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
             and row.get("task_status") == "DONE" and len(finals) == 1):
         return False
@@ -1336,6 +1364,13 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
 
         consistency = in_image("consistency", *[part for task_id in task_ids for part in ("--task", task_id)])
         captures = in_image("activation-captures")
+        # The in-image commands verify the generation manifest; its commit, not the image label,
+        # is what their evidence belongs to. Unverified or different: none of it attests this runtime.
+        generation = (consistency or {}).get("generation")
+        verified_commit = generation.get("candidate_commit") if isinstance(generation, dict) else None
+        unbound = consistency is not None and not _same(verified_commit, runtime.runtime_sha)
+        if unbound or consistency is None:
+            consistency = captures = None  # captures carry no commit: without the snapshot they are unbound
         if t is not None:
             try:
                 if approval_task is None:
@@ -1366,6 +1401,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             put([_monetary_observation(at, runtime, paid, consistency, cost)])
         except _SOURCE_ERRORS:
             unknown(("15",), "The monetary sources could not be evaluated; no retry was made.", _CONSISTENCY_SOURCE)
+        if unbound:
+            reason = ("The in-image generation commit is unverified or differs from the runtime image label, so its "
+                      "consistency, acceptance, capture and settlement evidence cannot attest this runtime.")
+            unknown(("07", "08", "11", "12", "15", "20"), reason, _CONSISTENCY_SOURCE)
+            put([_observation("17", None, reason, _CONSISTENCY_SOURCE, {}, at, candidate_sha=candidate_sha)])
         if t is None:
             unknown(("11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
         elif paid_thread is not None and paid is None:
@@ -1420,7 +1460,7 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     if not root.is_absolute() or root.is_symlink() or getattr(root, "is_junction", lambda: False)():
         raise ValueError("native scan directory is not canonical")
     manifest_raw = _read_bounded_file(root, "scan-manifest.json")
-    if "sha256:" + hashlib.sha256(manifest_raw).hexdigest() != indexed["seal_manifest_digest"]:
+    if not _same("sha256:" + hashlib.sha256(manifest_raw).hexdigest(), indexed["seal_manifest_digest"]):
         raise ValueError("manifest does not match the native indexed seal")
     manifest = json.loads(manifest_raw)
     scan = manifest["scan"]
@@ -1448,7 +1488,7 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
         # _encoded/_digest uses normalized JSON for preserved checkpoints.
         hashed = (json.dumps(json.loads(raw), ensure_ascii=True, allow_nan=False, sort_keys=True,
                              separators=(",", ":")).encode() if relative in preserved else raw)
-        if hashlib.sha256(hashed).hexdigest() != digest:
+        if not _same(hashlib.sha256(hashed).hexdigest(), digest):
             raise ValueError("native artifact digest mismatch")
         if relative in {"coverage.json", "findings.json"}:
             contents[relative] = json.loads(raw)
@@ -2034,3 +2074,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
