@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -143,6 +144,7 @@ from director_orchestrator.primary_default import (
     small_pre_authorization_refusal,
     small_producer_result_refusal,
     small_review_bounds,
+    small_task_usage_refusal,
     typed_external_effect_grant_kinds,
     _small_producer_constraints,
 )
@@ -232,6 +234,36 @@ class SmallReviewBoundsTests(unittest.TestCase):
         packet = self.router.planned_work_packet(record, review)
         self.assertEqual((None, 1_234), small_review_bounds(
             record, capped, review, packet, compact_view_lanes=SMALL_LANES))
+
+    def test_a_small_task_result_must_report_complete_usage(self):
+        complete = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
+                    "cost_usd": 0.001}
+        for usage, refused in (
+            (complete, False),
+            ({"total_tokens": 15, "cost_usd": 0}, False),
+            (None, True),
+            ({}, True),
+            ({"input_tokens": 10, "output_tokens": None, "cost_usd": 0.001}, True),
+            ({"total_tokens": 15}, True),
+            ({"total_tokens": 15, "cost_usd": None}, True),
+            ({"total_tokens": True, "cost_usd": 0.001}, True),
+            ({"total_tokens": 15, "cost_usd": True}, True),
+            ({"total_tokens": 15, "cost_usd": float("nan")}, True),
+            ({"total_tokens": 15, "cost_usd": -1}, True),
+            ({"total_tokens": -1, "cost_usd": 0.001}, True),
+        ):
+            with self.subTest(usage=usage):
+                result = {"status": "SUCCEEDED", "usage": usage}
+                self.assertEqual(
+                    "small_task_usage_unmeasured" if refused else None,
+                    small_task_usage_refusal(result, "claude", small_class=True))
+                # Outside the class nothing is asked of the usage.
+                self.assertIsNone(small_task_usage_refusal(result, "claude", small_class=False))
+        # The Responses lane reports tokens only: its cost is metered.
+        self.assertIsNone(small_task_usage_refusal(
+            {"usage": {"total_tokens": 15, "cost_usd": None}}, "openai", small_class=True))
+        self.assertEqual("small_task_usage_unmeasured", small_task_usage_refusal(
+            {"usage": {"cost_usd": None}}, "openai", small_class=True))
 
     def test_the_producer_and_ineligible_tasks_are_not_bounded(self):
         self.assertEqual((None, None), self.bounds(self.record("done"), reviewer=False))
@@ -736,6 +768,23 @@ class StandingGrantExerciseTests(unittest.TestCase):
                 services.hydrate(SimpleNamespace(projection={"application": view}))
                 self.assertIs(expected, services.execution_approval_free(task_id))
 
+    def test_an_audit_history_past_its_bound_keeps_the_button(self):
+        """No exercise rescans an unbounded ledger: past the bound it is refused."""
+
+        application = self.application()
+        page = [SimpleNamespace(grant_id="grant-other", outcome=RecordedOutcome.REFUSED,
+                                gate_results=(), digest="0" * 64)] * 1_000
+        for name, bound in (("records", {"_AUDIT_HISTORY_MAX_RECORDS": 3_000}),
+                            ("seconds", {"_AUDIT_HISTORY_MAX_SECONDS": -1.0})):
+            with self.subTest(bound=name), patch.multiple(
+                    "director_orchestrator.primary_default", **bound), patch.object(
+                    self.ledger, "delegation_audit_records", return_value=page) as read, \
+                    patch.object(self.ledger, "append_delegation_audit_record",
+                                 side_effect=AssertionError("audit written")):
+                self.assertFalse(self.exercise(application, self.record()))
+                self.assertEqual(3 if name == "records" else 1, read.call_count)
+                self.assertFalse(application._delegation_tripped)
+
     def test_a_paid_off_deployment_never_exercises_a_grant(self):
         application = self.application(
             dispatcher=False,
@@ -1007,6 +1056,33 @@ class ProviderAttemptRosterTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(2, result["attempt"])
         self.assertEqual("provider_result_authenticated", reason)
+
+    def test_a_refused_retry_reserves_nothing_more(self) -> None:
+        """A small task's reviewer is never retried after an unmeasured failure."""
+
+        roster = (("json", "responses-api"), ("text", "native-cli"))
+        reserved: list[int] = []
+
+        def reserve(ordinal: int) -> ProviderAttemptReservation:
+            reserved.append(ordinal)
+            return ProviderAttemptReservation(
+                "task", "assignment", ordinal, "openai",
+                *roster[(ordinal - 1) % len(roster)],
+                digest(f"key-{ordinal}"), digest(f"attempt-{ordinal}"), digest("budget"),
+            )
+
+        def dispatch(attempt: ProviderAttemptReservation) -> dict[str, object]:
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        status, result, _result_digest, reason = _execute_three_attempt_roster(
+            format_roster=roster, reserve_attempt=reserve,
+            record_attempt=lambda *_args: None, dispatch_attempt=dispatch,
+            retry_allowed=lambda: False,
+        )
+        self.assertEqual([1], reserved)
+        self.assertIs(ParallelAssignmentStatus.FAILED, status)
+        self.assertIsNone(result)
+        self.assertEqual("small_task_review_tokens_exhausted", reason)
 
     def test_third_attempt_requires_a_different_transport_on_single_format_roster(
         self,
@@ -5212,3 +5288,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]

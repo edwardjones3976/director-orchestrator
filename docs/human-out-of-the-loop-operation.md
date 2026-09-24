@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
@@ -216,7 +217,9 @@ before the action, not after it. For the pre-execution class, a refusal made
 before the ledger is consulted (no grant for the class, delegation off or
 suspended, a workload hold, a deployment that cannot execute, or a ledger that
 is absent or latched) and an exercise lost to a concurrent writer write no
-record; nothing runs without the button in either case.
+record; nothing runs without the button in either case. Neither does an
+exercise whose audit history is too long or too slow to read within its bound
+(10,000 records or five seconds): it keeps the button.
 
 ## Standing grant for small read-only tasks
 
@@ -242,7 +245,13 @@ compare, answer, analyse) and no shell syntax, dotfile, home, parent or
 absolute path, secret-like word or variable name, write-shaped word, or outward
 or mutating verb appears (the gateway's `DIRECTOR` command word and a leading
 `Project:` value are not sentences, while every `Outcome:` and `Constraints:`
-sentence is); and the frozen plan total is at most $1 and within the task
+sentence is); nothing in the request names personal or sensitive data: the
+people a record describes (customers, clients, employees, users, patients and
+the like), an identifying attribute (a name, address, e-mail, phone, birth
+date, ID, or health, financial or genealogy data), or a tabular or database
+file or data-like directory, and wording that plainly names personal
+identifiers is also a deterministic `sensitive data` approval reason for every
+task; and the frozen plan total is at most $1 and within the task
 budget, with the reviewer inside its own cap.
 Model or plan output can only remove eligibility. Every plan, assignment, and
 intake model forbids extra fields, so nothing a model writes can assert it.
@@ -319,7 +328,13 @@ attempt, so the reviewer's token cap would only be advisory there. The Director 
 every result to it by digest. The compact view a small task's reviewer is sent
 is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
 also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
-`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000). The producer's packet states the
+`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000), one allowance for the whole
+review: only a transport failure is ever retried and its usage is unmeasured,
+so a small task's reviewer is never retried. Every producer and reviewer result
+of a small task must report complete usage, integer token counts and a cost;
+the OpenAI Responses lane, which refuses any reply over its token allowance
+before returning it and is priced by its meter, reports tokens only. A result
+without that usage fails, which trips the grant. The producer's packet states the
 outcome size that fits, and a producer result whose review would exceed 16 KB is
 refused when it is accepted, before it is recorded and before any reviewer
 work. A result refused there still spent the producer's attempt. A
@@ -540,3 +555,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->

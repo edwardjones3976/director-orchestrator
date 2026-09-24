@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -87,7 +88,15 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("destructive action", re.compile(r"\b(delete|destroy|drop database|truncate|purge|wipe|remove account|rewrite history|force push)\b", re.I)),
     ("purchase or paid upgrade", re.compile(r"\b(buy|purchase|subscribe|upgrade plan|charge|payment|spend)\b", re.I)),
     ("external representation", re.compile(r"\b(send|email|message|post|reply|submit)\b.{0,50}\b(customer|client|public|vendor|agency|employer|recipient)\b", re.I | re.S)),
-    ("sensitive data", re.compile(r"\b(ssn|social security|passport|medical|health|financial|bank|credit card|identity|genealogy evidence|dna|authentication data)\b", re.I)),
+    ("sensitive data", re.compile(
+        r"\b(ssns?|social security|passport|medical|health|financial|bank|credit card|identity"
+        r"|genealogy evidence|dna|authentication data"
+        # Personal identifiers: every task that names them stops for the owner.
+        r"|personal data|personally identifiable|pii|date of birth|dates of birth|birth ?dates?"
+        r"|dob|phone numbers?|e-?mail addresses|home address(?:es)?|mailing address(?:es)?"
+        r"|street address(?:es)?|salar(?:y|ies)|payroll|patients?|diagnos(?:is|es)"
+        r"|account numbers?|card numbers?|routing numbers?|iban|genealogy|family tree"
+        r"|driver'?s licen[cs]e|tax id|national id)\b", re.I)),
     ("credential or permission change", re.compile(r"\b(api key|token|password|secret|credential|oauth|permission|access scope|administrator|admin access)\b", re.I)),
 )
 
@@ -452,6 +461,23 @@ _OUTSIDE_READ_ONLY = re.compile(
 )
 
 
+# Wording and paths that may reach personal or sensitive data keep a task out
+# of the small class even where the approval gate above does not stop it: the
+# people a record describes, the attributes that identify them, and tabular
+# or database files and data-like directories. Over-inclusive by design.
+_PERSONAL_DATA = re.compile(
+    r"\b(?:customers?|clients?|employees?|users?|patients?|members?|subscribers?|contacts?"
+    r"|people|persons?|personnel|staff|applicants?|students?|tenants?|donors?|citizens?"
+    r"|residents?|names?|address(?:es)?|e-?mails?|phones?|birth\w*|dob|ages?|gender"
+    r"|salar(?:y|ies)|wages?|payroll|ssns?|passports?|licen[cs]es?|ids?|identit(?:y|ies)"
+    r"|identifiers?|medical|health|diagnos\w*|bank\w*|cards?|iban|accounts?|financial"
+    r"|genealog\w*|ancestr\w*|dna|pii|personal|biometric\w*)\b"
+    r"|\.(?:csv|tsv|xlsx?|db|sqlite3?|parquet|sql|dump|bak)\b"
+    r"|\b(?:data|datasets?|exports?|backups?|dumps?|records)/",
+    re.I,
+)
+
+
 def _read_only_request(text: str) -> bool:
     """Whether every sentence opens with a read verb and no outside term appears.
 
@@ -475,6 +501,7 @@ def _read_only_request(text: str) -> bool:
         and all(_READ_VERB.match(part) for part in sentences)
         and not _OUTSIDE_READ_ONLY.search(body)
         and not _WRITE_SCOPE.search(body)
+        and not _PERSONAL_DATA.search(body)
     )
 
 
@@ -1768,3 +1795,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]

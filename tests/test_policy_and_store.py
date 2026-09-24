@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -1173,6 +1174,33 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
             "Summarize /etc/passwd.",
             "Summarize C:/Users/owner/notes.txt.",
         ),
+        "personal or sensitive data": (
+            "List customer names and addresses from data/customers.csv.",
+            "Summarize the customers table in app.db.",
+            "List the email addresses in contacts.xlsx.",
+            "Describe the patient records in the clinic export.",
+            "Explain the employee salaries in the payroll report.",
+            "Answer: what is the owner's date of birth?",
+            "List the phone numbers in the staff directory.",
+            "Compare users.json and members.json.",
+            "Summarize the genealogy notes for the family tree.",
+            "Analyse the bank account numbers in the ledger.",
+            "Review the SSNs in the HR sheet.",
+            "List the IDs in exports/people.tsv.",
+            "Describe the PII fields.",
+            "Summarize the medical history of the applicants.",
+            "Explain the credit card column.",
+            "Summarize backups/latest.sql.",
+            "List the clients and their ages.",
+            "Describe the personal details of the tenants.",
+            "Summarize the biometric data.",
+            "Review the passport scans.",
+            "Summarize the student grades in grades.parquet.",
+            "Compare the CUSTOMER and Employee lists.",
+            "Summarize the DOB column.",
+            "List every subscriber.",
+            "Summarize data/README.md.",
+        ),
         "not a read-shaped request": (
             "Print README.md.",
             "Read README.md and summarize it.",
@@ -1200,6 +1228,25 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
             with self.subTest(read_shaped=text):
                 self.assertTrue(self.eligible(self.record(text=f"Project: demo\n{text}")))
                 self.assertTrue(self.eligible(self.with_assignments({"task": text}, {})))
+
+    def test_personal_identifiers_are_a_deterministic_approval_reason(self) -> None:
+        """Unambiguous personal-data wording stops every task, not only this class."""
+
+        for text in (
+            "Summarize the phone numbers.",
+            "List the email addresses.",
+            "Explain the date of birth field.",
+            "Describe the patient intake form.",
+            "Summarize payroll.",
+            "List the account numbers.",
+            "Summarize the genealogy research.",
+            "Explain the IBAN column.",
+            "Summarize how PII is handled.",
+            "Review the SSNs.",
+            "Describe the home addresses.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("sensitive data", deterministic_approval_reasons(text))
 
     def gateway_record(self, text: str) -> TaskRecord:
         """The intake and preview plan exactly as the Slack gateway produces them."""
@@ -1259,3 +1306,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]

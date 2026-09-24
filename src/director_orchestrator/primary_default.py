@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -255,8 +256,13 @@ def _execute_three_attempt_roster(
         None,
     ],
     dispatch_attempt: Callable[[ProviderAttemptReservation], Mapping[str, Any]],
+    retry_allowed: Callable[[], bool] | None = None,
 ) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
-    """Run up to three bounded slots; stop after authenticated success."""
+    """Run up to three bounded slots; stop after authenticated success.
+
+    ``retry_allowed`` is asked before every retry is reserved; False stops the
+    roster with ``small_task_review_tokens_exhausted`` and reserves nothing.
+    """
 
     from .primary_workload import WorkloadAdmissionHold
 
@@ -264,6 +270,13 @@ def _execute_three_attempt_roster(
         raise RuntimeError("provider format roster must contain one to three entries")
     last_digest: str | None = None
     for attempt_ordinal in range(1, 4):
+        if attempt_ordinal > 1 and retry_allowed is not None and not retry_allowed():
+            return (
+                ParallelAssignmentStatus.FAILED,
+                None,
+                last_digest,
+                "small_task_review_tokens_exhausted",
+            )
         attempt = reserve_attempt(attempt_ordinal)
         expected = format_roster[(attempt_ordinal - 1) % len(format_roster)]
         if (attempt.format_id, attempt.transport_id) != expected:
@@ -777,6 +790,57 @@ def _compact_view_lanes(live_dependencies: Any) -> frozenset[str]:
             for item in (adapter, *dict(attempt.get(lane, {})).values())
         )
     )
+
+
+def _measured_tokens(result: Mapping[str, Any], *, require_cost: bool) -> int | None:
+    """A result's reported token usage, or None unless its usage is complete.
+
+    Complete means integer token counts (input and output, or a total) and,
+    when ``require_cost``, a finite non-negative ``cost_usd``.
+    """
+
+    usage = result.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    total = usage.get("total_tokens")
+    total = total if type(total) is int and total >= 0 else None
+    counts = (usage.get("input_tokens"), usage.get("output_tokens"))
+    if all(type(value) is int and value >= 0 for value in counts):
+        tokens = max(sum(counts), total or 0)
+    elif total is not None:
+        tokens = total
+    else:
+        return None
+    if require_cost:
+        cost = usage.get("cost_usd")
+        if (isinstance(cost, bool) or not isinstance(cost, (int, float))
+                or not math.isfinite(cost) or cost < 0):
+            return None
+    return tokens
+
+
+def small_task_usage_refusal(
+    result: Mapping[str, Any], provider: str, *, small_class: bool,
+) -> str | None:
+    """Refuse a small task's result whose usage the class's caps cannot check.
+
+    Every producer and reviewer result must report complete token usage, and
+    a cost, or the reviewer's token and dollar caps are unenforced for it. The
+    OpenAI Responses lane is the one exception to the cost: it reports none,
+    but refuses before returning any reply over its token allowance and is
+    priced from those tokens by its meter.
+    """
+
+    if not small_class:
+        return None
+    if _measured_tokens(result, require_cost=provider != "openai") is None:
+        return "small_task_usage_unmeasured"
+    return None
+
+
+# Bound on one exercise's audit-history read: past either, it keeps the button.
+_AUDIT_HISTORY_MAX_RECORDS = 10_000
+_AUDIT_HISTORY_MAX_SECONDS = 5.0
 
 
 def _independent_lane_pair(lanes: Collection[str]) -> bool:
@@ -2622,12 +2686,18 @@ class DefaultPrimaryApplication:
                 return False
             try:
                 history, after = [], None
+                started = monotonic()
                 while True:
-                    # ponytail: each page re-verifies the whole chain, O(N^2/1000) per eligible intake; a per-grant ledger read when history grows
+                    # ponytail: each page re-verifies the whole chain, so the read is bounded by record count and time instead of made linear; a per-grant ledger read when history grows past it
                     page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
                     history.extend(page)
                     if len(page) < 1_000:
                         break
+                    if (len(history) >= _AUDIT_HISTORY_MAX_RECORDS
+                            or monotonic() - started > _AUDIT_HISTORY_MAX_SECONDS):
+                        # Too long or too slow to read within its bound: the
+                        # exercise is refused and the button stays.
+                        return False
                     after = page[-1].digest
                 mine = [item for item in history if item.grant_id == grant.grant_id]
                 tripped = any(
@@ -3569,6 +3639,8 @@ class DefaultPrimaryActivation:
                     if review_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None, review_refusal)
+                    small_class = small_read_only_eligible(
+                        record, settings, compact_view_lanes=compact_view_lanes)
                     # A live lane needs a trusted positive per-lane and
                     # per-attempt limit bounded by the configured task budget
                     # before any attempt reservation or paid provider call.
@@ -3909,6 +3981,13 @@ class DefaultPrimaryActivation:
                                 reserve_attempt=reserve_attempt,
                                 record_attempt=record_attempt,
                                 dispatch_attempt=dispatch_attempt,
+                                # The reviewer's token cap is one allowance for
+                                # the whole review. Only a transport failure is
+                                # retried, and its usage is unmeasured, so it
+                                # spends the whole allowance: no retry.
+                                # ponytail: if a measured non-success is ever retried, pass the remaining allowance instead
+                                retry_allowed=(
+                                    None if review_token_cap is None else lambda: False),
                             )
                         )
                     finally:
@@ -3925,6 +4004,11 @@ class DefaultPrimaryActivation:
                         )
                     if result is None or result_digest is None:
                         raise RuntimeError("successful attempt lacks result evidence")
+                    usage_refusal = small_task_usage_refusal(
+                        result, provider, small_class=small_class)
+                    if usage_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, result_digest, usage_refusal)
                     # A small task's producer result is bounded here, before it
                     # is recorded and before any reviewer work, by the exact
                     # review packet it would produce.
@@ -4431,3 +4515,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]

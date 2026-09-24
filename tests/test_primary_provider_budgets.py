@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 """Owner-configured ceilings at the real Default planning and dispatch seams."""
@@ -31,6 +32,7 @@ from director_orchestrator.primary_effect_gateways import (
 from director_orchestrator.primary_generation import deployment_digest
 from director_orchestrator.primary_parallel import (
     PaidSetupHold, ParallelAssignmentStatus, ParallelReservation, ProviderAttemptReservation,
+    ProviderTransientDispatchError,
 )
 from tests.test_antigravity_team import budget, fixtures, grant
 from tests.test_primary_default import SHA, digest, packet_router
@@ -305,10 +307,40 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
                          self.dispatch_contexts[-1].total_token_limit)
         self.assertLess(self.dispatch_contexts[-1].total_token_limit, 400000)
 
+    USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
+
+    def test_a_reviewer_transport_failure_is_not_retried(self):
+        """Its usage is unknown, so it spent the reviewer's whole token allowance."""
+
+        def fail(_packet, *, context):
+            self.dispatch_contexts.append(context)
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        self.adapter.dispatch = fail
+        outcome = self.run_assignment(1)
+        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual("small_task_review_tokens_exhausted", outcome.reason_code)
+        self.assertEqual(1, self.activation.coordinator.reserve_provider_attempt.call_count)
+        self.assertEqual(1, len(self.dispatch_contexts))
+
+    def test_a_small_task_result_without_complete_usage_fails(self):
+        self.record.assignment_outcomes = []
+        for usage in (None, {"total_tokens": 15}, {"cost_usd": 0.001}):
+            with self.subTest(usage=usage):
+                self.adapter.dispatch = lambda _packet, *, context: {
+                    "status": "SUCCEEDED", "run_reference": "run-producer",
+                    "outcome": "short", "usage": usage}
+                outcome = self.run_assignment(0)
+                self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+                self.assertEqual("small_task_usage_unmeasured", outcome.reason_code)
+                self.handle.claim_store.record_result_packet_artifact.assert_not_called()
+                self.assertEqual([], self.record.assignment_outcomes)
+
     def test_a_producer_result_over_the_review_cap_is_refused_before_recording(self):
         self.record.assignment_outcomes = []
         self.adapter.dispatch = lambda _packet, *, context: {
-            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "x" * 20_000}
+            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "x" * 20_000,
+            "usage": self.USAGE}
         outcome = self.run_assignment(0)
         self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
         self.assertEqual("small_task_producer_result_over_cap", outcome.reason_code)
@@ -317,7 +349,8 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
 
         # A short result is recorded and becomes the reviewer's predecessor.
         self.adapter.dispatch = lambda _packet, *, context: {
-            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "short"}
+            "status": "SUCCEEDED", "run_reference": "run-producer", "outcome": "short",
+            "usage": self.USAGE}
         self.record.assignment_outcomes = []
         outcome = self.run_assignment(0)
         self.assertIs(ParallelAssignmentStatus.SUCCEEDED, outcome.status)
@@ -328,3 +361,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
