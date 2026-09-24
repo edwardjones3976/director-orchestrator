@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | BEGIN]]
@@ -87,7 +88,7 @@ _SPEND = """SELECT s.task_id,s.attempt_digest,s.provider_id,s.project_id,s.budge
 FROM {s}.director_primary_provider_spend s LEFT JOIN {s}.director_primary_provider_usage u USING (attempt_digest)
 WHERE s.task_id = ANY(%(tasks)s) ORDER BY s.task_id,s.attempt_digest LIMIT 600"""
 
-_BUDGETS = """SELECT b.document->>'task_id' AS task_id, b.document->>'project_id' AS project_id,
+_BUDGETS = """SELECT b.document AS document, b.document->>'task_id' AS task_id, b.document->>'project_id' AS project_id,
  b.document->>'day' AS day, (b.document->>'daily_limit_microusd')::bigint AS daily_limit_microusd,
  (SELECT coalesce(sum(GREATEST(s2.reserved_microusd,coalesce(u2.actual_microusd,0))),0)
     FROM {s}.director_primary_provider_spend s2 LEFT JOIN {s}.director_primary_provider_usage u2 USING (attempt_digest)
@@ -98,6 +99,27 @@ FROM {s}.director_primary_provider_budget b WHERE b.document->>'task_id' = ANY(%
 _RECEIPTS = """SELECT task_id, encode(sha256(convert_to(command_id,'UTF8')),'hex') AS command_id_sha256,
  command_digest, resulting_projection_digest, recorded_at FROM {s}.director_primary_command_receipt
 WHERE task_id = ANY(%(tasks)s) AND operation='approval_resume' ORDER BY task_id, recorded_at LIMIT 100"""
+
+
+def _owner_secret(settings):
+    """The entitlement owner-authority secret, or None: without it no budget verifies."""
+    try:
+        from .entitlement_control_plane import _read_secret_file
+        return _read_secret_file(getattr(settings, "entitlement_owner_authority_secret_file", "") or "")
+    except Exception:  # noqa: BLE001 - any failure leaves every budget unverified
+        return None
+
+
+def _signed_budget(document, secret) -> bool:
+    """The existing ProviderBudget contract: closed schema, grant digest and owner HMAC signature."""
+    if secret is None:
+        return False
+    try:
+        from .antigravity_team import ProviderBudget
+        ProviderBudget.model_validate(document).verify(secret)
+    except Exception:  # noqa: BLE001 - malformed, unsigned or wrongly signed: not evidence
+        return False
+    return True
 
 
 def _plain(value):
@@ -147,7 +169,14 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 spend, budgets = [], []
                 if usage_tables:
                     spend = [_row(r) for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall()]
-                    budgets = [_row(r) for r in connection.execute(_BUDGETS.format(s=schema), {"tasks": tasks}).fetchall()]
+                    secret = _owner_secret(settings)
+                    budgets = []
+                    for r in connection.execute(_BUDGETS.format(s=schema), {"tasks": tasks}).fetchall():
+                        row = _row(r)
+                        document = row.pop("document")
+                        row["provider_id"] = document.get("provider_id") if isinstance(document, dict) else None
+                        row["signature_verified"] = _signed_budget(document, secret)
+                        budgets.append(row)
                 receipts = [_row(r) for r in connection.execute(_RECEIPTS.format(s=schema), {"tasks": tasks}).fetchall()]
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables,
@@ -203,13 +232,15 @@ def _capture_product(provider, output: bytes):
     if provider == "grok":
         if envelope.get("object") == "response":
             return "xai-grok-responses" if isinstance(model, str) and model.startswith("grok") else None
-        # The grok CLI dialect grok_terminal_success accepts: stopReason and an integer num_turns.
+        # The grok CLI dialect grok_terminal_success accepts: stopReason and an integer num_turns,
+        # and it must name a Grok model: the lane name alone attests nothing.
         cli = "stopReason" in envelope and type(envelope.get("num_turns")) is int
-        return "xai-grok-cli" if cli and (model is None or "grok" in str(model).lower()) else None
+        return "xai-grok-cli" if cli and isinstance(model, str) and "grok" in model.lower() else None
     if provider == "claude":
+        # A result envelope must name its models: a non-empty modelUsage whose keys are all Claude models.
         usage = envelope.get("modelUsage")
-        if envelope.get("type") != "result" or (usage is not None and (
-                not isinstance(usage, dict) or not usage or any(not str(key).startswith("claude") for key in usage))):
+        if (envelope.get("type") != "result" or not isinstance(usage, dict) or not usage
+                or any(not str(key).startswith("claude") for key in usage)):
             return None
         return "anthropic-claude"
     return None
@@ -253,3 +284,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]

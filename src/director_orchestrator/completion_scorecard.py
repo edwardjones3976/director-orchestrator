@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
@@ -296,7 +297,11 @@ WHERE w.id='directorIntake'; COMMIT;"""
 _STATUS_EXECUTION = """BEGIN READ ONLY;
 SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
  'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,e."startedAt",e."stoppedAt",d.data
-   ,w.active AS workflow_active FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
+   ,w.active AS workflow_active,w."activeVersionId" AS active_version,
+     to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt" AS workflow_updated_at,
+     (SELECT h."createdAt" FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
+       AS active_version_at
+   FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
    ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
@@ -335,17 +340,17 @@ def _hop(source: dict[str, Any] | None, target: dict[str, Any] | None, host: str
     ours, theirs = _networks(source), _networks(target)
     if not ours or not theirs:
         return None
-    shared = {attach["NetworkID"] for attach in ours}
+    reachable = {attach["NetworkID"] for attach in ours}
 
     def answers(attach: dict[str, Any]) -> bool:
         return host in {*(attach.get("Aliases") or []), *(attach.get("DNSNames") or [])}
 
-    for attach in theirs:
-        if attach["NetworkID"] in shared and answers(attach):
-            # A second owner of the name makes resolution ambiguous: the hop is not bound to target.
-            return not any(row.get("Id") != (target or {}).get("Id") and other["NetworkID"] == attach["NetworkID"]
-                           and answers(other) for row in containers for other in _networks(row))
-    return False
+    if not any(attach["NetworkID"] in reachable and answers(attach) for attach in theirs):
+        return False
+    # The source resolves host on every network it is attached to: another owner of the
+    # name on any of them makes resolution ambiguous, so the hop is not bound to target.
+    return not any(row.get("Id") != (target or {}).get("Id") and other["NetworkID"] in reachable and answers(other)
+                   for row in containers for other in _networks(row))
 
 
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
@@ -892,6 +897,17 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
     well_formed = isinstance(ts, str) and bool(_TS.fullmatch(ts))
     facts = {"execution_id": execution.get("id"), "stopped_at": stopped.isoformat(), "message_ts": ts if well_formed else None}
+    # The execution must have run the version active now: by its recorded version where n8n
+    # stores one, otherwise by starting after that version existed and the workflow last changed.
+    version = execution.get("execution_version")
+    if version is not None:
+        current = isinstance(version, str) and bool(version) and version == execution.get("active_version")
+    else:
+        marks = (execution.get("active_version_at"), execution.get("workflow_updated_at"))
+        current = all(isinstance(mark, str) for mark in marks) and started >= max(_when(mark) for mark in marks)
+    if not current:
+        return _observation("04", None, "The saved execution is not shown to have run the workflow's active version.",
+                            source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
     if started < runtime.created_at:
@@ -1305,7 +1321,15 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     if paid is not None and consistency is not None:
         entry = (consistency.get("tasks") or {}).get(paid["task_id"])
         budgets = entry.get("budgets") if isinstance(entry, dict) else None
+    unsigned = False
     if isinstance(budgets, list):
+        # A budget row counts only when the in-image report re-verified its owner signature
+        # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
+        providers = {row.get("provider_id") for row in ((consistency or {}).get("tasks") or {}).get(
+            (paid or {}).get("task_id"), {}).get("spend") or []}
+        unsigned = any(row.get("signature_verified") is not True for row in budgets) or not providers <= {
+            row.get("provider_id") for row in budgets}
+        budgets = [row for row in budgets if row.get("signature_verified") is True]
         for row in budgets:
             if not _counter(row["day_held_microusd"]) or not _counter(row["daily_limit_microusd"]):
                 raise ValueError("malformed enrolled budget row")
@@ -1320,6 +1344,10 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     if unpriced:
         return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
                             + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
+    if unsigned:
+        return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or does not "
+                            "bind a provider the paid task was charged against; it is not an enrolled cap.",
+                            source, facts, at, **runtime.binding)
     if monitored and isinstance(budgets, list) and budgets and cost is not None:
         return _observation("15", True, "Enrolled signed daily caps hold, usage-monitor accounting is within budget and the "
                             "paid task's actual charges are settled request-correlated meter rows.", source, facts, at, **runtime.binding)
@@ -2136,3 +2164,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]

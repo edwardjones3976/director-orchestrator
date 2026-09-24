@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | BEGIN]]
@@ -77,7 +78,7 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-responses"),
                  ("grok", b'{"object":"response","model":"gpt-5"}', None),
                  ("grok", b'{"object":"response"}', None),
-                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"sessionId":"s-1"}', "xai-grok-cli"),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"sessionId":"s-1"}', None),
                  ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"xai/grok-4"}', "xai-grok-cli"),
                  ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"gpt-5"}', None),
                  ("grok", b'{"stopReason":"end_turn","num_turns":"1"}', None),
@@ -85,7 +86,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("grok", b'{"type":"result","subtype":"success"}', None),
                  ("grok", b'[1, 2]', None),
                  ("grok", b'not json', None),
-                 ("claude", b'{"type":"result","result":"ok"}', "anthropic-claude"),
+                 ("claude", b'{"type":"result","result":"ok"}', None),
+                 ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{},"gpt-5":{}}}', None),
                  ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}', "anthropic-claude"),
                  ("claude", b'{"type":"result","modelUsage":{"gpt-5":{}}}', None),
                  ("claude", b'{"type":"result","modelUsage":{}}', None),
@@ -130,7 +132,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         self.assertFalse(unverified.capture_attestations()["openai"]["surfaces"]["app"]["capture_verified"])
 
     @contextmanager
-    def capture_sources(self, store, output=b'{"type":"result","result":"ok"}', verifier_present=True):
+    def capture_sources(self, store, output=b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}',
+                        verifier_present=True):
         writes = Mock(side_effect=AssertionError("activation store append reached"))
 
         @contextmanager
@@ -466,8 +469,36 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.assertEqual(rows["sha256:" + "a" * 64]["budget_day"], "2026-09-12")
         self.assertEqual(entry[task_id]["budgets"], [{"task_id": task_id, "project_id": "fixture-project",
                                                        "day": "2026-09-12", "daily_limit_microusd": 5000000,
-                                                       "day_held_microusd": 700000}])
+                                                       "day_held_microusd": 700000, "provider_id": None,
+                                                       "signature_verified": False}])
         json.dumps(entry, allow_nan=False)
+
+    def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
+        import hmac
+        import tempfile
+        from director_orchestrator.entitlement_contracts import canonical_json_bytes
+        task_id = self.intake()
+        secret = "fixture-owner-authority-secret-0123456789abcdefghij"
+        document = {"schema_version": "primary-provider-budget/v1", "grant_digest": "c" * 64, "provider_id": "openai",
+                    "project_id": "fixture-project", "task_id": task_id, "day": "2026-09-12",
+                    "task_limit_microusd": 1000000, "daily_limit_microusd": 5000000,
+                    "attempt_reservation_microusd": 500000, "token_limit": 1000}
+        document["owner_signature"] = hmac.new(secret.encode(), canonical_json_bytes(document), hashlib.sha256).hexdigest()
+        forged = {**document, "task_id": task_id, "daily_limit_microusd": 9000000}
+        with self.handle.pool.connection() as connection:
+            for grant, doc in (("grant-signed", document), ("grant-forged", forged)):
+                connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest, document)"
+                                   " VALUES (%s, %s::jsonb)", (grant, json.dumps(doc)))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "owner-authority-secret"
+            path.write_text(secret, encoding="utf-8")
+            self.settings.entitlement_owner_authority_secret_file = str(path)
+            rows = self.report(tasks=[task_id])["tasks"][task_id]["budgets"]
+            self.assertEqual(sorted((row["daily_limit_microusd"], row["signature_verified"], row["provider_id"])
+                                    for row in rows), [(5000000, True, "openai"), (9000000, False, "openai")])
+            self.settings.entitlement_owner_authority_secret_file = str(Path(folder) / "missing")
+            rows = self.report(tasks=[task_id])["tasks"][task_id]["budgets"]
+            self.assertEqual({row["signature_verified"] for row in rows}, {False})
 
 
 if __name__ == "__main__":
@@ -476,3 +507,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]

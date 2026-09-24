@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
@@ -149,7 +150,9 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
-                                          "workflow_active": True,
+                                          "workflow_active": True, "active_version": "v-2", "execution_version": None,
+                                          "active_version_at": "2026-09-12T09:00:00.000+00:00",
+                                          "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
                                           "startedAt": "2026-09-12T09:59:00.000+00:00",
                                           "stoppedAt": "2026-09-12T09:59:02.000+00:00", "data": flatted(run)}}
 
@@ -169,7 +172,8 @@ def consistency_fixture():
              "project_id": "fixture-project", "budget_day": "2026-09-12", "reserved_microusd": 500000,
              "actual_microusd": 300000, "request_correlated": True}
     budget = {"task_id": PAID_TASK, "project_id": "fixture-project", "day": "2026-09-12",
-              "daily_limit_microusd": 5000000, "day_held_microusd": 500000}
+              "daily_limit_microusd": 5000000, "day_held_microusd": 500000, "provider_id": "claude",
+              "signature_verified": True}
     return {"version": "director-primary-consistency/v1",
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture()},
@@ -1410,6 +1414,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         shadowed.append({"Id": "6" * 64, "Name": "/another-orchestrator", "State": {"Running": True}, "Config": {},
                          "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["orchestrator"]}}}})
         self.assertEqual(row(collect_topology(shadowed), "01")["status"], "FAIL")
+        # A competing owner on any network the source is attached to breaks the hop, not only the first shared one.
+        second = topology()
+        second_net = {"NetworkID": "b" * 64, "Aliases": []}
+        second[1]["NetworkSettings"]["Networks"]["second"] = dict(second_net)
+        second[2]["NetworkSettings"]["Networks"]["second"] = dict(second_net)
+        second.append({"Id": "7" * 64, "Name": "/n8n-impostor", "State": {"Running": True}, "Config": {},
+                       "NetworkSettings": {"Networks": {"second": {"NetworkID": "b" * 64, "Aliases": ["n8n"]}}}})
+        self.assertEqual(row(collect_topology(second), "01")["status"], "FAIL")
         relay = topology()
         relay[1]["Config"]["Env"][3] = "N8N_DIRECTOR_WEBHOOK_URL=http://edge-engine-director-n8n-1:5678/webhook/director-intake"
         self.assertEqual(row(collect_topology(relay), "01")["status"], "PASS")
@@ -1550,6 +1562,16 @@ class ScorecardCollectorTests(unittest.TestCase):
         inactive = self.world()
         inactive.status["execution"]["workflow_active"] = False
         self.assertEqual(inactive.state("04"), "UNKNOWN")
+        # The execution must have run the active version.
+        for change in ({"execution_version": "v-1"}, {"active_version_at": "2026-09-12T09:59:30.000+00:00"},
+                       {"workflow_updated_at": "2026-09-12T09:59:30.000+00:00"}, {"active_version_at": None}):
+            case = self.world()
+            case.status["execution"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("04"), "UNKNOWN")
+        recorded = self.world()
+        recorded.status["execution"]["execution_version"] = "v-2"
+        self.assertEqual(recorded.state("04"), "PASS")
         # n8n resolving orchestrator to another container cannot attest the selected Director.
         detached = self.world()
         detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
@@ -1878,6 +1900,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         unsettled = self.world()
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
         self.assertEqual(unsettled.state("15"), "UNKNOWN")
+        # Only a re-verified, provider-bound signed budget is an enrolled cap.
+        for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"}):
+            case = self.world()
+            case.consistency["tasks"][PAID_TASK]["budgets"][0].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("15"), "UNKNOWN")
         uncorrelated = self.world()
         uncorrelated.consistency["tasks"][PAID_TASK]["spend"][0]["request_correlated"] = False
         self.assertEqual(uncorrelated.state("15"), "UNKNOWN")
@@ -2127,3 +2155,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]

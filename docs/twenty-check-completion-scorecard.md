@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]] -->
@@ -130,7 +131,8 @@ a container ID, never a name.
   project, and UNKNOWN when the gateway has no Compose labels. 01 also requires,
   from `docker inspect` alone, that the gateway and n8n share a Docker network
   (same network ID) on which n8n's aliases or DNS names include the relay
-  host, and likewise that n8n and the selected Director share a network on
+  host (on every network the source is attached to, no other container may
+  answer to that name), and likewise that n8n and the selected Director share a network on
   which the Director answers to `orchestrator` (the host n8n's health probe and
   intake request use). On that network no other container may answer to the
   same name. FAIL when a hop has no such network or the name has another
@@ -149,7 +151,9 @@ a container ID, never a name.
 - 04: only when, from `docker inspect`, the deployment's n8n reaches the
   selected Director (and no other container) as `orchestrator`, the newest
   saved successful scheduled `Director Status` execution of a workflow that is
-  active now, in the
+  active now, which ran its active version (the execution's recorded version
+  where n8n stores one, otherwise a start after both that version's history
+  entry and the workflow's last update; UNKNOWN when neither shows it), in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
   started before the running Director container was created is UNKNOWN, and so
@@ -235,7 +239,10 @@ runtime and write nothing.
   projection binding, and `OWNER_DECISION_REQUIRED` holds with a pending
   approval, which are in flight even with no open assignment or lease). For each `--task` it adds the spend rows with their
   settled usage and request correlation, and the enrolled budget rows with the
-  day's held amount, and its `approval_resume` command receipts (SHA-256 of
+  day's held amount, their provider and whether the full budget document passes
+  the owner-signed `ProviderBudget` contract (closed schema, grant digest and
+  HMAC owner signature, re-verified with the entitlement owner-authority
+  secret; without that secret nothing verifies), and its `approval_resume` command receipts (SHA-256 of
   the command ID, command and resulting projection digests, recorded time). In
   `owner-local-evidence-v1` mode it also returns the pinned adoption's
   repository, pull request, author, reviewers, reviewed source and adoption
@@ -261,9 +268,9 @@ runtime and write nothing.
   envelope needs an OpenAI model (`gpt-`, `o<digit>`, `codex`, `chatgpt-`), a
   Codex capture needs a native Codex JSONL turn, a Grok Responses envelope a
   `grok` model, a Grok CLI envelope `stopReason` with an integer `num_turns`
-  (and a Grok model when it names one),
-  and a Claude result envelope `claude` models in any `modelUsage`. Anything
-  else has no product. These are not part of
+  and a Grok model, and a Claude result envelope a non-empty `modelUsage`
+  whose keys are all `claude` models. An envelope that names no model has no
+  product: the lane name alone attests nothing. Anything else has no product. These are not part of
   `/health`, which stays readiness booleans only.
 
 Against an image built before these commands existed, `docker exec` exits
@@ -468,7 +475,9 @@ usage rows whose metering evidence carries request and response IDs, correlated
 by attempt digest to every attempt the task made. Check 15 fails when an
 enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
 provider exceeds its daily budget, and passes only when the paid task's budget
-rows, the usage-monitor accounting and a settled cost are all present. It is
+rows, the usage-monitor accounting and a settled cost are all present. A
+budget row that fails that signed contract, or that binds no provider the paid
+task was charged against, is not an enrolled cap and leaves 15 UNKNOWN. It is
 UNKNOWN when a budgeted usage-monitor provider has attempts today (a
 `request_count` that is not exactly zero), incomplete cost visibility and no
 reserved cost, because `reported_cost_usd` sums known costs only.
@@ -576,3 +585,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]] -->
