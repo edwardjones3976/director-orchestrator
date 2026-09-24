@@ -63,8 +63,16 @@ try {
         if ($LASTEXITCODE -ne 0) { Write-Error "could not stop $Container; no backup taken" }
     }
     # ./cache holds re-downloadable embedding/speech models (about 1 GB); chats, users and memory are the rest.
-    docker run --rm --entrypoint tar -v "${Volume}:/d:ro" -v "${OutDir}:/b" $image czf "/b/$name" --exclude=./cache -C /d .
-    if ($LASTEXITCODE -ne 0) { Write-Error 'backup failed' }
+    # Write under .part and rename only on success, so a failed tar never leaves a file that looks like a
+    # valid backup (which retention would count among the newest and use to prune real recovery points).
+    docker run --rm --entrypoint tar -v "${Volume}:/d:ro" -v "${OutDir}:/b" $image czf "/b/$name.part" --exclude=./cache -C /d .
+    $tarExit = $LASTEXITCODE
+    $part = Join-Path $OutDir "$name.part"
+    if ($tarExit -ne 0) {
+        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+        Write-Error "backup failed (tar exit $tarExit); partial archive removed"
+    }
+    Move-Item -LiteralPath $part -Destination (Join-Path $OutDir $name)
 } finally {
     if ($wasRunning) {
         docker start $Container | Out-Null

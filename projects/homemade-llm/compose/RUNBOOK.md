@@ -11,7 +11,16 @@ $compose = 'docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\s
 
 ## 0. Create the env file (once)
 
-`C:\llm\secrets` is created by `preflight.ps1 -Init` and restricted to you and SYSTEM. Create the env file there, not in the repo:
+`preflight.ps1 -Init` creates `C:\llm\secrets` but does **not** restrict it. Lock it down **before** any secret goes in, and create the env file there, not in the repo:
+
+0. Restrict the folder to you and SYSTEM (an owner step), then verify.
+
+   ```powershell
+   icacls C:\llm\secrets /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" "SYSTEM:(OI)(CI)F"
+   (Get-Acl C:\llm\secrets).Access | Select-Object IdentityReference, FileSystemRights
+   ```
+
+   The output must list only your account and `NT AUTHORITY\SYSTEM`. Don't continue until it does.
 
 1. Copy the template.
 
