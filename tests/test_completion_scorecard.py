@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
@@ -78,7 +79,8 @@ def containers():
     return [{"Id": DIRECTOR_ID, "Name": "/edge-engine-director-orchestrator-1", "Image": IMAGE,
              "Created": "2026-09-12T09:00:00.123456789Z",
              "State": {"Running": True, "StartedAt": "2026-09-12T09:30:00.000000001Z"},
-             "Config": {"Labels": {"org.director.candidate.commit": SHA, **compose_labels("orchestrator")},
+             "Config": {"Labels": {"org.director.candidate.commit": SHA, "org.director.candidate.tree": "d" * 40,
+                                   **compose_labels("orchestrator")},
                         "Env": [f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "SLACK_BOT_TOKEN=fixture-secret-bot",
                                 "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret", f"SLACK_OWNER_USER_ID={OWNER}",
                                 f"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256={PIN}",
@@ -147,6 +149,7 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
+                                          "workflow_active": True,
                                           "startedAt": "2026-09-12T09:59:00.000+00:00",
                                           "stoppedAt": "2026-09-12T09:59:02.000+00:00", "data": flatted(run)}}
 
@@ -257,6 +260,8 @@ class World:
             test.addCleanup(self._folder.cleanup)
         self.root = Path(self._folder.name)
         self.rows = containers() + [item for item in topology() if item["Id"] in (N8N_ID, N8N_DB_ID)]
+        self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway, created with the Director
+        self.commit_tree = "d" * 40
         self.payload = health()
         self.consistency = consistency_fixture()
         self.captures = captures_fixture()
@@ -327,7 +332,8 @@ class World:
                     and all(sc._labels(item).get(key) == value for key, value in wanted.items())]
             return "\n".join(item["Id"] for item in rows).encode()
         if args[:2] == ["docker", "inspect"]:
-            return json.dumps([item for item in self.rows if item["Id"] in args[2:]]).encode()
+            return json.dumps([item for item in self.rows
+                               if item["Id"] in args[2:] or item.get("Name", "").lstrip("/") in args[2:]]).encode()
         if args[:2] == ["docker", "exec"] and args[2] == DIRECTOR_ID and args[3:6] == ["python", "-m", "director_orchestrator.primary_generation"]:
             self.exec_timeouts.append(timeout)
             if args[6] == "consistency":
@@ -337,6 +343,8 @@ class World:
                 return self.reply(self.captures)
         if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._STATUS_EXECUTION:
             return self.reply(self.status)
+        if args[:2] == ["gh", "api"] and args[2] == f"repos/{sc.REPOSITORY}/git/commits/{SHA}":
+            return self.reply({"tree": self.commit_tree})
         raise ValueError("unrouted fixture command")
 
     def handle(self, request):
@@ -392,6 +400,7 @@ class World:
         selected = dict(deployment=DEPLOYMENT)
         if not only_deployment:
             selected.update(channel=CHANNEL_FIXTURE, approval_task=APPROVAL_TASK, trials=list(self.trials),
+                            gateway=GATEWAY, topology=False,
                             rubric_path=self.rubric_path, paid_thread=ts(20000), paid_rubric_path=self.paid_rubric_path,
                             drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200), "transport-failure": ts(150),
                                            "duplicate-input": ts(300), "ambiguous-post": ts(400)})
@@ -1357,6 +1366,11 @@ class ScorecardCollectorTests(unittest.TestCase):
                 with self.subTest(path=path.name, legacy=legacy):
                     self.assertNotIn(legacy, text)
 
+    def test_private_g_channel_ids_are_accepted(self):
+        report = self.world().report(channel="GPRIVATE12")
+        self.assertEqual(row(report, "03")["status"], "UNKNOWN")
+        self.assertIn("--channel", row(report, "03")["explanation"])
+
     def test_app_token_fingerprints_compare_in_constant_time_02(self):
         import hmac
         with patch.object(sc.hmac, "compare_digest", wraps=hmac.compare_digest) as spy:
@@ -1432,6 +1446,31 @@ class ScorecardCollectorTests(unittest.TestCase):
         receipted_5xx.threads[ts(200)].append({"ts": ts(202), "thread_ts": ts(200), "user": BOT,
                                                "text": "*DIR-LG-5E — REQUEST RECEIVED*"})
         self.assertEqual(receipted_5xx.state("03"), "UNKNOWN")
+        # Only a reply's header is a BLOCKED notice: a quoted one is not, and two notices are not one refusal.
+        quoted = self.world()
+        quoted.threads[ts(100)][1]["text"] = "Result below.\nThe docs mention *DIRECTOR — BLOCKED* replies."
+        self.assertEqual(quoted.state("03"), "UNKNOWN")
+        doubled = self.world()
+        doubled.threads[ts(100)].append({**doubled.threads[ts(100)][1], "ts": ts(102)})
+        self.assertEqual(doubled.state("03"), "UNKNOWN")
+        tagged = self.world()
+        tagged.threads[ts(100)][1]["text"] = ("*[[Director Gateway | fixture | 2026-09-12 | 10:00 UTC | BEGIN]]*\n\n"
+                                              + tagged.threads[ts(100)][1]["text"])
+        self.assertEqual(tagged.state("03"), "PASS")
+        # A receipt quoted inside another reply is not a second receipt.
+        quoted_receipt = self.world()
+        thread = quoted_receipt.threads[ts(300)]
+        thread.remove(next(m for m in thread if m.get("ts") == ts(302)))
+        thread.append({"ts": ts(303), "thread_ts": ts(300), "user": BOT,
+                       "text": "Note: earlier reply read *DIR-LG-D0 — REQUEST RECEIVED*"})
+        self.assertEqual(quoted_receipt.state("09"), "UNKNOWN")
+        # Slack intake evidence is bound to the selected gateway: recreated after the drills, or absent.
+        new_gateway = self.world()
+        new_gateway.rows[-1]["Created"] = "2026-09-12T11:00:00Z"
+        self.assertEqual(new_gateway.state("03"), "UNKNOWN")
+        report = self.world().report(gateway=None)
+        self.assertEqual(row(report, "03")["status"], "UNKNOWN")
+        self.assertIn("--gateway", row(report, "03")["explanation"])
         # One reply repeating its receipt text is one receipt: duplicate input was not exercised.
         repeated = self.world()
         thread = repeated.threads[ts(300)]
@@ -1508,6 +1547,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited = self.world()
         edited.threads[STATUS_TS][0]["edited"] = {"user": BOT, "ts": ts(90)}
         self.assertEqual(edited.state("04"), "UNKNOWN")
+        inactive = self.world()
+        inactive.status["execution"]["workflow_active"] = False
+        self.assertEqual(inactive.state("04"), "UNKNOWN")
         # n8n resolving orchestrator to another container cannot attest the selected Director.
         detached = self.world()
         detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
@@ -1593,6 +1635,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         del missing.tasks[APPROVAL_TASK]
         report = missing.report()
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
+
+    def test_generation_tree_must_match_the_runtime_label_and_commit(self):
+        for mutate in (lambda w: w.rows[0]["Config"]["Labels"].update({"org.director.candidate.tree": "e" * 40}),
+                       lambda w: w.consistency["generation"].update(candidate_tree="e" * 40),
+                       lambda w: setattr(w, "commit_tree", "e" * 40)):
+            world = self.world()
+            mutate(world)
+            with self.subTest(mutate=mutate):
+                self.assertEqual(world.state("07"), "UNKNOWN")
 
     def test_generation_commit_must_match_the_runtime_label(self):
         world = self.world()
@@ -2075,3 +2126,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]

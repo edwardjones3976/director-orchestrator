@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
@@ -40,7 +41,7 @@ import subprocess
 import tempfile
 import time
 from contextlib import closing
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -58,7 +59,7 @@ FRESH_FOR = timedelta(minutes=5)
 _COLLECTED = object()
 # Exact selectors. There is no default deployment and no committed channel.
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
-_CHANNEL = re.compile(r"C[A-Z0-9]{8,20}")
+_CHANNEL = re.compile(r"[CG][A-Z0-9]{8,20}")
 _TASK = re.compile(r"DIR-LG-[A-F0-9]{1,32}")
 _TS = re.compile(r"\d{10,}\.\d{1,6}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -198,6 +199,7 @@ class _Runtime:
     api_base: str
     health: dict = field(repr=False)
     env: dict = field(repr=False)  # holds secrets: memory only, never in facts
+    runtime_tree: str = ""  # the image's tree label; "" when absent or malformed
 
     @property
     def binding(self) -> dict[str, str]:
@@ -235,6 +237,8 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
             or service.get("State", {}).get("Running") is not True):
         raise ValueError("inspected container is not the selected deployment's running Director")
     runtime_sha = _sha(labels.get("org.director.candidate.commit", ""))
+    tree_label = labels.get("org.director.candidate.tree", "")
+    runtime_tree = tree_label if isinstance(tree_label, str) and re.fullmatch(r"[a-f0-9]{40}", tree_label) else ""
     image_id = service.get("Image", "")
     if not isinstance(image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
         raise ValueError("runtime image identity unavailable")
@@ -252,7 +256,7 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
         raise ValueError("primary health is malformed")
     runtime = _Runtime(project, ids[0], image_id, runtime_sha, _when(service["Created"]),
                        _when(service["State"]["StartedAt"]), environment, health_url,
-                       f"http://127.0.0.1:{int(port)}", health, env)
+                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree)
     binding = runtime.binding
     result = []
     owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True})
@@ -292,7 +296,7 @@ WHERE w.id='directorIntake'; COMMIT;"""
 _STATUS_EXECUTION = """BEGIN READ ONLY;
 SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
  'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,e."startedAt",e."stoppedAt",d.data
-   FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
+   ,w.active AS workflow_active FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
    ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
@@ -567,7 +571,20 @@ class _SlackThreads:
 
 
 # The offline collector's native receipt wording (REQUEST RECEIVED, legacy ACCEPTED).
-_RECEIPT = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
+_RECEIPT = re.compile(r"\*?(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\*?")
+_BLOCKED = "*DIRECTOR — BLOCKED*"
+_BEGIN_TAG = re.compile(r"\*?\[\[[^\]\n]*\|\s*BEGIN\]\]\*?")
+
+
+def _header(text: str) -> str:
+    """A bot reply's leading line, after the contribution BEGIN tag the gateway wraps replies in.
+
+    A receipt or BLOCKED notice is the reply's header; the same words quoted in a body are not one.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if lines and _BEGIN_TAG.fullmatch(lines[0]):
+        lines = lines[1:]
+    return lines[0] if lines else ""
 
 
 def _thread_counts(t: _SlackThreads, thread: str,
@@ -579,9 +596,9 @@ def _thread_counts(t: _SlackThreads, thread: str,
     # posted, so its text is never parsed and the caller grades nothing in that thread.
     altered = sum(1 for m in replies if not t.m.unedited(m))
     bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
-    # One receipt per distinct reply and task: a reply repeating its receipt text is still one receipt.
-    receipts = [task for text in bot for task in dict.fromkeys(m.group(1) for m in _RECEIPT.finditer(text))]
-    blocked = sum(1 for text in bot if "DIRECTOR — BLOCKED" in text)
+    # At most one receipt per reply, and only as its header: a quoted or repeated receipt is not another.
+    receipts = [match.group(1) for text in bot if (match := _RECEIPT.fullmatch(_header(text)))]
+    blocked = sum(1 for text in bot if _header(text) == _BLOCKED)
     return owner_inputs, receipts, blocked, altered
 
 
@@ -837,6 +854,19 @@ def _selected_director_hop(runtime: _Runtime) -> bool | None:
     return _hop(n8n[0], director, "orchestrator", containers)
 
 
+def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
+    """The runtime whose freshness bound is the later of the Director's and the selected gateway's creation.
+
+    Slack intake passes through the gateway, so a drill, trial, approval or paid run handled by a
+    predecessor gateway cannot attest the one running now.
+    """
+    row = _run_json(["docker", "inspect", gateway])[0]
+    if (row.get("Name", "").lstrip("/") != gateway or row.get("State", {}).get("Running") is not True
+            or not _gateway_launch(row) or _labels(row).get("com.docker.compose.project") != runtime.project):
+        raise ValueError("the selected gateway is not a running gateway of this deployment")
+    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"])))
+
+
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
     binding = runtime.binding
     source = "n8n Director Status saved execution (READ ONLY) and Slack conversations.replies"
@@ -854,6 +884,9 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
         return _observation("04", None, "No single Director Status workflow has a saved successful posting execution "
                             "in the last 72 hours.", source, {}, at, **binding)
     execution = found["execution"]
+    if execution.get("workflow_active") is not True:
+        return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
+                            "show that status delivery is operational.", source, {}, at, **binding)
     out = _flatted(execution["data"])["resultData"]["runData"]["Post Status"][-1]["data"]["main"][0][0]["json"]
     ts = out.get("ts") or (out.get("message") or {}).get("ts")
     started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
@@ -907,20 +940,20 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
     if kind == "refusal-4xx":
         if status != 404 or receipts:
             verdict = False
-        elif complete and owner_inputs == 1 and blocked >= 1:
+        elif complete and owner_inputs == 1 and blocked == 1:
             verdict = True
     elif kind == "reserved-5xx":
         if status == 409 or (tasks is not None and tasks > 1):
             verdict = False
         # A receipt means the gateway answered 202, so the reserved 5xx was not exercised.
-        elif status == 200 and complete and owner_inputs == 1 and blocked >= 1 and tasks == 1 and not receipts:
+        elif status == 200 and complete and owner_inputs == 1 and blocked == 1 and tasks == 1 and not receipts:
             verdict = True
     elif kind == "transport-failure":
         # No status reached the gateway: the task may or may not exist, but never twice.
         # A receipt means the relay answered 202, so the failure was not exercised.
         if status == 409 or (tasks is not None and tasks > 1):
             verdict = False
-        elif (complete and owner_inputs == 1 and blocked >= 1 and not receipts
+        elif (complete and owner_inputs == 1 and blocked == 1 and not receipts
               and (status == 404 or (status == 200 and tasks == 1))):
             verdict = True
     elif kind == "duplicate-input":
@@ -979,7 +1012,8 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
             explanation = ("Missing --drill-thread selections: " + ", ".join(missing) + "." if missing else
                            "Drill threads hold edited or subtyped bot replies, so nothing in them is graded: "
                            + ", ".join(altered) + "." if altered else
-                           "Drills that predate the running Director container cannot attest it: " + ", ".join(stale) + "."
+                           "Drills that predate the running Director or gateway container cannot attest it: "
+                           + ", ".join(stale) + "."
                            if stale else "A drill was not exercised or its evidence was incomplete or unavailable.")
         result.append(_observation(check, passed, explanation, _SLACK_SOURCE,
                                    {kind: facts.get(kind) for kind in kinds}, at, **runtime.binding))
@@ -1071,7 +1105,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     if failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
     elif not current:
-        passed08, explanation08 = None, ("The approval task was created before the running Director container, so it "
+        passed08, explanation08 = None, ("The approval task was created before the running Director container or "
+                                         "gateway, so it "
                                          "cannot attest this image.")
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
@@ -1328,6 +1363,14 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             t = None
     paid = None
     label = None
+    director_runtime, runtime = runtime, None
+    if gateway is not None:
+        try:
+            runtime = _gateway_bound(director_runtime, gateway)
+        except _SOURCE_ERRORS:
+            runtime = None
+    gateway_unbound = runtime is None
+    runtime = runtime or director_runtime
     try:
         if t is None:
             unknown(("03", "04", "06", "08", "09", "10", "11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
@@ -1342,7 +1385,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             except _SOURCE_ERRORS:
                 unknown(("10",), "The offline trial threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
-                put([_status_observation(at, runtime, t)])
+                put([_status_observation(at, director_runtime, t)])
             except _SOURCE_ERRORS:
                 unknown(("04",), "The status execution or its Slack readback could not be read; no retry was made.",
                         "n8n Director Status saved execution")
@@ -1368,7 +1411,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         # is what their evidence belongs to. Unverified or different: none of it attests this runtime.
         generation = (consistency or {}).get("generation")
         verified_commit = generation.get("candidate_commit") if isinstance(generation, dict) else None
-        unbound = consistency is not None and not _same(verified_commit, runtime.runtime_sha)
+        verified_tree = generation.get("candidate_tree") if isinstance(generation, dict) else None
+        unbound = consistency is not None and not (
+            _same(verified_commit, runtime.runtime_sha) and _same(verified_tree, runtime.runtime_tree)
+            and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree))
         if unbound or consistency is None:
             consistency = captures = None  # captures carry no commit: without the snapshot they are unbound
         if t is not None:
@@ -1402,10 +1448,14 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         except _SOURCE_ERRORS:
             unknown(("15",), "The monetary sources could not be evaluated; no retry was made.", _CONSISTENCY_SOURCE)
         if unbound:
-            reason = ("The in-image generation commit is unverified or differs from the runtime image label, so its "
+            reason = ("The in-image generation commit or tree is unverified or differs from the runtime image labels "
+                      "(or the labelled commit's tree), so its "
                       "consistency, acceptance, capture and settlement evidence cannot attest this runtime.")
             unknown(("07", "08", "11", "12", "15", "20"), reason, _CONSISTENCY_SOURCE)
             put([_observation("17", None, reason, _CONSISTENCY_SOURCE, {}, at, candidate_sha=candidate_sha)])
+        if gateway_unbound and t is not None:
+            unknown(("03", "08", "09", "10", "20"), "No running --gateway of this deployment was resolved, so Slack "
+                    "intake evidence cannot be bound to the gateway that handled it.", _SLACK_SOURCE)
         if t is None:
             unknown(("11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
         elif paid_thread is not None and paid is None:
@@ -1676,6 +1726,16 @@ def _merge_base(head: str) -> str | None:
                        "{merge_base: .merge_base_commit.sha}"])
     sha = value.get("merge_base") if isinstance(value, dict) else None
     return sha if isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha) else None
+
+
+def _commit_tree(sha: str) -> str | None:
+    """GitHub's tree for a commit (GET only); None when unreadable."""
+    try:
+        value = _run_json(["gh", "api", f"repos/{REPOSITORY}/git/commits/{sha}", "--jq", "{tree: .tree.sha}"])
+    except _SOURCE_ERRORS:
+        return None
+    tree = value.get("tree") if isinstance(value, dict) else None
+    return tree if isinstance(tree, str) and re.fullmatch(r"[a-f0-9]{40}", tree) else None
 
 
 def _compare_status(base: str, head: str) -> str:
@@ -2075,3 +2135,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]

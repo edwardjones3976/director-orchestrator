@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]] -->
@@ -136,14 +137,19 @@ a container ID, never a name.
   owner, UNKNOWN when a container shows no network attachments. No probe runs
   inside the gateway.
 - 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
-  `GET /v1/slack-thread-bindings` and the task readback (see below). A drill
+  `GET /v1/slack-thread-bindings` and the task readback (see below). A receipt
+  or `BLOCKED` notice counts only as a reply's leading header (after the
+  gateway's contribution BEGIN tag), at most one receipt per reply; the words
+  quoted in a body count as neither, and the 4xx, 5xx and transport drills need
+  exactly one `*DIRECTOR — BLOCKED*` reply. A drill
   whose thread holds a bot reply Slack reports as edited or with a subtype is
   UNKNOWN before anything in it is graded, and such a reply's text is never
   parsed: the bot never edits, so its receipts and `BLOCKED` text are no longer
   what was posted.
 - 04: only when, from `docker inspect`, the deployment's n8n reaches the
   selected Director (and no other container) as `orchestrator`, the newest
-  saved successful scheduled `Director Status` execution in the
+  saved successful scheduled `Director Status` execution of a workflow that is
+  active now, in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
   started before the running Director container was created is UNKNOWN, and so
@@ -154,9 +160,11 @@ a container ID, never a name.
   approval prompt Slack reports as edited or with a subtype is not the native
   prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
 - 07, 17, 15 (budget and meter rows): the in-image `consistency` command. Its
-  verified generation commit must equal the runtime image label; when it is
-  unverified or differs, 07, 08, 11, 12, 15, 17 and 20 are UNKNOWN, because
-  the in-image evidence belongs to that generation, not to the labelled image. 17
+  verified generation commit and tree must equal the runtime image's commit
+  and tree labels, and the tree must be the labelled commit's tree on GitHub
+  (GET only); when any of these is unverified or differs, 07, 08, 11, 12, 15,
+  17 and 20 are UNKNOWN, because the in-image evidence belongs to that
+  generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
@@ -350,6 +358,10 @@ runs and drills are repeated. The writer generation does not prove a restart,
 because the same owner token renews a live lease. This is an ordering check,
 not an execution record: a task created after the container but handled by a
 process the scorecard cannot see is still credited to the running image.
+Slack intake passes through the gateway, so 03, 08, 09, 10 and 20 also bind
+to the `--gateway` container: their freshness bound is the later of the
+Director's and the gateway's creation, and without a running `--gateway` of
+the deployment they are UNKNOWN. `--channel` accepts `C` and `G` Slack IDs.
 Check 10 reads only what Slack still shows: a deleted post leaves a tombstone,
 which 10 treats as a break, but a deleted post with no replies leaves nothing.
 
@@ -563,3 +575,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]] -->
