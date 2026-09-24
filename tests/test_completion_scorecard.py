@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
@@ -103,8 +104,11 @@ def health():
         "reconciliation_hold_reason": None,
         "primary_runtime_active": True, "effect_executor_ready": True,
         "provider_activation": {"combined_live_ready": True}},
-        "usage_monitor": {"daily_accounting": {"grok": {"reported_cost_usd": 0.1, "reserved_cost_usd": 0.2,
-                                                         "daily_budget_usd": 5.0}}}}
+        "usage_monitor": {"enabled": True, "paid_run_gate_open": True, "gate_state": "open",
+                          "unsupported_providers": [], "missing_or_stale_providers": [],
+                          "all_configured_have_recent_signal": True,
+                          "daily_accounting": {"grok": {"reported_cost_usd": 0.1, "reserved_cost_usd": 0.2,
+                                                        "daily_budget_usd": 5.0}}}}
 
 
 def runtime_fixture(**changes):
@@ -252,14 +256,30 @@ def approval_entry(decided=None):
     readback["slack_deliveries"].append(delivery)
     entry["deliveries"].append({"task_id": APPROVAL_TASK, **{key: value for key, value in delivery.items()
                                                               if key not in ("created_at", "last_error")}})
+    value = json.dumps({"task_id": APPROVAL_TASK, "projection_digest": projection, "kind": "tool_use",
+                        "request_digest": "sha256:" + "8" * 64}, separators=(",", ":"), sort_keys=True)
+    scope = (f"{APPROVAL_TASK} — OWNER DECISION REQUIRED\nOwner decision required for tool_use. Review the complete "
+             "proposed scope below:\nDecision scope: tool_use. Other safety gates still apply.")
     entry["messages"].insert(2, {"ts": prompt, "thread_ts": ts(30000), "user": BOT,
-                                 "client_msg_id": "approval-client-1", "text": "*Approval required*"})
+                                 "client_msg_id": "approval-client-1", "text": scope,
+                                 "blocks": [{"type": "section", "text": {"type": "plain_text", "text": scope}},
+                                            {"type": "actions", "elements": [
+                                                {"type": "button", "action_id": "director_primary_approve",
+                                                 "text": {"type": "plain_text", "text": "Approve this request"},
+                                                 "value": value}]}]})
     return entry
 
 
+INTAKE_WORKFLOW = json.loads((Path(__file__).resolve().parents[1] / "n8n/workflows/director-intake.json")
+                             .read_text(encoding="utf-8"))
+
+
 def workflow_fixture():
+    parameters = next(n for n in INTAKE_WORKFLOW["nodes"] if n["name"] == "Create Director Task")["parameters"]
     return {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
-            "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True}
+            "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True,
+            "create_task_parameters": json.loads(json.dumps(parameters)),
+            "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"]))}
 
 
 class World:
@@ -282,6 +302,7 @@ class World:
         self.calls, self.exec_timeouts, self.consistency_tasks = [], [], None
         self.threads, self.tasks, self.deliveries, self.bindings = {}, {}, {}, {}
         self.failing, self.slack_down = set(), False
+        self.incomplete = set()
         self.threads[STATUS_TS] = [{"ts": STATUS_TS, "user": BOT, "bot_id": "BBOT123",
                                     "text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}]
         self.history_extra, self.history_hidden = [], set()
@@ -385,6 +406,9 @@ class World:
                 raise httpx.ConnectError("fixture transport failure", request=request)
             if thread not in self.threads:
                 return httpx.Response(200, json={"ok": False, "error": "thread_not_found"})
+            if thread in self.incomplete:  # a cursor that never advances: the readback stays incomplete
+                return httpx.Response(200, json={"ok": True, "messages": self.threads[thread], "has_more": True,
+                                                 "response_metadata": {"next_cursor": "same"}})
             return httpx.Response(200, json={"ok": True, "messages": self.threads[thread], "has_more": False})
         if not str(url).startswith(API + "/") or request.headers["Authorization"] != "Bearer fixture-director-secret":
             raise AssertionError("Director read left the selected deployment or used the wrong credential")
@@ -474,7 +498,8 @@ def topology():
     gateway = {"Id": GATEWAY_ID, "Image": IMAGE, "Name": "/" + GATEWAY, "State": {"Running": True},
                "Config": {"Cmd": ["python", "-m", "director_orchestrator.slack_bot"], "Labels": compose_labels("slackbot"),
                           "Env": ["SLACK_APP_TOKEN=" + APP_TOKEN, "SLACK_BOT_TOKEN=fixture-secret-bot",
-                                  f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake"]},
+                                  f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
+                                  f"SLACK_OWNER_USER_ID={OWNER}", "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret"]},
                "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["slackbot"],
                                                           "DNSNames": ["edge-engine-director-slackbot-1", "slackbot"]}}}}
     n8n = {"Id": N8N_ID, "Name": "/edge-engine-director-n8n-1", "State": {"Running": True},
@@ -1411,6 +1436,26 @@ class ScorecardCollectorTests(unittest.TestCase):
         malformed[1]["Config"]["Env"][0] = "SLACK_APP_TOKEN=fixture-app-token"
         self.assertEqual(row(collect_topology(malformed), "02")["status"], "UNKNOWN")
 
+    def test_paid_runtime_needs_live_activated_providers_19(self):
+        self.assertEqual(self.world().state("19"), "PASS")
+        dormant = self.world()
+        dormant.payload["langgraph_primary"]["provider_activation"]["combined_live_ready"] = False
+        self.assertEqual(dormant.state("19"), "FAIL")
+
+    def test_intake_forwarding_contract_01(self):
+        self.assertEqual(row(collect_topology(topology()), "01")["status"], "PASS")
+        workflow = workflow_fixture()
+        workflow["create_task_parameters"]["headerParameters"]["parameters"] = [
+            header for header in workflow["create_task_parameters"]["headerParameters"]["parameters"]
+            if header["name"] != "X-Director-Intake-Signature"]
+        self.assertEqual(row(collect_topology(topology(), workflow=workflow), "01")["status"], "FAIL")
+        rewired = workflow_fixture()
+        rewired["connections"]["Create Director Task"]["main"][0][0]["node"] = "Accepted"
+        self.assertEqual(row(collect_topology(topology(), workflow=rewired), "01")["status"], "FAIL")
+        unread = workflow_fixture()
+        del unread["create_task_parameters"]
+        self.assertEqual(row(collect_topology(topology(), workflow=unread), "01")["status"], "FAIL")
+
     def test_n8n_workflow_database_must_be_n8ns_own_store_01(self):
         for change in ("DB_POSTGRESDB_HOST=external-db", "DB_TYPE=sqlite", "DB_POSTGRESDB_DATABASE=other"):
             rows = topology()
@@ -1522,6 +1567,18 @@ class ScorecardCollectorTests(unittest.TestCase):
         new_n8n = self.world()
         new_n8n.rows[1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(new_n8n.state("03"), "UNKNOWN")
+        # A stale drill grades nothing: its negative outcome is UNKNOWN too, not FAIL.
+        stale_failure = self.world()
+        stale_failure.bindings[ts(100)] = (200, "DIR-LG-5E")
+        stale_failure.rows[-1]["Created"] = "2026-09-12T11:00:00Z"
+        self.assertEqual(stale_failure.state("03"), "UNKNOWN")
+        # The gateway that handled the threads must hold the Director's Slack and bearer identities.
+        foreign_bot = self.world()
+        foreign_bot.rows[-1]["Config"]["Env"] = [e for e in foreign_bot.rows[-1]["Config"]["Env"]
+                                                 if not e.startswith("SLACK_BOT_TOKEN=")] + ["SLACK_BOT_TOKEN=other-bot"]
+        report = foreign_bot.report()
+        self.assertEqual(row(report, "03")["status"], "UNKNOWN")
+        self.assertNotIn("other-bot", json.dumps(report))
         report = self.world().report(gateway=None)
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--gateway", row(report, "03")["explanation"])
@@ -1604,6 +1661,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         inactive = self.world()
         inactive.status["execution"]["workflow_active"] = False
         self.assertEqual(inactive.state("04"), "UNKNOWN")
+        new_n8n = self.world()
+        new_n8n.rows[1]["Created"] = "2026-09-12T09:59:30Z"
+        self.assertEqual(new_n8n.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
         other_bot = self.world()
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
@@ -1675,6 +1735,23 @@ class ScorecardCollectorTests(unittest.TestCase):
         impostor = self.world()
         impostor.threads[ts(30000)][2]["user"] = OWNER
         self.assertEqual(impostor.state("08"), "FAIL")
+        stale_impostor = self.world()
+        stale_impostor.threads[ts(30000)][2]["user"] = OWNER
+        stale_impostor.rows[-1]["Created"] = "2026-09-12T09:10:00Z"
+        self.assertEqual([row(stale_impostor.report(), key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
+        partial = self.world()
+        partial.incomplete.add(ts(30000))
+        self.assertEqual(partial.state("08"), "UNKNOWN")
+        for change in ("wrong button", "wrong kind text"):
+            case = self.world()
+            prompt = case.threads[ts(30000)][2]
+            if change == "wrong button":
+                prompt["blocks"][1]["elements"][0]["value"] = prompt["blocks"][1]["elements"][0]["value"].replace(
+                    "sha256:" + "8" * 64, "sha256:" + "0" * 64)
+            else:
+                prompt["blocks"][0]["text"]["text"] = "Something else entirely"
+            with self.subTest(change=change):
+                self.assertEqual(case.state("08"), "UNKNOWN")
         edited_prompt = self.world()
         edited_prompt.threads[ts(30000)][2]["edited"] = {"user": BOT, "ts": ts(30020)}
         self.assertEqual(edited_prompt.state("08"), "UNKNOWN")
@@ -1977,6 +2054,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         unsettled = self.world()
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
         self.assertEqual(unsettled.state("15"), "UNKNOWN")
+        for change in ({"enabled": False}, {"paid_run_gate_open": False}, {"gate_state": "usage_disabled"},
+                       {"missing_or_stale_providers": ["claude"]}, {"unsupported_providers": ["x"]},
+                       {"all_configured_have_recent_signal": False}):
+            case = self.world()
+            case.payload["usage_monitor"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("15"), "UNKNOWN")
+        uncapped = self.world()
+        uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = {"request_count": 2, "reported_cost_usd": 0.0,
+                                                                            "daily_budget_usd": None}
+        self.assertEqual(uncapped.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
         for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
                        {"authority_digest": "e" * 64}):
@@ -2241,3 +2329,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]

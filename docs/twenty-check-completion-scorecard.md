@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]] -->
@@ -134,7 +135,10 @@ a container ID, never a name.
   from `docker inspect` alone, that the gateway and n8n share a Docker network
   (same network ID) on which n8n's aliases or DNS names include the relay
   host (on every network the source is attached to, no other container may
-  answer to that name), and that n8n's own `DB_*` settings name the queried
+  answer to that name), that the active intake `Create Director Task` node
+  forwards exactly as `n8n/workflows/director-intake.json` (Authorization and
+  the three `X-Director-Intake-*` headers, the signed body, timeout, no
+  redirects, full response, and the same connections), and that n8n's own `DB_*` settings name the queried
   `n8n-db` (PostgreSQL, database and user `n8n`, port 5432, a host only that
   container answers to) before its workflows or executions are read; setting
   values are never reported, and likewise that n8n and the selected Director share a network on
@@ -172,7 +176,11 @@ a container ID, never a name.
   and leaves 02 UNKNOWN.
 - 05, 19: the Director's `/health`.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
-  08 also the task's `approval_resume` command receipts from `consistency`. An
+  08 also the task's `approval_resume` command receipts from `consistency`.
+  08 needs a complete thread readback, and each prompt's approve button must
+  carry exactly this task, projection, request digest and kind while its
+  visible text names that kind and decision scope (and the plan outcome when
+  the task has a plan). An
   approval prompt Slack reports as edited or with a subtype is not the native
   prompt, so 08 cannot pass on it. Drill owner inputs follow the same rule.
 - 07, 17, 15 (budget and meter rows): the in-image `consistency` command. Its
@@ -189,7 +197,11 @@ a container ID, never a name.
   is neither offline nor rubric-correct.
 - 11, 12: the in-image `activation-captures` command; 11 also reads the paid run's lanes.
 - 13, 14: the workload journal from `--ledger`.
-- 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
+- 15 (daily accounting): `/health` `usage_monitor.daily_accounting`, only when
+  the monitor is enabled with its paid gate open (`gate_state` `open`) and no
+  configured provider is unsupported, missing or stale; an attempted provider
+  with no numeric `daily_budget_usd` leaves 15 UNKNOWN.
+- 19 also requires `provider_activation.combined_live_ready`.
 - 16: GitHub `ci.yml` runs and jobs at the exact head, or `--ci-replica-receipt`.
   Runs are read page by page (100 per page, at most 10 pages) until GitHub's
   `total_count` is reached, and each run's jobs must match its `total_count`;
@@ -376,6 +388,15 @@ saved executions for its own default age. The scorecard reads only the last
 72 hours either way.
 
 ### Execution-binding limits
+
+One freshness rule (`_is_current`) runs before any grading in every runtime
+collector (03, 04, 06, 08, 09, 10, 11, 20): evidence whose moments (a Slack
+post, a task's creation, an execution's start) precede the latest creation of
+the containers that handled it grades nothing, so its outcome is UNKNOWN,
+never PASS and never FAIL. For 04 that is the Director and n8n; for Slack
+intake evidence the Director, the `--gateway` and n8n, where the gateway must
+also hold the Director's Slack bot token, owner, channel and bearer secret
+(compared in constant time, never reported).
 
 No producer records which image or process executed a task. Checks 10, 11 and
 20 bind a run to the running image only when the container was created before
@@ -615,3 +636,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]] -->

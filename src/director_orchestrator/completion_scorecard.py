@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
@@ -212,6 +213,17 @@ class _Runtime:
         return {"runtime_sha": self.runtime_sha, "image_id": self.image_id}
 
 
+def _is_current(since: datetime, *moments: datetime | None) -> bool:
+    """The one freshness rule every collector applies before grading anything, positive or negative.
+
+    Evidence counts only when each of its moments (a Slack post, a task's creation, an execution's
+    start) is at or after ``since``: the latest creation of the components that handled it. No
+    producer records the executing image, so older evidence belongs to a predecessor and grades
+    nothing here: its outcome is UNKNOWN, never PASS and never FAIL.
+    """
+    return all(moment is not None and moment >= since for moment in moments)
+
+
 def _same(a: Any, b: Any) -> bool:
     """Constant-time equality for secrets and digests; anything but two strings never matches."""
     return isinstance(a, str) and isinstance(b, str) and hmac.compare_digest(a.encode(), b.encode())
@@ -275,7 +287,9 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
                                    "reconciliation_worker_ready": True})
     if active is not None:
-        active = active and health.get("paid_runs_enabled") is True
+        # A paid runtime is active only with its provider lanes live-activated too.
+        active = (active and health.get("paid_runs_enabled") is True
+                  and (primary.get("provider_activation") or {}).get("combined_live_ready") is True)
     result.append(_observation("19", active, "Observed paid switch and operational primary components together.",
                                health_url, {"paid": health.get("paid_runs_enabled"), "active": active}, at, **binding))
     return result, runtime
@@ -294,7 +308,10 @@ SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",
 'static_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'url' LIKE 'http%' AND n->'parameters'->>'url' NOT LIKE '%{{%'),
 'supported_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'method'='POST' AND n->'parameters'->>'url'='http://orchestrator:8080/v1/intake'),
 'supported_webhook',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Slack Gateway Webhook' AND n->>'type'='n8n-nodes-base.webhook' AND n->'parameters'->>'httpMethod'='POST' AND n->'parameters'->>'path'='director-intake'),
-'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task')
+'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task',
+'create_task_parameters',(SELECT n->'parameters' FROM json_array_elements(h.nodes::json) n
+   WHERE n->>'name'='Create Director Task' LIMIT 1),
+'connections',h.connections::json)
 FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
@@ -318,6 +335,22 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
    ORDER BY e."stoppedAt" DESC LIMIT 1) x)); COMMIT;"""
+
+
+_INTAKE_FORWARDING = ("method", "url", "authentication", "sendHeaders", "specifyHeaders", "headerParameters",
+                      "sendBody", "contentType", "rawContentType", "body", "options")
+
+
+def _intake_contract(parameters: Any, connections: Any) -> bool:
+    """The active Create Director Task node forwards exactly as n8n/workflows/director-intake.json does:
+    Authorization and the three X-Director-Intake-* headers, the signed body, timeout, no redirects, the
+    full response, and the same 202 / refusal / ambiguous wiring."""
+    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-intake.json"
+    reference = json.loads(path.read_text(encoding="utf-8"))
+    node = next(item for item in reference["nodes"] if item["name"] == "Create Director Task")
+    return (isinstance(parameters, dict)
+            and all(parameters.get(key) == node["parameters"].get(key) for key in _INTAKE_FORWARDING)
+            and connections == reference["connections"])
 
 
 def _environment(container: dict[str, Any]) -> dict[str, str]:
@@ -448,8 +481,13 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
             facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
                                            "gateway_n8n_route_matches", "containers_running")):
         route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
+    if isinstance(workflow, dict):
+        # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
+        workflow["forwarding_contract"] = _intake_contract(workflow.pop("create_task_parameters", None),
+                                                           workflow.pop("connections", None))
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
-                                             "supported_webhook": True, "direct_connection": True})
+                                             "supported_webhook": True, "direct_connection": True,
+                                             "forwarding_contract": True})
     if workflow and workflow.get("supported_request") is False and workflow.get("static_request") is not True:
         workflow_ok = None  # An unsupported expression is not a proven wrong destination.
     if route_pass is True:
@@ -894,8 +932,9 @@ def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
     return _hop(n8n, database, env["DB_POSTGRESDB_HOST"], containers)
 
 
-def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | None]:
-    """(n8n reaches the selected Director as orchestrator, n8n's store is the queried n8n-db, that db's ID)."""
+def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | None, datetime | None]:
+    """(n8n reaches the selected Director as orchestrator, n8n's store is the queried n8n-db, that db's ID,
+    n8n's creation time)."""
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("running container inventory unavailable or exceeds 128")
@@ -908,9 +947,9 @@ def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | No
     n8n, databases = service("n8n"), service("n8n-db")
     director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
     if len(n8n) != 1 or len(databases) != 1 or director is None:
-        return None, None, None
+        return None, None, None, None
     return (_hop(n8n[0], director, "orchestrator", containers), _n8n_store(n8n[0], databases[0], containers),
-            databases[0].get("Id"))
+            databases[0].get("Id"), _when(n8n[0]["Created"]))
 
 
 def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
@@ -924,6 +963,12 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
     if (row.get("Name", "").lstrip("/") != gateway or row.get("State", {}).get("Running") is not True
             or not _gateway_launch(row) or _labels(row).get("com.docker.compose.project") != runtime.project):
         raise ValueError("the selected gateway is not a running gateway of this deployment")
+    # The readback uses the Director's Slack bot, owner, channel and bearer: the gateway that handled the
+    # threads must hold the same ones (compared in constant time, never reported).
+    mine = _environment(row)
+    if not all(_same(mine.get(name), runtime.env.get(name)) for name in (
+            "SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET")):
+        raise ValueError("the selected gateway does not hold the Director's Slack and bearer identities")
     relays = _compose_ids(runtime.project, "n8n")
     if len(relays) != 1:
         raise ValueError("the selected deployment does not run exactly one n8n")
@@ -936,7 +981,7 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
     binding = runtime.binding
     source = "n8n Director Status saved execution (READ ONLY) and Slack conversations.replies"
-    hop, store, database = _n8n_bindings(runtime)
+    hop, store, database, n8n_created = _n8n_bindings(runtime)
     if database is None:
         return _observation("04", None, "The selected deployment does not run exactly one n8n and one n8n-db service.",
                             source, {}, at, **binding)
@@ -977,9 +1022,10 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if started < runtime.created_at:
+    if not _is_current(max(runtime.created_at, n8n_created), started):
         return _observation("04", None, "The newest saved status execution started before the running Director "
-                            "container was created, so it cannot attest this image.", source, facts, at, **binding)
+                            "container or the running n8n was created, so it cannot attest them.",
+                            source, facts, at, **binding)
     if (out.get("ok") is not True or not well_formed or out.get("channel") != t.channel
             or not Decimal(str(started.timestamp())) <= Decimal(ts) <= Decimal(str(stopped.timestamp())) + 1):
         return _observation("04", None, "The saved execution's Slack response is not a correlated post to the project channel.",
@@ -1017,10 +1063,13 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
     facts.update(thread_tasks=tasks, terminal_reply_count=replies)
     # No producer records the executing image: a drill posted, or a task created,
     # before the running container was created cannot attest it.
-    current = Decimal(thread) >= Decimal(str(since.timestamp())) and (
-        readback is None or _when(readback["task_created_at"]) >= since)
+    current = _is_current(since, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
+                          *([_when(readback["task_created_at"])] if readback else []))
     facts["after_container_created"] = current
     verdict: bool | None = None
+    if not current:
+        facts["verdict"] = None
+        return None, facts
     if kind == "refusal-4xx":
         if status != 404 or receipts:
             verdict = False
@@ -1058,8 +1107,6 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
               and row.get("delivered_at") and row.get("slack_ts") and replies == 1
               and snapshot["row"].get("final_receipt_matches_native_message") is True):
             verdict = True
-    if verdict is True and (not current or altered):
-        verdict = None
     facts["verdict"] = verdict
     return verdict, facts
 
@@ -1105,6 +1152,35 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     return result
 
 
+def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, Any], task: Any) -> bool:
+    """The delivered prompt shows this request: its approve button carries exactly this task, projection,
+    request digest and kind (as primary_slack_delivery.approval_value renders it), its visible text names
+    that kind and decision scope, and it shows the plan's outcome when the task has a plan."""
+    key, projection = str(delivery.get("notification_key", "")), str(delivery.get("projection_digest"))
+    if not key.startswith("approval:") or not key.endswith(":" + projection):
+        return False
+    request = key[len("approval:"):-len(":" + projection)]
+    blocks = message.get("blocks") if isinstance(message.get("blocks"), list) else []
+    buttons = [item for block in blocks if isinstance(block, dict) and block.get("type") == "actions"
+               for item in block.get("elements") or [] if isinstance(item, dict)
+               and item.get("action_id") == "director_primary_approve"]
+    if len(buttons) != 1:
+        return False
+    try:
+        value = json.loads(buttons[0].get("value") or "")
+    except ValueError:
+        return False
+    kind = value.get("kind") if isinstance(value, dict) else None
+    if not isinstance(kind, str) or value != {"task_id": task_id, "projection_digest": projection, "kind": kind,
+                                               "request_digest": request}:
+        return False
+    text = "\n".join(str((block.get("text") or {}).get("text", "")) for block in blocks
+                     if isinstance(block, dict) and block.get("type") == "section")
+    outcome = ((task or {}).get("plan") or {}).get("normalized_outcome") if isinstance(task, dict) else None
+    return (f"Owner decision required for {kind}." in text and f"Decision scope: {kind}." in text
+            and (outcome is None or str(outcome) in text))
+
+
 def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str,
                            consistency: dict | None) -> list[Observation]:
     binding = runtime.binding
@@ -1117,6 +1193,13 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     if readback is None:
         reason = "The approval task's typed readback was not collected complete."
         return [_observation(key, None, reason, _SLACK_SOURCE, {}, at, **binding) for key in ("06", "08")]
+    # Only a container set that already existed when the approval task was created can have handled it:
+    # a predecessor's approval evidence grades nothing here, positive or negative.
+    if not _is_current(runtime.created_at, _when(readback["task_created_at"])):
+        reason = ("The approval task was created before the running Director container, gateway or n8n, so it "
+                  "cannot attest this runtime.")
+        return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
+                             at, **binding) for key in ("06", "08")]
     counters = readback["task_scope_counters"]
     ordinals: dict[str, set[int]] = {}
     for event in readback["provider_attempts"]:
@@ -1170,6 +1253,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             failures.append("prompt message is from another user")
         native = [m for m in prompt if m.get("client_msg_id") == delivery.get("client_msg_id") and m.get("user") == t.bot
                   and t.m.unedited(m)]
+        # The prompt the owner saw must show this request's scope and carry its exact button value.
+        scoped = len(native) == 1 and _prompt_scoped(native[0], task_id, delivery, task)
         command = hashlib.sha256(str(delivery.get("owner_command_id")).encode()).hexdigest()
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         receipted = decided is not None and any(
@@ -1180,19 +1265,13 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
                 and delivery.get("owner_command_id") and decided is not None
                 and Decimal(slack_ts) <= Decimal(str(decided.timestamp()))
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
-                and len(native) == 1 and receipted):
+                and complete and len(native) == 1 and scoped and receipted):
             gaps += 1
-    # Only a container that already existed when the approval task was created can have handled it.
-    current = _when(readback["task_created_at"]) >= runtime.created_at
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
-               "failures": sorted(set(failures)), "unproven_rows": gaps, "task_created_after_container": current}
+               "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
     if failures:
         passed08, explanation08 = False, "An owner decision is not bound to its delivered bot prompt: " + "; ".join(sorted(set(failures))) + "."
-    elif not current:
-        passed08, explanation08 = None, ("The approval task was created before the running Director container or "
-                                         "gateway, so it "
-                                         "cannot attest this image.")
     elif (row.get("task_record_bound") is True and row.get("task_api_gateway_attested") is True and approvals and not gaps):
         passed08, explanation08 = True, ("Every approval prompt was delivered by the bot and read back, then approved later by "
                                          "an approval_resume command receipt re-read from the control plane whose command "
@@ -1218,7 +1297,7 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
         delivery_ambiguous = True if "AMBIGUOUS" in states else None
     # Only a container that already existed when the task was created can be
     # the image that executed it; no producer records the executing image.
-    bound = readback is not None and runtime.created_at <= _when(readback["task_created_at"])
+    bound = readback is not None and _is_current(runtime.created_at, _when(readback["task_created_at"]))
     return {"run_id": row.get("task_id"),
             "mode": "offline" if offline else ("paid" if counters is not None and counters["attempt_ordinals"] >= 1 else None),
             "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
@@ -1247,6 +1326,11 @@ def _run_records_observation(check: str, mode: str, at: datetime, runtime: _Runt
     facts = {"records": [{key: record[key] for key in ("run_id", "mode", "correctness_verified", "terminal_reply_count",
                                                        "wall_seconds", "operational_provider_attempts", "actual_cost_usd",
                                                        "runtime_sha", "image_id")} for record in records]}
+    # Freshness first: a run the running containers cannot have handled grades nothing, positive or negative.
+    stale = [record["run_id"] for record in records if record["runtime_sha"] is None or record["image_id"] is None]
+    if stale:
+        return _observation(check, None, "Runs not bound to the running containers (no runtime_sha): "
+                            + ", ".join(map(str, stale)) + "; they grade nothing here.", source, facts, at, **runtime.binding)
     wrong = [record["run_id"] for record in records if record["mode"] not in (None, mode)]
     if wrong:
         return _observation(check, False, f"Task evidence shows these are not {mode} runs: " + ", ".join(map(str, wrong)) + ".",
@@ -1373,11 +1457,23 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                           consistency: dict | None, cost: float | None) -> Observation:
     over: list[str] = []
     unpriced: list[str] = []
-    accounting = (runtime.health.get("usage_monitor") or {}).get("daily_accounting")
-    monitored = isinstance(accounting, dict) and bool(accounting)
+    monitor = runtime.health.get("usage_monitor") or {}
+    accounting = monitor.get("daily_accounting")
+    # A monitor counts only when enabled with the paid gate open and every configured provider current.
+    ready = (monitor.get("enabled") is True and monitor.get("paid_run_gate_open") is True
+             and monitor.get("gate_state") == "open" and monitor.get("unsupported_providers") == []
+             and monitor.get("missing_or_stale_providers") == []
+             and monitor.get("all_configured_have_recent_signal") is True)
+    monitored = ready and isinstance(accounting, dict) and bool(accounting)
+    uncapped: list[str] = []
     if monitored:
         for provider, value in sorted(accounting.items()):
             budget = value.get("daily_budget_usd")
+            requests = value.get("request_count")
+            attempted = ((type(requests) is int and requests > 0) or (value.get("reported_cost_usd") or 0) > 0
+                         or (value.get("reserved_cost_usd") or 0) > 0)
+            if attempted and type(budget) not in (int, float):
+                uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
             if type(budget) in (int, float):
                 used = max(value.get("reported_cost_usd") or 0, value.get("reserved_cost_usd") or 0)
                 requests = value.get("request_count")
@@ -1415,6 +1511,13 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     if unpriced:
         return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
                             + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
+    facts.update(usage_monitor_ready=ready, uncapped_attempted_providers=uncapped)
+    if not ready:
+        return _observation("15", None, "The usage monitor is disabled, its paid gate is closed, or a configured "
+                            "provider is unsupported, missing or stale.", source, facts, at, **runtime.binding)
+    if uncapped:
+        return _observation("15", None, "Attempted providers have no numeric daily budget: " + ", ".join(uncapped) + ".",
+                            source, facts, at, **runtime.binding)
     if unsigned:
         return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or a charged "
                             "attempt does not join the signed budget of its own grant and provider.",
@@ -2238,3 +2341,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
