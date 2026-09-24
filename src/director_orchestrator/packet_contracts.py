@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:55 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -35,6 +36,7 @@ _SCHEMA_FILENAMES = {
     "work": "model-work-packet-v1.schema.json",
     "result": "model-result-packet-v1.schema.json",
     "replay": "model-replay-run-v1.schema.json",
+    "view": "director-compact-work-view-v1.schema.json",
 }
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "docs" / "schemas"
 
@@ -125,7 +127,7 @@ def _enforce_canonical_size(document: Mapping[str, Any], *, label: str) -> None:
         raise PacketContractError(f"{label} exceeds the {MAX_DOCUMENT_BYTES}-byte limit")
 
 
-def _schema_path(kind: Literal["work", "result", "replay"]) -> Path:
+def _schema_path(kind: Literal["work", "result", "replay", "view"]) -> Path:
     return _SCHEMA_ROOT / _SCHEMA_FILENAMES[kind]
 
 
@@ -157,7 +159,7 @@ def result_contract_properties() -> dict[str, frozenset[str]]:
 def _validators() -> dict[str, Draft202012Validator]:
     schemas = {
         kind: load_json_document(_schema_path(kind), max_bytes=256_000)
-        for kind in ("work", "result", "replay")
+        for kind in ("work", "result", "replay", "view")
     }
     for schema in schemas.values():
         Draft202012Validator.check_schema(schema)
@@ -175,7 +177,7 @@ def _validators() -> dict[str, Draft202012Validator]:
     }
 
 
-def _validate(kind: Literal["work", "result", "replay"], document: JsonObject) -> None:
+def _validate(kind: Literal["work", "result", "replay", "view"], document: JsonObject) -> None:
     errors = sorted(_validators()[kind].iter_errors(document), key=lambda item: list(item.path))
     if not errors:
         return
@@ -211,6 +213,15 @@ def validate_packet(kind: PacketKind, document: Mapping[str, Any]) -> JsonObject
     _enforce_canonical_size(packet, label=f"{kind} packet")
     _validate(kind, packet)
     return packet
+
+
+def validate_compact_view(document: Mapping[str, Any]) -> JsonObject:
+    """Validate a director-compact-work-view/v1 document before any transport sends it."""
+
+    view = _as_json_object(document, label="compact work view")
+    _enforce_canonical_size(view, label="compact work view")
+    _validate("view", view)
+    return view
 
 
 def _require_matching(left: JsonObject, right: JsonObject, field: str) -> None:
@@ -339,3 +350,4 @@ def load_replay_run(
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-08 | 13:55 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

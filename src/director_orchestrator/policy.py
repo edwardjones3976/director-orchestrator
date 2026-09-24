@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -571,6 +572,29 @@ def _identifier_words(text: str) -> str:
 
     text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", text)
     return re.sub(r"(?<=[A-Za-z0-9])[_.-]+(?=[A-Za-z0-9])|_+", " ", text)
+
+
+# Secret-shaped values: private keys, provider and chat tokens, cloud access
+# keys, and upper-case credential variable names.
+_SECRET_SHAPED = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"
+    r"|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b"
+    r"|(?-i:\b[A-Z][A-Z0-9]*_(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)\b)"
+)
+
+
+def small_task_content_screened(text: str) -> bool:
+    """Whether a file's text may not be shown to a small task's models.
+
+    Refused when the sensitive-data or credential approval gate matches it,
+    as written or with identifiers split into words, or when it holds a
+    secret-shaped value.
+    """
+
+    reasons = {*deterministic_approval_reasons(text),
+               *deterministic_approval_reasons(_identifier_words(text))}
+    return (bool(reasons & {"sensitive data", "credential or permission change"})
+            or _SECRET_SHAPED.search(text) is not None)
 
 
 def _read_only_sentence(sentence: str) -> bool:
@@ -1912,3 +1936,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

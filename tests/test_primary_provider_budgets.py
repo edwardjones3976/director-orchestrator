@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
@@ -37,7 +38,15 @@ from director_orchestrator.primary_parallel import (
     ProviderTransientDispatchError,
 )
 from tests.test_antigravity_team import budget, fixtures, grant
-from tests.test_primary_default import SHA, digest, packet_router
+from tests.test_primary_default import (
+    README_BLOB,
+    README_TEXT,
+    SHA,
+    digest,
+    packet_router,
+    use_fixture_blobs,
+)
+from director_orchestrator.packet_routing import validated_compact_view
 
 
 def settings(**updates):
@@ -285,6 +294,7 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
                 record, self.settings, compact_view_lanes=frozenset({"grok", "claude"})))
         self.handle.claim_store.record_result_packet_artifact = Mock(side_effect=lambda **kw:
             SimpleNamespace(document_digest=document_digest(kw["packet"])))
+        use_fixture_blobs(self)
 
     def run_assignment(self, index):
         reservation, connection = self.request(index)
@@ -314,6 +324,61 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertLess(self.dispatch_contexts[-1].total_token_limit, 400000)
 
     USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
+
+    def test_a_class_task_whose_named_files_cannot_be_shown_is_refused(self):
+        reservation, _ = self.request(0)
+        with patch("director_orchestrator.packet_routing._BLOB_READER", None), \
+                patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
+            outcome = self.dispatch(reservation)
+        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
+        self.assertEqual("small_task_named_contents_unavailable", outcome.reason_code)
+        admission.assert_not_called()
+        self.assertEqual([], self.dispatch_contexts)
+
+    def test_both_models_see_the_same_named_file_contents(self):
+        router = self.activation.services._packet_router
+        views = [validated_compact_view(router.planned_work_packet(self.record, item))
+                 for item in self.record.plan.assignments]
+        self.assertEqual(views[0]["contents"], views[1]["contents"])
+        self.assertEqual([{"path": "README.md", "blob_sha": README_BLOB,
+                           "text": README_TEXT.decode()}], views[0]["contents"])
+        self.assertIn("Review scope: README.md.", views[1]["objective"])
+
+    def test_every_bridge_attempt_is_re_attested_immediately_before_its_send(self):
+        """A producer retry re-challenges too; a lost attestation sends nothing."""
+
+        from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        bridge = HostBridgePacketTransport(
+            "grok", "https://host.docker.internal:18765/v1/provider/dispatch", "s" * 40,
+            writer_owner_token_digest="sha256:" + "b" * 64,
+            outbound_payload_builder=validated_compact_view,
+            result_normalizer=lambda packet, result: result,
+            read_only_argv_digest="sha256:" + "2" * 64)
+        sends = []
+
+        def fail_transiently(_packet, *, context):
+            sends.append(context)
+            raise ProviderTransientDispatchError("temporary transport outage")
+
+        self.adapter.dispatch = fail_transiently
+        self.record.assignment_outcomes = []
+        reservation, connection = self.request(0)
+        self.dispatch.preflight(reservation, writer=self.writer, connection=connection,
+                                wave_budget_usage={})
+        # The attempt's transport is the bridge from here on.
+        self.adapter._transport = bridge
+        with patch.object(bridge, "read_only_attestation_current",
+                          side_effect=[True, False]) as current, \
+                patch("director_orchestrator.primary_default.live_provider_admissions",
+                      return_value={}), \
+                self.assertRaisesRegex(WorkloadAdmissionHold, "small_task_bridge_attestation_stale"):
+            self.dispatch(reservation)
+        # Checked before the first send and again before the retry, which
+        # never went out.
+        self.assertEqual(2, current.call_count)
+        self.assertEqual(1, len(sends))
 
     def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
         self.activation.services._packet_router = packet_router(self.settings)
@@ -381,3 +446,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

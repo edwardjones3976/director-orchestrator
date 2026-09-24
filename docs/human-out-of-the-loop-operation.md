@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]] -->
@@ -340,7 +341,19 @@ trip takes an explicit owner action, a new grant_id.
 **Bounded provider traffic.** Providers on the native CLI work-packet lanes,
 the OpenAI Responses lane, and the Claude and Grok host-bridge lanes receive a
 compact view of the work packet: its commit, digest, and file count, plus only
-the snapshot entries under owned paths or named in the objective. The cursor,
+the snapshot entries under owned paths or named in the objective. The view is
+defined by `docs/schemas/director-compact-work-view-v1.schema.json`, and every
+view is validated against it before any transport sends it. For a small
+read-only task the view also carries the text of every path the request names,
+read from the git blob its snapshot binds at the packet's commit (never a
+working tree) and bound by that blob hash, so a tool-less lane such as OpenAI
+Responses can read them; the reviewer's objective names the same paths, so
+both models see the same text. Each file is at most 4 KB, the total at most
+8 KB, and at most eight files. A named path missing from the snapshot,
+prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
+credential approval gate, or holding a secret-shaped value keeps the task out
+of the class: the grant is refused on `eligibility` at intake, and a dispatch
+fails with `small_task_named_contents_unavailable`. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
 full packet or a closed directive, so a task using any of them is outside the
 class and keeps the button. Every native CLI lane (Claude, Grok, Cursor, GitHub
@@ -357,10 +370,11 @@ sandbox". A host-bridge lane joins the class only when the bridge's
 HMAC-authenticated challenge reports the exact argv it runs for that lane, the
 Director re-checks that argv against the lane's read-only restriction set in
 `bridge_attestation.py`, and its digest equals the owner's pin in
-`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. Every attempt of a small
-task re-challenges the bridge first and fails with
-`small_task_bridge_attestation_stale` if the attestation is gone, changed, or
-cannot be authenticated. The restriction sets use only flags this repository
+`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. A small task's dispatch
+re-challenges the bridge before admission, and again immediately before every
+bridge send, each producer retry and reviewer attempt included; if the
+attestation is gone, changed, or cannot be authenticated, nothing is sent
+(`small_task_bridge_attestation_stale`). The restriction sets use only flags this repository
 already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
 `--disable-web-search`, `--no-subagents`, the canonical `--disallowed-tools`
 list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
@@ -618,3 +632,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->

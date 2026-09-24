@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -1800,6 +1801,9 @@ class DefaultDryRunServices:
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
+            from .packet_routing import git_blob_reader, set_compact_view_blob_reader
+            # Small read-only tasks show their named files from this snapshot.
+            set_compact_view_blob_reader(git_blob_reader(settings.repository_snapshot_root))
             execution_commit, execution_tree = settings.project_execution_authority_pins()
             packet_router = DirectorPacketTaskRouter(
                 authority_snapshots=LocalGitAuthoritySnapshotResolver(
@@ -2749,6 +2753,21 @@ class DefaultPrimaryApplication:
                 and _independent_lane_pair(self._compact_view_lanes & grant.providers)
                 and self._executes())
 
+    def _named_contents_available(self, record: TaskRecord) -> bool:
+        """Every path the producer's request names can be shown to its models."""
+
+        from .packet_routing import small_task_named_contents
+
+        router = getattr(self.services, "_packet_router", None)
+        if router is None or record.plan is None:
+            return False
+        try:
+            producer = min(record.plan.assignments, key=lambda item: item.sequence)
+            return small_task_named_contents(
+                router.planned_work_packet(record, producer)) is not None
+        except Exception:
+            return False
+
     def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
         """Whether a live standing grant pre-authorizes executing this task.
 
@@ -2784,8 +2803,9 @@ class DefaultPrimaryApplication:
                 self._delegation_tripped = True
                 return False
             now = datetime.now(timezone.utc)
-            if not small_read_only_eligible(
-                    record, settings, compact_view_lanes=self._compact_view_lanes):
+            if (not small_read_only_eligible(
+                    record, settings, compact_view_lanes=self._compact_view_lanes)
+                    or not self._named_contents_available(record)):
                 # Not a member of the class: refused and audited without
                 # reading history, and no other term is claimed evaluated.
                 try:
@@ -3756,6 +3776,22 @@ class DefaultPrimaryActivation:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
                             "small_task_packet_not_read_only")
+                    if small_class:
+                        from .packet_contracts import PacketContractError
+                        from .packet_routing import (
+                            small_task_named_contents,
+                            validated_compact_view,
+                        )
+                        if small_task_named_contents(packet) is None:
+                            return ParallelDispatchOutcome(
+                                ParallelAssignmentStatus.FAILED, None,
+                                "small_task_named_contents_unavailable")
+                        try:
+                            validated_compact_view(packet)
+                        except PacketContractError:
+                            return ParallelDispatchOutcome(
+                                ParallelAssignmentStatus.FAILED, None,
+                                "small_task_view_invalid")
                     if small_class and not _bridge_attestations_current(
                             live_dependencies, provider):
                         return ParallelDispatchOutcome(
@@ -4019,6 +4055,17 @@ class DefaultPrimaryActivation:
                                 raise WorkloadAdmissionHold(
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
+                        if small_class:
+                            # Immediately before this send, every attempt
+                            # and every retry: the bridge must still run the
+                            # pinned read-only argv.
+                            from .host_provider_bridge import HostBridgePacketTransport
+                            bridge = getattr(adapter, "_transport", None)
+                            if (isinstance(bridge, HostBridgePacketTransport)
+                                    and not bridge.read_only_attestation_current(
+                                        deadline=min(selected.deadline, monotonic() + 5))):
+                                raise WorkloadAdmissionHold(
+                                    "small_task_bridge_attestation_stale")
 
                         def authority_recheck(*, connection: Any = None,
                                               stage: str = "generation") -> None:
@@ -4641,3 +4688,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

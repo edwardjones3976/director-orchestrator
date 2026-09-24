@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -21,13 +22,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from .approvals import assignment_is_approved
 from .langgraph_runtime import PacketBoundaryAdapter, WriterOwnershipToken
-from .models import AntigravityDirective, Assignment, TaskRecord
-from .packet_contracts import canonical_json_bytes, document_digest, validate_packet
+from .models import AntigravityDirective, Assignment, AssignmentKind, TaskRecord
+from .packet_contracts import (
+    canonical_json_bytes,
+    document_digest,
+    validate_compact_view,
+    validate_packet,
+)
 
 
 class PacketRoutingError(ValueError):
@@ -69,6 +77,103 @@ _COMPACT_VIEW_FIELDS = (
 _MAX_COMPACT_AUTHORITY_ENTRIES = 64
 
 
+# A small read-only task's models are shown the text of the paths its request
+# names, so a tool-less lane can read them. Bounded to keep the reviewer's
+# view under its 16 KB cap with room for the producer's result.
+SMALL_TASK_CONTENT_FILE_MAX_BYTES = 4096
+SMALL_TASK_CONTENT_TOTAL_MAX_BYTES = 8192
+SMALL_TASK_CONTENT_MAX_FILES = 8
+_NAMED_PATH_TOKEN = re.compile(r"\w[\w-]*\.\w+|\w[\w.-]*/[\w./-]*\w")
+# ponytail: one reader per process, set by the Default services from their snapshot root; a per-router reader if one process ever serves two repositories
+_BLOB_READER: Callable[[str], bytes | None] | None = None
+
+
+def set_compact_view_blob_reader(reader: Callable[[str], bytes | None] | None) -> None:
+    global _BLOB_READER
+    _BLOB_READER = reader
+
+
+def git_blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def git_blob_reader(root: str) -> Callable[[str], bytes | None]:
+    """Read one blob by its hash from the snapshot repository, never the worktree."""
+
+    def read(blob_sha: str) -> bytes | None:
+        if re.fullmatch(r"[0-9a-f]{40}", blob_sha) is None:
+            return None
+        try:
+            completed = subprocess.run(
+                ("git", "-c", f"safe.directory={root}", "cat-file", "blob", blob_sha),
+                cwd=root, shell=False, check=False, capture_output=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return completed.stdout if completed.returncode == 0 else None
+
+    return read
+
+
+def _objective_tokens(objective: object) -> set[str]:
+    return {token.strip("`'\"()[]{}<>,;:!?").rstrip(".") for token in str(objective).split()}
+
+
+def named_paths(text: object) -> list[str]:
+    """The path-shaped tokens a request names, in order, without repeats."""
+
+    return sorted({token for token in _objective_tokens(text)
+                   if _NAMED_PATH_TOKEN.fullmatch(token)})
+
+
+def _under(path: str, roots: Sequence[str]) -> bool:
+    return any(path == root or path.startswith(root + "/") for root in roots)
+
+
+def _read_only_packet(work: Mapping[str, Any]) -> bool:
+    return work.get("allowed_tools") == ["READ_REPOSITORY"] and work.get(
+        "allowed_external_effects") == []
+
+
+def small_task_named_contents(work: Mapping[str, Any]) -> list[dict[str, str]] | None:
+    """The text of every path a small task's objective names, or None.
+
+    Read from the git blob the packet's own snapshot binds (its hash is
+    re-checked), never from a working tree. None, which keeps the task out of
+    the class, when no reader is configured or any named path is missing from
+    the snapshot, prohibited, binary, not UTF-8, over the per-file or total
+    cap, or screened as sensitive or secret.
+    """
+
+    from .policy import small_task_content_screened
+
+    reader = _BLOB_READER
+    snapshot = {entry["path"]: entry for entry in work.get("authority_snapshot") or ()}
+    prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
+    names = named_paths(work.get("objective", ""))
+    if reader is None or not names or len(names) > SMALL_TASK_CONTENT_MAX_FILES:
+        return None
+    contents: list[dict[str, str]] = []
+    total = 0
+    for path in names:
+        entry = snapshot.get(path)
+        if entry is None or _under(path, prohibited):
+            return None
+        data = reader(entry["blob_sha"])
+        if (data is None or git_blob_sha(data) != entry["blob_sha"]
+                or len(data) > SMALL_TASK_CONTENT_FILE_MAX_BYTES or b"\0" in data):
+            return None
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        total += len(data)
+        if total > SMALL_TASK_CONTENT_TOTAL_MAX_BYTES or small_task_content_screened(text):
+            return None
+        contents.append({"path": path, "blob_sha": entry["blob_sha"], "text": text})
+    return contents
+
+
 def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
     """What a model is shown. The Director keeps the full packet, including the
     snapshot inventory, and binds it by digest. Results are always rebound to
@@ -83,19 +188,12 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
     snapshot = list(work.get("authority_snapshot") or ())
     owned = [str(path).rstrip("/") for path in work.get("owned_paths") or ()]
     prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
-    named = {
-        token.strip("`'\"()[]{}<>,;:!?").rstrip(".")
-        for token in str(work.get("objective", "")).split()
-    }
-
-    def under(path: str, roots: list[str]) -> bool:
-        return any(path == root or path.startswith(root + "/") for root in roots)
-
+    named = _objective_tokens(work.get("objective", ""))
     entries = [
         dict(entry)
         for entry in snapshot
-        if (under(entry["path"], owned) or entry["path"] in named)
-        and not under(entry["path"], prohibited)
+        if (_under(entry["path"], owned) or entry["path"] in named)
+        and not _under(entry["path"], prohibited)
     ][:_MAX_COMPACT_AUTHORITY_ENTRIES]
     view: dict[str, Any] = {"schema_version": COMPACT_PROVIDER_VIEW_SCHEMA}
     view.update({key: work[key] for key in _COMPACT_VIEW_FIELDS if key in work})
@@ -105,9 +203,20 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
         "file_count": len(snapshot),
         "entries": entries,
     }
+    if _read_only_packet(work):
+        # A small read-only task: its named files' text, bound by blob hash.
+        contents = small_task_named_contents(work)
+        if contents is not None:
+            view["contents"] = contents
     # Equal to ProviderAdapterContext.work_packet_digest for the same packet.
     view["work_packet_digest"] = document_digest(work)
     return view
+
+
+def validated_compact_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    """compact_provider_view, validated against its v1 schema before any send."""
+
+    return validate_compact_view(compact_provider_view(work))
 
 
 class AuthoritySnapshotResolver(Protocol):
@@ -448,6 +557,16 @@ class DirectorPacketTaskRouter:
                 assignment.antigravity_directive
             )
 
+        if (assignment.kind is AssignmentKind.INDEPENDENT_REVIEW
+                and self._read_only_tools is not None and self._read_only_tools(record)):
+            # A small task's reviewer is shown the same named files as its
+            # producer: its objective names them too.
+            producer = next((item for item in plan.assignments
+                             if item.sequence in assignment.depends_on), None)
+            scope = named_paths(producer.task) if producer is not None else []
+            if scope:
+                objective = f"{objective} Review scope: {' '.join(scope)}."
+
         packet: dict[str, Any] = {
             "schema_version": "1.0",
             "task_id": record.task_id,
@@ -607,3 +726,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

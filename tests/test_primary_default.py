@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -106,7 +107,7 @@ from director_orchestrator.models import (
     TaskStatus,
 )
 from director_orchestrator.packet_contracts import document_digest
-from director_orchestrator.packet_routing import DirectorPacketTaskRouter
+from director_orchestrator.packet_routing import DirectorPacketTaskRouter, git_blob_sha
 from director_orchestrator.policy import preview_plan
 from director_orchestrator.primary_coordinator import PrimaryTaskCoordinator
 from director_orchestrator.primary_effect_gateways import (
@@ -163,9 +164,25 @@ def digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+# The fixture README.md a small read-only task is shown, bound by its real
+# git blob hash so the content check re-verifies it.
+README_TEXT = b"# Default\n\nA plain fixture file for the owner.\n"
+README_BLOB = git_blob_sha(README_TEXT)
+
+
+def fixture_blob_reader(blob_sha: str):
+    return README_TEXT if blob_sha == README_BLOB else None
+
+
+def use_fixture_blobs(test: unittest.TestCase) -> None:
+    started = patch("director_orchestrator.packet_routing._BLOB_READER", fixture_blob_reader)
+    started.start()
+    test.addCleanup(started.stop)
+
+
 class _FixedAuthorityResolver:
     def resolve(self, record, assignment):
-        return [{"path": "README.md", "commit_sha": SHA, "blob_sha": "c" * 40}]
+        return [{"path": "README.md", "commit_sha": SHA, "blob_sha": README_BLOB}]
 
 
 def packet_router(settings: Settings, **options) -> DirectorPacketTaskRouter:
@@ -470,14 +487,20 @@ class StandingGrantExerciseTests(unittest.TestCase):
         )
         self.ledger = audit_ledger(self.directory)
         self.sequence = 0
+        use_fixture_blobs(self)
 
     def application(self, ledger="default", *, dispatcher=True, lanes=SMALL_LANES, **changes):
+        settings = replace(self.settings, **changes)
         return DefaultPrimaryApplication(
-            replace(self.settings, **changes),
+            settings,
             # Prior pre-authorized tasks read as never started unless a test
             # supplies their durable state.
             self.coordinator(None),
-            None,
+            # The production router: it builds the producer packet whose named
+            # files must be showable before a grant pre-authorizes.
+            SimpleNamespace(_packet_router=packet_router(
+                settings, read_only_tools=lambda item: small_read_only_eligible(
+                    item, settings, compact_view_lanes=lanes))),
             DefaultPrimaryAuthority(SHA, digest("authority")),
             parallel_dispatcher=(lambda reservation: None) if dispatcher else None,
             delegation_ledger=self.ledger if ledger == "default" else ledger,
@@ -869,6 +892,28 @@ class StandingGrantExerciseTests(unittest.TestCase):
                 self.assertFalse(services.execution_approval_free(task_id))
                 services.hydrate(SimpleNamespace(projection={"application": view}))
                 self.assertIs(expected, services.execution_approval_free(task_id))
+
+    def test_a_grant_needs_every_named_file_showable(self):
+        """Missing, unreadable or screened named files keep the button."""
+
+        for name, reader in {
+            "no_reader": None,
+            "unreadable": lambda blob_sha: None,
+            "screened": lambda blob_sha: b"export OPENAI_API_KEY=sk-" + b"a" * 24 + b"\n",
+            "binary": lambda blob_sha: b"\0\1\2",
+        }.items():
+            with self.subTest(case=name), patch(
+                    "director_orchestrator.packet_routing._BLOB_READER", reader):
+                ledger = audit_ledger(self.directory)
+                self.assertFalse(self.exercise(self.application(ledger), self.record()))
+                [entry] = self.audit(ledger)
+                self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+                self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(entry))
+        # A named path that is not in the snapshot.
+        ledger = audit_ledger(self.directory)
+        self.assertFalse(self.exercise(self.application(ledger), self.record(
+            "Project: default\nSummarize docs/missing.md for the owner.")))
+        self.assertEqual({"eligibility": GateStatus.FAIL}, gate_statuses(self.audit(ledger)[0]))
 
     def test_an_audit_history_past_its_bound_keeps_the_button(self):
         """No exercise rescans an unbounded ledger: past the bound it is refused."""
@@ -2859,6 +2904,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             delegation_grant_json=small_grant(),
         )
         self.use_parallel_graph_completion_services(dispatcher, delegation_ledger=ledger)
+        use_fixture_blobs(self)
         return ledger
 
     def attested_intake(self, event, *, text=SMALL_TEXT, on_dispatch_ready=None):
@@ -5413,3 +5459,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

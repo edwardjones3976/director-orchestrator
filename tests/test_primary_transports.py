@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
@@ -56,6 +57,7 @@ from director_orchestrator.models import AntigravityDirective, AntigravityFixtur
 from director_orchestrator.packet_routing import (
     antigravity_directive_objective,
     compact_provider_view,
+    validated_compact_view,
 )
 from director_orchestrator.primary_transports import (
     ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA,
@@ -200,7 +202,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
 
     def _work(self, *, objective: str = "Find official public evidence"):
+        # A complete v1 work packet: compact views are schema-validated
+        # before any transport sends them.
         return {
+            **json.loads((SCHEMAS / "model-work-packet-v1.example.json").read_text(encoding="utf-8")),
             "task_id": "DIR-EXAMPLE",
             "assignment_id": "DIR-EXAMPLE-1",
             "idempotency_key": "DIR-EXAMPLE:1:review",
@@ -343,6 +348,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
     def test_native_envelope_is_rebound_to_packet_and_exact_lane(self):
         work = {
+            **json.loads((SCHEMAS / "model-work-packet-v1.example.json").read_text(encoding="utf-8")),
             "task_id": "DIR-EXAMPLE",
             "assignment_id": "DIR-EXAMPLE-1",
             "idempotency_key": "DIR-EXAMPLE:1:review",
@@ -971,9 +977,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         for provider in ("claude", "grok", "github-copilot"):
             with self.subTest(provider=provider):
                 if provider in {"claude", "grok"}:
+                    # The compact view, validated against its v1 schema.
                     self.assertIs(
                         transports[provider].outbound_payload_builder,
-                        compact_provider_view,
+                        validated_compact_view,
                     )
                     self.assertIsNotNone(transports[provider].result_normalizer)
                 else:
@@ -1458,3 +1465,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]

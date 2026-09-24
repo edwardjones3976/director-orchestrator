@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+from unittest.mock import patch
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -57,6 +59,7 @@ from director_orchestrator.policy import preview_plan
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "docs" / "schemas"
 COMMIT_SHA = "a" * 40
+ROOT = Path(__file__).resolve().parents[1]
 BLOB_SHA = "b" * 40
 
 
@@ -777,6 +780,102 @@ class CompactProviderViewTests(unittest.TestCase):
         self.packet = router.planned_work_packet(self.record, producer)
         self.view = compact_provider_view(self.packet)
 
+    def test_named_contents_are_bounded_blob_bound_and_screened(self) -> None:
+        """A small task's models are shown its named files' text, or it keeps the button."""
+
+        from director_orchestrator.packet_routing import (
+            git_blob_sha,
+            small_task_named_contents,
+        )
+
+        text = b"# Readme\n\nPlain text.\n"
+        files = {"README.md": text, "docs/guide.md": b"Guide.\n"}
+
+        def work(objective, blobs=None, **changes):
+            blobs = blobs if blobs is not None else files
+            return {
+                "objective": objective,
+                "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [],
+                "prohibited_paths": ["docs/private"],
+                "authority_snapshot": [
+                    {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": git_blob_sha(data)}
+                    for path, data in blobs.items()],
+                **changes,
+            }
+
+        def read_from(blobs):
+            by_sha = {git_blob_sha(data): data for data in blobs.values()}
+            return lambda sha: by_sha.get(sha)
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", read_from(files)):
+            contents = small_task_named_contents(work("Compare README.md and docs/guide.md."))
+            self.assertEqual(["README.md", "docs/guide.md"], [item["path"] for item in contents])
+            self.assertEqual(text.decode(), contents[0]["text"])
+            self.assertEqual(git_blob_sha(text), contents[0]["blob_sha"])
+            view = compact_provider_view(work("Summarize README.md."))
+            self.assertEqual(contents[:1], view["contents"])
+            # Only a read-only packet carries contents.
+            self.assertNotIn("contents", compact_provider_view(
+                work("Summarize README.md.", allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])))
+            for name, objective in {
+                "no_named_path": "Summarize the repository.",
+                "missing": "Summarize docs/missing.md.",
+                "too_many": " ".join(f"f{index}.md" for index in range(9)),
+            }.items():
+                with self.subTest(case=name):
+                    self.assertIsNone(small_task_named_contents(work(objective)))
+        cases = {
+            "binary": {"README.md": b"\0binary"},
+            "not_utf8": {"README.md": b"\xff\xfe"},
+            "over_file_cap": {"README.md": b"x" * 4097},
+            "over_total_cap": {"README.md": b"x" * 4096, "a.md": b"y" * 4096, "b.md": b"z"},
+            "secret": {"README.md": b"token: ghp_" + b"a" * 30 + b"\n"},
+            "credential_gate": {"README.md": b"Rotate the api key here.\n"},
+            "personal_gate": {"README.md": b"Their date of birth is listed.\n"},
+            "private_key": {"README.md": b"-----BEGIN RSA PRIVATE KEY-----\n"},
+        }
+        for name, blobs in cases.items():
+            with self.subTest(case=name), patch(
+                    "director_orchestrator.packet_routing._BLOB_READER", read_from(blobs)):
+                self.assertIsNone(small_task_named_contents(
+                    work(" ".join(["Summarize", *blobs]) + ".", blobs)))
+        # A prohibited path, a reader that returns other bytes than the hash
+        # names, and no reader at all.
+        blobs = {"docs/private/x.md": b"x\n"}
+        with patch("director_orchestrator.packet_routing._BLOB_READER", read_from(blobs)):
+            self.assertIsNone(small_task_named_contents(work("Summarize docs/private/x.md.", blobs)))
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: b"other"):
+            self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
+        with patch("director_orchestrator.packet_routing._BLOB_READER", None):
+            self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
+
+    def test_the_compact_view_has_a_v1_schema_every_view_is_validated_against(self) -> None:
+        from director_orchestrator.packet_contracts import (
+            PacketContractError,
+            validate_compact_view,
+        )
+        from director_orchestrator.packet_routing import validated_compact_view
+
+        example = json.loads((ROOT / "docs/schemas/director-compact-work-view-v1.example.json")
+                             .read_text(encoding="utf-8"))
+        validate_compact_view(example)
+        self.assertEqual(validate_compact_view(self.view), validated_compact_view(self.packet))
+        for name, change in {
+            "extra_field": {"unexpected": True},
+            "wrong_schema": {"schema_version": "director-compact-work-view/v2"},
+            "entries_over_cap": {"authority": {**example["authority"],
+                                               "entries": example["authority"]["entries"] * 65}},
+            "bad_blob": {"contents": [{**example["contents"][0], "blob_sha": "x"}]},
+            "text_over_cap": {"contents": [{**example["contents"][0], "text": "x" * 4097}]},
+            "unbound": {"work_packet_digest": "sha256:short"},
+        }.items():
+            with self.subTest(invalid=name), self.assertRaises(PacketContractError):
+                validate_compact_view({**example, **change})
+        for field in ("objective", "task_id", "authority", "work_packet_digest"):
+            with self.subTest(missing=field), self.assertRaises(PacketContractError):
+                validate_compact_view({key: value for key, value in example.items() if key != field})
+
     def test_small_task_view_is_bounded_and_omits_the_inventory(self) -> None:
         self.assertGreater(len(canonical_json_bytes(self.packet)), 200_000)
         self.assertLess(len(canonical_json_bytes(self.view)), 20_000)
@@ -846,3 +945,4 @@ if __name__ == "__main__":
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
