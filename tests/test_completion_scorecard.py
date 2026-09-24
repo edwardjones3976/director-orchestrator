@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
@@ -88,6 +89,7 @@ OWNER, BOT = tf.OWNER, tf.BOT
 PIN = "e" * 64
 BINDINGS_JSON = '{"fixture":1}'
 DIRECTOR_ID, GATEWAY_ID, N8N_ID, N8N_DB_ID = "1" * 64, "2" * 64, "3" * 64, "5" * 64
+PRIMARY_DB_ID = "9" * 64
 APP_TOKEN = "xapp-1-A0FIXTUREAPP-1-fixtureappsecret"
 SECRETS = ("fixture-secret-bot", "fixture-director-secret", "fixtureappsecret", "fixture-n8n-db-secret",
            "fixture-gateway-signing-secret-0123456789")
@@ -402,7 +404,14 @@ class World:
             test.addCleanup(self._folder.cleanup)
         self.root = Path(self._folder.name)
         self.rows = containers() + [item for item in topology() if item["Id"] in (N8N_ID, N8N_DB_ID)]
-        self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway, created with the Director
+        # The Director's primary control-plane database (docker-compose.yml langgraph-primary-db).
+        self.rows.append({"Id": PRIMARY_DB_ID, "Name": "/edge-engine-director-langgraph-primary-db-1",
+                          "Image": "sha256:" + "8" * 64, "Created": "2026-09-12T08:57:00.123456789Z",
+                          "State": {"Running": True, "StartedAt": "2026-09-12T08:57:01.000000001Z"},
+                          "Config": {"Labels": compose_labels("langgraph-primary-db"), "Env": []},
+                          "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64,
+                                                                     "Aliases": ["langgraph-primary-db"]}}}})
+        self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway (kept last), created with the Director
         self.rows[1]["Created"] = "2026-09-12T09:00:00Z"  # the deployment's n8n
         self.commit_tree = "d" * 40
         self.now = WORLD_NOW
@@ -625,7 +634,9 @@ def topology():
                                   "SLACK_GATEWAY_SECRET=fixture-gateway-signing-secret-0123456789"]},
                "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["slackbot"],
                                                           "DNSNames": ["edge-engine-director-slackbot-1", "slackbot"]}}}}
-    n8n = {"Id": N8N_ID, "Name": "/edge-engine-director-n8n-1", "State": {"Running": True},
+    n8n = {"Id": N8N_ID, "Name": "/edge-engine-director-n8n-1", "Image": "sha256:" + "4" * 64,
+           "Created": "2026-09-12T08:59:00.123456789Z",
+           "State": {"Running": True, "StartedAt": "2026-09-12T08:59:01.000000001Z"},
            "NetworkSettings": {"Ports": {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "45678"}]},
                                "Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n"],
                                                       "DNSNames": ["edge-engine-director-n8n-1", "n8n"]}}},
@@ -633,7 +644,9 @@ def topology():
                       "Env": ["DB_TYPE=postgresdb", "DB_POSTGRESDB_HOST=n8n-db", "DB_POSTGRESDB_PORT=5432",
                               "DB_POSTGRESDB_DATABASE=n8n", "DB_POSTGRESDB_USER=n8n",
                               "DB_POSTGRESDB_PASSWORD=fixture-n8n-db-secret"]}}
-    n8n_db = {"Id": N8N_DB_ID, "Name": "/edge-engine-director-n8n-db-1", "State": {"Running": True},
+    n8n_db = {"Id": N8N_DB_ID, "Name": "/edge-engine-director-n8n-db-1", "Image": "sha256:" + "6" * 64,
+              "Created": "2026-09-12T08:58:00.123456789Z",
+              "State": {"Running": True, "StartedAt": "2026-09-12T08:58:01.000000001Z"},
               "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n-db"]}}},
               "Config": {"Labels": compose_labels("n8n-db"),
                          "Env": ["POSTGRES_USER=n8n", "POSTGRES_DB=n8n", "POSTGRES_PASSWORD=fixture-n8n-db-secret"]}}
@@ -2505,23 +2518,57 @@ class ScorecardCollectorTests(unittest.TestCase):
                 self.assertNotEqual(case.state(check), "PASS")
 
     def test_containers_changed_before_final_cutoff_are_unknown(self):
-        world = self.world()
-        real, states = sc._deployment_state, []
+        real = sc._deployment_state
+        # Every container whose state backs evidence: the Director, its primary database, n8n-db and the gateway.
+        for restarted in (DIRECTOR_ID, PRIMARY_DB_ID, N8N_ID, N8N_DB_ID, GATEWAY_ID):
+            world, states = self.world(), []
 
-        def restart(project, gateway):
-            states.append(real(project, gateway))
-            world.rows[0]["State"]["StartedAt"] = "2026-09-12T19:59:00Z"  # the Director restarts after the probe
-            return states[-1]
+            def restart(project, gateway, world=world, restarted=restarted, states=states):
+                states.append(real(project, gateway))
+                container = next(item for item in world.rows if item["Id"] == restarted)
+                container["State"]["StartedAt"] = "2026-09-12T19:59:00Z"  # restarted after the probe
+                return states[-1]
 
-        with patch.object(sc, "_deployment_state", side_effect=restart):
-            report = world.report(only_deployment=True)
-        self.assertEqual(len(states), 2)
-        self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
+            with patch.object(sc, "_deployment_state", side_effect=restart):
+                report = world.report(only_deployment=True, gateway=GATEWAY)
+            with self.subTest(restarted=restarted):
+                self.assertEqual(len(states), 2)
+                self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
         steady = self.world()
         with patch.object(sc, "_deployment_state", side_effect=real) as probe:
             report = steady.report(only_deployment=True)
         self.assertEqual(probe.call_count, 2)
         self.assertEqual([row(report, key)["status"] for key in ("05", "19")], ["PASS", "PASS"])
+
+    def test_status_run_before_the_n8n_database_was_recreated_is_unknown_04(self):
+        self.assertEqual(self.world().state("04"), "PASS")
+        recreated = self.world()
+        database = next(item for item in recreated.rows if item["Id"] == N8N_DB_ID)
+        database["Created"] = "2026-09-12T09:59:30.000000001Z"  # after the saved run (09:59:00-09:59:02)
+        self.assertEqual(recreated.state("04"), "UNKNOWN")
+
+    def test_score_requires_one_runtime_binding(self):
+        first = self.world()
+        observed = first.observe()
+        single = sc.score(SHA, observed, now=first.now)
+        # Without binding arguments the single binding every runtime observation carries is inferred and reported.
+        self.assertEqual((single["runtime_sha"], single["image_id"]), (SHA, IMAGE))
+        self.assertEqual(single["passed"], first.report()["passed"])
+        # A second deployment on another image: combining both collect() outputs scores no runtime check.
+        other = "sha256:" + "e" * 64
+        second = self.world()
+        for item in second.rows:
+            if item["Id"] in (DIRECTOR_ID, GATEWAY_ID):
+                item["Image"] = other
+        second.consistency["generation"]["image_id"] = other
+        mixed = sc.score(SHA, observed + second.observe(), now=first.now)
+        self.assertEqual((mixed["runtime_sha"], mixed["image_id"]), (None, None))
+        self.assertFalse(mixed["all_checks_verified"])
+        runtime = [item for item in mixed["checks"] if item["scope"] == "runtime"]
+        self.assertTrue(runtime)
+        self.assertTrue(all(item["status"] == "UNKNOWN" for item in runtime))
+        self.assertTrue(all("more than one runtime binding" in item["explanation"] for item in runtime
+                            if any(o.check_id == item["id"] for o in observed)))
 
     def test_paid_outcome_must_equal_the_persisted_result_artifact_20(self):
         self.assertEqual(self.world().state("20"), "PASS")
@@ -3066,3 +3113,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]

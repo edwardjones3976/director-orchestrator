@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
@@ -282,10 +283,15 @@ def _compose_ids(project: str, service: str) -> list[str]:
     return ids
 
 
+# Every Compose service whose state backs evidence: the Director, its primary control-plane database, n8n and
+# n8n's database (its workflows and saved executions); the gateway is named separately.
+_EVIDENCE_SERVICES = ("orchestrator", "langgraph-primary-db", "n8n", "n8n-db")
+
+
 def _deployment_state(project: str, gateway: str | None) -> tuple:
-    """Identity and run state (Id, Image, Created, StartedAt, Running) of the deployment's Director and n8n
-    containers and the named gateway, compared whole between the deployment probe and the final cutoff."""
-    ids = _compose_ids(project, "orchestrator") + _compose_ids(project, "n8n")
+    """Identity and run state (Id, Image, Created, StartedAt, Running) of every container whose state backs
+    evidence and of the named gateway, compared whole between the deployment probe and the final cutoff."""
+    ids = [item for service in _EVIDENCE_SERVICES for item in _compose_ids(project, service)]
     rows = _run_json(["docker", "inspect", *ids, *([gateway] if gateway else [])])
     return tuple(sorted((str(row.get("Id")), str(row.get("Image")), str(row.get("Created")),
                          str((row.get("State") or {}).get("StartedAt")), (row.get("State") or {}).get("Running") is True)
@@ -1166,7 +1172,8 @@ def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
 
 def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | None, datetime | None]:
     """(n8n reaches the selected Director as orchestrator, n8n's store is the queried n8n-db, that db's ID,
-    n8n's creation time)."""
+    the later creation of n8n and its database: an execution saved before either was recreated belongs to a
+    predecessor execution store)."""
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
         raise ValueError("running container inventory unavailable or exceeds 128")
@@ -1181,7 +1188,7 @@ def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | No
     if len(n8n) != 1 or len(databases) != 1 or director is None:
         return None, None, None, None
     return (_hop(n8n[0], director, "orchestrator", containers), _n8n_store(n8n[0], databases[0], containers),
-            databases[0].get("Id"), _when(n8n[0]["Created"]))
+            databases[0].get("Id"), max(_when(n8n[0]["Created"]), _when(databases[0]["Created"])))
 
 
 def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
@@ -2833,6 +2840,16 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
     at = now or datetime.now(timezone.utc)
     if at.tzinfo is None:
         raise ValueError("score time must be timezone-aware")
+    # Runtime evidence scores for exactly one runtime binding: the one supplied, or else the single binding every
+    # runtime observation carries. Mixed deployments or images score no runtime check.
+    runtime_checks = {check.id for check in CHECKS if check.scope == "runtime"}
+    bindings = {(item.runtime_sha, item.image_id) for item in observations or []
+                if isinstance(item, Observation) and item._origin is _COLLECTED and item.check_id in runtime_checks
+                and item.runtime_sha and item.image_id and (not runtime_sha or item.runtime_sha == runtime_sha)
+                and (not image_id or item.image_id == image_id)}
+    mixed = not (runtime_sha and image_id) and len(bindings) > 1
+    if not (runtime_sha and image_id) and len(bindings) == 1:
+        runtime_sha, image_id = next(iter(bindings))
     rows = []
     for check in CHECKS:
         row = {**asdict(check), "status": "UNKNOWN", "explanation": "No authoritative collector proof is available.", "evidence": []}
@@ -2847,6 +2864,8 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
                 error = "Evidence is future-dated, stale or has an invalid expiry."
             elif check.scope == "candidate" and item.candidate_sha != candidate_sha:
                 error = "Evidence belongs to another candidate."
+            elif check.scope == "runtime" and mixed:
+                error = "Runtime evidence carries more than one runtime binding; no single runtime is scored."
             elif check.scope == "runtime" and (not item.runtime_sha or not item.image_id or
                     (runtime_sha and item.runtime_sha != runtime_sha) or (image_id and item.image_id != image_id)):
                 error = "Evidence is missing or mismatches the runtime image binding."
@@ -2935,3 +2954,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]

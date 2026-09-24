@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]] -->
@@ -481,7 +482,16 @@ its stamp, and a fixed-clock collection stamps at its frozen end. Upper bounds
 applied while grading use the time of that grading read. Just before the end the Director, gateway
 and n8n containers are re-inspected (ID, image, creation, start time and
 running state); if any differs from the deployment probe, or cannot be read,
-every runtime-derived PASS or FAIL becomes UNKNOWN. A drill's (09) or the paid
+every runtime-derived PASS or FAIL becomes UNKNOWN. That reinspection covers
+every container whose state backs evidence: the Director, its
+`langgraph-primary-db`, n8n, `n8n-db` and the named gateway. Check 04 bounds a
+saved status run by the later creation of n8n and `n8n-db`, so a run saved
+before the execution store was recreated grades nothing. The primary database
+is not a freshness bound: its evidence is bound per read to the accepted
+database instance. `score()` scores runtime checks for exactly one runtime
+binding: the supplied one, or else the single binding all runtime observations
+carry (reported at the top level); observations from mixed deployments or
+images leave every runtime check UNKNOWN. A drill's (09) or the paid
 run's (20) correlated final reply counts only when its fallback text and its
 complete normalized blocks (compared as check 08 compares prompts) are the
 Director's canonical terminal rendering; 20 grades the answer on the blocks'
@@ -798,3 +808,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]] -->
