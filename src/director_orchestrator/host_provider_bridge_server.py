@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -40,6 +41,7 @@ from .host_provider_bridge import (
     _digest,
     _LANE_AUTH_ENV,
     _SAFE_OS_ENV,
+    _TRANSPORT_ENV,
 )
 
 PROCESS_ENVIRONMENT_VERSION = "director-native-process-environment/v1"
@@ -82,7 +84,9 @@ def _apply_pinned_process_environment() -> bool:
     provider's billing route depends on the launching shell. The openai lane's
     native Codex child (codex_environment) also inherits HOME, PROGRAMDATA,
     PROGRAMFILES, PROGRAMFILES(X86), LANG and LC_ALL, which are neither pinned
-    nor hashed. Nothing from the file is echoed on refusal.
+    nor hashed. Inherited proxy/CA names (_TRANSPORT_ENV, any case) are dropped; the file
+    may set them, and the Responses route digest binds whatever remains.
+    Nothing from the file is echoed on refusal.
     """
     source = os.environ.get("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", "").strip()
     if not source:
@@ -98,7 +102,7 @@ def _apply_pinned_process_environment() -> bool:
         if set(document) != {"version", "environment"} or document["version"] != PROCESS_ENVIRONMENT_VERSION:
             raise ValueError("unknown pinned environment contract")
         pinned = document["environment"]
-        if not isinstance(pinned, dict) or set(pinned) != _SAFE_OS_ENV:
+        if not isinstance(pinned, dict) or not _SAFE_OS_ENV <= set(pinned) <= _SAFE_OS_ENV | _TRANSPORT_ENV:
             raise ValueError("pinned environment names differ")
         if not all(isinstance(value, str) and value and not any(c in value for c in "\r\n\0")
                    for value in pinned.values()):
@@ -118,7 +122,8 @@ def _apply_pinned_process_environment() -> bool:
         raise RuntimeError("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE is invalid") from None
     preserved = {
         key: value for key, value in os.environ.items()
-        if key.upper() not in _SAFE_OS_ENV and (key.upper() not in lane_auth or key in from_profile)
+        if key.upper() not in _SAFE_OS_ENV | _TRANSPORT_ENV
+        and (key.upper() not in lane_auth or key in from_profile)
     }
     os.environ.clear()
     os.environ.update(preserved)
@@ -430,3 +435,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

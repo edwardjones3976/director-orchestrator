@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
 # Material repair and regression authored by Grok; applied by Codex from the retained provider response.
 # Codex QA aligned the existing reconciliation test double with the occupied() interface.
@@ -590,6 +591,19 @@ class DefaultPrimaryLiveStartupBoundaryTests(unittest.TestCase):
                           {stage for stage, _bound in bounds})
         self.assertTrue(all(bound is not None and bound > 0 for _stage, bound in bounds), bounds)
         self.assertIsNotNone(contexts[0].deadline)
+        # A task approved as simulation or paid-off is never dispatched live,
+        # even when this live composition recovers it after a mode switch.
+        from director_orchestrator.primary_parallel import PaidSetupHold
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+        for label in ("offline_simulation", "paid_off"):
+            with self.subTest(execution_mode=label):
+                activation.services._execution_modes[record.task_id] = label
+                with self.assertRaises(PaidSetupHold):
+                    activation.application._parallel_dispatcher.preflight(
+                        reservation, writer=writer, connection=connection(), wave_budget_usage={})
+                with self.assertRaisesRegex(WorkloadAdmissionHold, "simulated_task_requires_live_approval"):
+                    activation.application._parallel_dispatcher(reservation)
+                self.assertEqual(1, len(contexts))
 
     def test_exact_effect_gateway_action_binding_fails_closed_when_missing(self):
         gateway = SimpleNamespace(system="slack", action=SLACK_POST_MESSAGE)
@@ -4169,3 +4183,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
 
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

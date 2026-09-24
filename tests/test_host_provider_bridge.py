@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -861,6 +862,23 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
             self.assertEqual(os.environ["UNRELATED"], "kept")
             self.assertEqual(os.environ["TEMP"], self.pinned["TEMP"])
 
+    def test_pinned_environment_replaces_inherited_proxy_and_ca_names(self) -> None:
+        from director_orchestrator.host_provider_bridge_server import _apply_pinned_process_environment
+        ambient = {"HTTPS_PROXY": "http://ambient:1", "https_proxy": "http://ambient:2",
+                   "SSL_CERT_FILE": "ambient.pem", "NO_PROXY": "ambient", "UNRELATED": "kept",
+                   "DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE": str(self.file)}
+        with patch.dict(os.environ, ambient, clear=True):
+            _apply_pinned_process_environment()
+            self.assertEqual(os.environ["UNRELATED"], "kept")
+            for name in ("HTTPS_PROXY", "https_proxy", "SSL_CERT_FILE", "NO_PROXY"):
+                self.assertNotIn(name, os.environ)
+        self.write({**self.pinned, "HTTPS_PROXY": "http://pinned:3"})
+        with patch.dict(os.environ, ambient, clear=True):
+            _apply_pinned_process_environment()
+            self.assertEqual(os.environ["HTTPS_PROXY"], "http://pinned:3")
+            if os.name != "nt":  # Windows environment names are case-insensitive
+                self.assertNotIn("https_proxy", os.environ)
+
     def test_codex_child_names_outside_the_pin_are_documented(self) -> None:
         # The openai native Codex child inherits more than the pinned names;
         # the docstring and the operations doc must name exactly that residual.
@@ -1004,3 +1022,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

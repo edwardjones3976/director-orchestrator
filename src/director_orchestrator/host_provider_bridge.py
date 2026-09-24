@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
@@ -58,6 +59,12 @@ _BRIDGE_CHALLENGE_PATH = "/v1/provider/challenge"
 _SAFE_OS_ENV = frozenset(
     {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
 )
+# Proxy and CA names httpx honours in the bridge process (never passed to a
+# host-command child). Compared upper-cased, so lowercase variants match.
+_TRANSPORT_ENV = frozenset({
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+})
 _LANE_AUTH_ENV = {
     "openai": frozenset(),
     "cursor": frozenset(),
@@ -836,3 +843,4 @@ def dispatch_bridge_request(
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

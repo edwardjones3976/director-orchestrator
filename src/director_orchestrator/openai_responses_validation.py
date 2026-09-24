@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
@@ -20,6 +21,29 @@ from .provider_validation import ValidationError, digest, MAX_CAPTURE_BYTES
 
 
 RESPONSES_VALIDATION_TRANSPORT = "responses-api"
+# ponytail: the modules on the Responses validation path; add one if the path grows.
+_RESPONSES_RUNTIME_MODULES = (
+    "openai_responses_validation.py", "primary_transports.py", "provider_validation.py",
+    "packet_contracts.py", "host_provider_bridge.py", "host_provider_bridge_server.py",
+)
+
+
+def responses_runtime_binding() -> str:
+    """Digest of the code and transport environment executing this route.
+
+    The package directory carries an installed copy's content address and the
+    Responses-path modules are hashed, so a replaced runtime changes the route
+    digest. Proxy/CA names httpx honours are bound by value (only hashed).
+    """
+    import os
+    from .host_provider_bridge import _TRANSPORT_ENV
+    package = Path(__file__).resolve().parent
+    return digest(canonical_json_bytes({
+        "package": str(package),
+        "modules": {name: digest((package / name).read_bytes()) for name in _RESPONSES_RUNTIME_MODULES},
+        "transport_environment": {key: value for key, value in sorted(os.environ.items())
+                                  if key.upper() in _TRANSPORT_ENV},
+    }))
 
 
 class OpenAIResponsesValidationRoute:
@@ -133,6 +157,7 @@ class OpenAIResponsesValidationRoute:
             meter_enrollment_digest=self.meter_enrollment_digest,
             total_token_limit=self.total_token_limit,
             maximum_timeout_seconds=maximum_timeout_seconds,
+            runtime_binding=responses_runtime_binding(),
         )
 
     @property
@@ -256,6 +281,7 @@ def responses_validation_configuration_digest(
     meter_enrollment_digest: str,
     total_token_limit: int,
     maximum_timeout_seconds: float | int,
+    runtime_binding: str,
 ) -> str:
     """Pin Responses validation identity without inventing account proof.
 
@@ -264,6 +290,9 @@ def responses_validation_configuration_digest(
     capture minted under one ceiling must not qualify a route running under
     another.
 
+    ``runtime_binding`` (responses_runtime_binding) ties the identity to the
+    executing runtime, so an older generation's pin refuses replaced code.
+
     Organization and project ids here are the enrollment routing intention that
     settlement later matches against provider-returned headers. Missing provider
     headers still refuse qualification.
@@ -271,6 +300,7 @@ def responses_validation_configuration_digest(
     if (not model or not api_url or not credential_digest or not organization_id
             or not api_project_id or not meter_enrollment_digest
             or type(total_token_limit) is not int or total_token_limit < 1
+            or not runtime_binding
             or isinstance(maximum_timeout_seconds, bool)
             or type(maximum_timeout_seconds) not in (int, float)
             or not maximum_timeout_seconds > 0):
@@ -286,6 +316,7 @@ def responses_validation_configuration_digest(
         "total_token_limit": total_token_limit,
         # Canonicalised as a number; 180 and 180.0 are one identity.
         "maximum_timeout_seconds": float(maximum_timeout_seconds),
+        "runtime_binding": runtime_binding,
     }))
 
 
@@ -559,3 +590,4 @@ def responses_route_from_environment() -> OpenAIResponsesValidationRoute | None:
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

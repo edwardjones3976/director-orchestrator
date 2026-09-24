@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
@@ -1443,6 +1444,15 @@ class DefaultDryRunServices:
         self._acquire_record(
             record, effect_grant=effect_grant, execution_mode=execution_mode
         )
+
+    def paid_dispatch_allowed(self, task_id: str) -> bool:
+        """Fail closed for a task approved as simulation or paid-off.
+
+        A live composition may recover such a task after a mode switch; its
+        persisted label, not the current composition, decides paid dispatch.
+        """
+        with self._lock:
+            return self._execution_modes.get(task_id) not in {"offline_simulation", "paid_off"}
 
     def discard(self, task_id: str) -> None:
         with self._lock:
@@ -2921,6 +2931,10 @@ class DefaultPrimaryActivation:
                 def dispatch_parallel_assignment(
                     reservation: ParallelReservation,
                 ) -> ParallelDispatchOutcome:
+                    if not services.paid_dispatch_allowed(reservation.task_id):
+                        # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never ambiguous.
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold("simulated_task_requires_live_approval")
                     record = services._record(reservation.task_id)
                     if record.plan is None:
                         raise RuntimeError("parallel dispatch has no durable plan")
@@ -3357,6 +3371,8 @@ class DefaultPrimaryActivation:
                     # check fail at readiness even though it matches at dispatch.
                     from .packet_contracts import canonical_json_bytes
                     try:
+                        if not services.paid_dispatch_allowed(reservation.task_id):
+                            raise PaidSetupHold()
                         record = services._record(reservation.task_id)
                         if record.plan is None:
                             raise PaidSetupHold()
@@ -3795,3 +3811,4 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

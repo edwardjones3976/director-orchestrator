@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
@@ -427,7 +428,12 @@ their mere presence:
   The pinned file is a UTF-8 JSON object of at most 64 KiB at an absolute path
   with exactly two keys: `version`, equal to
   `director-native-process-environment/v1`, and `environment`, an object with
-  exactly the ten names above. Every value is a non-empty string without CR, LF
+  the ten names above and optionally `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` and
+  `CURL_CA_BUNDLE`. Under a pin the bridge drops those proxy and CA names (in
+  any case) from its inherited environment and uses only the file's; they reach
+  the bridge's own HTTPS client, never a host-command child, and the Responses
+  route digest binds them. Every value is a non-empty string without CR, LF
   or NUL, and every `PATH` entry and the `TEMP`, `TMP`, `SYSTEMROOT` and
   `USERPROFILE` directories must be absolute and exist; an empty `PATH` entry
   (including a trailing `;`) refuses. Any other file refuses startup without
@@ -624,7 +630,13 @@ intake still closed. `ActivateOffline` needs the same
 acceptance, migration and restore evidence but not provider readiness: it turns
 offline simulation on and paid runs and live dispatch off, requires the paid-off
 intake projection with the live runtime inactive, and records no `ACTIVATED`
-stage. A later paid `Activate` can reuse that evidence chain only while the
+stage. Paid `Activate` first requires a quiescent primary plane
+(`primary_quiescence_metrics().rollback_safe`) before it stops anything, and
+again after the stop (writer leases excepted), so unfinished offline-simulated
+work is never recovered under live dispatch; on refusal nothing is switched.
+Independently, live dispatch refuses any task whose persisted
+`execution_mode` is `offline_simulation` or `paid_off`.
+A later paid `Activate` can reuse that evidence chain only while the
 legacy SQLite task ID/status inventory is unchanged: it binds the inventory
 again and refuses any difference as immutable. Legacy tasks stay live under
 primary (startup and periodic recovery of queued, planning, running and
@@ -831,3 +843,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->

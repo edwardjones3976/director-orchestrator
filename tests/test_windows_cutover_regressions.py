@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | BEGIN]]
@@ -194,6 +195,10 @@ function Record-Event($Event, $Image) {
     @{event=$Event; image=$Image} | ConvertTo-Json -Compress | Add-Content -LiteralPath $EventsPath
 }
 function Stop-And-Prove-AllIntake { Record-Event 'intake-stopped' }
+function Assert-PrimaryQuiescent { param([switch]$AfterStop)
+    $event = if ($AfterStop) { 'quiescent-after-stop' } else { 'quiescent-before-stop' }
+    Record-Event $event
+    if ($Scenario -eq "busy-$event") { throw "Paid activation refused: the primary plane is not quiescent" } }
 function Get-LegacyInventory { Record-Event 'inventory'; @('1', ('d' * 64)) }
 function Assert-RunningCandidate { param([string]$AsgiApp) Record-Event "candidate-$AsgiApp" }
 function Wait-Health { Record-Event 'health'; [pscustomobject]@{ langgraph_primary = ($HealthJson | ConvertFrom-Json) } }
@@ -640,7 +645,8 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
             result, events, final, prior = self._activate(Path(temporary))
             self.assertEqual(result.returncode, 0, result.stderr)
             names = [event["event"] for event in events]
-            self.assertEqual(names[:5], ["intake-stopped", "inventory", "evidence-bind-legacy-inventory",
+            self.assertEqual(names[:7], ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop",
+                                         "inventory", "evidence-bind-legacy-inventory",
                                          "evidence-require-ready", "readback-orchestrator"])
             self.assertLess(names.index("readback-slackbot"), names.index("up-orchestrator"))
             # Created stopped, read back, ACTIVATED recorded, and only then n8n and Slack start.
@@ -670,6 +676,63 @@ class WindowsCutoverRegressionTests(unittest.TestCase):
                          "LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED", "LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED"):
                 self.assertEqual(final[name], "false")
             self.assertEqual(final["LANGGRAPH_PARALLEL_KILL_SWITCH"], "true")
+
+    def test_paid_activation_refuses_a_busy_primary_plane_before_any_switch(self):
+        # Offline-simulated work left in the plane must never reach live dispatch.
+        for event, expected in (("quiescent-before-stop", ["quiescent-before-stop"]),
+                                ("quiescent-after-stop",
+                                 ["quiescent-before-stop", "intake-stopped", "quiescent-after-stop"])):
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                result, events, final, prior = self._activate(root, scenario=f"busy-{event}")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("not quiescent", result.stderr)
+                self.assertEqual([item["event"] for item in events], expected)
+                self.assertFalse(prior.exists())
+                self.assertEqual(final["ALLOW_PAID_RUNS"], "false")
+                self.assertEqual(final["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED"], "false")
+
+    @unittest.skipUnless(PWSH, "PowerShell is required")
+    def test_quiescence_check_runs_the_metrics_query_and_refuses_clearly(self):
+        harness = r"""
+param($Source, $Mode, $Fail)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-PrimaryQuiescent'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$script:databaseIdentity = 'storage-fixture'; $script:databaseInstanceId = 'instance-fixture'
+function Invoke-Compose { 'ARGS=' + ($args -join ' '); if ($Fail -eq 'yes') { throw 'Docker Compose command failed.' } }
+if ($Mode -eq 'after') { Assert-PrimaryQuiescent -AfterStop } else { Assert-PrimaryQuiescent }
+'passed'
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "quiescence.ps1"
+            path.write_text(harness, encoding="utf-8")
+
+            def run(mode, fail):
+                return subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(path),
+                                       str(ROOT / "scripts/windows-langgraph-primary-control.ps1"), mode, fail],
+                                      capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+
+            before = run("before", "no")
+            self.assertEqual(before.returncode, 0, before.stderr)
+            self.assertIn("primary_quiescence_metrics()", before.stdout)
+            self.assertIn("q.rollback_safe", before.stdout)
+            self.assertIn("accepted_instance_id='instance-fixture'", before.stdout)
+            after = run("after", "no")
+            self.assertEqual(after.returncode, 0, after.stderr)
+            self.assertNotIn("rollback_safe", after.stdout)
+            self.assertIn("q.unsettled_claim_count) == (0, 0, 0, 0)", after.stdout)
+            for mode, state in (("before", "Nothing was stopped"), ("after", "Intake remains stopped")):
+                refused = run(mode, "yes")
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("not quiescent", refused.stderr)
+                self.assertIn(state, refused.stderr)
+                self.assertNotIn("passed", refused.stdout)
 
     def test_offline_activation_needs_no_provider_readiness_and_records_no_activated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -986,3 +1049,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

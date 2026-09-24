@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
@@ -504,6 +505,25 @@ function Get-LegacyInventory {
     $inventory = [string](@($output | Where-Object { $_ -match '^\d+\|[0-9a-f]{64}$' }) | Select-Object -Last 1)
     if ([string]::IsNullOrWhiteSpace($inventory)) { throw "Legacy task ownership inventory could not be frozen." }
     return $inventory.Split('|')
+}
+
+function Assert-PrimaryQuiescent {
+    # Paid activation after ActivateOffline would recover unfinished simulated
+    # work under the live dispatcher, so the primary plane must hold none.
+    # -AfterStop ignores writer leases the just-stopped process leaves to expire;
+    # dispatches, assignments, reconciliation and claims must still be zero.
+    param([switch]$AfterStop)
+    $predicate = if ($AfterStop) {
+        "(q.active_provider_dispatch_count, q.active_assignment_count, q.unresolved_reconciliation_count, q.unsettled_claim_count) == (0, 0, 0, 0)"
+    } else { "q.rollback_safe" }
+    try {
+        Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+            "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); q=h.claim_store.primary_quiescence_metrics(); h.close(); raise SystemExit(0 if $predicate else 3)"
+    }
+    catch {
+        $state = if ($AfterStop) { "Intake remains stopped and no switch was changed." } else { "Nothing was stopped or switched." }
+        throw "Paid activation refused: the primary plane is not quiescent (unfinished dispatches, assignments, writer claims, reconciliation or claims, possibly from offline simulation). Finish or reconcile that work first. $state"
+    }
 }
 
 function Stop-And-Prove-AllIntake {
@@ -1029,7 +1049,11 @@ if ($Action -eq "PrepareOfflineHandoff") {
 }
 if ($Action -in @("Activate", "ActivateOffline")) {
     $offline = $Action -eq "ActivateOffline"
+    # Checked before the stop (nothing touched on refusal) and again after it,
+    # since the running service could admit work in between.
+    if (-not $offline) { Assert-PrimaryQuiescent }
     Stop-And-Prove-AllIntake
+    if (-not $offline) { Assert-PrimaryQuiescent -AfterStop }
     $legacyInventory = Get-LegacyInventory
     Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
     # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
@@ -1167,3 +1191,4 @@ if ($Action -eq "Rollback") {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]

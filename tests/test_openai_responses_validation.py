@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | BEGIN]]
@@ -22,6 +23,7 @@ from director_orchestrator.openai_responses_validation import (
     OpenAIResponsesValidationRoute,
     normalize_openai_responses_capture,
     responses_route_from_file,
+    responses_runtime_binding,
     responses_validation_configuration_digest,
 )
 from director_orchestrator.provider_validation import (
@@ -214,6 +216,7 @@ class ResponsesRouteTests(unittest.TestCase):
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
             maximum_timeout_seconds=180,
+            runtime_binding="a" * 64,
         )
         self.assertEqual(len(d1), 64)
         d2 = responses_validation_configuration_digest(
@@ -225,8 +228,43 @@ class ResponsesRouteTests(unittest.TestCase):
             meter_enrollment_digest="f" * 64,
             total_token_limit=128,
             maximum_timeout_seconds=180,
+            runtime_binding="a" * 64,
         )
         self.assertNotEqual(d1, d2)
+
+    def test_configuration_digest_binds_the_executing_runtime(self):
+        """A replaced runtime or a changed proxy/CA name changes the route digest."""
+        import os
+        import shutil
+        from director_orchestrator import openai_responses_validation as module
+        package = Path(module.__file__).resolve().parent
+
+        def transport():
+            return SimpleNamespace(response_meter=SimpleNamespace(enrollments={}), model=MODEL,
+                                   api_url="https://api.openai.com/v1", _api_key="sk-test",
+                                   maximum_timeout_seconds=60)
+
+        route = OpenAIResponsesValidationRoute(transport=transport(), total_token_limit=128,
+                                               expected_model=MODEL, meter_enrollment_digest="d" * 64,
+                                               expected_organization_id="org-1", expected_api_project_id="proj-1")
+        with patch.dict(os.environ, {}, clear=True):
+            baseline, digest_before = responses_runtime_binding(), route.configuration_digest
+            with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.invalid:8080"}):
+                self.assertNotEqual(responses_runtime_binding(), baseline)
+                self.assertNotEqual(route.configuration_digest, digest_before)
+            with tempfile.TemporaryDirectory() as directory:
+                copy = Path(directory) / ("a" * 64) / "director_orchestrator"
+                copy.mkdir(parents=True)
+                for name in module._RESPONSES_RUNTIME_MODULES:
+                    shutil.copyfile(package / name, copy / name)
+                with patch.object(module, "__file__", str(copy / "openai_responses_validation.py")):
+                    relocated = responses_runtime_binding()
+                    self.assertNotEqual(relocated, baseline)
+                    self.assertNotEqual(route.configuration_digest, digest_before)
+                    with (copy / "primary_transports.py").open("ab") as handle:
+                        handle.write(b"\n# replaced\n")
+                    self.assertNotEqual(responses_runtime_binding(), relocated)
+            self.assertEqual(route.configuration_digest, digest_before)
 
     def test_configuration_digest_binds_the_timeout_ceiling(self):
         """Finding 4: the transport ceiling is part of the identity.
@@ -239,7 +277,7 @@ class ResponsesRouteTests(unittest.TestCase):
         base = dict(model=MODEL, api_url="https://api.openai.com/v1/responses",
                     credential_digest="e" * 64, organization_id="org_fixture",
                     api_project_id="proj_fixture", meter_enrollment_digest="f" * 64,
-                    total_token_limit=128)
+                    total_token_limit=128, runtime_binding="a" * 64)
         d180 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=180)
         d60 = responses_validation_configuration_digest(**base, maximum_timeout_seconds=60)
         self.assertNotEqual(d180, d60)
@@ -689,3 +727,4 @@ if __name__ == "__main__":
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 18:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
