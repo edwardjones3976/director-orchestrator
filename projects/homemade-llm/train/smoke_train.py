@@ -7,7 +7,7 @@ Runs inside unsloth/unsloth (see scripts/train-smoke.ps1). Only these C:\\llm fo
 Writes: runs/<run>/adapter, models/smoke/*.gguf, reports/<run>.json, the HF cache, and scratch under /tmp.
 
 The base is Unsloth's pre-quantized mirror of Qwen/Qwen3-0.6B (Unsloth loads it even when asked for the
-Qwen repo), pinned by revision; every HF snapshot the run touched is recorded in the report.
+Qwen repo), pinned by revision; the report records the commit transformers actually resolved.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import time
+import uuid
 from pathlib import Path
 
 # The image sets HF_HOME=/workspace/.cache/huggingface; override it so the cache lands in the mounted C:\llm\hf.
@@ -29,7 +30,8 @@ from trl import SFTConfig, SFTTrainer  # noqa: E402
 BASE = os.environ.get("SMOKE_BASE", "unsloth/qwen3-0.6b-unsloth-bnb-4bit")
 REVISION = os.environ.get("SMOKE_REVISION", "e86f5289a2ca40ab7114071959dc2079cf97cb3c")
 SEED, STEPS, ROWS, SEQ = 7, 20, 50, 1024
-RUN = "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+# Timestamp for humans plus a random suffix, so two runs in the same second never share paths.
+RUN = "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
 WS = Path("/workspace")
 RUN_DIR, MODEL_DIR, REPORT = WS / "runs" / RUN, WS / "models" / "smoke", WS / "reports" / f"{RUN}.json"
 
@@ -50,8 +52,9 @@ def rows() -> list[dict]:
     return out
 
 
-def hf_snapshots() -> dict[str, str]:
-    """Every repo@revision in the HF cache, so the report names the exact weights used."""
+def hf_cache_refs() -> dict[str, str]:
+    """Cache contents (repo -> refs/main) at report time. Context only, not provenance: the shared cache
+    also holds earlier runs' downloads. The base's provenance is base_resolved_commit."""
     hub = Path(os.environ["HF_HOME"]) / "hub"
     return {d.name.removeprefix("models--").replace("--", "/"): (d / "refs" / "main").read_text().strip()
             for d in sorted(hub.glob("models--*")) if (d / "refs" / "main").exists()}
@@ -72,6 +75,8 @@ def main() -> None:
     set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
     torch.cuda.reset_peak_memory_stats()
     model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
+    # transformers stamps the commit it actually resolved onto the config: this run's real provenance.
+    resolved = getattr(model.config, "_commit_hash", None)
     model = FastLanguageModel.get_peft_model(
         model, r=16, lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -111,7 +116,8 @@ def main() -> None:
     tok.save_pretrained(str(RUN_DIR / "adapter"))
 
     report = {
-        "run": RUN, "base": BASE, "base_revision": REVISION, "seed": SEED, "steps": STEPS, "rows": ROWS, "batch": 2,
+        "run": RUN, "base": BASE, "base_revision": REVISION, "base_resolved_commit": resolved,
+        "seed": SEED, "steps": STEPS, "rows": ROWS, "batch": 2,
         "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,
         "load_peak_torch_allocated_gb": round(load_alloc_gb, 2), "load_peak_torch_reserved_gb": round(load_reserved_gb, 2),
         "peak_torch_allocated_gb": round(peak_alloc_gb, 2), "peak_torch_reserved_gb": round(peak_reserved_gb, 2),
@@ -141,7 +147,7 @@ def main() -> None:
         dest = MODEL_DIR / f"{RUN}-{f.name}"
         publish(f, dest)
         report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
-    report["hf_snapshots"] = hf_snapshots()  # includes the full-precision repo the merge step fetches
+    report["hf_cache_refs"] = hf_cache_refs()  # context only (see docstring); provenance is base_resolved_commit
     report["wall_seconds"] = round(time.time() - t0, 1)
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))

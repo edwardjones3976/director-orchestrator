@@ -8,9 +8,18 @@
 param(
     [string]$Gguf,
     [string]$Image = 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739',
-    [int]$TtlSeconds = 900
+    [int]$TtlSeconds = 900,
+    [string]$LmsModelsDir = (Join-Path $env:USERPROFILE '.lmstudio\models')
 )
 $ErrorActionPreference = 'Stop'
+
+# True only when both files have identical content (the import is a hard link, so this is normally instant
+# to confirm; a same-named stale import with different bytes fails it).
+function Test-SameContent([string]$A, [string]$B) {
+    (Test-Path -LiteralPath $A -PathType Leaf) -and (Test-Path -LiteralPath $B -PathType Leaf) -and
+    ((Get-Item -LiteralPath $A).Length -eq (Get-Item -LiteralPath $B).Length) -and
+    ((Get-FileHash -LiteralPath $A).Hash -eq (Get-FileHash -LiteralPath $B).Hash)
+}
 if (-not $Gguf) { $Gguf = (Get-ChildItem 'C:\llm\models\smoke\*.gguf' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName }
 if (-not $Gguf -or -not (Test-Path -LiteralPath $Gguf -PathType Leaf)) { Write-Error 'no smoke GGUF found; run train-smoke.ps1 first' }
 
@@ -27,13 +36,13 @@ if (-not $known) {
     }
 }
 if (-not $known) { Write-Error "imported model not listed by lms: $Gguf" }
-$loaded = (lms ps --json 2>$null | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }
-# An older smoke build may still hold the identifier; replace it so this run tests the GGUF it was given.
-if ($loaded -and $loaded.path -ne $known.path) { lms unload smoke 2>&1 | Out-Null; $loaded = $null }
-if (-not $loaded) {
-    lms load $known.modelKey --identifier smoke --ttl $TtlSeconds -y 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { Write-Error 'lms load failed' }
-}
+# The catalog entry must be this exact GGUF, not an older import that merely shares the file name.
+$imported = Join-Path $LmsModelsDir ($known.path -replace '/', '\')
+if (-not (Test-SameContent $Gguf $imported)) { Write-Error "LM Studio's $($known.path) is not the requested GGUF (content differs)" }
+# Always (re)load, so the requested TTL applies even when this model is already resident.
+if ((lms ps --json 2>$null | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { lms unload smoke 2>&1 | Out-Null }
+lms load $known.modelKey --identifier smoke --ttl $TtlSeconds -y 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Error 'lms load failed' }
 
 # The request pins the output to a JSON schema (LM Studio honours response_format on chat/completions).
 $request = @{
