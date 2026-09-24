@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
@@ -265,8 +266,10 @@ def _is_current(since: datetime, until: datetime | None, *moments: datetime | No
 
 
 def _same(a: Any, b: Any) -> bool:
-    """Constant-time equality for secrets and digests; anything but two strings never matches."""
-    return isinstance(a, str) and isinstance(b, str) and hmac.compare_digest(a.encode(), b.encode())
+    """Constant-time equality for secrets and digests; anything but two non-empty strings never matches, so two
+    unset values (an empty bearer the Director rejects, a missing digest) never agree."""
+    return (isinstance(a, str) and isinstance(b, str) and bool(a) and bool(b)
+            and hmac.compare_digest(a.encode(), b.encode()))
 
 
 def _labels(container: dict[str, Any] | None) -> dict[str, str]:
@@ -516,9 +519,20 @@ _GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR
 _GATEWAY_ONLY = ("SLACK_APP_TOKEN",)
 
 
+# The minimum length the product enforces on a gateway credential: slack_bot refuses to start, and
+# Settings.readiness is not ready, without a 32+ character SLACK_GATEWAY_SECRET distinct from the bearer;
+# main.require_auth rejects every request while ORCHESTRATOR_SHARED_SECRET is empty. Every other identity
+# must be set (non-empty) for the gateway to start or to match an event.
+_CREDENTIAL_MINIMUM = {"SLACK_GATEWAY_SECRET": 32}
+
+
 def _gateway_credentials_match(gateway_env: dict[str, str], director_env: dict[str, str]) -> bool:
-    """The gateway holds the Director's Slack bot, owner, channel and bearer (constant time, never reported)."""
-    return all(_same(gateway_env.get(name), director_env.get(name)) for name in _GATEWAY_IDENTITIES)
+    """The gateway holds the Director's Slack bot, owner, channel, bearer and intake signing secret, each set and
+    at the product's minimum length, the signing secret distinct from the bearer (constant time, never reported)."""
+    usable = all(isinstance(director_env.get(name), str) and len(director_env[name]) >= _CREDENTIAL_MINIMUM.get(name, 1)
+                 for name in _GATEWAY_IDENTITIES)
+    return (usable and all(_same(gateway_env.get(name), director_env.get(name)) for name in _GATEWAY_IDENTITIES)
+            and not _same(director_env.get("SLACK_GATEWAY_SECRET"), director_env.get("ORCHESTRATOR_SHARED_SECRET")))
 
 
 def _slack_app_id(token: str) -> str | None:
@@ -1647,6 +1661,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             and isinstance(receipt.get("authorization_claimed_at"), str)
             and isinstance(receipt.get("authorization_proof_expires_at"), str)
             and _when(receipt["authorization_claimed_at"]) <= _when(receipt["recorded_at"])
+            # The owner can only authorize what was already posted: the claim follows the prompt.
+            and bool(slack_ts) and Decimal(str(_when(receipt["authorization_claimed_at"]).timestamp())) >= Decimal(slack_ts)
             and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
             and runtime.until() is not None and decided <= runtime.until()
             for receipt in receipts)
@@ -1777,8 +1793,11 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
         row = snapshot["row"]
         markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
         row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
-        # Owner ruling 2026-09-24: the committed structural rubric proves the pipeline, not the answer.
-        records.append(_run_record(runtime, snapshot, t.m.evaluate_rubric(row, rubric, digest)["passed"], t.m.LABEL))
+        # Owner ruling 2026-09-24: the committed structural rubric proves the pipeline, not the answer; the outcomes
+        # graded must be the ones the durable ledger rows fix.
+        structural, bound = t.m.evaluate_rubric(row, rubric, digest)["passed"], _offline_outcomes_bound(snapshot, t.m.LABEL)
+        correctness = False if False in (structural, bound) else None if bound is None else structural
+        records.append(_run_record(runtime, snapshot, correctness, t.m.LABEL))
     observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
     if observed.passed is not True:
         return observed
@@ -1912,6 +1931,28 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         if (len(rows) != 1 or rows[0].get("verified") is not True or len(matching) != 1
                 or not _same(rows[0].get("document_digest"), assignment.get("result_digest"))
                 or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
+            return False
+    return True
+
+
+def _offline_outcomes_bound(facts: dict[str, Any], label: str) -> bool | None:
+    """Check 10: offline doubles persist no result packet (only paid results are recorded as
+    director_primary_result_packet_artifact rows), so each offline outcome is bound to the strongest durable
+    evidence there is: its assignment's ledger row. primary_default's dispatch_offline_assignment writes run_id
+    `offline-double:<the reservation's digest>` and the fixed simulation label as its result, and the settlement
+    join (_assignments_joined) ties its digest to the row's result digest; so no field is left free. A row
+    without its reservation digest is unknown; any other outcome is a mismatch."""
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or []
+    if not assignments:
+        return None
+    for assignment in assignments:
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        reservation = assignment.get("reservation_digest")
+        if len(matching) != 1 or not isinstance(reservation, str) or not reservation:
+            return None
+        if matching[0].get("run_id") != "offline-double:" + reservation or matching[0].get("result") != label:
             return False
     return True
 
@@ -2955,3 +2996,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
@@ -75,7 +76,8 @@ def sample():
         },
         "intake_authentication": "slack_gateway_attested",
         "assignment_outcomes": [{
-            "run_id": "offline-double:fixture", "result": collector_module.LABEL,
+            # primary_default dispatch_offline_assignment: run_id is offline-double:<the reservation digest>.
+            "run_id": "offline-double:sha256:" + "a" * 64, "result": collector_module.LABEL,
         }],
         **{field: [] for field in EMPTY_ATTEMPT_FIELDS},
     }
@@ -1479,3 +1481,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]

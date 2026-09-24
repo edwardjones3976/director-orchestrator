@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]] -->
@@ -491,7 +492,15 @@ is not a freshness bound: its evidence is bound per read to the accepted
 database instance. `score()` scores runtime checks for exactly one runtime
 binding: the supplied one, or else the single binding all runtime observations
 carry (reported at the top level); observations from mixed deployments or
-images leave every runtime check UNKNOWN. A drill's (09) or the paid
+images leave every runtime check UNKNOWN. Credential comparisons never match
+two empty values, and the gateway's credentials count only when each is set,
+the intake signing secret is at least 32 characters (slack_bot's startup rule)
+and differs from the bearer. Check 08 also requires the owner's authorization
+to be claimed no earlier than the prompt's Slack timestamp. Offline doubles
+persist no result packet, so check 10 binds each offline outcome to its
+assignment's durable ledger row: run_id `offline-double:<reservation digest>`,
+the fixed simulation label as its result and the row's result digest; any
+other outcome FAILs and a row without its reservation digest is UNKNOWN. A drill's (09) or the paid
 run's (20) correlated final reply counts only when its fallback text and its
 complete normalized blocks (compared as check 08 compares prompts) are the
 Director's canonical terminal rendering; 20 grades the answer on the blocks'
@@ -809,3 +818,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]] -->

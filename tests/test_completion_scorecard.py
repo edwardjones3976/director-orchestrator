@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
@@ -2579,6 +2580,47 @@ class ScorecardCollectorTests(unittest.TestCase):
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
         self.assertEqual(missing.state("20"), "UNKNOWN")
 
+    def test_offline_outcomes_are_fixed_by_the_ledger_row_10(self):
+        self.assertEqual(self.world().state("10"), "PASS")
+        first = "DIR-LG-7A01"
+        # A genuine digest under another run identity is a mismatch.
+        forged = self.world()
+        forged.tasks[first]["assignment_outcomes"][0]["run_id"] = "offline-double:sha256:" + "f" * 64
+        self.assertEqual(forged.state("10"), "FAIL")
+        # Other result text is not the double's (the collector already refuses it as an offline run).
+        edited = self.world()
+        edited.tasks[first]["assignment_outcomes"][0]["result"] = "SIMULATION — NO PROVIDER INTERACTION (edited)"
+        self.assertNotEqual(edited.state("10"), "PASS")
+        self.assertFalse(sc._offline_outcomes_bound(
+            {"readback": {"assignments": [{"sequence": 1, "reservation_digest": "sha256:" + "a" * 64}]},
+             "task": {"assignment_outcomes": [{"assignment_sequence": 1, "run_id": "offline-double:sha256:" + "a" * 64,
+                                               "result": "edited"}]}}, "label"))
+        unreserved = self.world()
+        unreserved.tasks[first]["qualification_evidence"]["assignments"][0]["reservation_digest"] = None
+        self.assertNotEqual(unreserved.state("10"), "PASS")
+        self.assertIsNone(sc._offline_outcomes_bound(
+            {"readback": {"assignments": [{"sequence": 1, "reservation_digest": None}]},
+             "task": {"assignment_outcomes": [{"assignment_sequence": 1}]}}, "x"))
+
+    def test_owner_authorizes_only_a_posted_prompt_08(self):
+        early = self.world()
+        # Claimed before the prompt (ts 30005) was posted, receipt recorded and decision taken afterward.
+        early.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["authorization_claimed_at"] = iso(
+            1789210000 + 30004)
+        self.assertEqual(early.state("08"), "UNKNOWN")
+
+    def test_matched_credentials_must_meet_the_product_minimums(self):
+        env = dict(entry.split("=", 1) for entry in containers()[0]["Config"]["Env"])
+        gateway = {name: env[name] for name in sc._GATEWAY_IDENTITIES}
+        self.assertTrue(sc._gateway_credentials_match(gateway, env))
+        self.assertFalse(sc._same("", ""))
+        for name, value in (("ORCHESTRATOR_SHARED_SECRET", ""), ("SLACK_BOT_TOKEN", ""), ("SLACK_OWNER_USER_ID", ""),
+                            ("SLACK_DIRECTOR_CHANNEL_ID", ""), ("SLACK_GATEWAY_SECRET", "s" * 31),
+                            ("SLACK_GATEWAY_SECRET", env["ORCHESTRATOR_SHARED_SECRET"])):
+            # Both sides hold the same unusable value: matching is not authentication.
+            with self.subTest(name=name, length=len(value)):
+                self.assertFalse(sc._gateway_credentials_match({**gateway, name: value}, {**env, name: value}))
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -3114,3 +3156,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
