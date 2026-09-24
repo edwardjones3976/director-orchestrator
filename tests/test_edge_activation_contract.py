@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:23 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:10 UTC | BEGIN]]
 """Connected activation regression; PostgreSQL uses only the sanctioned test DSN."""
@@ -119,7 +120,7 @@ class EdgeActivationContractTests(unittest.TestCase):
                 },
                 "volumes": [{"type": "bind", "source": str(self.root), "target": str(self.root), "read_only": True}],
                 "networks": {"default": None},
-            }},
+            }, "slackbot": {"image": self.image, "command": ["python", "-m", "director_orchestrator.slack_bot"], "pull_policy": "never"}},
             "networks": {"default": {"name": "edge-engine-director_default"}},
         }
         self.enterContext(patch("director_orchestrator.primary_generation.GENERATION_DATA_ROOT", self.root))
@@ -361,3 +362,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:10 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]

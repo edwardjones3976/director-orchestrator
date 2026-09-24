@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -142,13 +143,20 @@ effects. It is the fast stop. It does not undo anything already executed.
 
 **Rollback changes who owns new intake. It is not an undo.**
 
-It requires, in order: intake proved closed (it stops `slackbot`, `n8n` and
-`orchestrator`, then re-reads the container lists and throws if any survives);
-the same accepted pins, a clean checkout matching them, and an exact-candidate
-image; `ambiguous_effect_count == 0`; and quiescence.
+It requires, in order: a valid prior-image record or none (an invalid
+`<profile>.prior-images.<generation>.<image>.json` refuses before anything
+stops); intake proved closed (it stops `slackbot`, `n8n` and `orchestrator`,
+then re-reads the container lists and throws if any survives); the same
+accepted pins, a clean checkout matching them, and an exact-candidate image;
+`ambiguous_effect_count == 0`; and quiescence. After the compare-and-swap it
+restores the recorded prior orchestrator and gateway images and reads both
+back before n8n and Slack start; a failed readback or health check closes all
+intake again. With no record it stays on the candidate image and says no image
+was restored.
 
-Both refusals fire **after** intake has been stopped and the switches written
-false. A refused rollback is therefore not a no-op — it leaves the deployment
+The ambiguous-effect and quiescence refusals fire **after** intake has been
+stopped and the switches written false. A refused rollback is
+therefore not a no-op — it leaves the deployment
 with intake down and primary still owning the authority row. The deployed script
 does not yet carry PR #115's correction, and that correction does not change the
 refusal path.
@@ -201,3 +209,4 @@ material work. And a gate reading *unknown* is not a gate reading *pass*.
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->

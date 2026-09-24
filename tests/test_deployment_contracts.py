@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | BEGIN]]
@@ -429,6 +430,21 @@ process.stdout.write(JSON.stringify({outputs, store}));
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("FROM python:3.12-slim@sha256:", dockerfile)
 
+    def test_gateway_runs_the_verified_runtime_image(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        orchestrator = compose.split("  orchestrator:\n", 1)[1].split(
+            "\n  langgraph-primary-db:", 1
+        )[0]
+        slackbot = compose.split("  slackbot:\n", 1)[1].split("\n  n8n-db:", 1)[0]
+
+        def image_line(section):
+            return next(line for line in section.splitlines() if line.startswith("    image: "))
+
+        self.assertEqual(image_line(slackbot), image_line(orchestrator))
+        self.assertIn("    pull_policy: never", slackbot)
+        # Only the labelled orchestrator build may produce the shared runtime tag.
+        self.assertNotIn("build:", slackbot)
+
     # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
     def test_slack_bridge_keeps_provider_key_in_orchestrator_only(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -623,3 +639,4 @@ if __name__ == "__main__":
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-13 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-13 | 04:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:34 UTC | END]]
