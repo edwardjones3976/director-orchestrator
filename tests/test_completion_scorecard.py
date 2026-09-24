@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
@@ -270,7 +271,9 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
     task, deliveries, messages, _ = tf.sample()
     readback = tf.readback_fixture()
     if offline:
-        readback.update(assignments=[], provider_attempts=[], provider_usage=[])
+        # The offline double settled its one assignment; its result digest is the outcome's.
+        readback.update(assignments=[{**readback["assignments"][0], "result_digest": "sha256:" + "a" * 64}],
+                        provider_attempts=[], provider_usage=[])
         tf.recount(readback)
     else:
         task["assignment_outcomes"] = [{"run_id": "provider-run-1", "result": answer or "provider answer",
@@ -1914,6 +1917,10 @@ class ScorecardCollectorTests(unittest.TestCase):
             case.status["execution"]["credential_updated_at"] = credential_at
             with self.subTest(credential_at=credential_at):
                 self.assertEqual(case.state("04"), "UNKNOWN")
+        future_latest = self.world()
+        future_latest.status["latest"].update(startedAt="2026-09-12T21:00:00.000+00:00",
+                                              stoppedAt="2026-09-12T21:00:01.000+00:00")
+        self.assertEqual(future_latest.state("04"), "UNKNOWN")
         other_text = self.world()
         run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
             "ok": True, "channel": CHANNEL_FIXTURE, "ts": STATUS_TS,
@@ -2357,6 +2364,26 @@ class ScorecardCollectorTests(unittest.TestCase):
         effect["terminal_recorded_at"] = "2026-09-12T21:00:00+00:00"
         self.assertEqual(future_effect.state("20"), "UNKNOWN")
 
+    def test_offline_assignments_must_be_settled_and_joined_10(self):
+        for label, change in (("pending", {"status": "PENDING"}), ("active", {"status": "ACTIVE"}),
+                              ("other digest", {"result_digest": "sha256:" + "e" * 64})):
+            world = self.world()
+            world.tasks["DIR-LG-7A04"]["qualification_evidence"]["assignments"][0].update(change)
+            with self.subTest(label=label):
+                self.assertNotEqual(world.state("10"), "PASS")
+        extra = self.world()
+        assignments = extra.tasks["DIR-LG-7A05"]["qualification_evidence"]["assignments"]
+        assignments.append({**assignments[0], "assignment_id": assignments[0]["assignment_id"] + "-2", "sequence": 2})
+        self.assertNotEqual(extra.state("10"), "PASS")
+
+    def test_restart_needs_settled_attempts_06(self):
+        # The attempt's latest event is still STARTED (its SUCCEEDED event never landed): not settled.
+        unsettled = self.world()
+        readback = unsettled.tasks[APPROVAL_TASK]["qualification_evidence"]
+        readback["provider_attempts"].pop()
+        tf.recount(readback)
+        self.assertNotEqual(unsettled.state("06"), "PASS")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2441,6 +2468,20 @@ class ScorecardCollectorTests(unittest.TestCase):
             case.captures["required_providers"] = required
             with self.subTest(required=required):
                 self.assertEqual(case.state("12"), "FAIL")
+        # Freshness is measured from the collection's end: a capture observed during collection is current,
+        # and one expiring within FRESH_FOR of the end is not.
+        during = self.world()
+        during.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
+        for lane in during.captures["lanes"].values():
+            lane["surfaces"]["app"]["observed_at"] = "2026-09-12T20:03:00+00:00"
+        during.captures["observed_at"] = "2026-09-12T20:04:00+00:00"
+        during.consistency["captured_at"] = "2026-09-12T20:04:00+00:00"
+        self.assertEqual(during.state("12"), "PASS")
+        expiring = self.world()
+        expiring.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
+        expiring.captures["observed_at"] = expiring.consistency["captured_at"] = "2026-09-12T20:04:00+00:00"
+        expiring.captures["lanes"]["claude"]["surfaces"]["app"]["expires_at"] = "2026-09-12T20:07:00+00:00"
+        self.assertEqual(expiring.state("12"), "FAIL")
         future_capture = self.world()
         for lane in future_capture.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T21:00:00+00:00"
@@ -2872,3 +2913,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]

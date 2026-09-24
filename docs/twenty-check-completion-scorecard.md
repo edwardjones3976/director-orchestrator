@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
@@ -460,6 +461,16 @@ saved executions for its own default age. The scorecard reads only the last
 
 ### Execution-binding limits
 
+Every upper bound and expiry reference uses the collection's end: check 12's
+capture observation and `FRESH_FOR` validity, and the CI replica, workload
+journal and Security seal times. Check 04 dates the newest scheduled run inside
+the current n8n's life and the collection before using its status. One
+settlement join serves checks 10 and 20 (every readback assignment SUCCEEDED
+with exactly one outcome of its sequence and the same result digest; for paid
+runs the latest attempt too), and one settlement rule (every latest attempt and
+started effect terminal) serves checks 06 and 20. Activation insertion times
+are read for the current binding's latest row (every binding field), never by
+digest alone.
 A collection runs from its start to its end, which is known only once the live
 reads finish. Evidence is bounded by the end; each source's own read time (the
 consistency snapshot's `captured_at`, the captures report's `observed_at`)
@@ -746,3 +757,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]] -->

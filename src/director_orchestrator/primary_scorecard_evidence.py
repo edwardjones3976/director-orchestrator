@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
@@ -302,8 +303,10 @@ def _capture_product(provider, output: bytes):
     return None
 
 
-def _activation_recorded_at(dsn, schema, provider, digest, surface="runtime_adapter"):
-    """The database insertion time of the LIVE_OK row of that surface carrying digest, or None."""
+def _activation_recorded_at(dsn, schema, binding, digest, surface="runtime_adapter"):
+    """The insertion time of the current binding's latest row for that surface, when that row is LIVE_OK
+    and carries digest; otherwise None. Every binding field scopes the lookup (the same digest may exist
+    under another workspace or version), and only the latest revision is read, as the store's load does."""
     if surface not in ("app", "runtime_adapter"):
         raise ValueError("unknown activation surface")
     import psycopg
@@ -314,10 +317,15 @@ def _activation_recorded_at(dsn, schema, provider, digest, surface="runtime_adap
     with psycopg.connect(dsn, connect_timeout=10, row_factory=dict_row,
                          options="-c default_transaction_read_only=on -c statement_timeout=10000") as connection:
         row = connection.execute(
-            f"SELECT recorded_at FROM {schema}.director_provider_activation_evidence WHERE provider_id=%s"
-            " AND surface=%s AND stage='LIVE_OK' AND evidence_digest=%s"
-            " ORDER BY revision DESC LIMIT 1", (provider, surface, digest)).fetchone()
-    return _plain(row["recorded_at"]) if row else None
+            f"SELECT recorded_at, stage, evidence_digest FROM {schema}.director_provider_activation_evidence"
+            " WHERE provider_id=%s AND workspace_id=%s AND provider_version=%s AND app_version=%s"
+            " AND runtime_adapter_version=%s AND workspace_version=%s AND binding_version=%s AND surface=%s"
+            " ORDER BY revision DESC LIMIT 1",
+            (binding.provider_id, binding.workspace_id, binding.provider_version, binding.app_version,
+             binding.runtime_adapter_version, binding.workspace_version, binding.binding_version, surface)).fetchone()
+    if not row or row["stage"] != "LIVE_OK" or row["evidence_digest"] != digest:
+        return None
+    return _plain(row["recorded_at"])
 
 
 def activation_capture_report(settings, identity, manifest) -> dict:
@@ -343,6 +351,7 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             bindings=settings.primary_provider_activation_bindings(),
             required_providers=settings.langgraph_primary_required_providers, capture_verifier=verifier)
         lanes = service.capture_attestations()
+    bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         surface = lane["surfaces"].get("runtime_adapter")
         product = None
@@ -355,7 +364,7 @@ def activation_capture_report(settings, identity, manifest) -> dict:
         for name, each in lane["surfaces"].items():
             if each is not None:
                 each["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
-                                                              identity.postgres_schema, provider,
+                                                              identity.postgres_schema, bindings[provider],
                                                               each["evidence_digest"], name)
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
@@ -375,3 +384,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]

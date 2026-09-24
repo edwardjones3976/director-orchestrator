@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
@@ -936,8 +937,10 @@ def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[b
                                 "capture_verified": surface.get("capture_verified")}
             # A capture not yet observed at collection time is future-dated, not current.
             observed = _when(surface["observed_at"]) if surface.get("observed_at") else None
-            if (surface.get("stage") != "LIVE_OK" or surface.get("capture_verified") is not True or expires < at + FRESH_FOR
-                    or observed is None or observed > at):
+            # Observed no later than the collection's end, and still valid FRESH_FOR past it.
+            end = runtime.until() or at
+            if (surface.get("stage") != "LIVE_OK" or surface.get("capture_verified") is not True
+                    or expires < end + FRESH_FOR or observed is None or observed > end):
                 ok = False
         facts[lane] = lane_facts
         if not ok:
@@ -1185,6 +1188,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     # failures is not operational delivery. (Runs post only on a readiness change, so the graded post
     # may be older than a newer successful run that had nothing to post.)
     latest = found.get("latest") if isinstance(found.get("latest"), dict) else {}
+    marks = [latest.get("startedAt"), *([latest["stoppedAt"]] if latest.get("stoppedAt") else [])]
+    if not all(isinstance(mark, str) for mark in marks) or not _is_current(
+            max(runtime.created_at, n8n_created), runtime.until(), *(_when(mark) for mark in marks)):
+        return _observation("04", None, "The newest scheduled Director Status run started before the running Director "
+                            "container or n8n was created, or after the collection ended.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
     if latest.get("status") in ("error", "crashed", "failed", "canceled"):
         return _observation("04", False, "The newest scheduled Director Status run did not succeed.",
                             source, {"latest_execution_id": latest.get("id")}, at, **binding)
@@ -1510,7 +1518,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
         resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
                    and counters["started_attempts"] == counters["attempt_ordinals"]
-                   and row["qualification_evidence"].get("effect_state") != "AMBIGUOUS_DELIVERY_EFFECT"
+                   # The one settlement rule: every latest attempt and started effect is terminal.
+                   and _ambiguous_effects(row, readback, snapshot.get("latest")) == 0
                    and replies == 1 and row.get("final_receipt_matches_native_message") is True)
         obs06 = _observation("06", True if resumed else None,
                              "One task was processed before the current Director process start and finished after it "
@@ -1612,7 +1621,8 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
     finals = row.get("terminal_messages") or []
     offline = (row.get("all_recorded_outcomes_are_offline_doubles") is True
                and row.get("zero_calls_in_exposed_task_projection") is True and counters is not None
-               and counters["attempt_ordinals"] == 0 and len(finals) == 1 and finals[0].get("simulation_label_present") is True)
+               and counters["attempt_ordinals"] == 0 and len(finals) == 1 and finals[0].get("simulation_label_present") is True
+               and _assignments_joined(snapshot, attempts=False) is True)
     states = {str(receipt.get("state")) for receipt in row.get("delivery_receipts") or []}
     if (row.get("final_receipt_matches_native_message") is True and row.get("delivery_receipt_list_complete") is True
             and states <= {"DELIVERED", "SUPERSEDED", "SUPPRESSED"}):
@@ -1788,37 +1798,40 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
         return None
     if any(item in question or item in wrapper for item in expected):
         return False
-    joined = _outcomes_joined(facts)
+    joined = _assignments_joined(facts, attempts=True)
     if joined is not True:
         return joined
     return bool(answer) and all(item in answer and item in visible for item in expected)
 
 
-def _outcomes_joined(facts: dict[str, Any]) -> bool | None:
-    """Every graded outcome is the paid provider's result: its assignment sequence names a SUCCEEDED assignment
-    whose result digest, and whose latest attempt's SUCCEEDED result digest, equal the outcome's
-    provider_result_digest (as primary_default records them). Unreadable is unknown; a mismatch is not."""
+def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None:
+    """The one settlement join for a run's work (checks 10 and 20): every readback assignment is SUCCEEDED and
+    carries exactly one outcome of its sequence whose provider_result_digest is its result digest, and every
+    outcome has its assignment; for paid runs each assignment's latest attempt is SUCCEEDED with that digest
+    too (as primary_default records them). Unreadable is unknown; any unsettled or mismatched row is not."""
     readback = facts.get("readback")
     latest = facts.get("latest") if isinstance(facts.get("latest"), dict) else {}
-    outcomes = facts["task"].get("assignment_outcomes") or []
-    if not isinstance(readback, dict) or not outcomes:
+    outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
+    assignments = readback.get("assignments") or [] if isinstance(readback, dict) else []
+    if not isinstance(readback, dict) or not outcomes or not assignments:
         return None
-    for outcome in outcomes:
-        digest = "sha256:" + str((outcome or {}).get("provider_result_digest"))
-        assignments = [a for a in readback.get("assignments") or []
-                       if a.get("sequence") == (outcome or {}).get("assignment_sequence")]
-        if len(assignments) != 1:
+    if len(outcomes) != len(assignments):
+        return False
+    for assignment in assignments:
+        matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        digest = "sha256:" + str(matching[0].get("provider_result_digest")) if len(matching) == 1 else None
+        if (digest is None or assignment.get("status") != "SUCCEEDED"
+                or not _same(assignment.get("result_digest"), digest)):
             return False
-        assignment = assignments[0]
-        # The latest event of the assignment's last attempt (latest is keyed per attempt).
-        attempts = sorted((event for event in latest.values() if isinstance(event, dict)
-                           and event.get("assignment_id") == assignment.get("assignment_id")),
-                          key=lambda event: event.get("attempt_ordinal") or 0)
-        attempt = attempts[-1] if attempts else None
-        if (assignment.get("status") != "SUCCEEDED" or not _same(assignment.get("result_digest"), digest)
-                or not isinstance(attempt, dict) or attempt.get("status") != "SUCCEEDED"
-                or not _same(attempt.get("result_digest"), digest)):
-            return False
+        if attempts:
+            # The latest event of the assignment's last attempt (latest is keyed per attempt).
+            events = sorted((event for event in latest.values() if isinstance(event, dict)
+                             and event.get("assignment_id") == assignment.get("assignment_id")),
+                            key=lambda event: event.get("attempt_ordinal") or 0)
+            attempt = events[-1] if events else None
+            if (not isinstance(attempt, dict) or attempt.get("status") != "SUCCEEDED"
+                    or not _same(attempt.get("result_digest"), digest)):
+                return False
     return True
 
 
@@ -2481,19 +2494,19 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
             paid_rubric_path=paid_rubric_path, collection_end=collection_end))
     if github:
         try:
-            result.append(_ci_observation(candidate_sha, at, ci_replica_receipt))
+            result.append(_ci_observation(candidate_sha, collection_end(), ci_replica_receipt))
         except _SOURCE_ERRORS:
             result.append(_observation("16", None, "GitHub CI or the local-replica receipt could not be verified; no retry was made.",
                                        "GitHub Actions", {}, at, candidate_sha=candidate_sha))
     if ledger_path is not None:
         try:
-            result.extend(_workload_observation(ledger_path, at))
+            result.extend(_workload_observation(ledger_path, collection_end()))
         except _SOURCE_ERRORS:
             result.extend(_observation(key, None, "The assignment journal could not be verified; no retry was made.",
                                        str(ledger_path.resolve()), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
-            result.append(_security_observation(security_scan_id, candidate_sha, at))
+            result.append(_security_observation(security_scan_id, candidate_sha, collection_end()))
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
@@ -2781,3 +2794,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]

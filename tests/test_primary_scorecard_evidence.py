@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
@@ -181,7 +182,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                          "2026-09-12T09:30:01+00:00")
         self.assertEqual(report["lanes"]["claude"]["surfaces"]["app"]["recorded_at"], "2026-09-12T09:30:01+00:00")
         self.assertEqual(sorted(call.args[4] for call in recorded.call_args_list), ["app", "runtime_adapter"])
-        self.assertEqual(recorded.call_args.args[1:3], ("director_primary_v1", "claude"))
+        self.assertEqual(recorded.call_args.args[1], "director_primary_v1")
+        self.assertEqual(recorded.call_args.args[2], bindings["claude"])  # the full current binding
         self.assertEqual(report["version"], "director-activation-captures/v1")
         self.assertEqual(report["generation_manifest_sha256"], PIN)
         self.assertEqual(report["provider_bindings_sha256"], "d" * 64)
@@ -631,11 +633,21 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 " VALUES ('claude','w','p','a','r','w','b','runtime_adapter',1,%s,'LIVE_OK','e',%s,"
                 " '2020-01-01T00:00:00Z','2099-01-01T00:00:00Z','2026-09-12T10:00:10Z')",
                 (ACTIVATION_EVIDENCE_VERSION, "a" * 64))
-        recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "a" * 64)
+            # The same digest under an older workspace binding, at a higher revision and an earlier time.
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_provider_activation_evidence(provider_id, workspace_id,"
+                " provider_version, app_version, runtime_adapter_version, workspace_version, binding_version, surface,"
+                " revision, schema_version, stage, evidence_id, evidence_digest, observed_at, expires_at, recorded_at)"
+                " VALUES ('claude','old','p','a','r','w','b','runtime_adapter',7,%s,'LIVE_OK','e',%s,"
+                " '2020-01-01T00:00:00Z','2099-01-01T00:00:00Z','2026-09-12T08:00:00Z')",
+                (ACTIVATION_EVIDENCE_VERSION, "a" * 64))
+        current = SimpleNamespace(provider_id="claude", workspace_id="w", provider_version="p", app_version="a",
+                                  runtime_adapter_version="r", workspace_version="w", binding_version="b")
+        recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64)
         self.assertEqual(datetime.fromisoformat(recorded), datetime(2026, 9, 12, 10, 0, 10, tzinfo=timezone.utc))
-        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "b" * 64))
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "b" * 64))
         # The same digest on the other surface is another row.
-        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "a" * 64, "app"))
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64, "app"))
 
 
 if __name__ == "__main__":
@@ -652,3 +664,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
