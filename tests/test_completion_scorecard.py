@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
@@ -225,7 +226,7 @@ def consistency_fixture():
     return {"version": "director-primary-consistency/v1",
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
                            "candidate_tree": "d" * 40, "adoption": adoption_fixture()},
-            "captured_at": "2026-09-12T09:59:59+00:00", "intake_fencing_generation": 83, "counts": counts,
+            "captured_at": "2026-09-12T20:00:00+00:00", "intake_fencing_generation": 83, "counts": counts,
             "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
                                   "approval_receipts": []},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
@@ -246,7 +247,7 @@ def captures_fixture():
                "expires_at": "2026-09-13T12:00:00+00:00", "capture_verified": True}
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
-            "observed_at": "2026-09-12T09:59:59+00:00",
+            "observed_at": "2026-09-12T20:00:00+00:00",
             "required_providers": ["claude", "grok", "openai"],
             "lanes": {lane: {"binding_digest": "b" * 64, "product": product,
                              "surfaces": {"app": dict(surface), "runtime_adapter": dict(surface)}}
@@ -371,6 +372,7 @@ class World:
         self.rows[1]["Created"] = "2026-09-12T09:00:00Z"  # the deployment's n8n
         self.commit_tree = "d" * 40
         self.now = WORLD_NOW
+        self.until = None  # the collection's end; None means it ends when it starts
         self.payload = health()
         self.consistency = consistency_fixture()
         self.captures = captures_fixture()
@@ -533,12 +535,12 @@ class World:
         with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack):
             opener.return_value.open.return_value = response
-            observations = sc.collect(SHA, now=self.now, **selected)
+            observations = sc.collect(SHA, now=self.now, until=self.until, **selected)
             self.opened = [call.args[0] for call in opener.return_value.open.call_args_list]
         return observations
 
     def report(self, **options):
-        return sc.score(SHA, self.observe(**options), now=self.now, runtime_sha=SHA, image_id=IMAGE)
+        return sc.score(SHA, self.observe(**options), now=self.until or self.now, runtime_sha=SHA, image_id=IMAGE)
 
     def state(self, check, **options):
         return row(self.report(**options), check)["status"]
@@ -725,7 +727,8 @@ def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None):
 
 def ci_jobs(steps=True, failed=()):
     return [{"name": name, "conclusion": "failure" if name in failed else "success",
-             "steps": [{"name": "run"}] if steps else []} for name in sc.CI_JOBS]
+             "steps": [{"name": "run", "status": "completed", "conclusion": "success"}] if steps else []}
+            for name in sc.CI_JOBS]
 
 
 def replica_receipt(key, candidate=SHA, head_failures=("tests.test_fixture.T.test_known",), head_tests_run=3000):
@@ -1273,7 +1276,8 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertFalse(report["activation_authorized"])
 
     def test_ci_uses_existing_oracle_actual_steps_and_exact_sha(self):
-        jobs = [{"name": name, "conclusion": "success", "steps": [{"name": "actual test"}]} for name in sc.CI_JOBS]
+        jobs = [{"name": name, "conclusion": "success",
+                 "steps": [{"name": "actual test", "status": "completed", "conclusion": "success"}]} for name in sc.CI_JOBS]
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
@@ -1286,6 +1290,19 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(sc.score(SHA, observations, now=NOW)["checks"][15]["status"], "PASS")
             self.assertEqual(sc.score(OTHER, observations, now=NOW)["checks"][15]["status"], "UNKNOWN")
             jobs[0]["steps"] = []
+            self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
+
+    def test_ci_jobs_with_only_skipped_steps_did_not_execute_16(self):
+        skipped = [{"name": name, "conclusion": "success",
+                    "steps": [{"name": "guarded", "status": "completed", "conclusion": "skipped"}]} for name in sc.CI_JOBS]
+
+        def external_query(args):
+            if args[0] == "docker":
+                raise ValueError("offline")
+            if "/jobs?" in args[-1]:
+                return {"total_count": len(skipped), "jobs": skipped}
+            return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
+        with patch.object(sc, "_run_json", side_effect=external_query):
             self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
 
     def test_ci_missing_job_cannot_pass(self):
@@ -2311,6 +2328,35 @@ class ScorecardCollectorTests(unittest.TestCase):
         resequenced.tasks[PAID_TASK]["assignment_outcomes"][0]["assignment_sequence"] = 2
         self.assertEqual(resequenced.state("20"), "FAIL")
 
+    def test_snapshots_read_during_the_collection_are_current_07(self):
+        # A normal snapshot is captured while the collection runs, after its start: it must PASS.
+        during = self.world()
+        during.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
+        during.consistency["captured_at"] = "2026-09-12T20:02:00+00:00"
+        during.captures["observed_at"] = "2026-09-12T20:02:30+00:00"
+        report = during.report()
+        self.assertEqual([row(report, key)["status"] for key in ("07", "12")], ["PASS", "PASS"])
+        # Read after the collection ended, or before it began: not this collection's snapshot.
+        for captured in ("2026-09-12T20:06:00+00:00", "2026-09-12T19:59:00+00:00"):
+            case = self.world()
+            case.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
+            case.consistency["captured_at"] = captured
+            with self.subTest(captured=captured):
+                self.assertEqual(case.state("07"), "UNKNOWN")
+        late_captures = self.world()
+        late_captures.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
+        late_captures.captures["observed_at"] = "2026-09-12T20:06:00+00:00"
+        self.assertEqual(late_captures.state("12"), "UNKNOWN")
+
+    def test_every_drill_reply_and_effect_time_is_bounded(self):
+        future_blocked = self.world()
+        future_blocked.threads[ts(100)][1]["ts"] = "1789290000.100000"  # a BLOCKED reply dated after collection
+        self.assertEqual(future_blocked.state("03"), "UNKNOWN")
+        future_effect = self.world()
+        effect = future_effect.tasks[PAID_TASK]["qualification_evidence"]["effects"][0]
+        effect["terminal_recorded_at"] = "2026-09-12T21:00:00+00:00"
+        self.assertEqual(future_effect.state("20"), "UNKNOWN")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2825,3 +2871,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
@@ -459,6 +460,15 @@ saved executions for its own default age. The scorecard reads only the last
 
 ### Execution-binding limits
 
+A collection runs from its start to its end, which is known only once the live
+reads finish. Evidence is bounded by the end; each source's own read time (the
+consistency snapshot's `captured_at`, the captures report's `observed_at`)
+must lie between the start and the end; and every observation is stamped at
+the end, so nothing read during the collection is backdated. Drill verdicts
+bound every post they read (root, owner inputs, receipts, `BLOCKED` notices,
+final replies), and run records bound each external effect's reservation,
+start, binding and terminal times. Check 16 credits a job only if at least one
+of its steps completed without being skipped, and counts only those steps.
 One freshness rule (`_is_current`) runs before any grading in every runtime
 collector (03, 04, 06, 08, 09, 10, 11, 20): evidence whose moments (a Slack
 post, a task's creation or update, an execution's start or stop) are not all
@@ -735,3 +745,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]] -->

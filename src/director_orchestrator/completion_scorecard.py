@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
@@ -219,7 +220,23 @@ class _Runtime:
     health: dict = field(repr=False)
     env: dict = field(repr=False)  # holds secrets: memory only, never in facts
     runtime_tree: str = ""  # the image's tree label; "" when absent or malformed
-    collected_at: datetime | None = None  # the collection time: the upper bound of every evidence moment
+    collected_at: datetime | None = None  # the collection's start: no source may have been read before it
+    # The collection's end, read when grading (a callable): the upper bound of every evidence moment.
+    collection_end: Any = field(default=None, repr=False, compare=False)
+
+    def until(self) -> datetime | None:
+        """The evidence cutoff: the collection's end, never a time frozen before the live reads."""
+        return self.collection_end() if callable(self.collection_end) else self.collected_at
+
+    def read_in_window(self, value: Any) -> bool:
+        """A source's own read time (a snapshot's captured_at, a report's observed_at) lies inside the
+        collection: at or after its start and no later than its end."""
+        until = self.until()
+        try:
+            return (isinstance(value, str) and until is not None and self.collected_at is not None
+                    and self.collected_at <= _when(value) <= until)
+        except ValueError:
+            return False
 
     @property
     def binding(self) -> dict[str, str]:
@@ -257,7 +274,7 @@ def _compose_ids(project: str, service: str) -> list[str]:
     return ids
 
 
-def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
+def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observation], _Runtime]:
     """Observe only the selected deployment's Director; never a default name or port."""
     ids = _compose_ids(project, "orchestrator")
     if len(ids) != 1:
@@ -288,7 +305,7 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
         raise ValueError("primary health is malformed")
     runtime = _Runtime(project, ids[0], image_id, runtime_sha, _when(service["Created"]),
                        _when(service["State"]["StartedAt"]), environment, health_url,
-                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at)
+                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at, end)
     binding = runtime.binding
     result = []
     # The persisted owner row alone is not ownership: this process must hold the live writer lease.
@@ -875,7 +892,7 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
     pin = generation.get("manifest_sha256")
     captured = consistency.get("captured_at")
     if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
-            or not isinstance(captured, str) or _when(captured) > at
+            or not runtime.read_in_window(captured)
             or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
             or type(fence) is not int or fence != primary.get("intake_fencing_generation")):
         return _observation("07", None, "The consistency snapshot is not bound to the running generation pin and intake fence.",
@@ -980,7 +997,7 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
                     and _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
                     and _when(surface["recorded_at"]) <= min(times))
 
-        if (not times or runtime.collected_at is None or max(times) > runtime.collected_at
+        if (not times or runtime.until() is None or max(times) > runtime.until()
                 or not all(gated(surfaces.get(name)) for name in ("app", "runtime_adapter"))):
             unbound.append(lane)
     facts = {"lanes_used": used, "products": products, "transports": transports}
@@ -1209,7 +1226,7 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             "latest update.", source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if not _is_current(max(runtime.created_at, n8n_created), runtime.collected_at, started, stopped):
+    if not _is_current(max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
         return _observation("04", None, "The newest saved status execution started before the running Director "
                             "container or the running n8n was created, so it cannot attest them.",
                             source, facts, at, **binding)
@@ -1256,6 +1273,9 @@ def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
         moments += [_when(delivery[key]) for key in ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
                                                      "owner_decision_at") if delivery.get(key)]
     moments += [_when(event["recorded_at"]) for event in readback.get("provider_attempts") or []]
+    for effect in readback.get("effects") or []:
+        moments += [_when(effect[key]) for key in ("reserved_at", "execution_started_at", "bound_at",
+                                                    "terminal_recorded_at") if effect.get(key)]
     stamps = [row.get("input_message_ts"), *(m.get("ts") for m in row.get("terminal_messages") or [])]
     moments += [datetime.fromtimestamp(float(Decimal(str(ts))), timezone.utc) for ts in stamps if ts]
     return moments
@@ -1279,8 +1299,11 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
     facts.update(thread_tasks=tasks, terminal_reply_count=replies)
     # No producer records the executing image: a drill posted, or a task created,
     # before the running container was created cannot attest it.
+    # Every post the verdict reads (the root, owner inputs, receipts, BLOCKED notices, final replies).
+    posts = [datetime.fromtimestamp(float(Decimal(str(m["ts"]))), timezone.utc) for m in messages
+             if m.get("ts") and (m.get("ts") == thread or m.get("thread_ts") == thread)]
     current = _is_current(since, until, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
-                          *_moments(snapshot))
+                          *posts, *_moments(snapshot))
     facts["after_container_created"] = current
     verdict: bool | None = None
     if not current:
@@ -1331,7 +1354,7 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     facts: dict[str, Any] = {}
     for kind, thread in drills.items():
         try:
-            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.collected_at)
+            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.until())
         except _SOURCE_ERRORS:
             verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
     result = []
@@ -1448,7 +1471,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         return [_observation(key, None, reason, _SLACK_SOURCE, {}, at, **binding) for key in ("06", "08")]
     # Only a container set that already existed when the approval task was created can have handled it:
     # a predecessor's approval evidence grades nothing here, positive or negative.
-    if not _is_current(runtime.created_at, runtime.collected_at, *_moments(snapshot)):
+    if not _is_current(runtime.created_at, runtime.until(), *_moments(snapshot)):
         reason = ("The approval task was created before the running Director container, gateway or n8n, so it "
                   "cannot attest this runtime.")
         return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
@@ -1481,7 +1504,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         facts06["continued_after_start"] = continued
         # Every moment the resume rests on happened before the collection.
         spans = (len(terminal) == 1 and processed and continued
-                 and _is_current(runtime.created_at, runtime.collected_at, _when(terminal[0]["created_at"]),
+                 and _is_current(runtime.created_at, runtime.until(), _when(terminal[0]["created_at"]),
                                  *(_when(e["recorded_at"]) for e in readback["provider_attempts"]))
                  and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
@@ -1534,7 +1557,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             and isinstance(receipt.get("authorization_proof_expires_at"), str)
             and _when(receipt["authorization_claimed_at"]) <= _when(receipt["recorded_at"])
             and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
-            and runtime.collected_at is not None and decided <= runtime.collected_at
+            and runtime.until() is not None and decided <= runtime.until()
             for receipt in receipts)
         if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
@@ -1598,7 +1621,7 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
         delivery_ambiguous = True if "AMBIGUOUS" in states else None
     # Only a container that already existed when the task was created can be
     # the image that executed it; no producer records the executing image.
-    bound = readback is not None and _is_current(runtime.created_at, runtime.collected_at, *_moments(snapshot))
+    bound = readback is not None and _is_current(runtime.created_at, runtime.until(), *_moments(snapshot))
     return {"run_id": row.get("task_id"),
             "mode": _run_mode(offline, counters, readback),
             "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
@@ -1907,9 +1930,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
-                             paid_rubric_path: Path | None) -> list[Observation]:
+                             paid_rubric_path: Path | None, collection_end: Any = None) -> list[Observation]:
     try:
-        runtime_rows, runtime = _runtime(at, project)
+        runtime_rows, runtime = _runtime(at, project, collection_end)
     except _SOURCE_ERRORS:
         return [_observation("19", None, "Director identity/health could not be verified; no retry was made.",
                              "Docker Compose labels and Director /health", {}, at)]
@@ -1998,6 +2021,8 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         unbound = consistency is not None and not (
             _same(verified_commit, runtime.runtime_sha) and _same(verified_tree, runtime.runtime_tree)
             and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree))
+        if captures is not None and not runtime.read_in_window(captures.get("observed_at")):
+            captures = None  # a captures report not read during this collection attests nothing here
         if unbound or consistency is None:
             consistency = captures = None  # captures carry no commit: without the snapshot they are unbound
         if t is not None:
@@ -2196,8 +2221,14 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
         if value.get("total_count") != len(value["jobs"]):
             raise ValueError("a run's jobs were not listed completely")
         path = paths.get(int(args[-1].split("/runs/")[1].split("/")[0]))
-        jobs = [job if path == CI_WORKFLOW else {**job, "name": f"{path}: {job.get('name')}"}
-                for job in value["jobs"] if job.get("steps")]
+        # A job executed only if at least one step completed and was not skipped; only those steps count.
+        jobs = []
+        for job in value["jobs"]:
+            ran = [step for step in job.get("steps") or [] if isinstance(step, dict)
+                   and step.get("status") == "completed" and step.get("conclusion") not in (None, "skipped")]
+            if ran:
+                job = {**job, "steps": ran}
+                jobs.append(job if path == CI_WORKFLOW else {**job, "name": f"{path}: {job.get('name')}"})
         return {**value, "jobs": jobs}
 
     # Reuse the project's oracle rather than invent a second CI truth predicate.
@@ -2397,7 +2428,8 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
             drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
             trials: list[str] | None = None, rubric_path: Path | None = None, paid_thread: str | None = None,
-            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None) -> list[Observation]:
+            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None,
+            until: datetime | None = None) -> list[Observation]:
     """One bounded collection of the explicitly selected deployment and sources.
 
     Without ``deployment`` no container, port or Director endpoint is probed;
@@ -2429,7 +2461,15 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         raise ValueError("--rubric requires --trial")
     if paid_rubric_path is not None and paid_thread is None:
         raise ValueError("--paid-rubric requires --paid-thread")
+    # The collection runs from its start (at) to its end, which is only known once the live reads finish:
+    # evidence is bounded by the end, every source's own read time must lie in [start, end], and every
+    # observation is stamped at the end so nothing read during the collection is backdated.
     at = now or datetime.now(timezone.utc)
+    end = until or at if now is not None else None
+
+    def collection_end() -> datetime:
+        return end if end is not None else datetime.now(timezone.utc)
+
     result: list[Observation] = []
     if deployment is None:
         result.append(_observation("19", None, "No --deployment was selected; no runtime was inspected.",
@@ -2438,7 +2478,7 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         result.extend(_deployment_observations(
             at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path))
+            paid_rubric_path=paid_rubric_path, collection_end=collection_end))
     if github:
         try:
             result.append(_ci_observation(candidate_sha, at, ci_replica_receipt))
@@ -2457,7 +2497,8 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
-    return result
+    finished = collection_end()
+    return [replace(item, observed_at=finished, expires_at=finished + FRESH_FOR) for item in result]
 
 
 RUN_RECORD_FIELDS = frozenset({
@@ -2739,3 +2780,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
