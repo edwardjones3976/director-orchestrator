@@ -89,6 +89,18 @@ class SmokeTrainTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 smoke_train.resolve_commit(None, "org/m", pin)
 
+    def test_check_merge_source_attests_only_the_pin(self):
+        pin, base = "d" * 40, {"org/base": "e" * 40}
+        # Already cached at the pin (unchanged ref) and freshly fetched at the pin both attest.
+        self.assertEqual(smoke_train.check_merge_source({**base, "org/src": pin}, {**base, "org/src": pin}, "org/src", pin), pin)
+        self.assertEqual(smoke_train.check_merge_source(base, {**base, "org/src": pin}, "org/src", pin), pin)
+        for after in ({**base, "org/src": "f" * 40},              # upstream main moved
+                      base,                                       # the source never appeared in the cache
+                      {**base, "org/src": pin, "org/other": "1" * 40},  # something else was fetched too
+                      {"org/base": "2" * 40, "org/src": pin}):    # the base's ref changed during export
+            with self.assertRaises(SystemExit):
+                smoke_train.check_merge_source(base, after, "org/src", pin)
+
     def test_write_report_failure_keeps_previous_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp, "reports", "r.json")

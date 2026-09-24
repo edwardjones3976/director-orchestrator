@@ -29,6 +29,11 @@ from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 BASE = os.environ.get("SMOKE_BASE", "unsloth/qwen3-0.6b-unsloth-bnb-4bit")
 REVISION = os.environ.get("SMOKE_REVISION", "e86f5289a2ca40ab7114071959dc2079cf97cb3c")
+# The GGUF merge step fetches this full-precision repo itself, at its upstream main (Unsloth offers no revision
+# argument). It is pinned by verification: the run stops before training if main has moved, and the GGUF is
+# published only if the export resolved exactly this commit and fetched nothing else.
+MERGE_SOURCE = os.environ.get("SMOKE_MERGE_SOURCE", "unsloth/qwen3-0.6b")
+MERGE_REVISION = os.environ.get("SMOKE_MERGE_REVISION", "db4e90b8359f816f09bf5c944797ce116f26da3c")
 SEED, STEPS, ROWS, SEQ = 7, 20, 50, 1024
 # Timestamp for humans plus a random suffix, so two runs in the same second never share paths.
 RUN = "smoke-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
@@ -75,6 +80,17 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
     return commit
 
 
+def check_merge_source(before: dict[str, str], after: dict[str, str], source: str, revision: str) -> str:
+    """Given the cache refs before and after the export, return the attested merge-source commit or raise:
+    the source must resolve to the pinned revision, and no other repo's ref may have changed."""
+    if after.get(source) != revision:
+        raise SystemExit(f"export used {source}@{after.get(source)}, not the pinned {revision}; GGUF not published")
+    other = sorted(r for r, c in after.items() if before.get(r) != c and r != source)
+    if other:
+        raise SystemExit(f"export also fetched {other}; its sources cannot be attested; GGUF not published")
+    return revision
+
+
 def write_report(path: Path, report: dict) -> None:
     """Write to a temp file and rename over the report, so an interrupted update never truncates the
     earlier valid report (the pre-export training evidence)."""
@@ -96,6 +112,10 @@ def publish(src: Path, dest: Path) -> None:
 
 def main() -> None:
     t0 = time.time()
+    from huggingface_hub import HfApi
+    upstream = HfApi().model_info(MERGE_SOURCE).sha
+    if upstream != MERGE_REVISION:  # fail before spending the training time on a GGUF we would not publish
+        raise SystemExit(f"{MERGE_SOURCE} main is {upstream}, not the pinned {MERGE_REVISION}; update the pin deliberately")
     set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
     torch.cuda.reset_peak_memory_stats()
     model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
@@ -162,15 +182,18 @@ def main() -> None:
     # (Errno 13), so export inside the container filesystem and copy only the finished GGUF out.
     export_dir = Path("/tmp") / RUN / "gguf"
     t_gguf = time.time()
+    refs_before = hf_cache_refs()
     model.save_pretrained_gguf(str(export_dir), tok, quantization_method="q4_k_m")
     report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
+    report["merge_source"] = MERGE_SOURCE
+    report["merge_resolved_commit"] = check_merge_source(refs_before, hf_cache_refs(), MERGE_SOURCE, MERGE_REVISION)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     report["gguf"] = []
     for f in export_dir.parent.rglob("*.gguf"):
         dest = MODEL_DIR / f"{RUN}-{f.name}"
         publish(f, dest)
         report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
-    report["hf_cache_refs"] = hf_cache_refs()  # context only (see docstring); provenance is base_resolved_commit
+    report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_resolved_commit
     report["wall_seconds"] = round(time.time() - t0, 1)
     write_report(REPORT, report)
     print(json.dumps(report, indent=2))

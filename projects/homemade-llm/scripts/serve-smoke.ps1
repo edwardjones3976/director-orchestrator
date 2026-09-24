@@ -39,6 +39,12 @@ if (-not $Gguf) { $Gguf = (Get-ChildItem (Join-Path $HotRoot 'models\smoke\*.ggu
 if (-not $Gguf -or -not (Test-Path -LiteralPath $Gguf -PathType Leaf)) { Write-Error 'no smoke GGUF found; run train-smoke.ps1 first' }
 if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$reports does not exist (run preflight.ps1 -Init)" }
 
+# Every run manages the one global 'smoke' identifier, so overlapping runs could probe each other's GGUF:
+# one run at a time. The mutex is released when this process exits (including on error).
+$lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-serve-smoke')
+try { $held = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+if (-not $held) { Write-Error 'another serve-smoke run is in progress; not starting' }
+
 # lms prints status on stderr; native exit codes are checked explicitly.
 lms server start 2>&1 | Out-Null
 # Refuse before anything is loaded if the API is reachable beyond loopback ("serve on local network").
@@ -64,9 +70,11 @@ if (-not (Test-SameContent $Gguf $imported)) { Write-Error "LM Studio's $($known
 # Always (re)load, so the requested TTL applies even when this model is already resident.
 if ((lms ps --json 2>$null | ConvertFrom-Json) | Where-Object { $_.identifier -eq 'smoke' }) { lms unload smoke 2>&1 | Out-Null }
 lms load $known.modelKey --identifier smoke --ttl $TtlSeconds -y 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Error 'lms load failed' }
+# If the load or its TTL cannot be verified, the GPU-release deadline cannot be trusted: unload before failing.
+if ($LASTEXITCODE -ne 0) { lms unload smoke 2>&1 | Out-Null; Write-Error 'lms load failed (smoke unloaded)' }
 if (-not (Test-LoadedModel (lms ps --json 2>$null | ConvertFrom-Json) $known.path $TtlSeconds)) {
-    Write-Error "after loading, lms ps does not show 'smoke' = $($known.path) with ttl ${TtlSeconds}s"
+    lms unload smoke 2>&1 | Out-Null
+    Write-Error "after loading, lms ps does not show 'smoke' = $($known.path) with ttl ${TtlSeconds}s (smoke unloaded)"
 }
 
 # The request pins the output to a JSON schema (LM Studio honours response_format on chat/completions).

@@ -72,6 +72,13 @@ $lateStop = ($cmds | Where-Object { $_.Extent.Text -match '^lms server stop' -an
 $lateUnload = ($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
 Assert-Equal ([bool]($finalBind -and $lateUnload -and $lateStop)) $true 'order: a failed final loopback check unloads and stops the server'
 
+# Both load-verification failures unload 'smoke' before failing (the TTL cannot be trusted then).
+$unloadsBeforeProbe = @($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $load -and $_.Extent.StartOffset -lt $curl })
+Assert-Equal $unloadsBeforeProbe.Count 2 'cleanup: failed load and failed TTL check both unload smoke'
+# The cross-process lock is taken before the server is touched.
+$lockAt = $ast.Extent.Text.IndexOf("Mutex]::new(`$false, 'Global\homemade-llm-serve-smoke')")
+Assert-Equal ([bool]($lockAt -ge 0 -and $lockAt -lt $start)) $true 'lock: serve-smoke mutex taken before lms server start'
+
 # Every docker call goes through Invoke-DockerBounded, so none can hang the run.
 $bareDocker = @($cmds | Where-Object { $_.GetCommandName() -eq 'docker' })
 Assert-Equal $bareDocker.Count 0 'bounded: no top-level docker call bypasses Invoke-DockerBounded'
