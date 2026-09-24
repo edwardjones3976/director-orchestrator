@@ -1,12 +1,13 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:09 UTC | BEGIN]]
 # Homemade LLM preflight (M0.1). Read-only by default.
-#   .\preflight.ps1          probe drives, tools, ports and layout; print a summary
-#   .\preflight.ps1 -Init    also create the C:\llm layout, G:\llm-mirror and E:\llm-archive
-# Exit 0 = no FAIL rows; 1 = at least one FAIL. The JSON report goes to C:\llm\reports\
-# when that directory exists and is never committed.
+#   .\preflight.ps1          probe drives, tools, ports and layout; print a summary; writes nothing
+#   .\preflight.ps1 -Report  also write a JSON report to C:\llm\reports\ (never committed)
+#   .\preflight.ps1 -Init    create the C:\llm layout, G:\llm-mirror and E:\llm-archive; implies -Report
+# Exit 0 = no FAIL rows; 1 = at least one FAIL.
 [CmdletBinding()]
 param(
     [switch]$Init,
+    [switch]$Report,
     [double]$FloorGB = 150,   # refuse jobs when C: free space is below this (plan D-003)
     [double]$HotCapGB = 120   # C:\llm size cap
 )
@@ -117,7 +118,7 @@ $fails = @($rows | Where-Object status -eq 'FAIL').Count
 Write-Output "preflight: $($rows.Count) checks, $fails FAIL, $(@($rows | Where-Object status -eq 'WARN').Count) WARN"
 
 $reports = Join-Path $HotRoot 'reports'
-if (Test-Path $reports) {
+if (($Report -or $Init) -and (Test-Path $reports)) {
     $file = Join-Path $reports ("preflight-{0}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss'))
     [pscustomobject]@{ generated_utc = (Get-Date).ToUniversalTime().ToString('o'); init = [bool]$Init; checks = $rows } |
         ConvertTo-Json -Depth 4 | Set-Content -Path $file -Encoding utf8
