@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Project rollout packet — homemade-llm
@@ -12,10 +13,10 @@ are borrowed from another deployment. No secret values appear here.
 - **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b841a78580b2664236b16dcc61094bdce9c8` / `C:\Users\edwar\director-orchestrator\.worktrees\homemade-llm`
 - **Deployment intent:** analysis_only (M0–M2); planned for M3 as a local provider lane, subject to `OWNER_DECISION_REQUIRED`
 - **Concurrent with other active Director deployments:** true (director-orchestrator, edge-engine-director, long-table-director, project-uppercut-director stacks are live on this host)
-- **Deployment profile:** not_created (planned name `.env.homemade-llm`, example file only in the repository)
-- **Compose namespace:** not_created (planned `homemade-llm` for Open WebUI + SearXNG only; no orchestrator instance)
-- **State namespace:** not_created (planned `C:\llm\` on the host; never a repository path)
-- **Ports and volumes:** planned — LM Studio `127.0.0.1:1234`, Open WebUI `3000`, SearXNG `8088` (8080 belongs to the orchestrator); volumes under `C:\llm\`
+- **Deployment profile:** `C:\llm\secrets\open-webui.env` (outside the repository, ACL owner + SYSTEM; template `compose/.env.homemade-llm.example`)
+- **Compose namespace:** `homemade-llm` (Open WebUI + SearXNG only, deployed 2026-09-24 for M0.5; no orchestrator instance)
+- **State namespace:** `C:\llm\` on the host (created by `preflight.ps1 -Init`), plus the Docker volume `homemade-llm_open-webui-data`, archived into `C:\llm\state\open-webui` by `scripts/backup-openwebui.ps1`; never a repository path
+- **Ports:** all loopback only: LM Studio `127.0.0.1:1234`, Open WebUI `127.0.0.1:3000`, SearXNG `127.0.0.1:8088` (8080 belongs to the orchestrator). Phone access only through `tailscale serve` (see `compose/RUNBOOK.md`)
 
 ## Allowlists and execution boundaries
 
@@ -79,8 +80,8 @@ used as a fallback.
 
 ## Rollback
 
-- **Stop command or action:** `docker compose -p homemade-llm down` (Open WebUI + SearXNG only, once deployed); `lms unload --all`
-- **Configuration rollback:** delete the ignored `.env.homemade-llm`; nothing in the runtime references this project
+- **Stop command or action:** from `projects/homemade-llm/compose/`, `docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env down` (Open WebUI + SearXNG only; see `compose/RUNBOOK.md` §4); `lms unload --all`
+- **Configuration rollback:** the same `down` command (never `-v`, which deletes the chat data volume), then remove `C:\llm\secrets\open-webui.env`; nothing in the orchestrator runtime references this project
 - **State restore:** `G:\llm-mirror` → `C:\llm` by robocopy; adapters and datasets also in `E:\llm-archive`
 - **Slack rollback:** not_applicable
 - **Evidence retained:** PR numbers, exact SHAs, dispatch receipts, `C:\llm\reports\`
@@ -93,3 +94,4 @@ used as a fallback.
 - **Next bounded action:** merge PR-0, then M0.1 (`scripts/preflight.ps1`)
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | END]] -->
