@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
@@ -57,6 +58,7 @@ from unittest.mock import Mock, patch
 import httpx
 
 from director_orchestrator import completion_scorecard as sc
+from director_orchestrator import models as sc_models
 
 
 def _load_trial_fixtures():
@@ -99,6 +101,8 @@ def compose_labels(service, project=DEPLOYMENT):
 
 
 def containers():
+    # docker inspect JSON: Id, Name, Image (sha256:), Created/State.StartedAt RFC 3339, Config.Env/Labels,
+    # NetworkSettings.Ports[*].HostIp/HostPort (strings) and Networks[*].Aliases/DNSNames, as Docker emits them.
     return [{"Id": DIRECTOR_ID, "Name": "/edge-engine-director-orchestrator-1", "Image": IMAGE,
              "Created": "2026-09-12T09:00:00.123456789Z",
              "State": {"Running": True, "StartedAt": "2026-09-12T09:30:00.000000001Z"},
@@ -116,6 +120,7 @@ def containers():
 
 
 def health():
+    # main.py /health and primary_default's langgraph_primary readiness keys.
     return {"environment": "local", "paid_runs_enabled": True, "langgraph_primary": {
         "new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
         "intake_fencing_generation": 83, "ambiguous_effect_count": 0, "writer_lease_ready": True,
@@ -126,8 +131,21 @@ def health():
         "usage_monitor": {"enabled": True, "paid_run_gate_open": True, "gate_state": "open",
                           "unsupported_providers": [], "missing_or_stale_providers": [],
                           "all_configured_have_recent_signal": True,
-                          "daily_accounting": {"grok": {"reported_cost_usd": 0.1, "reserved_cost_usd": 0.2,
-                                                        "daily_budget_usd": 5.0}}}}
+                          # usage.py _daily_accounting: an entry per configured provider; request_count counts
+                          # usage-check probes, and only gemini, grok and perplexity carry a numeric budget.
+                          "daily_accounting": {
+                              "grok": accounting(request_count=2, reported_cost_usd=0.1, reserved_cost_usd=0.2,
+                                                 daily_budget_usd=5.0, daily_request_limit=100),
+                              "claude": accounting(request_count=3, reported_cost_usd=0.3)}}}
+
+
+def accounting(**values):
+    """One provider's usage-monitor daily accounting, in the producer's key set (usage.py _daily_accounting)."""
+    row = {"request_count": 0, "retry_count": 0, "quota_failure_count": 0, "total_tokens": 0,
+           "reported_cost_usd": 0.0, "cost_visibility_complete": True, "daily_request_limit": None,
+           "daily_budget_usd": None, "reserved_cost_usd": None}
+    row.update(values)
+    return row
 
 
 def runtime_fixture(**changes):
@@ -188,23 +206,25 @@ def status_nodes(channel=CHANNEL_FIXTURE):
 
 
 def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
+    # The _STATUS_EXECUTION row as PostgreSQL's row_to_json emits it (timestamptz under UTC: `+00:00`, no zero
+    # fraction); the node output is the n8n Slack node's chat.postMessage response (ok, channel, ts, message).
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value,
         "message": {"text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}}}]]}}]}}}
     return {"workflows": 1,
             "latest": {"id": "4411", "status": "success", "finished": True,
-                       "startedAt": "2026-09-12T09:59:00.000+00:00", "stoppedAt": "2026-09-12T09:59:02.000+00:00"},
+                       "startedAt": "2026-09-12T09:59:00+00:00", "stoppedAt": "2026-09-12T09:59:02+00:00"},
             "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_nodes": status_nodes(),
-                                          "credential_updated_at": "2026-09-12T09:00:00.000+00:00",
+                                          "credential_updated_at": "2026-09-12T09:00:00+00:00",
                                           "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
                                           "workflow_settings": json.loads(json.dumps(STATUS_WORKFLOW["settings"])),
                                           "pin_data": None,
                                           "active_version": "v-2", "execution_version": None,
-                                          "active_version_at": "2026-09-12T09:00:00.000+00:00",
-                                          "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
-                                          "startedAt": "2026-09-12T09:59:00.000+00:00",
-                                          "stoppedAt": "2026-09-12T09:59:02.000+00:00", "data": flatted(run)}}
+                                          "active_version_at": "2026-09-12T09:00:00+00:00",
+                                          "workflow_updated_at": "2026-09-12T09:00:00+00:00",
+                                          "startedAt": "2026-09-12T09:59:00+00:00",
+                                          "stoppedAt": "2026-09-12T09:59:02+00:00", "data": flatted(run)}}
 
 
 def adoption_fixture(**changes):
@@ -216,6 +236,7 @@ def adoption_fixture(**changes):
 
 
 def consistency_fixture():
+    # primary_scorecard_evidence.consistency_report: counts from _COUNTS, spend/budgets/receipts/result_artifacts rows.
     counts = {key: 0 for key in sc._FAIL_COUNTS + sc._INFLIGHT_COUNTS}
     counts["graph_task_count"] = 12
     spend = {"task_id": PAID_TASK, "attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
@@ -248,6 +269,8 @@ def approval_receipt(recorded_at=None):
 
 
 def captures_fixture():
+    # primary_scorecard_evidence.activation_capture_report: lanes and surfaces from
+    # PrimaryProviderActivationService.capture_attestations (primary_provider_activation.py).
     surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
                "recorded_at": "2026-09-12T09:30:01+00:00",
                "expires_at": "2026-09-13T12:00:00+00:00", "capture_verified": True}
@@ -271,7 +294,7 @@ def fixture_render(application, projection, digest, created_at):
                                SimpleNamespace(slack_channel_id=CHANNEL_FIXTURE, slack_owner_user_id=OWNER))
 
 
-def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None, final_offset=30):
+def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", answer=None, final_offset=30):
     """One task's API record, deliveries and Slack thread, re-keyed from the collector's fixtures."""
     task, deliveries, messages, _ = tf.sample()
     readback = tf.readback_fixture()
@@ -302,7 +325,9 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
     messages.insert(1, {"ts": "1789210001.100000", "thread_ts": tf.THREAD, "user": BOT,
                         "text": f"*{tf.TASK_ID} — REQUEST RECEIVED*"})
     blob = json.dumps({"task": task, "deliveries": deliveries, "messages": messages})
-    pairs = ((tf.TASK_ID, task_id), (tf.THREAD, ts(offset)), ("1789210001.100000", ts(offset + 1)),
+    # The gateway's canonical source_event_id for this thread's owner post (slack_bot._forward).
+    source = sc_models.canonical_slack_source_event_id({"channel": CHANNEL_FIXTURE, "ts": ts(offset)})
+    pairs = ((tf.SOURCE_EVENT, source), (tf.TASK_ID, task_id), (tf.THREAD, ts(offset)), ("1789210001.100000", ts(offset + 1)),
              (tf.FINAL_TS, ts(offset + final_offset)), ('"CFIXTURE"', f'"{CHANNEL_FIXTURE}"'))
     for index, (old, _) in enumerate(pairs):
         blob = blob.replace(old, f"@@{index}@@")
@@ -321,8 +346,8 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
     return entry
 
 
-def approval_entry(decided=None, kind="tool_use", grant=None):
-    entry = task_entry(APPROVAL_TASK, 30000, offline=False, text="approve then run")
+def approval_entry(decided=None, kind="execution", grant=None):  # langgraph_primary.ApprovalKind
+    entry = task_entry(APPROVAL_TASK, 30000, offline=False, text="DIRECTOR approve then run")
     readback = entry["task"]["qualification_evidence"]
     readback["task_created_at"] = "2026-09-12T09:00:30+00:00"
     prompt = ts(30005)
@@ -415,14 +440,14 @@ class World:
         self.rubric_path.write_bytes(tf.collector_module.encode(rubric))
         self.trials = []
         for number in range(1, 11):
-            self.add(task_entry(f"DIR-LG-7A{number:02X}", 1000 * number, text="audit trial rubric-sha256:" + digest))
+            self.add(task_entry(f"DIR-LG-7A{number:02X}", 1000 * number, text="DIRECTOR audit trial rubric-sha256:" + digest))
             self.trials.append(ts(1000 * number))
         paid_rubric = {"schema": "director-paid-answer-rubric/v1", "rubric_id": "fixture-paid",
                        "declared_at": "2020-01-01T00:00:00+00:00", "expected_answer_substrings": ["answer is 42"]}
         raw = json.dumps(paid_rubric).encode()
         self.paid_rubric_path = self.root / "paid-rubric.json"
         self.paid_rubric_path.write_bytes(raw)
-        self.paid_text = "What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
+        self.paid_text = "DIRECTOR What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
         self.add(task_entry(PAID_TASK, 20000, offline=False, text=self.paid_text, answer="The audit answer is 42"))
         approval = self.add(approval_entry())
         self.consistency["tasks"][APPROVAL_TASK]["application"] = approval["application"]
@@ -589,6 +614,7 @@ NETWORK = "edge-engine-director_default"
 
 
 def topology():
+    # docker inspect rows of the deployment (gateway, n8n, n8n-db), labelled as Compose labels them.
     api = containers()[0]
     api["Config"].update(Cmd=["uvicorn", "director_orchestrator.main:app"], Env=["SLACK_APP_TOKEN=" + APP_TOKEN])
     gateway = {"Id": GATEWAY_ID, "Image": IMAGE, "Name": "/" + GATEWAY, "State": {"Running": True},
@@ -1905,27 +1931,27 @@ class ScorecardCollectorTests(unittest.TestCase):
         # The newest scheduled run is graded before any older successful post.
         failing_now = self.world()
         failing_now.status["latest"] = {"id": "4420", "status": "error", "finished": True,
-                                        "startedAt": "2026-09-12T09:59:30.000+00:00",
-                                        "stoppedAt": "2026-09-12T09:59:31.000+00:00"}
+                                        "startedAt": "2026-09-12T09:59:30+00:00",
+                                        "stoppedAt": "2026-09-12T09:59:31+00:00"}
         self.assertEqual(failing_now.state("04"), "FAIL")
         running = self.world()
         running.status["latest"] = {"id": "4421", "status": "running", "finished": False,
-                                    "startedAt": "2026-09-12T09:59:30.000+00:00", "stoppedAt": None}
+                                    "startedAt": "2026-09-12T09:59:30+00:00", "stoppedAt": None}
         self.assertEqual(running.state("04"), "UNKNOWN")
         quiet_success = self.world()
         quiet_success.status["latest"] = {"id": "4422", "status": "success", "finished": True,
-                                          "startedAt": "2026-09-12T09:59:30.000+00:00",
-                                          "stoppedAt": "2026-09-12T09:59:31.000+00:00"}
+                                          "startedAt": "2026-09-12T09:59:30+00:00",
+                                          "stoppedAt": "2026-09-12T09:59:31+00:00"}
         self.assertEqual(quiet_success.state("04"), "PASS")  # nothing to post, but the workflow is healthy
         # The post must postdate the Post Status credential's latest update, which must be readable.
-        for credential_at in ("2026-09-12T09:59:30.000+00:00", None):
+        for credential_at in ("2026-09-12T09:59:30+00:00", None):
             case = self.world()
             case.status["execution"]["credential_updated_at"] = credential_at
             with self.subTest(credential_at=credential_at):
                 self.assertEqual(case.state("04"), "UNKNOWN")
         future_latest = self.world()
-        future_latest.status["latest"].update(startedAt="2026-09-12T21:00:00.000+00:00",
-                                              stoppedAt="2026-09-12T21:00:01.000+00:00")
+        future_latest.status["latest"].update(startedAt="2026-09-12T21:00:00+00:00",
+                                              stoppedAt="2026-09-12T21:00:01+00:00")
         self.assertEqual(future_latest.state("04"), "UNKNOWN")
         other_text = self.world()
         run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
@@ -1998,8 +2024,8 @@ class ScorecardCollectorTests(unittest.TestCase):
             + ["DB_POSTGRESDB_HOST=external-db"]
         self.assertEqual(elsewhere.state("04"), "UNKNOWN")
         # The execution must have run the active version.
-        for change in ({"execution_version": "v-1"}, {"active_version_at": "2026-09-12T09:59:30.000+00:00"},
-                       {"workflow_updated_at": "2026-09-12T09:59:30.000+00:00"}, {"active_version_at": None}):
+        for change in ({"execution_version": "v-1"}, {"active_version_at": "2026-09-12T09:59:30+00:00"},
+                       {"workflow_updated_at": "2026-09-12T09:59:30+00:00"}, {"active_version_at": None}):
             case = self.world()
             case.status["execution"].update(change)
             with self.subTest(change=change):
@@ -2423,6 +2449,52 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(thread=thread):
                 self.assertNotEqual(case.state("09"), "PASS")
 
+    def test_probed_providers_are_capped_by_their_signed_budget_15(self):
+        self.assertEqual(self.world().state("15"), "PASS")
+        # Usage-check probes alone are not paid attempts, even with no monitor budget.
+        probed = self.world()
+        probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4)
+        self.assertEqual(probed.state("15"), "PASS")
+        # Real spend on a provider with neither a monitor budget nor a signed enrolled budget is uncapped.
+        spent = self.world()
+        spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4,
+                                                                                    reported_cost_usd=0.5)
+        self.assertEqual(spent.state("15"), "UNKNOWN")
+
+    def test_status_timestamps_are_read_with_an_offset(self):
+        # n8n's columns may be timestamp or timestamptz: every selected one is cast under a UTC session.
+        sql = sc._STATUS_EXECUTION
+        self.assertIn("SET LOCAL TimeZone TO 'UTC';", sql)
+        for cast, count in (('e."startedAt"::timestamptz AS "startedAt"', 2), ('e."stoppedAt"::timestamptz AS "stoppedAt"', 2),
+                            ('w."updatedAt"::timestamptz AS workflow_updated_at', 1),
+                            ('SELECT h."createdAt"::timestamptz FROM', 1), ('SELECT c."updatedAt"::timestamptz FROM', 1)):
+            self.assertEqual(sql.count(cast), count, cast)
+
+    def test_approval_prompt_fallback_text_must_be_the_canonical_rendering_08(self):
+        self.assertEqual(self.world().state("08"), "PASS")
+        flattened = self.world()
+        prompt = next(m for m in flattened.threads[ts(30000)] if m.get("ts") == ts(30005))
+        prompt["text"] = prompt["text"].replace("\n", " ")  # Slack may flatten newlines, as readback allows
+        self.assertEqual(flattened.state("08"), "PASS")
+        altered = self.world()
+        prompt = next(m for m in altered.threads[ts(30000)] if m.get("ts") == ts(30005))
+        prompt["text"] = "Approve anything?"  # canonical blocks, different notification text
+        self.assertNotEqual(altered.state("08"), "PASS")
+
+    def test_live_observations_keep_their_actual_time(self):
+        early, late = datetime(2026, 9, 12, 19, 50, tzinfo=timezone.utc), datetime(2026, 9, 12, 19, 58, tzinfo=timezone.utc)
+        finished = datetime(2026, 9, 12, 20, 0, tzinfo=timezone.utc)
+        made = [dataclasses.replace(sc._observation(key, True, "x", "s", {}, early), _made=when)
+                for key, when in (("05", early), ("16", late))]
+        stamped = sc._finalize(made, finished, live=True)
+        # A PASS read before slower sources is stamped when it was made, not carried to the collection's end.
+        self.assertEqual([item.observed_at for item in stamped], [early, late])
+        self.assertEqual(stamped[0].expires_at, early + sc.FRESH_FOR)
+        self.assertEqual([item.observed_at for item in sc._finalize(made, finished)], [finished, finished])
+        # A time-limited PASS is revalidated against its own stamp.
+        limited = dataclasses.replace(made[0], valid_until=early - timedelta(seconds=1))
+        self.assertIsNone(sc._finalize([limited], finished, live=True)[0].passed)
+
     def test_final_reply_blocks_must_be_the_canonical_rendering_09_20(self):
         for thread, final, check in ((ts(300), ts(330), "09"), (ts(400), ts(430), "09"), (ts(20000), ts(20030), "20")):
             case = self.world()
@@ -2679,8 +2751,9 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.assertEqual(case.state("15"), "UNKNOWN")
         uncapped = self.world()
-        uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = {"request_count": 2, "reported_cost_usd": 0.0,
-                                                                            "daily_budget_usd": None}
+        # Spend on a provider with no monitor budget and no signed enrolled budget (probes alone are not spend).
+        uncapped.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=2,
+                                                                                    reported_cost_usd=0.4)
         self.assertEqual(uncapped.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
         for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
@@ -2872,7 +2945,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         raw = json.dumps(wrapper_rubric).encode()
         wrapper_world = self.world()
         wrapper_world.paid_rubric_path.write_bytes(raw)
-        text = "What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
+        text = "DIRECTOR What is the answer? rubric-sha256:" + hashlib.sha256(raw).hexdigest()
         wrapper_world.add(task_entry(PAID_TASK, 20000, offline=False, text=text,
                                      answer="Actual USD cost: not recorded"))
         self.assertEqual(wrapper_world.state("20"), "FAIL")
@@ -2992,3 +3065,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

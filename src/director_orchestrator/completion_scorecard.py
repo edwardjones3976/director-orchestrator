@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
@@ -150,15 +151,17 @@ class Observation:
     digest: str = ""
     facts: Any = field(default_factory=dict)
     _origin: object = field(default=None, repr=False, compare=False)
-    # The latest final cutoff at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
+    # The latest stamp at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
     valid_until: Any = field(default=None, repr=False, compare=False)
+    # When the observation was actually made: after every read it rests on, so never backdated.
+    _made: Any = field(default=None, repr=False, compare=False)
 
 
 def _observation(check_id: str, passed: bool | None, explanation: str,
                  source: str, facts: Any, at: datetime, **binding: Any) -> Observation:
     digest = hashlib.sha256(json.dumps(facts, sort_keys=True, allow_nan=False).encode()).hexdigest()
     return Observation(check_id, passed, explanation, source, at, at + FRESH_FOR,
-                       digest=digest, facts=facts, _origin=_COLLECTED, **binding)
+                       digest=digest, facts=facts, _origin=_COLLECTED, _made=datetime.now(timezone.utc), **binding)
 
 
 def _sha(value: str) -> str:
@@ -381,23 +384,27 @@ FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
 # 72-hour retention window; the Slack node's response is read from its data.
-_STATUS_EXECUTION = """BEGIN READ ONLY; SET LOCAL search_path TO public;
+# Every timestamp is cast to timestamptz under a UTC session, so row_to_json always emits an offset whether n8n's
+# column is timestamp or timestamptz (a naive value would be unreadable, never guessed).
+_STATUS_EXECUTION = """BEGIN READ ONLY; SET LOCAL search_path TO public; SET LOCAL TimeZone TO 'UTC';
 SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE name='Director Status'),
- 'latest',(SELECT row_to_json(y) FROM (SELECT e.id,e.status,e.finished,e."startedAt",e."stoppedAt"
+ 'latest',(SELECT row_to_json(y) FROM (SELECT e.id,e.status,e.finished,e."startedAt"::timestamptz AS "startedAt",
+   e."stoppedAt"::timestamptz AS "stoppedAt"
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id
    WHERE w.name='Director Status' AND e.mode='trigger' AND e."startedAt" > now()-interval '72 hours'
    ORDER BY e."startedAt" DESC, e.id DESC LIMIT 1) y),
- 'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,e."startedAt",e."stoppedAt",d.data
+ 'execution',(SELECT row_to_json(x) FROM (SELECT e.id,e.status,e.finished,e.mode,
+   e."startedAt"::timestamptz AS "startedAt",e."stoppedAt"::timestamptz AS "stoppedAt",d.data
    ,w.active AS workflow_active,w."activeVersionId" AS active_version,
-     to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt" AS workflow_updated_at,
-     (SELECT h."createdAt" FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
+     to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt"::timestamptz AS workflow_updated_at,
+     (SELECT h."createdAt"::timestamptz FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
        AS active_version_at,
      (SELECT h.nodes::json FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
        AS active_nodes,
      (SELECT h.connections::json FROM workflow_history h
         WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections,
      w.settings::json AS workflow_settings, w."pinData"::json AS pin_data,
-     (SELECT c."updatedAt" FROM credentials_entity c WHERE c.id = (
+     (SELECT c."updatedAt"::timestamptz FROM credentials_entity c WHERE c.id = (
         SELECT n->'credentials'->'slackApi'->>'id' FROM workflow_history h, json_array_elements(h.nodes::json) n
         WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId" AND n->>'name'='Post Status' LIMIT 1))
        AS credential_updated_at
@@ -1526,7 +1533,9 @@ def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, An
                                          "terminal_classification": None},
                       projection, _when(delivery["created_at"]), channel, owner)
     try:
-        return payload is not None and _slack_blocks(blocks) == _slack_blocks(payload["blocks"])
+        # Fallback text as PrimarySlackDelivery.readback compares it (Slack may flatten its newlines), and blocks.
+        return (payload is not None and message.get("text") in (payload["text"], payload["text"].replace("\n", " "))
+                and _slack_blocks(blocks) == _slack_blocks(payload["blocks"]))
     except ValueError:
         return False
 
@@ -1975,8 +1984,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         for provider, value in sorted(accounting.items()):
             budget = value.get("daily_budget_usd")
             requests = value.get("request_count")
-            attempted = ((type(requests) is int and requests > 0) or (value.get("reported_cost_usd") or 0) > 0
-                         or (value.get("reserved_cost_usd") or 0) > 0)
+            # Spend, not request_count: for most providers request_count counts the monitor's own usage-check
+            # probes (usage.py _daily_accounting); grok's paid requests carry reserved_cost_usd.
+            attempted = (value.get("reported_cost_usd") or 0) > 0 or (value.get("reserved_cost_usd") or 0) > 0
             if attempted and type(budget) not in (int, float):
                 uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
             if type(budget) in (int, float):
@@ -2004,6 +2014,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
                 == (charge.get("task_id"), charge.get("project_id"), charge.get("budget_day"), charge.get("provider_id"))
                 for budget in budgets) for charge in spend)
         budgets = [row for row in budgets if row.get("signature_verified") is True]
+        # The monitor has numeric caps only for gemini, grok and perplexity (usage.py _daily_accounting); a
+        # provider's owner-signed enrolled budget is its cap otherwise.
+        uncapped = [provider for provider in uncapped if provider not in {row.get("provider_id") for row in budgets}]
         for row in budgets:
             if not _counter(row["day_held_microusd"]) or not _counter(row["daily_limit_microusd"]):
                 raise ValueError("malformed enrolled budget row")
@@ -2620,17 +2633,18 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
     if deployment is not None:
         deployed = _still_deployed(deployed, state, deployment, gateway)
-    return _finalize(deployed + result, collection_end())
+    return _finalize(deployed + result, collection_end(), live=now is None)
 
 
-def _finalize(observations: list[Observation], finished: datetime) -> list[Observation]:
-    """Freeze one final cutoff after every source (deployment, GitHub, ledger, Security) was read: stamp every
-    observation at it, and revalidate every time-limited PASS against it, so none is emitted valid past the
-    evidence it rests on."""
+def _finalize(observations: list[Observation], finished: datetime, *, live: bool = False) -> list[Observation]:
+    """Stamp each observation when it was actually made (after every read it rests on, never later than the
+    collection's end), so a PASS read before slower sources is not carried forward to the end, and revalidate
+    every time-limited PASS against its stamp. A fixed-clock collection (now given) stamps at its frozen end."""
     out = []
     for item in observations:
-        item = replace(item, observed_at=finished, expires_at=finished + FRESH_FOR)
-        if item.passed is True and item.valid_until is not None and finished > item.valid_until:
+        stamp = min(item._made, finished) if live and isinstance(item._made, datetime) else finished
+        item = replace(item, observed_at=stamp, expires_at=stamp + FRESH_FOR)
+        if item.passed is True and item.valid_until is not None and stamp > item.valid_until:
             item = replace(item, passed=None, explanation="Time-limited evidence does not stay valid FRESH_FOR past "
                            "the collection's final cutoff: " + item.explanation)
         out.append(item)
@@ -2920,3 +2934,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

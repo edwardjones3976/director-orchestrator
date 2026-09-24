@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
@@ -1025,12 +1026,16 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     rows = deliveries if rows_ok else []
     rows_bound = rows_ok and all(row.get("task_id") == task_id for row in rows)
     raw = lambda message: html.unescape(str(message.get("text", "")))
-    clean = lambda text: re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+    clean = lambda text: re.sub(r"<@[A-Z0-9]+>", "", text).strip()  # slack_bot._clean_text
     messages = [m for m in messages if isinstance(m, dict) and isinstance(m.get("ts"), str)
         and TS.fullmatch(m["ts"]) and (m["ts"] == thread or m.get("thread_ts") == thread)]
+    from director_orchestrator.models import canonical_slack_source_event_id
+    # The gateway's own identity for the owner's message (slack_bot._forward and _forward_thread_reply:
+    # the canonical `<channel>:<ts>`, else client_msg_id, event_ts or ts), computed by the same function.
+    source_of = lambda m: (canonical_slack_source_event_id({"channel": channel, "ts": m.get("ts")})
+        or m.get("client_msg_id") or m.get("event_ts") or m.get("ts"))
     inputs = [m for m in messages if isinstance(intake.get("source_event_id"), str)
-        and intake["source_event_id"] and (intake["source_event_id"] in
-        (m.get("client_msg_id"), m.get("event_ts"), m.get("ts")))
+        and intake["source_event_id"] and intake["source_event_id"] == source_of(m)
         and m.get("user") == owner and not m.get("bot_id")
         and unedited(m) and clean(str(m.get("text", ""))) == intake.get("text")]
     bound = (task.get("task_id") == task_id and intake.get("channel_id") == channel
@@ -1040,8 +1045,11 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     bound = bool(bound and input_message)
     terminal_rows = [r for r in rows if r.get("notification_key") == "terminal"] if rows_bound else []
     ids = {r.get("client_msg_id") for r in terminal_rows if r.get("client_msg_id")}
-    # Count additional bot final messages too, not just the first ledger match.
-    final_pattern = re.compile(re.escape(task_id) + r"\s+—\s+(?:SUCCEEDED|FAILED|CANCELLED|POLICY_STOPPED|COMPLETED)\b")
+    # Count additional bot final messages too, not just the first ledger match: any of the Director's own
+    # terminal classifications (primary_slack_delivery.render_notification renders `<task> — <classification>`).
+    from director_orchestrator.langgraph_primary import TerminalClassification
+    final_pattern = re.compile(re.escape(task_id) + r"\s+—\s+(?:"
+        + "|".join(re.escape(str(item)) for item in TerminalClassification) + r")\b")
     finals = [m for m in messages if bot and m.get("user") == bot and
               (m.get("client_msg_id") in ids or final_pattern.search(raw(m)))]
     final = finals[0] if complete and len(finals) == 1 else None
@@ -1316,3 +1324,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

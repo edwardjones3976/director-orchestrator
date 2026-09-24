@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
@@ -183,6 +184,15 @@ def _row(row):
     return {key: _plain(value) for key, value in row.items()}
 
 
+def _require_instance(connection, schema, identity):
+    """Re-verify, inside the read's own transaction, that this connection reached the accepted control plane
+    (storage identity and database instance) that database_binding resolved; anything else refuses the read."""
+    from .langgraph_postgres import _require_accepted_database
+    with connection.cursor() as cursor:
+        _require_accepted_database(cursor, schema=schema, storage_identity=identity.database_identity,
+                                   instance_id=identity.database_instance_id)
+
+
 def consistency_report(settings, identity, *, tasks=()) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
     import psycopg
@@ -205,6 +215,7 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
         connection.read_only = True
         per_task = {}
         with connection.transaction():
+            _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
             if tasks:
                 present = connection.execute(
@@ -322,7 +333,7 @@ def _capture_product(provider, output: bytes):
     return None
 
 
-def _activation_recorded_at(dsn, schema, binding, digest, surface="runtime_adapter"):
+def _activation_recorded_at(dsn, schema, binding, digest, surface="runtime_adapter", *, identity):
     """The insertion time of the current binding's latest row for that surface, when that row is LIVE_OK
     and carries digest; otherwise None. Every binding field scopes the lookup (the same digest may exist
     under another workspace or version), and only the latest revision is read, as the store's load does."""
@@ -334,7 +345,9 @@ def _activation_recorded_at(dsn, schema, binding, digest, surface="runtime_adapt
 
     schema = _require_schema(schema)
     with psycopg.connect(dsn, connect_timeout=10, row_factory=dict_row,
-                         options="-c default_transaction_read_only=on -c statement_timeout=10000") as connection:
+                         options="-c default_transaction_read_only=on -c statement_timeout=10000") as connection, \
+            connection.transaction():
+        _require_instance(connection, schema, identity)
         row = connection.execute(
             f"SELECT recorded_at, stage, evidence_digest FROM {schema}.director_provider_activation_evidence"
             " WHERE provider_id=%s AND workspace_id=%s AND provider_version=%s AND app_version=%s"
@@ -384,7 +397,7 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             if each is not None:
                 each["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
                                                               identity.postgres_schema, bindings[provider],
-                                                              each["evidence_digest"], name)
+                                                              each["evidence_digest"], name, identity=identity)
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes,
@@ -406,3 +419,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

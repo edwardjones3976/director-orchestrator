@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
@@ -261,7 +262,10 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.settings = SimpleNamespace(langgraph_primary_postgres_dsn=TEST_DSN,
                                         langgraph_primary_postgres_schema=self.schema,
                                         langgraph_primary_acceptance_mode="provider-v2")
-        self.identity = SimpleNamespace(candidate_commit="a" * 40, candidate_tree="b" * 40)
+        from director_orchestrator.langgraph_postgres import database_binding
+        storage, instance = database_binding(TEST_DSN, schema=self.schema, allow_insecure_local_transport=True)
+        self.identity = SimpleNamespace(candidate_commit="a" * 40, candidate_tree="b" * 40,
+                                        database_identity=storage, database_instance_id=instance)
 
     def tearDown(self) -> None:
         try:
@@ -671,11 +675,28 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 (ACTIVATION_EVIDENCE_VERSION, "a" * 64))
         current = SimpleNamespace(provider_id="claude", workspace_id="w", provider_version="p", app_version="a",
                                   runtime_adapter_version="r", workspace_version="w", binding_version="b")
-        recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64)
+        bound = {"identity": self.identity}
+        recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64, **bound)
         self.assertEqual(datetime.fromisoformat(recorded), datetime(2026, 9, 12, 10, 0, 10, tzinfo=timezone.utc))
-        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "b" * 64))
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "b" * 64, **bound))
         # The same digest on the other surface is another row.
-        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64, "app"))
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64, "app", **bound))
+        # Another database instance behind the same DSN refuses the read.
+        from director_orchestrator.langgraph_postgres import PostgresCheckpointConfigurationError
+        other = SimpleNamespace(**{**vars(self.identity), "database_instance_id": str(uuid.uuid4())})
+        with self.assertRaises(PostgresCheckpointConfigurationError):
+            evidence._activation_recorded_at(TEST_DSN, self.schema, current, "a" * 64, identity=other)
+
+    def test_consistency_read_refuses_another_database_instance(self):
+        from director_orchestrator.langgraph_postgres import PostgresCheckpointConfigurationError
+        self.intake()
+        accepted = self.identity
+        for field, value in (("database_instance_id", str(uuid.uuid4())), ("database_identity", "postgres:sha256:" + "e" * 64)):
+            self.identity = SimpleNamespace(**{**vars(accepted), field: value})
+            with self.subTest(field=field), self.assertRaises(PostgresCheckpointConfigurationError):
+                self.report()
+        self.identity = accepted
+        self.assertEqual(self.report()["counts"]["graph_task_count"], 1)
 
 
 if __name__ == "__main__":
@@ -695,3 +716,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

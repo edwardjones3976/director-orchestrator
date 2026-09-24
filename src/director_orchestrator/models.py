@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | BEGIN]]
@@ -253,6 +254,18 @@ class UsageCheckStatus(StrEnum):
 
 
 MAX_SLACK_INTAKE_TEXT = 20_000
+
+
+def canonical_slack_source_event_id(event: dict) -> str:
+    """The gateway's source_event_id for a Slack message event: `<channel>:<ts>`, or "" without both.
+
+    slack_bot uses it for every intake it forwards; the offline collector and the scorecard match owner
+    inputs with it, so the two cannot drift."""
+    channel = event.get("channel", "")
+    message_ts = event.get("ts", "")
+    if not channel or not message_ts:
+        return ""
+    return f"{channel}:{message_ts}"
 
 
 class SlackIntake(BaseModel):
@@ -1490,3 +1503,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 23:25 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

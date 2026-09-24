@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
@@ -18,13 +19,17 @@ import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import uuid
 
 import httpx
 import jsonschema
+
+from director_orchestrator.models import canonical_slack_source_event_id
 
 
 COLLECTOR_PATH = Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py"
@@ -37,8 +42,13 @@ FINAL_TS = "1789210030.100000"
 TASK_ID = "DIR-LG-AB12"
 OWNER = "UOWNER123"
 BOT = "UBOT123"
-SOURCE_EVENT = "fixture-owner-source-event"
-FINAL_ID = "fixture-terminal-client-id"
+# Slack client_msg_id values are UUIDs.
+OWNER_CLIENT_MSG_ID = "4f1d6a2e-8b3c-4e5f-9a0b-1c2d3e4f5a6b"
+# The delivery's client_msg_id: uuid5 of schema, task and notification key (primary_slack_delivery.py scan).
+FINAL_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "director_primary_v1:" + TASK_ID + ":terminal"))
+# projection_digest is a sha256: digest; status receipt ids are "status-" + a sha256: digest (primary_default).
+PROJECTION = "sha256:" + hashlib.sha256(b"fixture-projection").hexdigest()
+RECEIPT_ID = "status-sha256:" + hashlib.sha256(b"fixture-receipt").hexdigest()
 EMPTY_ATTEMPT_FIELDS = (
     "provider_runs", "provider_run_history", "provider_contact_attempts",
     "provider_contact_attempt_history", "provider_interaction_ledger",
@@ -49,14 +59,19 @@ ENV = {
     "ORCHESTRATOR_SHARED_SECRET": "fixture-director-secret",
     "SLACK_OWNER_USER_ID": OWNER,
 }
+# The gateway's own source_event_id for the owner's message (slack_bot._forward via
+# models.canonical_slack_source_event_id): `<channel>:<ts>`, never the raw client_msg_id.
+SOURCE_EVENT = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": THREAD})
 
 
 def sample():
+    # The /v1/tasks/{id} TaskRecord (models.TaskRecord), /v1/primary/tasks/{id}/deliveries rows
+    # (primary_slack_delivery) and conversations.replies messages, with main.py's x-task-engine-owner headers.
     task = {
         "task_id": TASK_ID,
         "intake": {
             "channel_id": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": THREAD,
-            "user_id": OWNER, "source_event_id": SOURCE_EVENT, "text": "audit trial",
+            "user_id": OWNER, "source_event_id": SOURCE_EVENT, "text": "DIRECTOR audit trial",
         },
         "intake_authentication": "slack_gateway_attested",
         "assignment_outcomes": [{
@@ -65,21 +80,21 @@ def sample():
         **{field: [] for field in EMPTY_ATTEMPT_FIELDS},
     }
     deliveries = [{
-        "task_id": TASK_ID, "notification_key": "terminal", "projection_digest": "fixture-digest",
+        "task_id": TASK_ID, "notification_key": "terminal", "projection_digest": PROJECTION,
         "client_msg_id": FINAL_ID, "state": "DELIVERED", "slack_ts": FINAL_TS,
         "claimed_at": "2026-09-12T10:00:20+00:00",
         "acknowledged_at": "2026-09-12T10:00:30+00:00",
         "delivered_at": "2026-09-12T10:00:31+00:00", "readback_attempts": 1,
     }]
     messages = [{
-        "ts": THREAD, "user": OWNER, "client_msg_id": SOURCE_EVENT,
-        "text": "<@UBOT123> audit trial",
+        "ts": THREAD, "user": OWNER, "client_msg_id": OWNER_CLIENT_MSG_ID,
+        "text": "<@UBOT123> DIRECTOR audit trial",
     }, {
         "ts": FINAL_TS, "thread_ts": THREAD, "user": BOT,
         "client_msg_id": FINAL_ID,
         "text": TASK_ID + " — SUCCEEDED\n" + collector_module.LABEL,
     }]
-    headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest"}
+    headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": PROJECTION}
     return task, deliveries, messages, headers
 
 
@@ -99,7 +114,7 @@ def readback_fixture():
     assignment = TASK_ID + "-A1"
     return {
         "schema_version": "director-qualification-readback/v1", "task_id": TASK_ID, "engine_owner": "langgraph",
-        "projection_version": 3, "projection_digest": "fixture-digest", "source_event_id": SOURCE_EVENT,
+        "projection_version": 3, "projection_digest": PROJECTION, "source_event_id": SOURCE_EVENT,
         "execution_mode": "offline_simulation", "terminal_classification": "SUCCEEDED",
         "terminal_reason_code": "effect_readback_verified", "task_created_at": "2026-09-12T10:00:00+00:00",
         "task_updated_at": "2026-09-12T10:00:31+00:00",
@@ -136,13 +151,15 @@ def readback_fixture():
                      "terminal_disposition": "COMPLETED", "terminal_evidence_digest": "sha256:" + "c" * 64,
                      "terminal_recorded_at": "2026-09-12T10:00:29+00:00"}],
         "reconciliation_events": [],
-        "slack_deliveries": [{"notification_key": "terminal", "projection_digest": "fixture-digest",
+        "slack_deliveries": [{"notification_key": "terminal", "projection_digest": PROJECTION,
                               "client_msg_id": FINAL_ID, "state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
                               "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": "2026-09-12T10:00:30+00:00",
                               "delivered_at": "2026-09-12T10:00:31+00:00", "slack_ts": FINAL_TS, "readback_attempts": 1,
                               "last_error": None, "owner_decision": None, "owner_decision_at": None,
                               "owner_command_id": None}],
-        "status_receipts": [{"receipt_id": "receipt-1", "source_event_id": "status-event-1",
+        # A status reply's source_event_id is the gateway's canonical `<channel>:<ts>` as well.
+        "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": canonical_slack_source_event_id(
+                                 {"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"}),
                              "created_at": "2026-09-12T10:00:40+00:00"}],
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
@@ -189,13 +206,40 @@ class SummaryTests(unittest.TestCase):
         self.assertTrue(report["task_record_bound"])
         self.assertTrue(report["owner_account_input_matched"])
         self.assertEqual(report["input_message_ts"], THREAD)
-        self.assertEqual(report["input_client_msg_id"], SOURCE_EVENT)
+        self.assertEqual(report["input_client_msg_id"], OWNER_CLIENT_MSG_ID)
         self.assertTrue(report["task_api_gateway_attested"])
         self.assertEqual(report["terminal_reply_count"], 1)
         self.assertTrue(report["final_receipt_matches_native_message"])
         self.assertEqual(report["wall_seconds"], 30.0)
         self.assertTrue(report["wall_under_60_seconds"])
         self.assertIsNone(report["human_typing_attested"])
+
+    def test_input_binds_by_the_gateway_canonical_source_event_id(self):
+        import ast
+        # The gateway and the summarizer share one canonicalizer, so they cannot drift (read from source:
+        # importing slack_bot needs live gateway credentials).
+        gateway = ast.parse((Path(__file__).resolve().parents[1] / "src/director_orchestrator/slack_bot.py")
+                            .read_text(encoding="utf-8"))
+        self.assertIn("_canonical_slack_source_event_id = canonical_slack_source_event_id",
+                      [ast.unparse(node) for node in gateway.body if isinstance(node, ast.Assign)])
+        self.assertNotIn("_canonical_slack_source_event_id",
+                         [node.name for node in gateway.body if isinstance(node, ast.FunctionDef)])
+        self.assertEqual(SOURCE_EVENT, ENV["SLACK_DIRECTOR_CHANNEL_ID"] + ":" + THREAD)
+        self.assertTrue(self.summarize()["task_record_bound"])
+        # The gateway never stores the raw client_msg_id while it has the channel and ts.
+        self.task["intake"]["source_event_id"] = OWNER_CLIENT_MSG_ID
+        self.assertFalse(self.summarize()["task_record_bound"])
+        # Another channel's identity for the same ts is another message.
+        self.task["intake"]["source_event_id"] = "COTHER:" + THREAD
+        self.assertFalse(self.summarize()["task_record_bound"])
+
+    def test_every_director_terminal_classification_counts_as_a_final_reply(self):
+        # A second final with a real classification the old pattern missed (TIMED_OUT, POLICY_BLOCKED, ...).
+        for classification in ("TIMED_OUT", "POLICY_BLOCKED", "BUDGET_EXHAUSTED", "EXACT_SHA_INVALID"):
+            self.messages = sample()[2] + [{"ts": "1789210050.100000", "thread_ts": THREAD, "user": BOT,
+                                            "client_msg_id": "another-final", "text": TASK_ID + " — " + classification}]
+            with self.subTest(classification=classification):
+                self.assertEqual(self.summarize()["terminal_reply_count"], 2)
 
     def test_two_distinct_terminal_timestamps_count_twice_even_with_same_client_id(self):
         duplicate = deepcopy(self.messages[-1])
@@ -377,7 +421,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(chain["attempt_ids"], ["sha256:" + "1" * 64])
         self.assertEqual(chain["effect_ids"], ["sha256:" + "3" * 64])
         self.assertEqual(chain["delivery_ids"], [FINAL_ID])
-        self.assertEqual(chain["status_receipt_ids"], ["receipt-1"])
+        self.assertEqual(chain["status_receipt_ids"], [RECEIPT_ID])
         self.assertEqual(chain["provider_result_digests"], ["sha256:" + "2" * 64])
         self.assertEqual(evidence["effect_state"], "PROVIDER_EFFECT_RECORDED")
         self.assertEqual(evidence["provider_effect_state"], "PROVIDER_RESULT_RECORDED")
@@ -826,14 +870,14 @@ class SummaryTests(unittest.TestCase):
         after = readback_fixture()
         before = {**readback_fixture(), "captured_at": "2026-09-12T10:00:35+00:00", "status_receipts": [],
                   "task_scope_counters": {**readback_fixture()["task_scope_counters"], "status_receipts": 0}}
-        proof = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority=same,
+        proof = collector_module.status_receipt_delta(before, after, RECEIPT_ID, baseline_authority=same,
                                                       before_binding=binding, after_binding=binding)
         self.assertTrue(proof["proof"])
         self.assertEqual((0, 0, 0, 1), (proof["tasks_created"], proof["assignments_created"],
                                         proof["provider_attempts_created"], proof["deduplicated_receipts"]))
         self.assertEqual(0, proof["observed_delta"]["provider_attempt_events_added"])
         # A consistent caller-supplied file yields only an observed delta, never proof.
-        filed = collector_module.status_receipt_delta(before, after, "receipt-1", baseline_authority="caller-supplied-file",
+        filed = collector_module.status_receipt_delta(before, after, RECEIPT_ID, baseline_authority="caller-supplied-file",
                                                       before_binding=binding, after_binding=binding)
         self.assertIsNone(filed["proof"])
         self.assertEqual(proof["observed_delta"], filed["observed_delta"])
@@ -865,12 +909,12 @@ class SummaryTests(unittest.TestCase):
                         "status_receipts": [dict(r) for r in after["status_receipts"]]}
                 mutate(b, a)
                 options = {"baseline_authority": same, "before_binding": binding, "after_binding": binding, **kwargs}
-                verdict = collector_module.status_receipt_delta(b, a, "receipt-1", **options)
+                verdict = collector_module.status_receipt_delta(b, a, RECEIPT_ID, **options)
                 self.assertIsNone(verdict["proof"], label)
                 self.assertIsNone(verdict["observed_delta"], label)
         # Through the collector entry path, with the observation schema.
         self.task["qualification_evidence"] = after
-        collected = self.summarize(baseline=before, receipt_id="receipt-1", baseline_authority=same,
+        collected = self.summarize(baseline=before, receipt_id=RECEIPT_ID, baseline_authority=same,
                                    before_binding=binding, after_binding=binding)["qualification_evidence"]
         evidence = collected["status_receipts"]
         self.assertEqual((0, 0, 0, 1), (evidence["tasks_created"], evidence["assignments_created"],
@@ -878,7 +922,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("task-and-thread-local/v1", evidence["baseline"]["counter_scope"])
         collector_module.validate_observations({**receipt_fixture(), "trials": [
             {**structural_trial(), "qualification_evidence": collected}]})
-        filed_evidence = self.summarize(baseline=before, receipt_id="receipt-1",
+        filed_evidence = self.summarize(baseline=before, receipt_id=RECEIPT_ID,
                                         before_binding=binding, after_binding=binding)["qualification_evidence"]
         self.assertIsNone(filed_evidence["status_receipts"]["tasks_created"])
         self.assertIsNone(filed_evidence["status_receipts"]["deduplicated_receipts"])
@@ -1044,7 +1088,7 @@ class CollectorTransportTests(unittest.TestCase):
         raw_body = b'{ "ok": true, "fixture": "preserve exact bytes" }\n'
         collector = self.build_collector(lambda request: httpx.Response(200, content=raw_body, headers={
             "Authorization": "Bearer " + ENV["SLACK_BOT_TOKEN"],
-            "x-task-engine-owner": "langgraph", "x-primary-projection-digest": "fixture-digest",
+            "x-task-engine-owner": "langgraph", "x-primary-projection-digest": PROJECTION,
         }))
         payload, headers = collector.get(collector_module.SLACK + "auth.test")
         self.assertTrue(payload["ok"])
@@ -1434,3 +1478,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]

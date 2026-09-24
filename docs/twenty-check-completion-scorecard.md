@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]] -->
@@ -268,8 +269,11 @@ a container ID, never a name.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`, only when
   the monitor is enabled with its paid gate open (`gate_state` `open`) and no
-  configured provider is unsupported, missing or stale; an attempted provider
-  with no numeric `daily_budget_usd` leaves 15 UNKNOWN.
+  configured provider is unsupported, missing or stale. A provider with spend
+  today (`reported_cost_usd` or `reserved_cost_usd` above zero; `request_count`
+  counts the monitor's own usage-check probes) and neither a numeric
+  `daily_budget_usd` (only gemini, grok and perplexity have one) nor an
+  owner-signed enrolled budget for that provider leaves 15 UNKNOWN.
 - 19 also requires `provider_activation.combined_live_ready`.
 - 16: GitHub `ci.yml` runs and jobs at the exact head, or `--ci-replica-receipt`.
   Runs are read page by page (100 per page, at most 10 pages) until GitHub's
@@ -467,18 +471,27 @@ The consistency snapshot also returns the manifest-verified
 `DIRECTOR_RUNTIME_IMAGE_ID`, which must equal Docker's inspected image
 (otherwise 07, 08, 11, 12, 15, 17 and 20 are UNKNOWN), and the selected gateway
 must run the Director's image (01 FAILs; Slack-derived 03, 08, 09, 10 and 20
-are UNKNOWN). One final cutoff is frozen after every source (deployment,
-GitHub, ledger, Security) was read; every observation is stamped at it and a
-time-limited PASS (12's capture expiries) is revalidated against it. Upper
-bounds applied while grading use the time of that grading read, which is no
-later than the final cutoff. Just before that cutoff the Director, gateway
+are UNKNOWN). The consistency and activation reads re-verify, inside their own
+read-only transaction, the accepted control plane's storage identity and
+database instance, and refuse any other database. Each observation is stamped
+when it was actually made (after every read it rests on, never later than the
+collection's end), so a PASS read before slower sources is not carried forward
+to the end; a time-limited PASS (12's capture expiries) is revalidated against
+its stamp, and a fixed-clock collection stamps at its frozen end. Upper bounds
+applied while grading use the time of that grading read. Just before the end the Director, gateway
 and n8n containers are re-inspected (ID, image, creation, start time and
 running state); if any differs from the deployment probe, or cannot be read,
 every runtime-derived PASS or FAIL becomes UNKNOWN. A drill's (09) or the paid
 run's (20) correlated final reply counts only when its fallback text and its
 complete normalized blocks (compared as check 08 compares prompts) are the
 Director's canonical terminal rendering; 20 grades the answer on the blocks'
-content too. Check 20 also requires every settled assignment's persisted
+content too. An approval prompt (08) must match the canonical rendering in its
+fallback text (newlines possibly flattened, as the Director's own readback
+allows) as well as its blocks. An owner input binds to its task only through
+the gateway's own `source_event_id` (`<channel>:<ts>`, computed by the one
+`models.canonical_slack_source_event_id` both use), and every Director terminal
+classification counts as a final reply. The n8n status query casts its
+timestamps to `timestamptz` under a UTC session, so they always carry an offset. Check 20 also requires every settled assignment's persisted
 provider result packet (read by the in-image report and revalidated against
 its stored digest) to be the one its result digest names, with outcome text
 equal to the graded outcome's result: a mismatch FAILs, an unread or missing
@@ -496,8 +509,8 @@ digest alone.
 A collection runs from its start to its end, which is known only once the live
 reads finish. Evidence is bounded by the end; each source's own read time (the
 consistency snapshot's `captured_at`, the captures report's `observed_at`)
-must lie between the start and the end; and every observation is stamped at
-the end, so nothing read during the collection is backdated. Drill verdicts
+must lie between the start and the end; and every observation is stamped when
+it was made, after its reads, so nothing read during the collection is backdated. Drill verdicts
 bound every post they read (root, owner inputs, receipts, `BLOCKED` notices,
 final replies), and run records bound each external effect's reservation,
 start, binding and terminal times. Check 16 credits a job only if at least one
@@ -659,7 +672,9 @@ project, budget day, provider and grant do not all match one signed budget, leav
 unverified usage receipt leaves 15 and 20 without actual cost (UNKNOWN). It is
 UNKNOWN when a budgeted usage-monitor provider has attempts today (a
 `request_count` that is not exactly zero), incomplete cost visibility and no
-reserved cost, because `reported_cost_usd` sums known costs only.
+reserved cost, because `reported_cost_usd` sums known costs only. Unbudgeted
+providers (claude, openai) are capped by their signed enrolled budgets; their
+`request_count` counts usage-check probes, not paid attempts.
 Usage-monitor accounting covers only its configured providers; the signed
 budget rows carry the enforced cap. The reusable run-fact validator enforces
 count, unique IDs, actual owner origin, runtime/image binding, correct mode,
@@ -782,3 +797,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]] -->
