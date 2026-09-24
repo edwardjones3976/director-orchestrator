@@ -38,14 +38,22 @@ $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
 $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
 if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
-    # Every cleanup step is bounded: stop (then kill if stop fails), wait at most 60 s for the job, then
-    # force-remove it, so the script itself can never hang past the timeout.
-    docker stop --time 20 $name 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { docker kill $name 2>&1 | Out-Null }
+    # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang
+    # them): each runs in its own job with a deadline, so the script can never hang past the timeout.
+    function Invoke-Bounded([string[]]$A, [int]$Seconds) {
+        $j = Start-Job { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
+        $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
+        Remove-Job $j -Force
+        $r
+    }
+    if (@(Invoke-Bounded @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded @('kill', $name) 20 | Out-Null }
     if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
     Remove-Job $job -Force
-    $left = docker ps -a --filter "name=^$name$" --format '{{.Names}}'
-    Write-Error "training exceeded ${TimeoutMinutes} min; container $name $(if ($left) { 'could NOT be removed; run: docker rm -f ' + $name } else { 'stopped and removed' })"
+    $ps = @(Invoke-Bounded @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
+    $state = if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
+             elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
+             else { 'stopped and removed' }
+    Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
 }
 $out = @(Receive-Job $job); Remove-Job $job
 $out | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
