@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]] -->
@@ -500,7 +501,24 @@ to be claimed no earlier than the prompt's Slack timestamp. Offline doubles
 persist no result packet, so check 10 binds each offline outcome to its
 assignment's durable ledger row: run_id `offline-double:<reservation digest>`,
 the fixed simulation label as its result and the row's result digest; any
-other outcome FAILs and a row without its reservation digest is UNKNOWN. A drill's (09) or the paid
+other outcome FAILs and a row without its reservation digest is UNKNOWN.
+Every observation is stamped when its source phase (deployment, GitHub, ledger,
+Security) began reading, so a composite built from several reads (15 joins
+`/health` with the consistency snapshot) is never stamped after its earliest
+dependency read. Each assignment's `reserved_at` and `completed_at` are
+settlement evidence: both must be present, in order and inside the freshness
+window. The ambiguous-post drill (09) needs a DELIVERED terminal row that was
+never acknowledged and was settled by one or two readback attempts, as
+`PrimarySlackDelivery.readback` does.
+
+Documented limit (check 04): the check binds the status post to the
+authenticated Director bot identity (the posted message's user is the bot
+`auth.test` names), to a run after the Slack credential's last update in n8n,
+and to the currently active workflow version. It does not authenticate the
+token n8n holds: that would need n8n's encryption key to decrypt its credential
+store and a Slack call with that token, which is new credential access reserved
+for the owner. A token revoked outside n8n, with its credential row unchanged,
+is therefore not detected until a later run fails. A drill's (09) or the paid
 run's (20) correlated final reply counts only when its fallback text and its
 complete normalized blocks (compared as check 08 compares prompts) are the
 Director's canonical terminal rendering; 20 grades the answer on the blocks'
@@ -819,3 +837,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]] -->

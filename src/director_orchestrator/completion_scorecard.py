@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -1373,6 +1374,8 @@ def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
         moments += [_when(delivery[key]) for key in ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
                                                      "owner_decision_at") if delivery.get(key)]
     moments += [_when(event["recorded_at"]) for event in readback.get("provider_attempts") or []]
+    for assignment in readback.get("assignments") or []:
+        moments += [_when(assignment[key]) for key in ("reserved_at", "completed_at") if assignment.get(key)]
     for effect in readback.get("effects") or []:
         moments += [_when(effect[key]) for key in ("reserved_at", "execution_started_at", "bound_at",
                                                     "terminal_recorded_at") if effect.get(key)]
@@ -1444,6 +1447,9 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
                 or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
             verdict = False
         elif (status == 200 and complete and owner_inputs == 1 and tasks == 1 and row.get("acknowledged_at") is None
+              # PrimarySlackDelivery.readback increments readback_attempts (at most twice) before it can settle
+              # an unacknowledged row as DELIVERED: zero attempts is not that recovery.
+              and type(row.get("readback_attempts")) is int and 1 <= row["readback_attempts"] <= 2
               and replies == 1 and _delivered_final(readback, snapshot)):
             verdict = True
     facts["verdict"] = verdict
@@ -1975,6 +1981,13 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
         digest = "sha256:" + str(matching[0].get("provider_result_digest")) if len(matching) == 1 else None
         if (digest is None or assignment.get("status") != "SUCCEEDED"
                 or not _same(assignment.get("result_digest"), digest)):
+            return False
+        # Settled means completed after it was reserved (both also bound by _moments' freshness window).
+        try:
+            if not (assignment.get("reserved_at") and assignment.get("completed_at")
+                    and _when(assignment["reserved_at"]) <= _when(assignment["completed_at"])):
+                return False
+        except ValueError:
             return False
         if attempts:
             # The latest event of the assignment's last attempt (latest is keyed per attempt).
@@ -2653,29 +2666,40 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
     result: list[Observation] = []
     deployed: list[Observation] = []
     state = None
+
+    def since(started: datetime, items: list[Observation]) -> list[Observation]:
+        # A composite (health, Slack, consistency, captures, ...) is stamped when its source phase began reading,
+        # so none is stamped after its earliest dependency read.
+        return [replace(item, _made=started) for item in items]
+
     if deployment is None:
         result.append(_observation("19", None, "No --deployment was selected; no runtime was inspected.",
                                    "Docker Compose labels", {}, at))
     else:
+        started = datetime.now(timezone.utc)
         deployed, state = _deployment_observations(
             at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
             paid_rubric_path=paid_rubric_path, collection_end=collection_end)
+        deployed = since(started, deployed)
     if github:
+        started = datetime.now(timezone.utc)
         try:
-            result.append(_ci_observation(candidate_sha, collection_end(), ci_replica_receipt))
+            result.extend(since(started, [_ci_observation(candidate_sha, collection_end(), ci_replica_receipt)]))
         except _SOURCE_ERRORS:
             result.append(_observation("16", None, "GitHub CI or the local-replica receipt could not be verified; no retry was made.",
                                        "GitHub Actions", {}, at, candidate_sha=candidate_sha))
     if ledger_path is not None:
         try:
-            result.extend(_workload_observation(ledger_path, collection_end()))
+            started = datetime.now(timezone.utc)
+            result.extend(since(started, list(_workload_observation(ledger_path, collection_end()))))
         except _SOURCE_ERRORS:
             result.extend(_observation(key, None, "The assignment journal could not be verified; no retry was made.",
                                        str(ledger_path.resolve()), {}, at) for key in ("13", "14"))
     if security_scan_id is not None:
         try:
-            result.append(_security_observation(security_scan_id, candidate_sha, collection_end()))
+            started = datetime.now(timezone.utc)
+            result.extend(since(started, [_security_observation(security_scan_id, candidate_sha, collection_end())]))
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
@@ -2685,8 +2709,8 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
 
 
 def _finalize(observations: list[Observation], finished: datetime, *, live: bool = False) -> list[Observation]:
-    """Stamp each observation when it was actually made (after every read it rests on, never later than the
-    collection's end), so a PASS read before slower sources is not carried forward to the end, and revalidate
+    """Stamp each observation when its source phase began reading (never after its earliest dependency read, and
+    never later than the collection's end), so a PASS read before slower sources is not carried forward, and revalidate
     every time-limited PASS against its stamp. A fixed-clock collection (now given) stamps at its frozen end."""
     out = []
     for item in observations:
@@ -2997,3 +3021,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]

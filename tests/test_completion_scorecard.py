@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -50,6 +51,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -2621,6 +2623,44 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(name=name, length=len(value)):
                 self.assertFalse(sc._gateway_credentials_match({**gateway, name: value}, {**env, name: value}))
 
+    def test_live_observations_are_stamped_at_their_phase_start(self):
+        inside = []
+
+        def deployment_phase(*args, **kwargs):
+            time.sleep(0.05)  # the phase reads for a while before it grades
+            inside.append(datetime.now(timezone.utc))
+            return [sc._observation("15", True, "x", "s", {}, NOW, runtime_sha=SHA, image_id=IMAGE)], ("steady",)
+
+        with patch.object(sc, "_deployment_observations", side_effect=deployment_phase), \
+                patch.object(sc, "_still_deployed", side_effect=lambda items, *rest: items):
+            observed = sc.collect(SHA, deployment=DEPLOYMENT)
+        # Stamped when the phase began reading (before its later reads), not when the observation was made.
+        self.assertLess(observed[0].observed_at, inside[0])
+
+    def test_assignment_timestamps_bound_settlement_10(self):
+        self.assertEqual(self.world().state("10"), "PASS")
+        first = "DIR-LG-7A01"
+        for change in ({"completed_at": None}, {"completed_at": "2026-09-12T10:00:04+00:00"},
+                       {"completed_at": "2026-09-13T10:00:25+00:00"}):
+            case = self.world()
+            case.tasks[first]["qualification_evidence"]["assignments"][0].update(change)
+            with self.subTest(change=change):
+                self.assertNotEqual(case.state("10"), "PASS")
+        self.assertFalse(sc._assignments_joined(
+            {"readback": {"assignments": [{"sequence": 1, "status": "SUCCEEDED", "result_digest": "sha256:" + "a" * 64,
+                                           "reserved_at": "2026-09-12T10:00:05+00:00", "completed_at": None}]},
+             "task": {"assignment_outcomes": [{"assignment_sequence": 1, "provider_result_digest": "a" * 64}]}},
+            attempts=False))
+
+    def test_ambiguous_post_requires_a_readback_attempt_09(self):
+        self.assertEqual(self.world().state("09"), "PASS")
+        unread = self.world()
+        for delivery in (unread.deliveries["DIR-LG-A0"]
+                         + unread.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]):
+            if delivery.get("notification_key") == "terminal":
+                delivery["readback_attempts"] = 0
+        self.assertNotEqual(unread.state("09"), "PASS")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -3157,3 +3197,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
