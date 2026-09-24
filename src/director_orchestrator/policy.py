@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
@@ -558,6 +559,8 @@ _READ_GERUND = re.compile(
     r"|including|regarding|concerning|following|using|containing|matching",
     re.I,
 )
+# Lanes that may produce a small read-only task but never review one.
+SMALL_TASK_PRODUCER_ONLY_LANES = frozenset({"openai"})
 # The only tool a small read-only task's packets may carry.
 SMALL_TASK_ALLOWED_TOOLS = frozenset({"READ_REPOSITORY"})
 
@@ -787,6 +790,10 @@ def small_read_only_eligible(
         or trusted_work_kind(reviewer) is not WorkKind.REVIEW
         or producer.agent == reviewer.agent
     ):
+        return False
+    # The OpenAI Responses transport reports every acceptance check NOT_RUN,
+    # which a review can never pass: it may produce a small task, never review it.
+    if (reviewer.primary_provider_lane or reviewer.agent.value) in SMALL_TASK_PRODUCER_ONLY_LANES:
         return False
     for item in (producer, reviewer):
         if (
@@ -2018,3 +2025,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

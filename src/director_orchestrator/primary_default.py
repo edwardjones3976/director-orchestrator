@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
@@ -188,6 +189,7 @@ from .policy import (
     SMALL_TASK_REVIEW_MAX_PACKET_BYTES,
     canonical_repository,
     preview_plan,
+    SMALL_TASK_PRODUCER_ONLY_LANES,
     small_read_only_eligible,
     small_task_packet_read_only,
     _canonical_prestage_record,
@@ -878,7 +880,28 @@ _AUDIT_HISTORY_MAX_RECORDS = 10_000
 _AUDIT_HISTORY_MAX_SECONDS = 5.0
 
 
-def _failed_pre_authorized_task(coordinator: Any, records) -> str | None:
+def result_acceptance_passes(packet: Mapping[str, Any] | None) -> bool:
+    """Whether an authenticated review result accepts: every check PASS, and
+    no risk, blocker or requested decision."""
+
+    acceptance = packet.get("acceptance", []) if packet is not None else []
+    return bool(
+        packet is not None
+        and packet.get("status") == "SUCCEEDED"
+        and acceptance
+        and all(
+            isinstance(item, Mapping) and item.get("status") == "PASS"
+            for item in acceptance
+        )
+        and not packet.get("risks")
+        and not packet.get("blockers")
+        and not packet.get("requested_decisions")
+    )
+
+
+def _failed_pre_authorized_task(
+    coordinator: Any, records, *, deadline: float | None = None,
+) -> str | None:
     """The first task these records pre-authorized that must trip its grant.
 
     Read from durable state, so a task settled through a provider callback,
@@ -886,15 +909,29 @@ def _failed_pre_authorized_task(coordinator: Any, records) -> str | None:
     terminal was persisted all count the same way. A terminal other than
     SUCCEEDED counts, and so does an unreadable task. A task with no
     projection never started: its intake failed after the audit record.
+
+    ``deadline`` bounds the whole scan: every read is given it, and running
+    out raises DelegationAuditDeadlineExceeded rather than counting a task as
+    failed, so a slow store refuses without tripping the grant.
     """
+
+    bound = {} if deadline is None else {"deadline": deadline}
+
+    def out_of_time() -> bool:
+        return deadline is not None and monotonic() >= deadline
 
     for item in records:
         if item.outcome is not RecordedOutcome.PRE_AUTHORIZED:
             continue
         task_id = item.acting_agent.removeprefix("director-langgraph:")
+        if out_of_time():
+            raise DelegationAuditDeadlineExceeded("prior-task scan reached its deadline")
         try:
-            projection = coordinator.get_projection(task_id)
+            projection = coordinator.get_projection(task_id, **bound)
         except Exception:
+            if out_of_time():
+                raise DelegationAuditDeadlineExceeded(
+                    "prior-task scan reached its deadline") from None
             return task_id
         if projection is None:
             continue
@@ -907,8 +944,11 @@ def _failed_pre_authorized_task(coordinator: Any, records) -> str | None:
             # Its plan is not registered yet, so nothing has dispatched.
             continue
         try:
-            aggregate = coordinator.parallel_aggregate(task_id)
+            aggregate = coordinator.parallel_aggregate(task_id, **bound)
         except Exception:
+            if out_of_time():
+                raise DelegationAuditDeadlineExceeded(
+                    "prior-task scan reached its deadline") from None
             return task_id
         # A terminal, failed aggregate the graph never classified (resume
         # raised, or the process stopped before it) counts as well.
@@ -943,12 +983,17 @@ def _bounded_audit_history(ledger: Any) -> list | None:
         after = page[-1].digest
 
 
-def _independent_lane_pair(lanes: Collection[str]) -> bool:
-    """Whether two of these lanes belong to different provider families."""
+def _independent_lane_pair(
+    lanes: Collection[str], *, reviewer_excluded: Collection[str] = (),
+) -> bool:
+    """Whether a producer and a reviewer from different provider families
+    exist among these lanes, the reviewer outside ``reviewer_excluded``."""
 
-    for first, second in itertools.combinations(sorted(lanes), 2):
+    for producer, reviewer in itertools.permutations(sorted(lanes), 2):
+        if reviewer in reviewer_excluded:
+            continue
         try:
-            if not share_provider_family(first, second):
+            if not share_provider_family(producer, reviewer):
                 return True
         except UnknownContactError:
             continue
@@ -958,6 +1003,7 @@ def _independent_lane_pair(lanes: Collection[str]) -> bool:
 def small_pre_authorization_refusal(
     record: TaskRecord, settings: Settings, ledger: Any, *,
     approval_free: bool, compact_view_lanes: Collection[str], coordinator: Any,
+    packet: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Why a task a standing grant pre-authorized may not be dispatched, if at all.
 
@@ -1017,6 +1063,13 @@ def small_pre_authorization_refusal(
             or not {_assignment_provider_lane(item) for item in plan.assignments}
             <= grant.providers):
         return "small_task_pre_authorization_revoked"
+    # The packet being dispatched must work from the exact commit the task
+    # was pre-authorized at: a rebuilt packet on a moved repository is not
+    # the work the grant authorized.
+    if packet is not None and any(
+            item.candidate_sha is None or item.candidate_sha != packet.get("starting_ref")
+            for item in records):
+        return "small_task_pre_authorization_commit_changed"
     if any(item.grant_id == grant.grant_id
            and item.outcome is RecordedOutcome.REFUSED
            and any(gate.gate == "delegation_trip" for gate in item.gate_results)
@@ -1025,11 +1078,16 @@ def small_pre_authorization_refusal(
         return "small_task_pre_authorization_tripped"
     # A failure no later intake has recorded yet: derived here from the
     # durable state of every task this grant pre-authorized.
-    if _failed_pre_authorized_task(coordinator, [
+    try:
+        failed = _failed_pre_authorized_task(coordinator, [
             item for item in history
             if item.outcome is RecordedOutcome.PRE_AUTHORIZED
             and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
-            and item.grant_id == grant.grant_id]) is not None:
+            and item.grant_id == grant.grant_id],
+            deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+    except DelegationAuditDeadlineExceeded:
+        return "small_task_pre_authorization_unaudited"
+    if failed is not None:
         return "small_task_pre_authorization_tripped"
     if not small_read_only_eligible(
             record, settings, compact_view_lanes=compact_view_lanes):
@@ -1630,19 +1688,7 @@ def build_automatic_primary_live_dependencies(
 
     def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
         packet = authenticated_result(context)
-        acceptance = packet.get("acceptance", []) if packet is not None else []
-        accepted = bool(
-            packet is not None
-            and packet.get("status") == "SUCCEEDED"
-            and acceptance
-            and all(
-                isinstance(item, Mapping) and item.get("status") == "PASS"
-                for item in acceptance
-            )
-            and not packet.get("risks")
-            and not packet.get("blockers")
-            and not packet.get("requested_decisions")
-        )
+        accepted = result_acceptance_passes(packet)
         return AcceptanceResult(
             _digest(
                 {
@@ -2737,7 +2783,8 @@ class DefaultPrimaryApplication:
     def _failed_prior_exercise(self, records) -> str | None:
         """The first task this grant pre-authorized that must trip it, if any."""
 
-        return _failed_pre_authorized_task(self.coordinator, records)
+        return _failed_pre_authorized_task(
+            self.coordinator, records, deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
 
     def _trip_on_failed_terminal(self, task_id: str, classification: str) -> None:
         """Record the trip when a pre-authorized task reaches a failed terminal.
@@ -2821,7 +2868,8 @@ class DefaultPrimaryApplication:
         return (self._delegation_ledger is not None
                 and not self._delegation_tripped
                 and in_scope
-                and _independent_lane_pair(self._compact_view_lanes & grant.providers)
+                and _independent_lane_pair(self._compact_view_lanes & grant.providers,
+                                           reviewer_excluded=SMALL_TASK_PRODUCER_ONLY_LANES)
                 and self._executes())
 
     def _named_contents_available(self, record: TaskRecord) -> bool:
@@ -3839,7 +3887,8 @@ class DefaultPrimaryActivation:
                     pre_authorization_refusal = small_pre_authorization_refusal(
                         record, settings, delegation_ledger,
                         approval_free=services.execution_approval_free(record.task_id),
-                        compact_view_lanes=compact_view_lanes, coordinator=coordinator)
+                        compact_view_lanes=compact_view_lanes, coordinator=coordinator,
+                        packet=packet)
                     if pre_authorization_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
@@ -4135,6 +4184,20 @@ class DefaultPrimaryActivation:
                                 raise WorkloadAdmissionHold(
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
+                        if services.execution_approval_free(record.task_id):
+                            # Immediately before this send, every attempt and
+                            # retry of a pre-authorized task: the grant is
+                            # re-read (live, not revoked or suspended, same
+                            # document), the verified ledger is scanned for a
+                            # trip and for failed tasks under the same bounded
+                            # deadline, and the commit is re-checked. A lapse
+                            # sends nothing.
+                            lapsed = small_pre_authorization_refusal(
+                                record, settings, delegation_ledger, approval_free=True,
+                                compact_view_lanes=compact_view_lanes,
+                                coordinator=coordinator, packet=packet)
+                            if lapsed is not None:
+                                raise WorkloadAdmissionHold(lapsed)
                         if small_class:
                             # Immediately before this send, every attempt
                             # and every retry: the bridge must still run the
@@ -4779,3 +4842,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
@@ -325,6 +326,63 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
         self.assertEqual(3, len(seen))
         self.assertEqual(1, len(set(seen)))
 
+    def test_the_one_viable_pair_openai_producer_and_attested_grok_reviewer(self):
+        """End to end on the parts that decide it: eligibility, readiness,
+        usage, and the acceptance evidence the review must carry."""
+
+        from dataclasses import replace
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import (
+            Assignment, AssignmentKind, ProviderName, SlackIntake, TaskRecord, TaskStatus)
+        from director_orchestrator.policy import preview_plan, small_read_only_eligible
+        from director_orchestrator.primary_default import (
+            _independent_lane_pair, result_acceptance_passes, small_task_usage_refusal)
+        from director_orchestrator.policy import SMALL_TASK_PRODUCER_ONLY_LANES
+        from director_orchestrator.primary_transports import _normalize_host_native_result
+        from director_orchestrator.primary_transports import _bound_research_result
+
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        text = "Project: demo\nSummarize README.md for the owner."
+        record = TaskRecord(task_id="DIR-PAIR", status=TaskStatus.QUEUED, intake=SlackIntake(
+            source_event_id="evt-pair", channel_id="C1", thread_ts="1.1", user_id="U1", text=text))
+        plan = preview_plan(text, settings)
+        producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+
+        def with_agents(first, second):
+            return plan.model_copy(update={"assignments": [
+                producer.model_copy(update={"agent": first}),
+                reviewer.model_copy(update={"agent": second})]})
+
+        lanes = frozenset({"openai", "grok"})
+        record.plan = with_agents(ProviderName.OPENAI, ProviderName.GROK)
+        self.assertTrue(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
+        # Responses can produce, never review.
+        record.plan = with_agents(ProviderName.GROK, ProviderName.OPENAI)
+        self.assertFalse(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
+        self.assertIn("openai", SMALL_TASK_PRODUCER_ONLY_LANES)
+        # Readiness: that pair arms it; Responses alone, or with only another
+        # producer-only reviewer, does not.
+        self.assertTrue(_independent_lane_pair(lanes, reviewer_excluded={"openai"}))
+        self.assertFalse(_independent_lane_pair({"openai"}, reviewer_excluded={"openai"}))
+        self.assertFalse(_independent_lane_pair({"openai", "grok"},
+                                                reviewer_excluded={"openai", "grok"}))
+        # The Grok bridge reviewer can return acceptance evidence the review
+        # accepts, with complete usage; without it, the review rejects.
+        work = work_packet()
+        passing = grok_response()
+        passing["output"][1]["content"][0]["text"] = json.dumps({
+            "status": "SUCCEEDED", "outcome": "The summary is accurate.",
+            "acceptance": [{"check": check, "status": "PASS", "evidence": "Checked against README.md."}
+                           for check in work["acceptance_checks"]]})
+        result = _normalize_host_native_result("grok", work, passing)
+        self.assertTrue(result_acceptance_passes(result))
+        self.assertIsNone(small_task_usage_refusal(result, "grok", small_class=True))
+        self.assertFalse(result_acceptance_passes(
+            _normalize_host_native_result("grok", work, grok_response())))
+        # Responses results always report NOT_RUN: never an accepted review.
+        self.assertFalse(result_acceptance_passes(
+            _bound_research_result("openai", work, run_reference="resp-1", outcome="done")))
+
     def test_no_native_lane_joins_the_small_class(self):
         """Owner ruling 2026-09-24: native lanes send the compact view but are
         never small-class capable; readiness and eligibility never count them."""
@@ -570,3 +628,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

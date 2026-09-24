@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
@@ -395,6 +396,27 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
             self.run_assignment(0)
         self.assertEqual(1, len(self.dispatch_contexts))
 
+    def test_a_pre_authorized_task_is_re_checked_before_every_send(self):
+        """A grant that lapses between admission and the send sends nothing."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        self.record.assignment_outcomes = []
+        checks = []
+
+        def refusal(*args, **kwargs):
+            checks.append(kwargs.get("packet") is not None)
+            return None if len(checks) == 1 else "small_task_pre_authorization_tripped"
+
+        with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
+                patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                      side_effect=refusal), \
+                self.assertRaisesRegex(WorkloadAdmissionHold,
+                                       "small_task_pre_authorization_tripped"):
+            self.run_assignment(0)
+        self.assertEqual([True, True], checks)
+        self.assertEqual([], self.dispatch_contexts)
+
     def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
         self.activation.services._packet_router = packet_router(self.settings)
         reservation, _ = self.request(1)
@@ -463,3 +485,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
@@ -601,10 +602,12 @@ class PrimaryTaskCoordinator:
         writer = self._task_writer(task_id)
         return self.parallel.reserve_ready(task_id=task_id, writer=writer, policy=policy)
 
-    def parallel_aggregate(self, task_id: str) -> ParallelAggregate:
+    def parallel_aggregate(
+        self, task_id: str, *, deadline: float | None = None,
+    ) -> ParallelAggregate:
         """Read the deterministic all-assignment aggregate without mutation."""
 
-        return self.parallel.aggregate(task_id)
+        return self.parallel.aggregate(task_id, deadline=deadline)
 
     def reserve_provider_attempt(
         self,
@@ -918,8 +921,10 @@ class PrimaryTaskCoordinator:
             )
         return self._persist_outcome(self._runtime.recover(task_id), writer)
 
-    def get_projection(self, task_id: str) -> PrimaryTaskProjection | None:
-        return self._store.read_primary_task_projection(task_id)
+    def get_projection(
+        self, task_id: str, *, deadline: float | None = None,
+    ) -> PrimaryTaskProjection | None:
+        return self._store.read_primary_task_projection(task_id, deadline=deadline)
 
     def read_qualification_evidence(self, task_id: str) -> dict | None:
         """Forward one bounded READ ONLY qualification readback; no graph, lease or write."""
@@ -1113,3 +1118,4 @@ class PrimaryTaskCoordinator:
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

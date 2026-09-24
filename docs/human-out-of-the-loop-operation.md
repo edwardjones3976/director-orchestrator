@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
@@ -368,7 +369,13 @@ read from the git blob its snapshot binds at the packet's commit (never a
 working tree; the blob's size is checked before it is read, and the read is
 streamed and stops at the cap) and bound by that blob hash, so a tool-less lane such as OpenAI
 Responses can read them; the reviewer's objective names the same paths, so
-both models see the same text. Each file is at most 4 KB, the total at most
+both models see the same text. The OpenAI Responses lane may produce a small
+task but never review one: it reports every acceptance check NOT_RUN, which a
+review can never pass. With native lanes excluded and the Claude bridge lane
+not attestable, the one pair that can complete a small task is an OpenAI
+Responses producer with an attested Grok bridge reviewer, whose result must
+carry structured acceptance evidence with every check PASS; readiness reports
+armed only when such a pair exists. Each file is at most 4 KB, the total at most
 8 KB, and at most eight files. A named path missing from the snapshot,
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
 credential approval gate or the request text's personal-data exclusion (as
@@ -439,11 +446,16 @@ replaced ledger has none, and a history past its bound counts as unread),
 no `delegation_trip` for that grant_id exists anywhere in it and no task that
 grant pre-authorized has failed, stopped ambiguous, or become unreadable
 according to durable task state, whether or not a trip was written yet
-(`small_task_pre_authorization_tripped`), and it still qualifies
+(`small_task_pre_authorization_tripped`; that scan of prior tasks is bounded
+by one deadline and, when it runs out, refuses as unaudited without tripping),
+the packet being dispatched works from the exact commit recorded as the
+pre-authorization's candidate (`small_task_pre_authorization_commit_changed`),
+and it still qualifies
 (`small_task_pre_authorization_lapsed`, for example after a restart under a
 lower reviewer cap or different lanes), rather than run without the class's
 bounds; a task whose graph keeps the button is never affected. That failure
-trips the grant.
+trips the grant. The same check runs again immediately before every provider
+send of a pre-authorized task, each retry included, and a lapse sends nothing.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -669,3 +681,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->

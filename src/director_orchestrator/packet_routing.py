@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
@@ -27,6 +28,8 @@ import hashlib
 import hmac
 import re
 import subprocess
+import threading
+from time import monotonic
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -102,12 +105,15 @@ def git_blob_sha(data: bytes) -> str:
 
 def git_blob_reader(
     root: str, *, max_bytes: int = SMALL_TASK_CONTENT_FILE_MAX_BYTES,
+    timeout_seconds: float = 10.0,
 ) -> Callable[[str], bytes | None]:
     """Read one blob by its hash from the snapshot repository, never the worktree.
 
     The blob's size is asked first and a blob over ``max_bytes`` is refused
     without reading it. The read itself is streamed and stops at max_bytes + 1,
-    so a size the object store misreports still cannot fill memory.
+    so a size the object store misreports still cannot fill memory. Both steps
+    share one ``timeout_seconds`` deadline; a read still running when it
+    passes has its process ended and returns nothing, keeping the button.
     """
 
     git = ("git", "-c", f"safe.directory={root}", "cat-file")
@@ -115,10 +121,11 @@ def git_blob_reader(
     def read(blob_sha: str) -> bytes | None:
         if re.fullmatch(r"[0-9a-f]{40}", blob_sha) is None:
             return None
+        deadline = monotonic() + timeout_seconds
         try:
             size = subprocess.run(
                 (*git, "-s", blob_sha), cwd=root, shell=False, check=False,
-                capture_output=True, timeout=10,
+                capture_output=True, timeout=timeout_seconds,
             )
             if size.returncode != 0 or int(size.stdout.strip() or b"-1") > max_bytes:
                 return None
@@ -128,16 +135,27 @@ def git_blob_reader(
             )
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return None
+        received: list[bytes] = []
+        pump = threading.Thread(
+            target=lambda: received.append(process.stdout.read(max_bytes + 1)), daemon=True)
+        pump.start()
+        pump.join(max(0.0, deadline - monotonic()))
+        timed_out = pump.is_alive()
+        if process.poll() is None:
+            process.kill()
         try:
-            data = process.stdout.read(max_bytes + 1)
-        finally:
-            process.stdout.close()
-            if process.poll() is None:
-                process.kill()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                return None
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return None
+        if timed_out:
+            # The killed process ends the pipe; the daemon reader is not
+            # waited for, so the deadline holds.
+            return None
+        pump.join(5)
+        process.stdout.close()
+        if not received:
+            return None
+        data = received[0]
         if len(data) > max_bytes or process.returncode not in (0, -9, 1):
             return None
         return data
@@ -779,3 +797,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

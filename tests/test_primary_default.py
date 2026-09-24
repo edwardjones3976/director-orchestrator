@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -781,7 +782,7 @@ class StandingGrantExerciseTests(unittest.TestCase):
 
         application.coordinator = SimpleNamespace(
             claim_authenticated_intake=lambda **_: ("DIR-LG-INFLIGHT", False),
-            get_projection=lambda task_id: None,
+            get_projection=lambda task_id, **_: None,
             create_intake=create_intake,
         )
         application.services = SimpleNamespace(
@@ -974,8 +975,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
                                   "parallel_plan_digest": digest("plan")},
                   second.task_id: RUNNING}
         coordinator = SimpleNamespace(
-            get_projection=lambda task_id: SimpleNamespace(projection=states[task_id]),
-            parallel_aggregate=lambda task_id: SimpleNamespace(
+            get_projection=lambda task_id, **_: SimpleNamespace(projection=states[task_id]),
+            parallel_aggregate=lambda task_id, **_: SimpleNamespace(
                 ambiguous_slot_count=0, terminal=False, succeeded=False))
         self.assertEqual([], [entry for entry in self.audit()
                               if "delegation_trip" in gate_statuses(entry)])
@@ -985,12 +986,12 @@ class StandingGrantExerciseTests(unittest.TestCase):
         # Ambiguous or unreadable prior tasks count the same way.
         for name, prior in {
             "ambiguous": SimpleNamespace(
-                get_projection=lambda task_id: SimpleNamespace(projection=RUNNING),
-                parallel_aggregate=lambda task_id: SimpleNamespace(
+                get_projection=lambda task_id, **_: SimpleNamespace(projection=RUNNING),
+                parallel_aggregate=lambda task_id, **_: SimpleNamespace(
                     ambiguous_slot_count=1, terminal=False, succeeded=False)),
             "unreadable": SimpleNamespace(
-                get_projection=lambda task_id: (_ for _ in ()).throw(OSError("down")),
-                parallel_aggregate=lambda task_id: None),
+                get_projection=lambda task_id, **_: (_ for _ in ()).throw(OSError("down")),
+                parallel_aggregate=lambda task_id, **_: None),
         }.items():
             with self.subTest(prior=name):
                 self.assertEqual("small_task_pre_authorization_tripped",
@@ -1158,6 +1159,44 @@ class StandingGrantExerciseTests(unittest.TestCase):
         ledger.delegation_audit_records(limit=10)
         self.assertEqual([None], anchor.timeouts)
 
+    def test_recovery_needs_the_pre_authorized_commit(self):
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        refuse = lambda packet: small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None), packet=packet)
+        self.assertIsNone(refuse({"starting_ref": SHA}))
+        self.assertEqual("small_task_pre_authorization_commit_changed",
+                         refuse({"starting_ref": "d" * 40}))
+
+    def test_a_slow_prior_task_scan_refuses_without_tripping(self):
+        import time as time_module
+        from director_orchestrator import primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+
+        def slow(task_id, *, deadline=None):
+            time_module.sleep(0.3)
+            raise TimeoutError("read ran out")
+
+        slow_coordinator = SimpleNamespace(get_projection=slow, parallel_aggregate=slow)
+        with patch.object(module, "_AUDIT_HISTORY_MAX_SECONDS", 0.2):
+            self.assertEqual("small_task_pre_authorization_unaudited",
+                             small_pre_authorization_refusal(
+                                 record, self.settings, self.ledger, approval_free=True,
+                                 compact_view_lanes=SMALL_LANES, coordinator=slow_coordinator))
+            application = self.application()
+            application.coordinator = slow_coordinator
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertFalse(any("delegation_trip" in gate_statuses(entry) for entry in self.audit()))
+        # A read that fails in time still counts the task as failed.
+        failing = SimpleNamespace(get_projection=lambda task_id, **_: (_ for _ in ()).throw(
+            OSError("down")), parallel_aggregate=lambda task_id, **_: None)
+        self.assertEqual("small_task_pre_authorization_tripped", small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=failing))
+
     def test_the_append_verification_is_bounded_too(self):
         from director_orchestrator.store import DelegationAuditDeadlineExceeded
 
@@ -1223,12 +1262,12 @@ class StandingGrantExerciseTests(unittest.TestCase):
     @staticmethod
     def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False,
                     failed_aggregate=False):
-        def get_projection(task_id):
+        def get_projection(task_id, **_):
             if unreadable:
                 raise OSError("projection unavailable")
             return None if projection is None else SimpleNamespace(projection=projection)
 
-        def parallel_aggregate(task_id):
+        def parallel_aggregate(task_id, **_):
             if aggregate_unreadable:
                 raise OSError("aggregate unavailable")
             return SimpleNamespace(ambiguous_slot_count=ambiguous,
@@ -5738,3 +5777,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]

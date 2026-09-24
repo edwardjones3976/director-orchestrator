@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 from dataclasses import replace
@@ -923,6 +925,38 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertIsNone(reader(large))
             self.assertEqual([4097], reads)
 
+    def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
+        import subprocess as subprocess_module
+        import time as time_module
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        killed = []
+
+        class Slow:
+            def __init__(self, *args, **kwargs):
+                self.returncode = None
+                self.stdout = SimpleNamespace(
+                    read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                killed.append(True)
+                self.returncode = -9
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+        reader = git_blob_reader(".", timeout_seconds=0.3)
+        started = time_module.monotonic()
+        with patch("director_orchestrator.packet_routing.subprocess.run", return_value=sized), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", Slow):
+            self.assertIsNone(reader("a" * 40))
+        self.assertLess(time_module.monotonic() - started, 2.5)
+        self.assertEqual([True], killed)
+
     def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
         """Extensionless files count: conventional names and any exact snapshot path."""
 
@@ -1117,3 +1151,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
