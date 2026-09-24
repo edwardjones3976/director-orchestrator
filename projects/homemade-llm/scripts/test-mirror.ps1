@@ -37,7 +37,11 @@ try {
     Assert-Equal (Test-Path (Join-Path $dst 'stale.txt')) $false '/MIR removes files no longer in the source'
     Assert-Equal (@(Get-ChildItem (Join-Path $src 'reports') -Filter 'mirror-*.log').Count -gt 0) $true 'a log lands in reports'
 
-    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', 'Q:\')) 1 'refuses a drive root destination'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', 'Q:\')) 1 'refuses an absent drive root destination'
+    # Existing roots use -List so a regressed guard could only list, never delete.
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "$($env:SystemDrive)\", '-List')) 1 'refuses an existing drive root (C:\)'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $env:SystemDrive, '-List')) 1 'refuses a bare drive (C:), which means the current directory'
+    Assert-Equal (Invoke-Mirror @('-Source', "$($env:SystemDrive)\", '-Dest', $dst, '-List')) 1 'refuses a drive root source'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $src 'inner'))) 1 'refuses a destination inside the source'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $src)) 1 'refuses source equal to destination'
     Assert-Equal (Invoke-Mirror @('-Source', (Join-Path $work 'missing'), '-Dest', $dst)) 1 'refuses a missing source'

@@ -35,30 +35,44 @@ public static class MirrorFinalPath {
     }
 }
 '@ -ErrorAction SilentlyContinue
+# Full path without a trailing separator, except a root keeps its "\": a bare "C:" means
+# "the current directory on C:", which /MIR would then delete into.
+function Get-NormalPath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -eq [IO.Path]::GetPathRoot($full)) { $full } else { $full.TrimEnd('\') }
+}
+function Test-IsRoot([string]$Path) { $Path -eq [IO.Path]::GetPathRoot($Path) }
+
 # A destination may not exist yet: resolve its nearest existing ancestor and re-append the rest.
 function Resolve-FinalPath([string]$Path) {
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $full = Get-NormalPath $Path
     $existing = $full; $tail = @()
     while ($existing -and -not (Test-Path -LiteralPath $existing)) {
         $tail = @(Split-Path $existing -Leaf) + $tail
         $existing = Split-Path $existing -Parent
     }
     if (-not $existing) { return $full }
-    $final = [MirrorFinalPath]::Of($existing).TrimEnd('\')
+    $final = Get-NormalPath ([MirrorFinalPath]::Of($existing))
     if ($tail.Count) { $final = Join-Path $final ($tail -join '\') }
-    $final.TrimEnd('\')
+    Get-NormalPath $final
 }
 
+# /MIR deletes at the destination, so refuse anything that could reach data outside the mirror.
+# Roots are refused on the paths as given, before any resolution, and again after it.
+foreach ($given in $Source, $Dest) {
+    # "C:" or "C:foo" is drive-relative (resolved against C:'s current directory), never what a mirror means.
+    if ($given -match '^[A-Za-z]:(?![\\/])') { Write-Error "refusing a drive-relative path: $given" }
+    if (Test-IsRoot (Get-NormalPath $given)) { Write-Error "refusing a drive or share root: $given" }
+}
 $src = Resolve-FinalPath $Source
 $dst = Resolve-FinalPath $Dest
-# /MIR deletes at the destination, so refuse anything that could reach data outside the mirror.
-if (-not (Test-Path $src -PathType Container)) { Write-Error "source $src is not a directory" }
-if ($dst -match '^[A-Za-z]:$') { Write-Error "refusing a drive root as the mirror destination: $dst" }
+if ((Test-IsRoot $src) -or (Test-IsRoot $dst)) { Write-Error "refusing a path that resolves to a root: $src -> $dst" }
+if (-not (Test-Path -LiteralPath $src -PathType Container)) { Write-Error "source $src is not a directory" }
 # The mirror is local: a UNC destination (a share root, or a mapped drive resolved to one) is refused outright.
 if ($dst.StartsWith('\\') -or $src.StartsWith('\\')) { Write-Error "refusing a UNC path: $src -> $dst" }
 # Refuse any junction or symlink on either path or its parents, checked on the paths as given:
 # the resolved final paths above have already looked through the links and would hide them.
-foreach ($p in [IO.Path]::GetFullPath($Source).TrimEnd('\'), [IO.Path]::GetFullPath($Dest).TrimEnd('\')) {
+foreach ($p in (Get-NormalPath $Source), (Get-NormalPath $Dest)) {
     $cur = $p
     while ($cur) {
         if ((Test-Path -LiteralPath $cur) -and ((Get-Item -LiteralPath $cur -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
