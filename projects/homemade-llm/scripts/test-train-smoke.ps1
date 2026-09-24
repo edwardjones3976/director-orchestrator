@@ -49,6 +49,10 @@ try {
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'junction or symbolic link') { $fail += "junction HotRoot: not refused (exit $LASTEXITCODE)" }
     $o = Run $clean
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'junction or symbolic link') { $fail += "junction reports folder: not refused (exit $LASTEXITCODE)" }
+    $nested = Join-Path $tmpRoot 'nested'; New-Item -ItemType Directory (Join-Path $nested 'hf') | Out-Null
+    $links += New-Item -ItemType Junction (Join-Path $nested 'hf\hub') -Target $real
+    $o = Run $nested
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'Junction inside a mounted folder') { $fail += "junction nested in hf: not refused (exit $LASTEXITCODE)" }
 } finally {
     foreach ($l in $links) { if ($l) { $l.Delete() } }   # remove the links themselves before the recursive delete
     Get-ChildItem -LiteralPath $tmpRoot -Recurse -Force -File | ForEach-Object { $_.Attributes = 'Normal' }   # HF marks some files read-only
@@ -58,7 +62,7 @@ try {
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
-Write-Output 'ok  junction as HotRoot, and as a mounted subfolder, refused'
+Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
 Write-Output "ok  hung docker CLI: cleanup call returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]

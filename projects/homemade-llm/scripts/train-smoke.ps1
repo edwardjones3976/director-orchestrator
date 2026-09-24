@@ -17,13 +17,21 @@ $ErrorActionPreference = 'Stop'
 # preflight's free-space floor and hot-tier cap gate drive C only, so the hot root must live there.
 $HotRoot = [IO.Path]::GetFullPath($HotRoot)
 if (-not $HotRoot.StartsWith('C:\', [StringComparison]::OrdinalIgnoreCase)) { Write-Error "HotRoot must be on C: (preflight gates only C:); got $HotRoot" }
-# The path string says C:, but a junction or symlink on it (or on a mounted subfolder) could land on another
-# drive; refuse any link rather than trying to resolve it.
+# The path string says C:, but a junction or symlink on it, on a mounted folder or anywhere inside one could
+# land on another drive that preflight never gates; refuse rather than trying to resolve them.
 foreach ($sub in '', 'hf', 'runs', 'models', 'models\smoke', 'reports') {
     for ($p = Join-Path $HotRoot $sub; $p; $p = Split-Path $p -Parent) {
         if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             Write-Error "$p is a junction or symbolic link; HotRoot and its mounted folders must be real folders on C:"
         }
+    }
+    # Inside a mount only native Windows links redirect host writes. The Linux symlinks the HF cache creates
+    # through the bind mount are also reparse points, but have no LinkType and resolve inside the container.
+    $dir = Join-Path $HotRoot $sub
+    if ($sub -and (Test-Path -LiteralPath $dir)) {
+        $link = Get-ChildItem -LiteralPath $dir -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop |
+            Where-Object { $_.LinkType -in 'Junction', 'SymbolicLink' } | Select-Object -First 1
+        if ($link) { Write-Error "$($link.FullName) is a $($link.LinkType) inside a mounted folder; it could redirect writes off C:" }
     }
 }
 # The container's HF_HOME is the mounted <HotRoot>\hf, which is also Hugging Face's default token location:
@@ -55,24 +63,35 @@ $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '
     '-v', "${code}:/code:ro", '-e', "SMOKE_BASE=$Base", '-e', "SMOKE_REVISION=$Revision",
     '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token', '-e', 'HF_STORED_TOKENS_PATH=/nonexistent/hf-stored-tokens',
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
-$job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
-if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
-    # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang
-    # them): each runs in its own job with a deadline, so the script can never hang past the timeout.
-    function Invoke-Bounded([string[]]$A, [int]$Seconds) {
-        $j = Start-Job { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
-        $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
-        Remove-Job $j -Force
-        $r
-    }
+# Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them):
+# each runs in its own job with a deadline. Stop-Smoke returns the container's final state.
+function Invoke-Bounded([string[]]$A, [int]$Seconds) {
+    $j = Start-Job { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $A)
+    $r = if (Wait-Job $j -Timeout $Seconds) { @(Receive-Job $j) } else { @('__EXIT__timeout') }
+    Remove-Job $j -Force
+    $r
+}
+function Stop-Smoke {
     if (@(Invoke-Bounded @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded @('kill', $name) 20 | Out-Null }
     if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
     Remove-Job $job -Force
     $ps = @(Invoke-Bounded @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
-    $state = if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
-             elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
-             else { 'stopped and removed' }
-    Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
+    if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
+    elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
+    else { 'stopped and removed' }
+}
+$job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
+$done = $false
+try {
+    if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
+        $state = Stop-Smoke; $done = $true
+        Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
+    }
+    $done = $true
+} finally {
+    # Reached without $done only when the wait was interrupted (Ctrl+C or a stopped pipeline): disconnecting
+    # the docker client does not stop the daemon-side container, so stop it here too.
+    if (-not $done) { Write-Warning "interrupted; container $name $(Stop-Smoke)" }
 }
 $out = @(Receive-Job $job); Remove-Job $job
 $out | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
