@@ -1,9 +1,13 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:07 UTC | BEGIN]]
-"""Paid-provider spend meter for homemade-llm (M0.10). Read-only.
+"""Paid-provider spend meter for homemade-llm (M0.10). Reporting is read-only.
 
 Totals the costs that the provider-dispatch wrapper already records in its receipts
-(~/.claude/skills/provider-dispatch/receipts). The receipts are the ledger; this
-script only reads them.
+(~/.claude/skills/provider-dispatch/receipts). The receipts are the ledger; a report
+only reads them. (--self-test writes fixtures to a temporary directory it deletes.)
+
+--project counts only receipts filed under this project's worktree folders (Grok CLI).
+xAI and Perplexity receipts carry no project, so in --project mode they are reported
+under "unattributed" rather than silently dropped or wrongly claimed.
 
     python spend_meter.py                  # last 7 days, every project
     python spend_meter.py --days 28 --json
@@ -46,13 +50,20 @@ def receipt_cost(path: Path, data: dict) -> tuple[str, float | None] | None:
     return None
 
 
+UNATTRIBUTED = ("xai", "perplexity")  # provider-level receipt folders with no project field
+
+
 def meter(root: Path, since: float, project_only: bool) -> dict:
     totals: dict[str, dict] = {}
+    unattributed: dict[str, dict] = {}
     for path in root.rglob("*.json"):
         if path.stat().st_mtime < since:
             continue
+        bucket = totals
         if project_only and not path.parent.name.startswith(PROJECT_DIRS):
-            continue
+            if path.parent.name not in UNATTRIBUTED:
+                continue
+            bucket = unattributed
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -61,18 +72,22 @@ def meter(root: Path, since: float, project_only: bool) -> dict:
         if not found:
             continue
         provider, usd = found
-        row = totals.setdefault(provider, {"calls": 0, "usd": 0.0, "uncosted": 0})
+        row = bucket.setdefault(provider, {"calls": 0, "usd": 0.0, "uncosted": 0})
         row["calls"] += 1
         if usd is None:
             row["uncosted"] += 1
         else:
             row["usd"] += usd
-    return {
+    rounded = lambda rows: {k: {**v, "usd": round(v["usd"], 4)} for k, v in sorted(rows.items())}
+    report = {
         "since_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(since)),
         "scope": "homemade-llm" if project_only else "all projects",
-        "providers": {k: {**v, "usd": round(v["usd"], 4)} for k, v in sorted(totals.items())},
+        "providers": rounded(totals),
         "total_usd": round(sum(v["usd"] for v in totals.values()), 4),
     }
+    if project_only:
+        report["unattributed"] = rounded(unattributed)
+    return report
 
 
 def self_test() -> None:
@@ -98,6 +113,9 @@ def self_test() -> None:
         assert everything["total_usd"] == 1.4016, everything
         project = meter(root, 0, project_only=True)
         assert project["providers"] == {"grok-cli": {"calls": 1, "usd": 0.33, "uncosted": 0}}, project
+        assert project["unattributed"]["xai"]["calls"] == 1, project
+        assert project["unattributed"]["perplexity"] == {"calls": 2, "usd": 0.02, "uncosted": 1}, project
+        assert "unattributed" not in everything, everything
         assert meter(root, time.time() + 60, project_only=False)["providers"] == {}
     print("spend_meter self-test: ok")
 
@@ -124,6 +142,8 @@ def main() -> int:
     for name, row in report["providers"].items():
         print(f"  {name:<11} {row['calls']:>4} calls  USD {row['usd']:>8.4f}  uncosted {row['uncosted']}")
     print(f"  {'total':<11} {'':>10}  USD {report['total_usd']:>8.4f}")
+    for name, row in report.get("unattributed", {}).items():
+        print(f"  unattributed {name}: {row['calls']} calls, USD {row['usd']:.4f} (receipts carry no project)")
     return 0
 
 

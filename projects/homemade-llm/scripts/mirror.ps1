@@ -17,6 +17,18 @@ $dst = [IO.Path]::GetFullPath($Dest).TrimEnd('\')
 # /MIR deletes at the destination, so refuse anything that could reach data outside the mirror.
 if (-not (Test-Path $src -PathType Container)) { Write-Error "source $src is not a directory" }
 if ($dst -match '^[A-Za-z]:$') { Write-Error "refusing a drive root as the mirror destination: $dst" }
+# The mirror is local: a UNC destination (including a share root) is refused outright.
+if ($dst.StartsWith('\\') -or $src.StartsWith('\\')) { Write-Error "refusing a UNC path: $src -> $dst" }
+# String checks cannot see through junctions or symlinks, so refuse any link on either path or its parents.
+foreach ($p in $src, $dst) {
+    $cur = $p
+    while ($cur) {
+        if ((Test-Path -LiteralPath $cur) -and ((Get-Item -LiteralPath $cur -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            Write-Error "refusing a path through a junction or symlink: $cur"
+        }
+        $cur = Split-Path $cur -Parent
+    }
+}
 if ($dst -eq $src -or $dst.StartsWith("$src\", 'OrdinalIgnoreCase') -or $src.StartsWith("$dst\", 'OrdinalIgnoreCase')) {
     Write-Error "source and destination overlap: $src -> $dst"
 }

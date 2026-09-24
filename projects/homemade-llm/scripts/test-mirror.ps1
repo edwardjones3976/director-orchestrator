@@ -41,6 +41,13 @@ try {
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $src 'inner'))) 1 'refuses a destination inside the source'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $src)) 1 'refuses source equal to destination'
     Assert-Equal (Invoke-Mirror @('-Source', (Join-Path $work 'missing'), '-Dest', $dst)) 1 'refuses a missing source'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', '\\localhost\c$')) 1 'refuses a UNC share root'
+    $elsewhere = Join-Path $work 'elsewhere'; New-Item -ItemType Directory $elsewhere | Out-Null
+    Set-Content (Join-Path $elsewhere 'keep.txt') 'must survive'
+    $link = Join-Path $work 'link'; New-Item -ItemType Junction -Path $link -Target $elsewhere | Out-Null
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $link)) 1 'refuses a junction destination'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $link 'sub'))) 1 'refuses a destination beneath a junction'
+    Assert-Equal (Test-Path (Join-Path $elsewhere 'keep.txt')) $true 'junction target left untouched'
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
