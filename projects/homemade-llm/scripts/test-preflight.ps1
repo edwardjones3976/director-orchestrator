@@ -79,6 +79,13 @@ try {
     $res = Invoke-Preflight $r @('-Report')
     Assert-Equal (Get-Row $r 'layout C:\llm') 'FAIL' 'layout: a file where a directory belongs is FAIL'
 
+    $fileRoot = Join-Path $work 'root-is-a-file'
+    New-Item -ItemType Directory -Force $work | Out-Null
+    Set-Content $fileRoot 'not a directory'
+    $res = Invoke-Preflight $fileRoot
+    Assert-Equal ([bool]($res.out -match 'llm root\s+FAIL')) $true 'hot root: a file in place of the root is FAIL'
+    Assert-Equal $res.exit 1 'hot root: file root exits 1'
+
     # Incomplete scan: deny listing on one subtree of a scratch root, then restore it.
     $r = New-Root -WithReports
     $locked = Join-Path $r 'locked'

@@ -70,8 +70,9 @@ foreach ($letter in $roles.Keys) {
     }
 }
 
-# Hot-tier size against the cap.
-if (Test-Path $HotRoot) {
+# Hot-tier size against the cap. A hot root that exists as a file is FAIL; nothing can be laid out beneath it.
+if (Test-Path $HotRoot -PathType Leaf) { Add-Row 'C:\llm root' 'FAIL' "$HotRoot exists but is not a directory" }
+elseif (Test-Path $HotRoot -PathType Container) {
     $scanErrors = $null
     $bytes = [double](Get-ChildItem $HotRoot -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors | Measure-Object Length -Sum).Sum
     $detail = "$([math]::Round($bytes / 1GB, 2)) GB of $HotCapGB GB cap"
