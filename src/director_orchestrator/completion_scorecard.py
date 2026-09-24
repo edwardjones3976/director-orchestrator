@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
@@ -315,7 +316,9 @@ SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",
 'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task',
 'create_task_parameters',(SELECT n->'parameters' FROM json_array_elements(h.nodes::json) n
    WHERE n->>'name'='Create Director Task' LIMIT 1),
-'connections',h.connections::json)
+'connections',h.connections::json,
+'disabled_nodes',(SELECT coalesce(json_agg(n->>'name'),'[]'::json) FROM json_array_elements(h.nodes::json) n
+   WHERE coalesce((n->>'disabled')::boolean,false)))
 FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
@@ -337,7 +340,10 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
         FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_route_ok,
      (SELECT json_agg(n) FROM workflow_history h, json_array_elements(h.nodes::json) n
         WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
-          AND n->>'name' IN ('Diff Readiness','Post Status')) AS status_nodes
+          AND n->>'name' IN ('Diff Readiness','Post Status')) AS status_nodes,
+     (SELECT coalesce(json_agg(n->>'name'),'[]'::json) FROM workflow_history h, json_array_elements(h.nodes::json) n
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
+          AND coalesce((n->>'disabled')::boolean,false)) AS disabled_nodes
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
@@ -348,16 +354,25 @@ _INTAKE_FORWARDING = ("method", "url", "authentication", "sendHeaders", "specify
                       "sendBody", "contentType", "rawContentType", "body", "options")
 
 
-def _intake_contract(parameters: Any, connections: Any) -> bool:
+def _intake_contract(parameters: Any, connections: Any, disabled: Any = None) -> bool:
     """The active Create Director Task node forwards exactly as n8n/workflows/director-intake.json does:
     Authorization and the three X-Director-Intake-* headers, the signed body, timeout, no redirects, the
     full response, and the same 202 / refusal / ambiguous wiring."""
     path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-intake.json"
     reference = json.loads(path.read_text(encoding="utf-8"))
     node = next(item for item in reference["nodes"] if item["name"] == "Create Director Task")
-    return (isinstance(parameters, dict)
+    # n8n skips a disabled node: no node of the reference workflow may be disabled in the active version.
+    return (isinstance(parameters, dict) and isinstance(disabled, list)
+            and not {item["name"] for item in reference["nodes"]} & set(map(str, disabled))
             and all(parameters.get(key) == node["parameters"].get(key) for key in _INTAKE_FORWARDING)
             and connections == reference["connections"])
+
+
+def _no_disabled_status_nodes(disabled: Any) -> bool:
+    """No node of n8n/workflows/director-status.json (trigger, health read, diff, post) is disabled."""
+    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-status.json"
+    names = {node["name"] for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
+    return isinstance(disabled, list) and not names & set(map(str, disabled))
 
 
 def _status_nodes_match(nodes: Any, channel: str) -> bool:
@@ -395,7 +410,13 @@ def _container_name(value: str) -> str:
     return value
 
 
-_GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET")
+# Every setting slack_bot.py reads that the Director must share (bearer, intake signing secret, Slack bot,
+# owner and channel). test_gateway_identities_cover_every_gateway_secret derives the gateway's secret and
+# identity reads from slack_bot.py and config.py, so a new one cannot be missed silently. SLACK_APP_TOKEN
+# is gateway-only; its app identity is check 02's.
+_GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET",
+                       "SLACK_GATEWAY_SECRET")
+_GATEWAY_ONLY = ("SLACK_APP_TOKEN",)
 
 
 def _gateway_credentials_match(gateway_env: dict[str, str], director_env: dict[str, str]) -> bool:
@@ -522,7 +543,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     if isinstance(workflow, dict):
         # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
         workflow["forwarding_contract"] = _intake_contract(workflow.pop("create_task_parameters", None),
-                                                           workflow.pop("connections", None))
+                                                           workflow.pop("connections", None),
+                                                           workflow.pop("disabled_nodes", None))
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
                                              "supported_webhook": True, "direct_connection": True,
                                              "forwarding_contract": True})
@@ -967,6 +989,13 @@ def _n8n_store(n8n: dict[str, Any] | None, database: dict[str, Any] | None,
             or env.get("DB_POSTGRESDB_USER") != "n8n" or env.get("DB_POSTGRESDB_PORT", "5432") != "5432"
             or not env.get("DB_POSTGRESDB_HOST") or database is None):
         return False
+    # n8n must be able to open that store: the server's user, database and password are n8n's (the
+    # password compared in memory, in constant time, never reported).
+    served = _environment(database)
+    if not (_same(served.get("POSTGRES_USER"), env["DB_POSTGRESDB_USER"])
+            and _same(served.get("POSTGRES_DB", served.get("POSTGRES_USER")), env["DB_POSTGRESDB_DATABASE"])
+            and _same(served.get("POSTGRES_PASSWORD"), env.get("DB_POSTGRESDB_PASSWORD"))):
+        return False
     return _hop(n8n, database, env["DB_POSTGRESDB_HOST"], containers)
 
 
@@ -1037,7 +1066,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
-    if execution.get("active_route_ok") is not True or not _status_nodes_match(execution.get("status_nodes"), t.channel):
+    if (execution.get("active_route_ok") is not True or not _status_nodes_match(execution.get("status_nodes"), t.channel)
+            or not _no_disabled_status_nodes(execution.get("disabled_nodes"))):
         return _observation("04", None, "The active Director Status version is not the Read Health (GET "
                             "orchestrator:8080/health) -> Diff Readiness -> Post Status route with the repository's "
                             "Diff Readiness code and a Post Status of $json.text to the project channel.",
@@ -1082,6 +1112,15 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
         return _observation("04", False, "The message at the execution's posted timestamp is not the bot's STATUS message.",
                             source, facts, at, **binding)
     return _observation("04", None, "The status message readback was incomplete.", source, facts, at, **binding)
+
+
+def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] | None) -> bool:
+    """The one final-reply correlation every drill branch uses: a single terminal delivery row, DELIVERED
+    and read back with its Slack ts, matching the native final message."""
+    terminal = [r for r in (readback or {}).get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+    return (len(terminal) == 1 and terminal[0].get("state") == "DELIVERED" and bool(terminal[0].get("delivered_at"))
+            and bool(terminal[0].get("slack_ts"))
+            and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True)
 
 
 def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) -> tuple[bool | None, dict[str, Any]]:
@@ -1131,7 +1170,7 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
         if status == 409 or len(set(receipts)) > 1 or (tasks or 0) > 1 or (replies or 0) > 1:
             verdict = False
         elif (len(receipts) >= 2 and status == 200 and complete and owner_inputs == 1
-              and set(receipts) == {bound} and tasks == 1 and replies == 1):
+              and set(receipts) == {bound} and tasks == 1 and replies == 1 and _delivered_final(readback, snapshot)):
             verdict = True
     else:
         terminal = [r for r in readback["slack_deliveries"] if r.get("notification_key") == "terminal"] if readback else []
@@ -1140,10 +1179,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
         if ((replies or 0) > 1 or (tasks is not None and tasks > 1)
                 or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
             verdict = False
-        elif (status == 200 and complete and owner_inputs == 1 and tasks == 1 and row.get("state") == "DELIVERED"
-              and row.get("acknowledged_at") is None
-              and row.get("delivered_at") and row.get("slack_ts") and replies == 1
-              and snapshot["row"].get("final_receipt_matches_native_message") is True):
+        elif (status == 200 and complete and owner_inputs == 1 and tasks == 1 and row.get("acknowledged_at") is None
+              and replies == 1 and _delivered_final(readback, snapshot)):
             verdict = True
     facts["verdict"] = verdict
     return verdict, facts
@@ -2390,3 +2427,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]

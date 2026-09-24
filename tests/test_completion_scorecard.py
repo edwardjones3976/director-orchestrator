@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
@@ -71,7 +72,8 @@ PIN = "e" * 64
 BINDINGS_JSON = '{"fixture":1}'
 DIRECTOR_ID, GATEWAY_ID, N8N_ID, N8N_DB_ID = "1" * 64, "2" * 64, "3" * 64, "5" * 64
 APP_TOKEN = "xapp-1-A0FIXTUREAPP-1-fixtureappsecret"
-SECRETS = ("fixture-secret-bot", "fixture-director-secret", "fixtureappsecret", "fixture-n8n-db-secret")
+SECRETS = ("fixture-secret-bot", "fixture-director-secret", "fixtureappsecret", "fixture-n8n-db-secret",
+           "fixture-gateway-signing-secret-0123456789")
 REAL_SLACK_THREADS = sc._SlackThreads
 PAID_TASK, APPROVAL_TASK = "DIR-LG-FA1D", "DIR-LG-AA01"
 STATUS_TS = f"{int(datetime(2026, 9, 12, 9, 59, 1, tzinfo=timezone.utc).timestamp())}.000100"
@@ -89,6 +91,7 @@ def containers():
                                    **compose_labels("orchestrator")},
                         "Env": [f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "SLACK_BOT_TOKEN=fixture-secret-bot",
                                 "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret", f"SLACK_OWNER_USER_ID={OWNER}",
+                                "SLACK_GATEWAY_SECRET=fixture-gateway-signing-secret-0123456789",
                                 f"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256={PIN}",
                                 f"LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON={BINDINGS_JSON}"]},
              "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18082"}]},
@@ -172,7 +175,7 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_route_ok": True,
-                                          "status_nodes": status_nodes(),
+                                          "status_nodes": status_nodes(), "disabled_nodes": [],
                                           "active_version": "v-2", "execution_version": None,
                                           "active_version_at": "2026-09-12T09:00:00.000+00:00",
                                           "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
@@ -293,7 +296,7 @@ def workflow_fixture():
     parameters = next(n for n in INTAKE_WORKFLOW["nodes"] if n["name"] == "Create Director Task")["parameters"]
     return {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
             "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True,
-            "create_task_parameters": json.loads(json.dumps(parameters)),
+            "create_task_parameters": json.loads(json.dumps(parameters)), "disabled_nodes": [],
             "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"]))}
 
 
@@ -514,7 +517,8 @@ def topology():
                "Config": {"Cmd": ["python", "-m", "director_orchestrator.slack_bot"], "Labels": compose_labels("slackbot"),
                           "Env": ["SLACK_APP_TOKEN=" + APP_TOKEN, "SLACK_BOT_TOKEN=fixture-secret-bot",
                                   f"SLACK_DIRECTOR_CHANNEL_ID={CHANNEL_FIXTURE}", "N8N_DIRECTOR_WEBHOOK_URL=http://n8n:5678/webhook/director-intake",
-                                  f"SLACK_OWNER_USER_ID={OWNER}", "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret"]},
+                                  f"SLACK_OWNER_USER_ID={OWNER}", "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret",
+                                  "SLACK_GATEWAY_SECRET=fixture-gateway-signing-secret-0123456789"]},
                "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["slackbot"],
                                                           "DNSNames": ["edge-engine-director-slackbot-1", "slackbot"]}}}}
     n8n = {"Id": N8N_ID, "Name": "/edge-engine-director-n8n-1", "State": {"Running": True},
@@ -527,7 +531,8 @@ def topology():
                               "DB_POSTGRESDB_PASSWORD=fixture-n8n-db-secret"]}}
     n8n_db = {"Id": N8N_DB_ID, "Name": "/edge-engine-director-n8n-db-1", "State": {"Running": True},
               "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["n8n-db"]}}},
-              "Config": {"Labels": compose_labels("n8n-db")}}
+              "Config": {"Labels": compose_labels("n8n-db"),
+                         "Env": ["POSTGRES_USER=n8n", "POSTGRES_DB=n8n", "POSTGRES_PASSWORD=fixture-n8n-db-secret"]}}
     return [api, gateway, n8n, n8n_db]
 
 
@@ -1485,8 +1490,40 @@ class ScorecardCollectorTests(unittest.TestCase):
         unread = workflow_fixture()
         del unread["create_task_parameters"]
         self.assertEqual(row(collect_topology(topology(), workflow=unread), "01")["status"], "FAIL")
+        # n8n skips a disabled node: every required intake node must be enabled.
+        for name in ("Slack Gateway Webhook", "Create Director Task", "Accepted"):
+            disabled = workflow_fixture()
+            disabled["disabled_nodes"] = [name]
+            with self.subTest(name=name):
+                self.assertEqual(row(collect_topology(topology(), workflow=disabled), "01")["status"], "FAIL")
+
+    def test_gateway_identities_cover_every_gateway_secret(self):
+        import re
+        root = Path(__file__).resolve().parents[1]
+        config = (root / "src/director_orchestrator/config.py").read_text(encoding="utf-8")
+        env_of = dict(re.findall(r"^\s+(\w+): str = os\.getenv\(\s*\"(\w+)\"", config, re.M))
+        gateway = (root / "src/director_orchestrator/slack_bot.py").read_text(encoding="utf-8")
+        read = {env_of[name] for name in re.findall(r"\bsettings\.(\w+)", gateway) if name in env_of}
+        sensitive = {name for name in read if re.search(r"SECRET|TOKEN|OWNER|CHANNEL", name)}
+        self.assertTrue({"SLACK_GATEWAY_SECRET", "ORCHESTRATOR_SHARED_SECRET", "SLACK_BOT_TOKEN"} <= sensitive)
+        self.assertEqual(sensitive - set(sc._GATEWAY_ONLY), set(sc._GATEWAY_IDENTITIES))
+        rows = topology()
+        rows[1]["Config"]["Env"] = [e for e in rows[1]["Config"]["Env"] if not e.startswith("SLACK_GATEWAY_SECRET=")] \
+            + ["SLACK_GATEWAY_SECRET=another-signing-secret-0123456789abc"]
+        report = collect_topology(rows)
+        self.assertEqual(row(report, "01")["status"], "FAIL")
+        self.assertNotIn("another-signing-secret", json.dumps(report))
 
     def test_n8n_workflow_database_must_be_n8ns_own_store_01(self):
+        # n8n must be able to authenticate to the queried database.
+        for entry in ("POSTGRES_PASSWORD=rotated-db-secret", "POSTGRES_USER=postgres", "POSTGRES_DB=other"):
+            rows = topology()
+            key = entry.split("=")[0]
+            rows[3]["Config"]["Env"] = [e for e in rows[3]["Config"]["Env"] if not e.startswith(key + "=")] + [entry]
+            with self.subTest(entry=entry):
+                report = collect_topology(rows)
+                self.assertEqual(row(report, "01")["status"], "UNKNOWN")
+                self.assertNotIn("rotated-db-secret", json.dumps(report))
         for change in ("DB_POSTGRESDB_HOST=external-db", "DB_TYPE=sqlite", "DB_POSTGRESDB_DATABASE=other"):
             rows = topology()
             key = change.split("=")[0]
@@ -1707,6 +1744,11 @@ class ScorecardCollectorTests(unittest.TestCase):
             mutate(case.status["execution"]["status_nodes"])
             with self.subTest(mutate=mutate):
                 self.assertEqual(case.state("04"), "UNKNOWN")
+        for name in ("Every 5 minutes", "Read Health", "Diff Readiness", "Post Status"):
+            case = self.world()
+            case.status["execution"]["disabled_nodes"] = [name]
+            with self.subTest(name=name):
+                self.assertEqual(case.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
         other_bot = self.world()
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
@@ -1912,6 +1954,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         duplicated = self.world()
         duplicated.tasks["DIR-LG-A0"]["qualification_evidence"]["task_scope_counters"]["thread_tasks"] = 2
         self.assertEqual(duplicated.state("09"), "FAIL")
+        # The duplicate-input final reply must be the task's DELIVERED terminal row, read back as native.
+        for change in ({"state": "AMBIGUOUS"}, {"slack_ts": None}):
+            case = self.world()
+            delivery = next(r for r in case.tasks["DIR-LG-D0"]["qualification_evidence"]["slack_deliveries"]
+                            if r.get("notification_key") == "terminal")
+            delivery.update(change)
+            with self.subTest(change=change):
+                self.assertNotEqual(case.state("09"), "PASS")
         crowded = self.world()
         crowded.threads[ts(400)].append({"ts": ts(405), "thread_ts": ts(400), "user": OWNER, "text": "another input"})
         self.assertEqual(crowded.state("09"), "UNKNOWN")
@@ -2386,3 +2436,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]

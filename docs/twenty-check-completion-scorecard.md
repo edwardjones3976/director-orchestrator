@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]] -->
@@ -138,12 +139,17 @@ a container ID, never a name.
   host (on every network the source is attached to, no other container may
   answer to that name), that the active intake `Create Director Task` node
   forwards exactly as `n8n/workflows/director-intake.json` (the gateway must
-  hold the Director's bot token, owner, channel and bearer, compared in
-  constant time, since n8n forwards its Authorization unchanged; Authorization and
+  hold the Director's bot token, owner, channel, bearer and intake signing
+  secret `SLACK_GATEWAY_SECRET`, compared in constant time, since n8n forwards
+  its Authorization and signature headers unchanged; a test derives the
+  gateway's secret reads from `slack_bot.py` so a new one cannot be missed;
+  no node of the reference workflow may be disabled; Authorization and
   the three `X-Director-Intake-*` headers, the signed body, timeout, no
   redirects, full response, and the same connections), and that n8n's own `DB_*` settings name the queried
   `n8n-db` (PostgreSQL, database and user `n8n`, port 5432, a host only that
-  container answers to) before its workflows or executions are read; setting
+  container answers to, and the server's `POSTGRES_USER`, `POSTGRES_DB` and
+  `POSTGRES_PASSWORD` equal to n8n's, the password compared in memory in
+  constant time) before its workflows or executions are read; setting
   values are never reported, and likewise that n8n and the selected Director share a network on
   which the Director answers to `orchestrator` (the host n8n's health probe and
   intake request use). On that network no other container may answer to the
@@ -167,7 +173,7 @@ a container ID, never a name.
   `http://orchestrator:8080/health` -> `Diff Readiness` -> one Slack
   `Post Status` route whose `Diff Readiness` code is exactly the repository's
   and whose `Post Status` sends `$json.text` to the project channel through a
-  Slack API credential, which ran its active version (the execution's recorded version
+  Slack API credential, with no node of that workflow disabled, which ran its active version (the execution's recorded version
   where n8n stores one, otherwise a start after both that version's history
   entry and the workflow's last update; UNKNOWN when neither shows it), in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
@@ -230,7 +236,7 @@ posted to exercise one path. A drill that was not exercised stays UNKNOWN.
 | `refusal-4xx` | complete thread, one owner input, a `DIRECTOR — BLOCKED` reply, no receipt, binding 404 | a bound task (200) or ambiguous binding (409), or any receipt | otherwise |
 | `reserved-5xx` | complete thread, one owner input, a `BLOCKED` reply, no receipt, binding 200 and the task's readback shows one task for the thread | binding 409 or more than one thread task | binding 404 (the reservation was not exercised), a receipt (the gateway answered 202, so the 5xx was not exercised), or otherwise |
 | `transport-failure` | complete thread, one owner input, a `BLOCKED` reply, no receipt, and binding 404 or binding 200 with one thread task | binding 409 or more than one thread task | a receipt (the relay answered 202, so the failure was not exercised), or otherwise |
-| `duplicate-input` | one owner input, two or more receipts (distinct replies) naming the bound task, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
+| `duplicate-input` | one owner input, two or more receipts (distinct replies) naming the bound task, the single terminal delivery `DELIVERED` with its Slack ts and matching the native final message, one thread task and one final reply | binding 409, receipts naming several tasks, several thread tasks or final replies | fewer than two receipts |
 | `ambiguous-post` | a complete thread with one owner input, the bound task's single terminal delivery is `DELIVERED` with `acknowledged_at` null, `delivered_at` and `slack_ts` set, one thread task, one final reply matching the native message | the terminal delivery is `AMBIGUOUS` after two readbacks, several thread tasks, or several final replies | `acknowledged_at` is set (the ambiguity was not exercised) |
 
 Check 03 combines `refusal-4xx`, `reserved-5xx` and `transport-failure`; check
@@ -647,3 +653,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]] -->
