@@ -89,19 +89,26 @@ class SmokeTrainTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 smoke_train.resolve_commit(None, "org/m", pin)
 
-    def test_pin_ref_points_main_at_a_cached_snapshot_only(self):
+    def test_pinned_ref_pins_only_cached_snapshots_and_restores_the_shared_ref(self):
         pin = "d" * 40
         with tempfile.TemporaryDirectory() as tmp:
             repo_dir = Path(tmp, "hub", "models--org--src")
+            ref = repo_dir / "refs" / "main"
             with mock.patch.dict(smoke_train.os.environ, {"HF_HOME": tmp}):
                 with self.assertRaises(SystemExit):  # snapshot not cached: refuse rather than pin a missing commit
-                    smoke_train.pin_ref("org/src", pin)
-                self.assertFalse((repo_dir / "refs" / "main").exists())
+                    with smoke_train.pinned_ref("org/src", pin):
+                        pass
+                self.assertFalse(ref.exists())
                 (repo_dir / "snapshots" / pin).mkdir(parents=True)
-                (repo_dir / "refs").mkdir()
-                (repo_dir / "refs" / "main").write_text("e" * 40)  # upstream main had moved on
-                smoke_train.pin_ref("org/src", pin)
-                self.assertEqual((repo_dir / "refs" / "main").read_text(), pin)
+                with smoke_train.pinned_ref("org/src", pin):  # no previous ref: removed again afterwards
+                    self.assertEqual(ref.read_text(), pin)
+                self.assertFalse(ref.exists())
+                ref.write_text("e" * 40)  # another tool's ref in the shared cache
+                with self.assertRaises(RuntimeError):
+                    with smoke_train.pinned_ref("org/src", pin):
+                        self.assertEqual(ref.read_text(), pin)
+                        raise RuntimeError("export failed")
+                self.assertEqual(ref.read_text(), "e" * 40)  # restored even though the export failed
 
     def test_write_report_failure_keeps_previous_report(self):
         with tempfile.TemporaryDirectory() as tmp:

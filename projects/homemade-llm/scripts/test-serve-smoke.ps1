@@ -11,7 +11,7 @@ function Assert-Equal($Actual, $Expected, [string]$Case) {
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
 Assert-Equal $errors.Count 0 'parser: no errors'
-foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly') {
+foreach ($name in 'Test-Reply', 'Test-SameContent', 'Test-LoadedModel', 'Test-LoopbackOnly', 'Test-LmStudioOwner') {
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -47,6 +47,11 @@ Assert-Equal (Test-LoopbackOnly @((& $l '127.0.0.1'), (& $l '::1'))) $true 'bind
 Assert-Equal (Test-LoopbackOnly @((& $l '127.0.0.1'), (& $l '0.0.0.0'))) $false 'bind: any extra non-loopback listener fails'
 Assert-Equal (Test-LoopbackOnly @(& $l '192.168.1.20')) $false 'bind: LAN address fails'
 Assert-Equal (Test-LoopbackOnly @()) $false 'bind: no listener fails'
+$proc = { param($n) [pscustomobject]@{ ProcessName = $n } }
+Assert-Equal (Test-LmStudioOwner @(& $proc 'LM Studio')) $true 'owner: LM Studio listener passes'
+Assert-Equal (Test-LmStudioOwner @((& $proc 'LM Studio'), (& $proc 'ollama'))) $false 'owner: another process also on 1234 fails'
+Assert-Equal (Test-LmStudioOwner @(& $proc 'python')) $false 'owner: a different server fails'
+Assert-Equal (Test-LmStudioOwner @()) $false 'owner: no owning process fails'
 
 # Structural checks on serve-smoke.ps1 itself: the function tests above would still pass if a call site
 # were deleted or moved, so assert the script's top-level call order from its syntax tree.
@@ -63,6 +68,8 @@ $load = First-Offset { $_.Extent.Text -match "^Invoke-Lms @\('load', .*'--ttl', 
 $postLoad = First-Offset { $_.Extent.Text -match '^Test-LoadedModel' }
 $curl = First-Offset { $_.Extent.Text -match '^curl\.exe' }
 Assert-Equal ([bool]($start -and $preBind -and $start -lt $preBind -and $preBind -lt $load)) $true 'order: loopback check runs after server start and before any load'
+$ownerCheck = First-Offset { $_.Extent.Text -match '^Test-LmStudioOwner' }
+Assert-Equal ([bool]($ownerCheck -and $start -lt $ownerCheck -and $ownerCheck -lt $load)) $true 'order: listener ownership is checked after server start and before any load'
 Assert-Equal ([bool]($unload -and $unload -lt $load)) $true 'order: an existing smoke model is unloaded before the reload'
 Assert-Equal ([bool]$load) $true 'order: the model is (re)loaded with --ttl $TtlSeconds'
 Assert-Equal ([bool]($postLoad -and $load -lt $postLoad -and $postLoad -lt $curl)) $true 'order: Test-LoadedModel verifies the load before any request'

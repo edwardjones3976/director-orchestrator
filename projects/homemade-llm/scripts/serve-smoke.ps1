@@ -21,6 +21,13 @@ function Test-LoopbackOnly($Listeners) {
     ($l.Count -gt 0) -and (@($l | Where-Object { $_.LocalAddress -notin '127.0.0.1', '::1' }).Count -eq 0)
 }
 
+# True only when every process listening on the port is LM Studio, and there is at least one: a different
+# OpenAI-compatible server on 1234 would otherwise answer the probes and produce a false PASS.
+function Test-LmStudioOwner($Processes) {
+    $p = @($Processes)
+    ($p.Count -gt 0) -and (@($p | Where-Object { $_.ProcessName -ne 'LM Studio' }).Count -eq 0)
+}
+
 # True only when `lms ps` shows exactly one 'smoke' model, loaded from the expected catalog path with the
 # requested TTL; this is what proves the reload happened and the GPU-release bound is in force.
 function Test-LoadedModel($Loaded, [string]$Path, [int]$TtlSeconds) {
@@ -61,11 +68,18 @@ function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
 }
 
 Invoke-Lms @('server', 'start') | Out-Null
+if ($lmsExit -ne 0) { Write-Error "lms server start failed (exit $lmsExit); is another service using port 1234?" }
+$status = (Invoke-Lms @('server', 'status', '--json')) -join "`n" | ConvertFrom-Json
+if (-not ($status.running -eq $true -and $status.port -eq 1234)) { Write-Error "lms server status is not running on 1234: $($status | ConvertTo-Json -Compress)" }
 # Refuse before anything is loaded if the API is reachable beyond loopback ("serve on local network").
 $preLoad = Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue
 if (-not (Test-LoopbackOnly $preLoad)) {
     Invoke-Lms @('server', 'stop') | Out-Null
     Write-Error "LM Studio is listening beyond loopback on 1234 ($(($preLoad.LocalAddress | Sort-Object -Unique) -join ', ')); server stopped, nothing loaded. Turn off 'serve on local network'."
+}
+$owners = @($preLoad | ForEach-Object { Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue })
+if (-not (Test-LmStudioOwner $owners)) {
+    Write-Error "port 1234 is not served by LM Studio (listener process: $(($owners.ProcessName | Sort-Object -Unique) -join ', ')); nothing loaded"
 }
 $known = ((Invoke-Lms @('ls', '--json')) -join "`n" | ConvertFrom-Json) | Where-Object { $_.path -like "homemade-llm/smoke/$(Split-Path $Gguf -Leaf)" }
 if (-not $known) {

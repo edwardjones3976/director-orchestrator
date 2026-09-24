@@ -15,10 +15,12 @@ import gc
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 # The image sets HF_HOME=/workspace/.cache/huggingface; override it so the cache lands in the mounted C:\llm\hf.
@@ -84,14 +86,25 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
     return commit
 
 
-def pin_ref(repo: str, revision: str) -> None:
-    """Point the cache's refs/main for repo at revision, which must already be a cached snapshot. Offline
-    (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot."""
+@contextmanager
+def pinned_ref(repo: str, revision: str):
+    """While active, the cache's refs/main for repo points at revision, which must already be a cached snapshot;
+    offline (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot. The
+    shared cache's previous ref is restored on exit (or removed if there was none), even on failure."""
     d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--"))
     if not (d / "snapshots" / revision).is_dir():
         raise SystemExit(f"{repo}@{revision} is not in the cache; cannot pin it for the offline export")
-    (d / "refs").mkdir(parents=True, exist_ok=True)
-    (d / "refs" / "main").write_text(revision)
+    ref = d / "refs" / "main"
+    previous = ref.read_text() if ref.exists() else None
+    ref.parent.mkdir(parents=True, exist_ok=True)
+    ref.write_text(revision)
+    try:
+        yield
+    finally:
+        if previous is None:
+            ref.unlink(missing_ok=True)
+        else:
+            ref.write_text(previous)
 
 
 def write_report(path: Path, report: dict) -> None:
@@ -115,6 +128,9 @@ def publish(src: Path, dest: Path) -> None:
 
 def main() -> None:
     t0 = time.time()
+    # docker stop sends SIGTERM to this process (PID 1, which ignores it without a handler): exit via SystemExit
+    # so finally blocks, such as the cache-ref restore, still run.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     set_seed(SEED)  # before model/PEFT construction, so the LoRA initialisation is reproducible too
     torch.cuda.reset_peak_memory_stats()
     model, tok = FastLanguageModel.from_pretrained(BASE, revision=REVISION, max_seq_length=SEQ, load_in_4bit=True)
@@ -177,17 +193,17 @@ def main() -> None:
         report["sample_is_json"] = False
     write_report(REPORT, report)  # training evidence survives a failed export
 
-    # Stage the export's inputs, then free this process's GPU memory: fetch the merge source at its pinned commit,
-    # and point the base's refs/main at its pin, because the offline child reloads the base by name via the adapter.
+    # Stage the export's inputs, then free this process's GPU memory: fetch the merge source at its pinned commit;
+    # the base's refs/main is pinned only for the export, because the offline child reloads the base by name.
     from huggingface_hub import snapshot_download
     snapshot_download(MERGE_SOURCE, revision=MERGE_REVISION)
-    pin_ref(BASE, resolved)
     del trainer, model
     gc.collect()
     torch.cuda.empty_cache()
     t_gguf = time.time()
-    subprocess.run([sys.executable, __file__, "export"], check=True,
-                   env={**os.environ, "SMOKE_RUN": RUN, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
+    with pinned_ref(BASE, resolved):
+        subprocess.run([sys.executable, __file__, "export"], check=True,
+                       env={**os.environ, "SMOKE_RUN": RUN, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
     report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
     report["merge_source"], report["merge_revision"] = MERGE_SOURCE, MERGE_REVISION  # bound: offline, local snapshot
     export_dir = Path("/tmp") / RUN / "gguf"
