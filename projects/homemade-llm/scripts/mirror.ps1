@@ -98,8 +98,16 @@ if ($dst -eq $src -or $dst.StartsWith("$src\", 'OrdinalIgnoreCase') -or $src.Sta
     Write-Error "source and destination overlap: $src -> $dst"
 }
 
+# Robocopy follows junctions by default, so a link *inside* the destination could carry /MIR's deletes
+# elsewhere. Refuse to run if one exists (/XJ below also stops robocopy from following any it meets).
+if (Test-Path -LiteralPath $dst -PathType Container) {
+    $inner = Get-ChildItem -LiteralPath $dst -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue -ErrorVariable walkErrors | Select-Object -First 1
+    if ($inner) { Write-Error "refusing: the destination contains a junction or symlink: $($inner.FullName)" }
+    if ($walkErrors) { Write-Error "refusing: the destination could not be fully scanned for links ($($walkErrors.Count) errors)" }
+}
+
 $logDir = Join-Path $src 'reports'
-$rcArgs = @($src, $dst, '/MIR', '/XD', (Join-Path $src 'secrets'), '/R:2', '/W:5', '/NP', '/NDL', '/FFT')
+$rcArgs = @($src, $dst, '/MIR', '/XJ', '/XD', (Join-Path $src 'secrets'), '/R:2', '/W:5', '/NP', '/NDL', '/FFT')
 if ($List) { $rcArgs += '/L' }
 if (Test-Path $logDir -PathType Container) {
     $rcArgs += "/UNILOG:$(Join-Path $logDir ('mirror-{0}.log' -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')))"

@@ -68,6 +68,15 @@ try {
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $link 'sub'))) 1 'refuses a destination beneath a junction'
     Assert-Equal (Test-Path (Join-Path $elsewhere 'keep.txt')) $true 'junction target left untouched'
 
+    # A junction *inside* the destination: a real (non -List) run on scratch folders must refuse
+    # and leave the junction's target intact.
+    $innerLink = Join-Path $dst 'inner-link'
+    New-Item -ItemType Junction -Path $innerLink -Target $elsewhere | Out-Null
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $dst)) 1 'refuses a destination containing a junction'
+    Assert-Equal (Test-Path (Join-Path $elsewhere 'keep.txt')) $true 'target of an inner junction left untouched'
+    [IO.Directory]::Delete($innerLink)   # removes the link only, never its target
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $dst)) 0 'mirrors again once the inner junction is gone'
+
     # 8.3 alias of the source used as the destination must resolve to the same folder and be refused.
     $short = (cmd /c "for %I in (`"$src`") do @echo %~sI").Trim()
     if ($short -and $short -ne $src) {
