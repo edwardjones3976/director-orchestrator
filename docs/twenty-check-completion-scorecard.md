@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]] -->
@@ -59,7 +60,7 @@ whether any operation is permitted. The report always says
 | 07 | Reconciliation clear | In-image read-only consistency command bound to the running generation |
 | 08 | Authenticated owner approval | Original scoped instruction, delivered prompt and signed decision; the owner's approval command receipt re-read and matched |
 | 09 | Durable final reply | duplicate-input and ambiguous-post drills plus one final result |
-| 10 | Ten offline Slack runs | Ten consecutive actual-owner --trial threads (the only top-level owner posts from the first to the last), independent correctness and measured time, zero operational provider calls from task evidence |
+| 10 | Ten offline Slack runs | Ten consecutive actual-owner --trial threads (the only top-level owner posts from the first to the last), the committed structural rubric (pipeline proof, not answer correctness) and measured time, zero operational provider calls from task evidence |
 | 11 | Every runtime lane used is its real product | Every lane the paid run actually used is attested as its real product (OpenAI/Codex Responses, xAI Grok, Claude) with no substitution (amended by owner decision 2026-09-23; Grok Bot and Antigravity team mode are follow-ups) |
 | 12 | Fresh activation captures | Unexpired verified captures bound to provider_bindings_sha256 |
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
@@ -226,16 +227,11 @@ a container ID, never a name.
   17 and 20 are UNKNOWN, because the in-image evidence belongs to that
   generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
-- 10: correctness is answer-specific: each trial input commits
-  (`answers-sha256:<digest>`) to a `--trial-answers` file
-  (`director-offline-trial-answers/v1`: `answers_id`, `declared_at` before the
-  inputs, and one to five expected substrings per trial thread), graded like
-  20 against the persisted provider result that survived the Director's
-  rendering and never against the question or the fixed wrapper. The
-  structural rubric proves shape only; without answers correctness is UNKNOWN.
-  With the current offline doubles, whose only result is the simulation label
-  (fixed wrapper text), no trial can be graded correct, so 10 cannot PASS
-  until the doubles return task-specific answers.
+- 10: Owner ruling (2026-09-24), option chosen: "Offline = pipeline proof". Check 10 proves the pipeline works end to end offline (delivery, simulation labels, ten consecutive, committed structural rubric); answer correctness is check 20's job (the real paid run). Check 10 therefore does
+  not verify answers: its PASS rests on the committed structural rubric and
+  every binding, freshness, route and consecutiveness predicate, and its run
+  records report `structural_rubric_passed`, never answer correctness. Check 20
+  verifies answers.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
   trial to the last. A trial whose terminal reply Slack reports as edited, or
@@ -725,3 +721,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->

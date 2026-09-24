@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
@@ -411,9 +412,6 @@ class World:
         self.consistency["tasks"][APPROVAL_TASK]["application"] = approval["application"]
         self.candidate_files = {}  # path -> bytes or Exception, overriding the candidate commit's blob
         self.workflow = workflow_fixture()
-        # Check 10's structural and consecutiveness rules are tested with the answer rule held True; the
-        # answer rule itself is tested with real_trial_answers = True.
-        self.real_trial_answers = False
 
     def add(self, entry, thread=True):
         task_id = entry["task"]["task_id"]
@@ -527,10 +525,8 @@ class World:
         response.__exit__ = Mock(return_value=False)
         response.geturl.return_value = HEALTH
         response.read.return_value = json.dumps(self.payload).encode()
-        answer_rule = sc._trial_answer_correct if self.real_trial_answers else (lambda *args: True)
         with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
-                patch.object(sc, "_SlackThreads", side_effect=self.slack), \
-                patch.object(sc, "_trial_answer_correct", side_effect=answer_rule):
+                patch.object(sc, "_SlackThreads", side_effect=self.slack):
             opener.return_value.open.return_value = response
             observations = sc.collect(SHA, now=self.now, **selected)
             self.opened = [call.args[0] for call in opener.return_value.open.call_args_list]
@@ -2203,32 +2199,6 @@ class ScorecardCollectorTests(unittest.TestCase):
         final["edited"] = {"user": BOT, "ts": ts(490)}
         self.assertEqual(edited_final.state("09"), "UNKNOWN")
 
-    def test_trial_correctness_is_answer_specific_10(self):
-        # Without predeclared answers the structural rubric proves shape only: correctness unknown.
-        world = self.world()
-        world.real_trial_answers = True
-        report = world.report()
-        self.assertEqual(row(report, "10")["status"], "UNKNOWN")
-        self.assertIn("correctness", row(report, "10")["explanation"])
-        # Offline doubles answer only with the simulation label, which is fixed wrapper text: never correct.
-        answers = {"schema": "director-offline-trial-answers/v1", "answers_id": "fixture-answers",
-                   "declared_at": "2020-01-01T00:00:00+00:00",
-                   "trials": {thread: ["SIMULATION"] for thread in world.trials}}
-        raw = json.dumps(answers).encode()
-        path = world.root / "answers.json"
-        path.write_bytes(raw)
-        for thread in world.trials:
-            task = next(task for task in world.tasks.values() if task["intake"]["thread_ts"] == thread)
-            task["intake"]["text"] += " answers-sha256:" + hashlib.sha256(raw).hexdigest()
-            world.threads[thread][0]["text"] = f"<@{BOT}> " + task["intake"]["text"]  # the owner post says the same
-        self.assertEqual(world.state("10", trial_answers_path=path), "FAIL")
-        # An input that does not commit to the answers file is not graded as correct.
-        uncommitted = self.world()
-        uncommitted.real_trial_answers = True
-        path2 = uncommitted.root / "answers.json"
-        path2.write_bytes(raw)
-        self.assertEqual(uncommitted.state("10", trial_answers_path=path2), "FAIL")
-
     def test_receipts_are_reply_headers_only(self):
         # A receipt quoted inside a provider result is not the native receipt.
         thread, bot = "1789210000.100000", BOT
@@ -2285,6 +2255,23 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertIsNone(sc._ambiguous_effects(row_of(None), {"effects": [{"execution_started_at": "x"}]}, {}))
         self.assertEqual(sc._ambiguous_effects(row_of("AMBIGUOUS_DELIVERY_EFFECT"), readback, {}), 1)
         self.assertIsNone(sc._ambiguous_effects(row_of(None), None, {}))
+
+    def test_offline_trials_are_pipeline_proof_10(self):
+        # Owner ruling 2026-09-24: the committed structural rubric plus valid evidence passes 10; answers are 20's.
+        report = self.world().report()
+        self.assertEqual(row(report, "10")["status"], "PASS")
+        records = row(report, "10")["evidence"][0]["facts"]["records"]
+        self.assertTrue(all("structural_rubric_passed" in r and "correctness_verified" not in r for r in records))
+        self.assertIn("pipeline proof", sc.CHECKS[9].action)
+        # A trial input that does not commit to the structural rubric fails it.
+        uncommitted = self.world()
+        thread = uncommitted.trials[2]
+        task = next(t for t in uncommitted.tasks.values() if t["intake"]["thread_ts"] == thread)
+        task["intake"]["text"] = "audit trial without a rubric marker"
+        uncommitted.threads[thread][0]["text"] = f"<@{BOT}> " + task["intake"]["text"]
+        self.assertNotEqual(uncommitted.state("10"), "PASS")
+        # Without the rubric, 10 is not graded.
+        self.assertEqual(self.world().state("10", rubric_path=None), "UNKNOWN")
 
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
@@ -2794,3 +2781,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]

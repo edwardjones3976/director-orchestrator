@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
@@ -114,7 +115,9 @@ CHECKS = (
     Check("07", "Primary reconciliation is clear", "runtime", "Run the in-image read-only consistency command; it must report zero unresolved, ambiguous or conflicting records for the running generation."),
     Check("08", "Owner approval is authenticated and scoped", "runtime", "Verify a real signed owner decision against its delivered prompt and approved work packet."),
     Check("09", "Final reply is durable and unambiguous", "runtime", "Read back exactly one terminal reply; prove duplicate input and ambiguous-post recovery."),
-    Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with independent correctness, time and zero-call evidence."),
+    # Owner ruling 2026-09-24 ("Offline = pipeline proof"): 10 proves the offline pipeline end to end; it does
+    # not verify answers, which is check 20's job.
+    Check("10", "Ten actual offline Slack runs qualify", "runtime", "Run ten consecutive actual-owner Slack trials with a committed structural rubric (pipeline proof, not answer correctness), time and zero-call evidence."),
     Check("11", "Every runtime lane used is its real product", "runtime", "Attest every lane the paid run used as its real product (OpenAI/Codex Responses, xAI Grok, Claude) from verified validation-store captures; no substitution (owner decision 2026-09-23)."),
     Check("12", "Native activation evidence is fresh", "runtime", "Verify current native captures, binding digests, identities and expiry through the activation verifier."),
     Check("13", "Rolling twenty admissions recompute reported resource bounds", "coordination", "Use the authoritative append-only assignment ledger, including failed and ambiguous attempts. The ledger does not authenticate operator-reported usage or attestations; it only recomputes reported bound violations from journal rows."),
@@ -1595,9 +1598,12 @@ _RECORD_ORDER = ("run_id", "mode", "actual_owner_event", "correctness_verified",
 
 def _run_records_observation(check: str, mode: str, at: datetime, runtime: _Runtime,
                              records: list[dict[str, Any]], source: str) -> Observation:
-    facts = {"records": [{key: record[key] for key in ("run_id", "mode", "correctness_verified", "terminal_reply_count",
-                                                       "wall_seconds", "operational_provider_attempts", "actual_cost_usd",
-                                                       "runtime_sha", "image_id")} for record in records]}
+    # For offline runs the correctness field holds the structural (pipeline) rubric, never answer correctness.
+    shown = {"correctness_verified": "structural_rubric_passed"} if mode == "offline" else {}
+    facts = {"records": [{shown.get(key, key): record[key] for key in ("run_id", "mode", "correctness_verified",
+                                                                       "terminal_reply_count", "wall_seconds",
+                                                                       "operational_provider_attempts", "actual_cost_usd",
+                                                                       "runtime_sha", "image_id")} for record in records]}
     # Freshness first: a run the running containers cannot have handled grades nothing, positive or negative.
     stale = [record["run_id"] for record in records if record["runtime_sha"] is None or record["image_id"] is None]
     if stale:
@@ -1610,19 +1616,18 @@ def _run_records_observation(check: str, mode: str, at: datetime, runtime: _Runt
     order = _RECORD_ORDER + (("simulation_label",) if mode == "offline" else ())
     missing = next(((record["run_id"], key) for record in records for key in order if record[key] is None), None)
     if missing:
-        return _observation(check, None, f"Run {missing[0]} lacks measured {missing[1]}; unknown is not zero or compliant.",
+        return _observation(check, None, f"Run {missing[0]} lacks measured {shown.get(missing[1], missing[1])}; unknown is not zero or compliant.",
                             source, facts, at, **runtime.binding)
     passed, reason = evaluate_run_records(records, mode=mode, runtime_sha=runtime.runtime_sha, image_id=runtime.image_id)
     return _observation(check, passed, reason, source, facts, at, **runtime.binding)
 
 
 def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials: list[str] | None,
-                       rubric_path: Path | None, answers_path: Path | None = None) -> Observation:
+                       rubric_path: Path | None) -> Observation:
     if not trials or len(set(trials)) != 10 or len(trials) != 10 or rubric_path is None:
         return _observation("10", None, "Ten distinct --trial threads and their --rubric are required.",
                             _SLACK_SOURCE, {}, at, **runtime.binding)
     rubric, digest = t.m.load_rubric(Path(rubric_path))
-    answers, answers_digest = _load_trial_answers(Path(answers_path)) if answers_path is not None else (None, None)
     records = []
     for thread in trials:
         replies = t.replies(thread)
@@ -1631,11 +1636,8 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
         row = snapshot["row"]
         markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
         row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
-        # The structural rubric proves shape only; correctness also needs the trial's own predeclared answer.
-        structural = t.m.evaluate_rubric(row, rubric, digest)["passed"]
-        correct = (False if not structural else
-                   _trial_answer_correct(t, snapshot, thread, answers, answers_digest, runtime.runtime_sha))
-        records.append(_run_record(runtime, snapshot, correct, t.m.LABEL))
+        # Owner ruling 2026-09-24: the committed structural rubric proves the pipeline, not the answer.
+        records.append(_run_record(runtime, snapshot, t.m.evaluate_rubric(row, rubric, digest)["passed"], t.m.LABEL))
     observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
     if observed.passed is not True:
         return observed
@@ -1718,7 +1720,7 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool | None:
 
 
 def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
-    """Answer-specific correctness (checks 10 and 20): each expected substring is in the persisted provider
+    """Answer-specific correctness (check 20): each expected substring is in the persisted provider
     results and in the delivered final reply, which must be the Director's own rendering of them (truncation
     included), and none is in the owner's question or the Director's fixed terminal wrapper."""
     finals = facts["row"].get("terminal_messages") or []
@@ -1738,44 +1740,6 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
     if any(item in question or item in wrapper for item in expected):
         return False
     return bool(answer) and all(item in answer and item in visible for item in expected)
-
-
-def _load_trial_answers(path: Path) -> tuple[dict[str, Any], str]:
-    """The predeclared, digest-committed per-trial answer criteria for check 10."""
-    with Path(path).open("rb") as stream:
-        raw = stream.read(MAX_BYTES + 1)
-    if len(raw) > MAX_BYTES:
-        raise ValueError("trial answers exceed their bound")
-    value = json.loads(raw)
-    trials = value.get("trials") if isinstance(value, dict) else None
-    if (not isinstance(value, dict) or set(value) != {"schema", "answers_id", "declared_at", "trials"}
-            or value["schema"] != "director-offline-trial-answers/v1"
-            or not isinstance(value["answers_id"], str) or not re.fullmatch(r"[a-z0-9-]{1,80}", value["answers_id"])
-            or not isinstance(trials, dict) or not 1 <= len(trials) <= 10
-            or any(not isinstance(key, str) or not _TS.fullmatch(key) or not isinstance(items, list)
-                   or not 1 <= len(items) <= 5 or any(not isinstance(item, str) or not item or len(item) > 200
-                                                       for item in items) for key, items in trials.items())):
-        raise ValueError("unsupported trial answers")
-    _when(value["declared_at"])
-    return value, hashlib.sha256(raw).hexdigest()
-
-
-def _trial_answer_correct(t: _SlackThreads, snapshot: dict[str, Any], thread: str, answers: dict[str, Any] | None,
-                          digest: str | None, sha: str) -> bool | None:
-    """Check 10's answer-specific correctness for one trial: the owner input commits to the answers file by
-    answers-sha256, the file was declared before the input, and the trial's own criterion is verified like
-    check 20's. Without an answers file correctness is unknown: the structural rubric proves shape only."""
-    if answers is None or digest is None:
-        return None
-    row = snapshot["row"]
-    markers = re.findall(r"\banswers-sha256:([a-f0-9]{64})\b",
-                         str((snapshot["task"].get("intake") or {}).get("text", "")))
-    expected = answers["trials"].get(thread)
-    if (row.get("task_record_bound") is not True or len(markers) != 1 or not _same(markers[0], digest)
-            or not row.get("input_message_ts") or expected is None
-            or _when(answers["declared_at"]).timestamp() > float(row["input_message_ts"])):
-        return False
-    return _answer_verified(_with_rendering(t, snapshot, sha), expected)
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -1886,7 +1850,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
-                             paid_rubric_path: Path | None, trial_answers_path: Path | None = None) -> list[Observation]:
+                             paid_rubric_path: Path | None) -> list[Observation]:
     try:
         runtime_rows, runtime = _runtime(at, project)
     except _SOURCE_ERRORS:
@@ -1943,7 +1907,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             except _SOURCE_ERRORS:
                 unknown(("03", "09"), "Drill threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
-                put([_trial_observation(at, runtime, t, trials, rubric_path, trial_answers_path)])
+                put([_trial_observation(at, runtime, t, trials, rubric_path)])
             except _SOURCE_ERRORS:
                 unknown(("10",), "The offline trial threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
@@ -2374,8 +2338,7 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
             drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
             trials: list[str] | None = None, rubric_path: Path | None = None, paid_thread: str | None = None,
-            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None,
-            trial_answers_path: Path | None = None) -> list[Observation]:
+            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None) -> list[Observation]:
     """One bounded collection of the explicitly selected deployment and sources.
 
     Without ``deployment`` no container, port or Director endpoint is probed;
@@ -2405,8 +2368,6 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         raise ValueError("--ci-replica-receipt requires --github")
     if rubric_path is not None and trial_list is None:
         raise ValueError("--rubric requires --trial")
-    if trial_answers_path is not None and trial_list is None:
-        raise ValueError("--trial-answers requires --trial")
     if paid_rubric_path is not None and paid_thread is None:
         raise ValueError("--paid-rubric requires --paid-thread")
     at = now or datetime.now(timezone.utc)
@@ -2418,7 +2379,7 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         result.extend(_deployment_observations(
             at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path, trial_answers_path=trial_answers_path))
+            paid_rubric_path=paid_rubric_path))
     if github:
         try:
             result.append(_ci_observation(candidate_sha, at, ci_replica_receipt))
@@ -2717,3 +2678,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]

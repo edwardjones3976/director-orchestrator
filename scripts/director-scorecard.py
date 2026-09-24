@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:57 UTC | BEGIN]]
@@ -33,15 +34,13 @@ def main() -> int:
     parser.add_argument("--approval-task", help="DIR-LG task that resumed after approval across a restart (checks 06/08)")
     parser.add_argument("--trial", action="append", default=[], metavar="THREAD_TS", help="Offline trial thread for check 10; repeat for ten consecutive owner posts")
     parser.add_argument("--rubric", type=Path, help="Structural rubric the ten --trial inputs committed to")
-    parser.add_argument("--trial-answers", type=Path,
-                        help="Predeclared per-trial answer criteria the ten --trial inputs committed to (check 10)")
     parser.add_argument("--paid-thread", metavar="THREAD_TS", help="The real paid Slack run for checks 11, 15 and 20")
     parser.add_argument("--paid-rubric", type=Path, help="Paid answer rubric the --paid-thread input committed to")
     parser.add_argument("--ci-replica-receipt", type=Path, help="Owner-signed local-replica receipt for check 16; requires --github")
     args = parser.parse_args()
     try:
         selected = (args.deployment, args.channel, args.github, args.ledger, args.security_scan, args.drill_thread,
-                    args.approval_task, args.trial, args.rubric, args.trial_answers, args.paid_thread, args.paid_rubric,
+                    args.approval_task, args.trial, args.rubric, args.paid_thread, args.paid_rubric,
                     args.ci_replica_receipt, args.gateway)
         if any(selected) and not args.live:
             parser.error(_LIVE_ONLY)
@@ -57,8 +56,7 @@ def main() -> int:
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
                                drill_threads=drills, approval_task=args.approval_task, trials=args.trial or None,
                                rubric_path=args.rubric, paid_thread=args.paid_thread, paid_rubric_path=args.paid_rubric,
-                               ci_replica_receipt=args.ci_replica_receipt,
-                               trial_answers_path=args.trial_answers) if args.live else []
+                               ci_replica_receipt=args.ci_replica_receipt) if args.live else []
         runtime = next((item for item in observations if item.runtime_sha and item.image_id), None)
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
                        runtime_sha=runtime.runtime_sha if runtime else None, image_id=runtime.image_id if runtime else None)
@@ -82,3 +80,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
