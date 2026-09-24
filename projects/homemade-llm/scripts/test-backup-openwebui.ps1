@@ -48,6 +48,14 @@ try {
     Assert-Equal (In-Volume 'cat /d/sentinel.txt') 'v3' 'restore: corrupt archive leaves data intact'
     Remove-Item $bad
 
+    # An archive carrying restore bookkeeping (a journal saying 'done') is refused before the volume changes.
+    $trap = Join-Path $out 'open-webui-20000101-000001.tgz'
+    docker run --rm --entrypoint sh -v "${out}:/b" $Image -c 'mkdir /s && echo evil > /s/sentinel.txt && printf done > /s/.restore-state && tar czf /b/open-webui-20000101-000001.tgz -C /s .' | Out-Null
+    Assert-Equal (Invoke-Backup ($common + @('-Restore', $trap))) 1 'restore: archive with bookkeeping refused'
+    Assert-Equal (In-Volume 'cat /d/sentinel.txt') 'v3' 'restore: bookkeeping archive leaves data intact'
+    Assert-Equal (In-Volume 'test -e /d/.restore-state && echo yes || echo no') 'no' 'restore: bookkeeping archive leaves no journal behind'
+    Remove-Item $trap
+
     # Name not in the script's own format: refused before docker runs.
     $evil = Join-Path $out 'x;touch pwned.tgz'; Copy-Item $good $evil
     Assert-Equal ((Invoke-Backup ($common + @('-Restore', $evil))) -ne 0) $true 'restore: unexpected archive name refused'

@@ -59,6 +59,10 @@ fi
 rm -f /d/.restore-state /d/.restore-state.tmp
 mkdir /x
 tar xzf "/b/$ARCHIVE" -C /x
+# An archive carrying its own bookkeeping could overwrite the live journal mid-copy: refuse it untouched.
+if find /x -mindepth 1 -maxdepth 1 \( -name .pre-restore -o -name '.restore-state*' \) | grep -q .; then
+    echo "archive contains restore bookkeeping (.pre-restore or .restore-state*); refused, volume unchanged" >&2; exit 5
+fi
 journal moving
 mkdir /d/.pre-restore
 find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore ! -name '.restore-state*' -exec mv -t /d/.pre-restore {} +
