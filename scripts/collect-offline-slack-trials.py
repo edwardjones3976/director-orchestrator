@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
@@ -221,19 +222,35 @@ def unedited(message):
     return "edited" not in message and not message.get("subtype")
 
 
+BEGIN_TAG = re.compile(r"\*?\[\[[^\]\n]*\|\s*BEGIN\]\]\*?")
+RECEIPT_HEADER = re.compile(r"\*?(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\*?")
+
+
+def reply_header(text):
+    """A bot reply's leading line, after the contribution BEGIN tag the gateway wraps replies in.
+
+    A receipt or BLOCKED notice is the reply's header; the same words quoted in a body (for example
+    inside an untrusted provider result) are not one. The scorecard's drill parser uses this too.
+    """
+    lines = [line.strip() for line in html.unescape(str(text)).strip().splitlines() if line.strip()]
+    if lines and BEGIN_TAG.fullmatch(lines[0]):
+        lines = lines[1:]
+    return lines[0] if lines else ""
+
+
 def task_from_accepted(thread, messages, complete, bot):
     if not complete:
         raise ValueError("Task lookup requires complete thread readback")
     # slack_bot.py:658 sends the current "REQUEST RECEIVED" wording; "ACCEPTED" is
     # the retained legacy wording. Either binds a task ID the same way, and any
     # duplicate or mixed-wording match within the thread stays ambiguous.
-    pattern = re.compile(r"(?<![A-Z0-9-])(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\b")
     replies = [message for message in messages if message.get("user") == bot and message.get("thread_ts") == thread]
     # The bot never edits its replies; an edited one may have gained or lost a receipt.
     if not all(unedited(message) for message in replies):
         raise ValueError("Edited or subtyped bot reply in the thread")
+    # Only a reply whose leading header is the receipt counts; receipt text anywhere else does not.
     matches = [match.group(1) for message in replies
-        for match in pattern.finditer(html.unescape(str(message.get("text", ""))))]
+        if (match := RECEIPT_HEADER.fullmatch(reply_header(message.get("text", ""))))]
     if len(matches) != 1:
         raise ValueError("Exactly one native task receipt required")
     return matches[0]
@@ -1298,3 +1315,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
@@ -498,6 +499,53 @@ def _hop(source: dict[str, Any] | None, target: dict[str, Any] | None, host: str
                    for row in containers for other in _networks(row))
 
 
+def _relay_route_ok(relay: Any, n8n: dict[str, Any] | None) -> bool:
+    """The gateway's relay URL is n8n's intake webhook: plain http to n8n (or its container name) on 5678."""
+    n8n_name = (n8n or {}).get("Name", "").lstrip("/")
+    return (relay.scheme == "http" and relay.hostname in {"n8n", *([n8n_name] if n8n_name else [])}
+            and relay.port == 5678 and relay.path == "/webhook/director-intake"
+            and not relay.username and not relay.password and not relay.query and not relay.fragment)
+
+
+def _intake_route_verified(runtime: _Runtime, gateway: str) -> bool | None:
+    """Check 01's route predicates, re-evaluated now for the Slack-derived checks (03, 08, 09, 10, 20).
+
+    The selected gateway's relay URL, its credentials, the gateway-to-n8n and n8n-to-Director hops, n8n's
+    own execution store, and the active intake workflow version equal to the candidate's workflow file.
+    Historical Slack evidence says nothing about an intake route that no longer holds.
+    """
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        raise ValueError("running container inventory unavailable or exceeds 128")
+    containers = _run_json(["docker", "inspect", *ids])
+
+    def service(name: str) -> list[dict[str, Any]]:
+        return [row for row in containers if _labels(row).get("com.docker.compose.project") == runtime.project
+                and _labels(row).get("com.docker.compose.service") == name]
+
+    gate = next((row for row in containers if row.get("Name", "").lstrip("/") == gateway), None)
+    n8n, databases = service("n8n"), service("n8n-db")
+    director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
+    if gate is None or director is None or len(n8n) != 1 or len(databases) != 1:
+        return None
+    env = _environment(gate)
+    relay = urlsplit(env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
+    if not _relay_route_ok(relay, n8n[0]) or not _gateway_credentials_match(env, runtime.env):
+        return False
+    hops = (_hop(gate, n8n[0], relay.hostname, containers), _hop(n8n[0], director, "orchestrator", containers),
+            _n8n_store(n8n[0], databases[0], containers))
+    if not all(hop is True for hop in hops):
+        return False if False in hops else None
+    workflow = _run_json(["docker", "exec", databases[0]["Id"], "psql", "-U", "n8n", "-d", "n8n",
+                          "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
+    if (not isinstance(workflow, dict) or workflow.get("active") is not True or not workflow.get("active_version")
+            or workflow.get("active_version") != workflow.get("stored_version")):
+        return False
+    return _workflow_matches(runtime.runtime_sha, "director-intake.json", workflow.get("nodes"),
+                             workflow.get("connections"), settings=workflow.get("settings"),
+                             pin_data=workflow.get("pin_data"))
+
+
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
                            channel: str | None) -> list[Observation]:
     """Inspect every running container; the gateway is the caller's exact name, never a guess."""
@@ -552,10 +600,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
             workflow = None
     channel_ok = channel is not None and gateway_env.get("SLACK_DIRECTOR_CHANNEL_ID") == channel
     relay = urlsplit(gateway_env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
-    n8n_name = (n8n or {}).get("Name", "").lstrip("/")
-    route_ok = (relay.scheme == "http" and relay.hostname in {"n8n", *([n8n_name] if n8n_name else [])}
-                and relay.port == 5678 and relay.path == "/webhook/director-intake"
-                and not relay.username and not relay.password and not relay.query and not relay.fragment)
+    route_ok = _relay_route_ok(relay, n8n)
     facts = {**gateway_identity, "director_port_loopback": _loopback(director, 8080),
              "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
              "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
@@ -745,18 +790,6 @@ class _SlackThreads:
 # The offline collector's native receipt wording (REQUEST RECEIVED, legacy ACCEPTED).
 _RECEIPT = re.compile(r"\*?(DIR-LG-[A-F0-9]+)\s+—\s+(?:ACCEPTED|REQUEST RECEIVED)\*?")
 _BLOCKED = "*DIRECTOR — BLOCKED*"
-_BEGIN_TAG = re.compile(r"\*?\[\[[^\]\n]*\|\s*BEGIN\]\]\*?")
-
-
-def _header(text: str) -> str:
-    """A bot reply's leading line, after the contribution BEGIN tag the gateway wraps replies in.
-
-    A receipt or BLOCKED notice is the reply's header; the same words quoted in a body are not one.
-    """
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    if lines and _BEGIN_TAG.fullmatch(lines[0]):
-        lines = lines[1:]
-    return lines[0] if lines else ""
 
 
 def _thread_counts(t: _SlackThreads, thread: str,
@@ -772,8 +805,8 @@ def _thread_counts(t: _SlackThreads, thread: str,
     altered = sum(1 for m in replies + posts if not t.m.unedited(m))
     bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
     # At most one receipt per reply, and only as its header: a quoted or repeated receipt is not another.
-    receipts = [match.group(1) for text in bot if (match := _RECEIPT.fullmatch(_header(text)))]
-    blocked = sum(1 for text in bot if _header(text) == _BLOCKED)
+    receipts = [match.group(1) for text in bot if (match := _RECEIPT.fullmatch(t.m.reply_header(text)))]
+    blocked = sum(1 for text in bot if t.m.reply_header(text) == _BLOCKED)
     return owner_inputs, receipts, blocked, altered
 
 
@@ -1195,6 +1228,22 @@ def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] |
             and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True)
 
 
+def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
+    """Every Slack and readback moment a task verdict rests on: task creation and update, each delivery's
+    creation, claim, acknowledgement, delivery and owner decision, each provider attempt, the owner input
+    and the terminal replies. All of them must fall inside the freshness bound."""
+    readback = (snapshot or {}).get("readback") or {}
+    row = (snapshot or {}).get("row") or {}
+    moments = [_when(readback[key]) for key in ("task_created_at", "task_updated_at") if readback.get(key)]
+    for delivery in readback.get("slack_deliveries") or []:
+        moments += [_when(delivery[key]) for key in ("created_at", "claimed_at", "acknowledged_at", "delivered_at",
+                                                     "owner_decision_at") if delivery.get(key)]
+    moments += [_when(event["recorded_at"]) for event in readback.get("provider_attempts") or []]
+    stamps = [row.get("input_message_ts"), *(m.get("ts") for m in row.get("terminal_messages") or [])]
+    moments += [datetime.fromtimestamp(float(Decimal(str(ts))), timezone.utc) for ts in stamps if ts]
+    return moments
+
+
 def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
                    until: datetime | None = None) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
@@ -1214,7 +1263,7 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
     # No producer records the executing image: a drill posted, or a task created,
     # before the running container was created cannot attest it.
     current = _is_current(since, until, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
-                          *([_when(readback["task_created_at"])] if readback else []))
+                          *_moments(snapshot))
     facts["after_container_created"] = current
     verdict: bool | None = None
     if not current:
@@ -1382,8 +1431,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         return [_observation(key, None, reason, _SLACK_SOURCE, {}, at, **binding) for key in ("06", "08")]
     # Only a container set that already existed when the approval task was created can have handled it:
     # a predecessor's approval evidence grades nothing here, positive or negative.
-    if not _is_current(runtime.created_at, runtime.collected_at, _when(readback["task_created_at"]),
-                       _when(readback["task_updated_at"])):
+    if not _is_current(runtime.created_at, runtime.collected_at, *_moments(snapshot)):
         reason = ("The approval task was created before the running Director container, gateway or n8n, so it "
                   "cannot attest this runtime.")
         return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
@@ -1491,6 +1539,20 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     return [obs06, _observation("08", passed08, explanation08, _SLACK_SOURCE, facts08, at, **binding)]
 
 
+def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, latest: Any) -> int | None:
+    """1 for an ambiguous delivery effect; 0 only when every latest provider attempt is terminal (SUCCEEDED or
+    FAILED) and every started external effect has a terminal disposition; otherwise unknown (None)."""
+    if readback is None:
+        return None
+    if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
+        return 1
+    attempts = (latest or {}).values() if isinstance(latest, dict) else []
+    settled = (all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
+               and all(effect.get("terminal_disposition") or not effect.get("execution_started_at")
+                       for effect in readback.get("effects") or []))
+    return 0 if settled else None
+
+
 def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, label: str) -> dict[str, Any]:
     """A RUN_RECORD_FIELDS row built only from task-level evidence, never the mode switch."""
     row, readback = snapshot["row"], snapshot["readback"]
@@ -1507,8 +1569,7 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
         delivery_ambiguous = True if "AMBIGUOUS" in states else None
     # Only a container that already existed when the task was created can be
     # the image that executed it; no producer records the executing image.
-    bound = readback is not None and _is_current(runtime.created_at, runtime.collected_at,
-                                                 _when(readback["task_created_at"]), _when(readback["task_updated_at"]))
+    bound = readback is not None and _is_current(runtime.created_at, runtime.collected_at, *_moments(snapshot))
     return {"run_id": row.get("task_id"),
             "mode": "offline" if offline else ("paid" if counters is not None and counters["attempt_ordinals"] >= 1 else None),
             "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
@@ -1518,8 +1579,8 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
             "terminal_reply_count": row.get("terminal_reply_count"),
             "wall_seconds": row.get("wall_seconds"), "owner_pause_seconds": row.get("owner_pause_seconds"),
             "machine_seconds": row.get("machine_seconds"),
-            "ambiguous_effects": (1 if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT" else 0)
-            if readback else None,
+            # Zero only once every attempt and every started effect is terminal; anything unsettled is unknown.
+            "ambiguous_effects": _ambiguous_effects(row, readback, snapshot.get("latest")),
             "delivery_ambiguous": delivery_ambiguous,
             "operational_provider_attempts": counters["attempt_ordinals"] if counters else None,
             "actual_cost_usd": 0 if offline else None, "cost_basis": "simulation_zero_calls" if offline else None,
@@ -1556,11 +1617,12 @@ def _run_records_observation(check: str, mode: str, at: datetime, runtime: _Runt
 
 
 def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials: list[str] | None,
-                       rubric_path: Path | None) -> Observation:
+                       rubric_path: Path | None, answers_path: Path | None = None) -> Observation:
     if not trials or len(set(trials)) != 10 or len(trials) != 10 or rubric_path is None:
         return _observation("10", None, "Ten distinct --trial threads and their --rubric are required.",
                             _SLACK_SOURCE, {}, at, **runtime.binding)
     rubric, digest = t.m.load_rubric(Path(rubric_path))
+    answers, answers_digest = _load_trial_answers(Path(answers_path)) if answers_path is not None else (None, None)
     records = []
     for thread in trials:
         replies = t.replies(thread)
@@ -1569,7 +1631,11 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
         row = snapshot["row"]
         markers = re.findall(r"\brubric-sha256:([a-f0-9]{64})\b", str((snapshot["task"].get("intake") or {}).get("text", "")))
         row["input_rubric_sha256"] = markers[0] if row["task_record_bound"] and len(markers) == 1 else None
-        records.append(_run_record(runtime, snapshot, t.m.evaluate_rubric(row, rubric, digest)["passed"], t.m.LABEL))
+        # The structural rubric proves shape only; correctness also needs the trial's own predeclared answer.
+        structural = t.m.evaluate_rubric(row, rubric, digest)["passed"]
+        correct = (False if not structural else
+                   _trial_answer_correct(t, snapshot, thread, answers, answers_digest, runtime.runtime_sha))
+        records.append(_run_record(runtime, snapshot, correct, t.m.LABEL))
     observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
     if observed.passed is not True:
         return observed
@@ -1595,9 +1661,12 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
 def _paid_facts(t: _SlackThreads, thread: str, sha: str) -> dict[str, Any]:
     replies = t.replies(thread)
     task_id = t.m.task_from_accepted(thread, replies[0], replies[1], t.bot)
-    facts = _task_facts(t, thread, task_id, replies)
+    return _with_rendering(t, _task_facts(t, thread, task_id, replies), sha)
+
+
+def _with_rendering(t: _SlackThreads, facts: dict[str, Any], sha: str) -> dict[str, Any]:
     finals = {m.get("ts") for m in facts["row"].get("terminal_messages") or []}
-    facts["finals_unedited"] = all(t.m.unedited(m) for m in replies[0] if m.get("ts") in finals)
+    facts["finals_unedited"] = all(t.m.unedited(m) for m in facts["messages"] if m.get("ts") in finals)
     # The Director's own terminal rendering of this task (truncation included) and its fixed wrapper (the same
     # rendering with every provider result removed): only answer text that survived into it is gradable.
     readback = facts.get("readback") or {}
@@ -1645,25 +1714,68 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool | None:
             and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
             and row.get("task_status") == "DONE" and len(finals) == 1):
         return False
-    final = [m for m in paid["messages"] if m.get("ts") == finals[0]["ts"]]
+    return _answer_verified(paid, rubric["expected_answer_substrings"])
+
+
+def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
+    """Answer-specific correctness (checks 10 and 20): each expected substring is in the persisted provider
+    results and in the delivered final reply, which must be the Director's own rendering of them (truncation
+    included), and none is in the owner's question or the Director's fixed terminal wrapper."""
+    finals = facts["row"].get("terminal_messages") or []
+    final = [m for m in facts["messages"] if len(finals) == 1 and m.get("ts") == finals[0]["ts"]]
     # Slack keeps an edited message's ts but returns its new text: grade only the unedited reply.
-    if len(final) != 1 or paid.get("finals_unedited") is not True:
+    if len(final) != 1 or facts.get("finals_unedited") is not True:
         return False
-    # Grade the provider answer only: the persisted results the delivered final reply rendered, never the
-    # Director's fixed wrapper (header, completion line, cost line, contribution tags) or the question.
-    answer = "\n".join(str(item.get("result", "")) for item in paid["task"].get("assignment_outcomes") or []
+    answer = "\n".join(str(item.get("result", "")) for item in facts["task"].get("assignment_outcomes") or []
                        if isinstance(item, dict))
-    question = html.unescape(str((paid["task"].get("intake") or {}).get("text", "")))
-    wrapper, rendered = paid.get("terminal_wrapper"), paid.get("terminal_render")
+    question = html.unescape(str((facts["task"].get("intake") or {}).get("text", "")))
+    wrapper, rendered = facts.get("terminal_wrapper"), facts.get("terminal_render")
     visible = html.unescape(str(final[0].get("text", "")))
     # Unverifiable (renderer not the candidate's, or the native reply is not its rendering): unknown, not wrong.
     if not isinstance(wrapper, str) or not isinstance(rendered, str) or visible not in (
             rendered, rendered.replace("\n", " ")):
         return None
-    if any(item in question or item in wrapper for item in rubric["expected_answer_substrings"]):
+    if any(item in question or item in wrapper for item in expected):
         return False
-    # Graded text is provider answer that survived rendering: in the persisted results and in the reply.
-    return bool(answer) and all(item in answer and item in visible for item in rubric["expected_answer_substrings"])
+    return bool(answer) and all(item in answer and item in visible for item in expected)
+
+
+def _load_trial_answers(path: Path) -> tuple[dict[str, Any], str]:
+    """The predeclared, digest-committed per-trial answer criteria for check 10."""
+    with Path(path).open("rb") as stream:
+        raw = stream.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("trial answers exceed their bound")
+    value = json.loads(raw)
+    trials = value.get("trials") if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or set(value) != {"schema", "answers_id", "declared_at", "trials"}
+            or value["schema"] != "director-offline-trial-answers/v1"
+            or not isinstance(value["answers_id"], str) or not re.fullmatch(r"[a-z0-9-]{1,80}", value["answers_id"])
+            or not isinstance(trials, dict) or not 1 <= len(trials) <= 10
+            or any(not isinstance(key, str) or not _TS.fullmatch(key) or not isinstance(items, list)
+                   or not 1 <= len(items) <= 5 or any(not isinstance(item, str) or not item or len(item) > 200
+                                                       for item in items) for key, items in trials.items())):
+        raise ValueError("unsupported trial answers")
+    _when(value["declared_at"])
+    return value, hashlib.sha256(raw).hexdigest()
+
+
+def _trial_answer_correct(t: _SlackThreads, snapshot: dict[str, Any], thread: str, answers: dict[str, Any] | None,
+                          digest: str | None, sha: str) -> bool | None:
+    """Check 10's answer-specific correctness for one trial: the owner input commits to the answers file by
+    answers-sha256, the file was declared before the input, and the trial's own criterion is verified like
+    check 20's. Without an answers file correctness is unknown: the structural rubric proves shape only."""
+    if answers is None or digest is None:
+        return None
+    row = snapshot["row"]
+    markers = re.findall(r"\banswers-sha256:([a-f0-9]{64})\b",
+                         str((snapshot["task"].get("intake") or {}).get("text", "")))
+    expected = answers["trials"].get(thread)
+    if (row.get("task_record_bound") is not True or len(markers) != 1 or not _same(markers[0], digest)
+            or not row.get("input_message_ts") or expected is None
+            or _when(answers["declared_at"]).timestamp() > float(row["input_message_ts"])):
+        return False
+    return _answer_verified(_with_rendering(t, snapshot, sha), expected)
 
 
 def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float | None, str | None]:
@@ -1774,7 +1886,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
-                             paid_rubric_path: Path | None) -> list[Observation]:
+                             paid_rubric_path: Path | None, trial_answers_path: Path | None = None) -> list[Observation]:
     try:
         runtime_rows, runtime = _runtime(at, project)
     except _SOURCE_ERRORS:
@@ -1815,6 +1927,12 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             runtime = None
     gateway_unbound = runtime is None
     runtime = runtime or director_runtime
+    route_verified: bool | None = None
+    if not gateway_unbound:
+        try:
+            route_verified = _intake_route_verified(director_runtime, gateway)
+        except _SOURCE_ERRORS:
+            route_verified = None
     try:
         if t is None:
             unknown(("03", "04", "06", "08", "09", "10", "11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
@@ -1825,7 +1943,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             except _SOURCE_ERRORS:
                 unknown(("03", "09"), "Drill threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
-                put([_trial_observation(at, runtime, t, trials, rubric_path)])
+                put([_trial_observation(at, runtime, t, trials, rubric_path, trial_answers_path)])
             except _SOURCE_ERRORS:
                 unknown(("10",), "The offline trial threads could not be read; no retry was made.", _SLACK_SOURCE)
             try:
@@ -1900,6 +2018,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         if gateway_unbound and t is not None:
             unknown(("03", "08", "09", "10", "20"), "No running --gateway and single n8n of this deployment were "
                     "resolved, so Slack intake evidence cannot be bound to the relay that handled it.", _SLACK_SOURCE)
+        elif route_verified is not True and t is not None:
+            unknown(("03", "08", "09", "10", "20"), "The current intake route (gateway relay and credentials, both "
+                    "hops, n8n's store and the candidate's active intake workflow) is not verified, so historical "
+                    "Slack intake evidence cannot attest it.", _SLACK_SOURCE)
         if t is None:
             unknown(("11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
         elif paid_thread is not None and paid is None:
@@ -2252,7 +2374,8 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
             drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
             trials: list[str] | None = None, rubric_path: Path | None = None, paid_thread: str | None = None,
-            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None) -> list[Observation]:
+            paid_rubric_path: Path | None = None, ci_replica_receipt: Path | None = None,
+            trial_answers_path: Path | None = None) -> list[Observation]:
     """One bounded collection of the explicitly selected deployment and sources.
 
     Without ``deployment`` no container, port or Director endpoint is probed;
@@ -2282,6 +2405,8 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         raise ValueError("--ci-replica-receipt requires --github")
     if rubric_path is not None and trial_list is None:
         raise ValueError("--rubric requires --trial")
+    if trial_answers_path is not None and trial_list is None:
+        raise ValueError("--trial-answers requires --trial")
     if paid_rubric_path is not None and paid_thread is None:
         raise ValueError("--paid-rubric requires --paid-thread")
     at = now or datetime.now(timezone.utc)
@@ -2293,7 +2418,7 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         result.extend(_deployment_observations(
             at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
-            paid_rubric_path=paid_rubric_path))
+            paid_rubric_path=paid_rubric_path, trial_answers_path=trial_answers_path))
     if github:
         try:
             result.append(_ci_observation(candidate_sha, at, ci_replica_receipt))
@@ -2591,3 +2716,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]

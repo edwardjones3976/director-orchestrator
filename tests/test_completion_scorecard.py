@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]]
@@ -272,6 +273,10 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
                                         "provider": "claude", "assignment_sequence": 1,
                                         "review_summary": "fixture review"}]
     task["assignment_outcomes"][0]["provider_result_digest"] = "a" * 64
+    for sequence, outcome in enumerate(task["assignment_outcomes"], 1):  # a TaskRecord the renderer accepts
+        outcome.setdefault("assignment_sequence", sequence)
+        outcome.setdefault("review_summary", "fixture review")
+        outcome.setdefault("provider", "claude")
     task.update(status="DONE", qualification_evidence=readback)
     task["intake"]["text"] = text
     messages[0]["text"] = f"<@{BOT}> {text}"
@@ -289,8 +294,7 @@ def task_entry(task_id, offset, *, offline=True, text="audit trial", answer=None
     for index, (_, new) in enumerate(pairs):
         blob = blob.replace(f"@@{index}@@", new)
     entry = json.loads(blob)
-    if answer is not None:
-        # The final reply is the Director's own terminal rendering of the persisted record.
+    if True:  # every final reply is the Director's own terminal rendering of the persisted record
         readback = entry["task"]["qualification_evidence"]
         terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
         payload = fixture_render({"task_record": entry["task"], "execution_mode": readback["execution_mode"]},
@@ -406,6 +410,10 @@ class World:
         approval = self.add(approval_entry())
         self.consistency["tasks"][APPROVAL_TASK]["application"] = approval["application"]
         self.candidate_files = {}  # path -> bytes or Exception, overriding the candidate commit's blob
+        self.workflow = workflow_fixture()
+        # Check 10's structural and consecutiveness rules are tested with the answer rule held True; the
+        # answer rule itself is tested with real_trial_answers = True.
+        self.real_trial_answers = False
 
     def add(self, entry, thread=True):
         task_id = entry["task"]["task_id"]
@@ -443,6 +451,8 @@ class World:
                 return self.reply(self.consistency)
             if args[6] == "activation-captures":
                 return self.reply(self.captures)
+        if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._ACTIVE_INTAKE:
+            return self.reply(self.workflow)
         if args[:2] == ["docker", "exec"] and args[2] == N8N_DB_ID and args[-1] == sc._STATUS_EXECUTION:
             return self.reply(self.status)
         if args[:2] == ["git", "-C"] and args[3] == "show":
@@ -517,8 +527,10 @@ class World:
         response.__exit__ = Mock(return_value=False)
         response.geturl.return_value = HEALTH
         response.read.return_value = json.dumps(self.payload).encode()
+        answer_rule = sc._trial_answer_correct if self.real_trial_answers else (lambda *args: True)
         with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
-                patch.object(sc, "_SlackThreads", side_effect=self.slack):
+                patch.object(sc, "_SlackThreads", side_effect=self.slack), \
+                patch.object(sc, "_trial_answer_correct", side_effect=answer_rule):
             opener.return_value.open.return_value = response
             observations = sc.collect(SHA, now=self.now, **selected)
             self.opened = [call.args[0] for call in opener.return_value.open.call_args_list]
@@ -2191,6 +2203,89 @@ class ScorecardCollectorTests(unittest.TestCase):
         final["edited"] = {"user": BOT, "ts": ts(490)}
         self.assertEqual(edited_final.state("09"), "UNKNOWN")
 
+    def test_trial_correctness_is_answer_specific_10(self):
+        # Without predeclared answers the structural rubric proves shape only: correctness unknown.
+        world = self.world()
+        world.real_trial_answers = True
+        report = world.report()
+        self.assertEqual(row(report, "10")["status"], "UNKNOWN")
+        self.assertIn("correctness", row(report, "10")["explanation"])
+        # Offline doubles answer only with the simulation label, which is fixed wrapper text: never correct.
+        answers = {"schema": "director-offline-trial-answers/v1", "answers_id": "fixture-answers",
+                   "declared_at": "2020-01-01T00:00:00+00:00",
+                   "trials": {thread: ["SIMULATION"] for thread in world.trials}}
+        raw = json.dumps(answers).encode()
+        path = world.root / "answers.json"
+        path.write_bytes(raw)
+        for thread in world.trials:
+            task = next(task for task in world.tasks.values() if task["intake"]["thread_ts"] == thread)
+            task["intake"]["text"] += " answers-sha256:" + hashlib.sha256(raw).hexdigest()
+            world.threads[thread][0]["text"] = f"<@{BOT}> " + task["intake"]["text"]  # the owner post says the same
+        self.assertEqual(world.state("10", trial_answers_path=path), "FAIL")
+        # An input that does not commit to the answers file is not graded as correct.
+        uncommitted = self.world()
+        uncommitted.real_trial_answers = True
+        path2 = uncommitted.root / "answers.json"
+        path2.write_bytes(raw)
+        self.assertEqual(uncommitted.state("10", trial_answers_path=path2), "FAIL")
+
+    def test_receipts_are_reply_headers_only(self):
+        # A receipt quoted inside a provider result is not the native receipt.
+        thread, bot = "1789210000.100000", BOT
+        messages = [{"ts": thread, "user": OWNER, "text": "go"},
+                    {"ts": "1789210001.1", "thread_ts": thread, "user": bot,
+                     "text": "DIR-LG-AA — SUCCEEDED\nclaude: see DIR-LG-BB — REQUEST RECEIVED"}]
+        with self.assertRaises(ValueError):
+            tf.collector_module.task_from_accepted(thread, messages, True, bot)
+        messages.append({"ts": "1789210002.1", "thread_ts": thread, "user": bot,
+                         "text": "*[[Director Gateway | x | 2026-09-12 | 10:00 UTC | BEGIN]]*\n\n"
+                                 "*DIR-LG-CC — REQUEST RECEIVED*\nThe Director returned a valid intake receipt."})
+        self.assertEqual(tf.collector_module.task_from_accepted(thread, messages, True, bot), "DIR-LG-CC")
+
+    def test_slack_checks_need_the_current_intake_route(self):
+        for label, mutate in (
+                ("disabled intake node", lambda w: next(n for n in w.workflow["nodes"]
+                                                        if n["name"] == "Create Director Task").update(disabled=True)),
+                ("inactive intake", lambda w: w.workflow.update(active=False)),
+                ("gateway relay elsewhere", lambda w: w.rows[-1]["Config"]["Env"].__setitem__(
+                    3, "N8N_DIRECTOR_WEBHOOK_URL=http://elsewhere:5678/webhook/director-intake"))):
+            world = self.world()
+            mutate(world)
+            report = world.report()
+            with self.subTest(label=label):
+                for key in ("03", "08", "09", "10", "20"):
+                    self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+                self.assertIn("intake route", row(report, "03")["explanation"])
+
+    def test_every_verdict_timestamp_is_bounded(self):
+        # A future-dated terminal reply or delivery is not current, though the root and task are.
+        future_final = self.world()
+        delivery = next(r for r in future_final.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]
+                        if r.get("notification_key") == "terminal")
+        delivery["delivered_at"] = "2026-09-12T21:00:00+00:00"
+        self.assertEqual(future_final.state("09"), "UNKNOWN")
+        future_paid = self.world()
+        terminal = next(r for r in future_paid.tasks[PAID_TASK]["qualification_evidence"]["slack_deliveries"]
+                        if r.get("notification_key") == "terminal")
+        terminal["acknowledged_at"] = "2026-09-12T21:00:00+00:00"
+        self.assertEqual(future_paid.state("20"), "UNKNOWN")
+
+    def test_unsettled_attempt_is_not_zero_ambiguous_20(self):
+        # A paid attempt still STARTED is unsettled: its effect is unknown, never zero.
+        world = self.world()
+        for event in world.tasks[PAID_TASK]["qualification_evidence"]["provider_attempts"]:
+            event["status"] = "STARTED"
+        self.assertNotEqual(world.state("20"), "PASS")
+        # The record's ambiguous-effect count itself: zero only when everything is terminal.
+        row_of = lambda state: {"qualification_evidence": {"effect_state": state}}
+        readback = {"effects": [{"execution_started_at": "2026-09-12T10:00:00+00:00", "terminal_disposition": "COMPLETED"}]}
+        self.assertEqual(sc._ambiguous_effects(row_of("PROVIDER_EFFECT_RECORDED"), readback,
+                                               {"a": {"status": "SUCCEEDED"}}), 0)
+        self.assertIsNone(sc._ambiguous_effects(row_of(None), readback, {"a": {"status": "STARTED"}}))
+        self.assertIsNone(sc._ambiguous_effects(row_of(None), {"effects": [{"execution_started_at": "x"}]}, {}))
+        self.assertEqual(sc._ambiguous_effects(row_of("AMBIGUOUS_DELIVERY_EFFECT"), readback, {}), 1)
+        self.assertIsNone(sc._ambiguous_effects(row_of(None), None, {}))
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2698,3 +2793,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]

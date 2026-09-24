@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | BEGIN]] -->
@@ -225,6 +226,16 @@ a container ID, never a name.
   17 and 20 are UNKNOWN, because the in-image evidence belongs to that
   generation, not to the labelled image. 17
   is UNKNOWN unless the adoption's repository is exactly this repository.
+- 10: correctness is answer-specific: each trial input commits
+  (`answers-sha256:<digest>`) to a `--trial-answers` file
+  (`director-offline-trial-answers/v1`: `answers_id`, `declared_at` before the
+  inputs, and one to five expected substrings per trial thread), graded like
+  20 against the persisted provider result that survived the Director's
+  rendering and never against the question or the fixed wrapper. The
+  structural rubric proves shape only; without answers correctness is UNKNOWN.
+  With the current offline doubles, whose only result is the simulation label
+  (fixed wrapper text), no trial can be graded correct, so 10 cannot PASS
+  until the doubles return task-specific answers.
 - 10: ten `--trial` threads evaluated in-process with `evaluate_run_records(mode="offline")`,
   then one bounded `conversations.history` read of `--channel` from the first
   trial to the last. A trial whose terminal reply Slack reports as edited, or
@@ -471,6 +482,15 @@ runs and drills are repeated. The writer generation does not prove a restart,
 because the same owner token renews a live lease. This is an ordering check,
 not an execution record: a task created after the container but handled by a
 process the scorecard cannot see is still credited to the running image.
+03, 08, 09, 10 and 20 are graded only while the current intake route is
+verified with check 01's predicates (the gateway's relay URL and credentials,
+both hops, n8n's store and the active intake workflow equal to the candidate's
+file); otherwise they are UNKNOWN. Every Slack and readback moment a verdict
+uses (task creation and update, each delivery's times, provider attempts, the
+owner input and the terminal replies) must lie inside the freshness bound. A
+paid run's ambiguous-effect count is zero only once every attempt is terminal;
+an unsettled or unknown effect state leaves it unknown. Task receipts count
+only as a reply's leading header, in the collector as in the drill parser.
 Slack intake passes through the gateway and n8n, so 03, 08, 09, 10 and 20 also
 bind to the `--gateway` container and the deployment's single n8n: their
 freshness bound is the latest creation of the Director, the gateway and n8n,
@@ -704,3 +724,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->

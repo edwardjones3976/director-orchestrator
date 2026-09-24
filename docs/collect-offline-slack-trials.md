@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]] -->
@@ -37,6 +38,11 @@ before trial 2. It requires:
   containing either: Slack keeps its original timestamp but returns the new text.
 
 The collector accepts only this contract; a file cannot weaken its requirements.
+The structural rubric proves the shape of a trial, not that its answer is
+correct: the completion scorecard's check 10 additionally requires a
+predeclared per-trial answer file (see the scorecard documentation), and a
+receipt counts only as a bot reply's leading header, never as text quoted
+inside a provider result.
 Compute its **file-byte SHA256** and include
 `rubric-sha256:<64-lowercase-hex-digest>` in the owner's original trial request.
 The collector matches that source event back to immutable intake text. The
@@ -324,3 +330,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-22 | 01:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
