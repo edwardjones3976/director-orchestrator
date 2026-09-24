@@ -48,6 +48,21 @@ try {
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $link)) 1 'refuses a junction destination'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $link 'sub'))) 1 'refuses a destination beneath a junction'
     Assert-Equal (Test-Path (Join-Path $elsewhere 'keep.txt')) $true 'junction target left untouched'
+
+    # 8.3 alias of the source used as the destination must resolve to the same folder and be refused.
+    $short = (cmd /c "for %I in (`"$src`") do @echo %~sI").Trim()
+    if ($short -and $short -ne $src) {
+        Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $short)) 1 'refuses an 8.3 alias of the source'
+    } else { Write-Output 'skip 8.3 alias (short names disabled on this volume)' }
+
+    # subst alias: map a free letter onto the work folder, then name the source's parent through it.
+    $letter = [char[]](90..68) | Where-Object { -not (Test-Path "$($_):\") } | Select-Object -First 1
+    subst "$($letter):" $work | Out-Null
+    try {
+        Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "$($letter):\src")) 1 'refuses a subst alias equal to the source'
+        Assert-Equal (Invoke-Mirror @('-Source', (Join-Path $src 'models'), '-Dest', "$($letter):\src")) 1 'refuses a subst alias that is an ancestor of the source'
+    } finally { subst "$($letter):" /D | Out-Null }
+    Assert-Equal (Test-Path (Join-Path $src 'models\adapter.bin')) $true 'source intact after alias refusals'
 } finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
