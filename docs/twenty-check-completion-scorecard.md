@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]] -->
@@ -151,7 +152,9 @@ a container ID, never a name.
 - 04: only when, from `docker inspect`, the deployment's n8n reaches the
   selected Director (and no other container) as `orchestrator`, the newest
   saved successful scheduled `Director Status` execution of a workflow that is
-  active now, which ran its active version (the execution's recorded version
+  active now, whose active version is the `Read Health` GET of
+  `http://orchestrator:8080/health` -> `Diff Readiness` -> one Slack
+  `Post Status` route, which ran its active version (the execution's recorded version
   where n8n stores one, otherwise a start after both that version's history
   entry and the workflow's last update; UNKNOWN when neither shows it), in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
@@ -239,10 +242,15 @@ runtime and write nothing.
   projection binding, and `OWNER_DECISION_REQUIRED` holds with a pending
   approval, which are in flight even with no open assignment or lease). For each `--task` it adds the spend rows with their
   settled usage and request correlation, and the enrolled budget rows with the
-  day's held amount, their provider and whether the full budget document passes
-  the owner-signed `ProviderBudget` contract (closed schema, grant digest and
-  HMAC owner signature, re-verified with the entitlement owner-authority
-  secret; without that secret nothing verifies), and its `approval_resume` command receipts (SHA-256 of
+  day's held amount, their provider and storage grant and whether the full
+  budget document passes the owner-signed `ProviderBudget` contract (closed
+  schema, HMAC owner signature re-verified with the entitlement owner-authority
+  secret, and a grant digest equal to the grant it is stored under). Each spend
+  row carries its grant and whether its usage receipt passes the
+  `ProviderUsageReceipt` HMAC with the entitlement route-verifier secret and
+  binds that attempt, grant, provider, cost and tokens; an unverified receipt
+  is no actual cost. Without either secret nothing it signs verifies, and the
+  report says which secrets were available, and its `approval_resume` command receipts (SHA-256 of
   the command ID, command and resulting projection digests, recorded time). In
   `owner-local-evidence-v1` mode it also returns the pinned adoption's
   repository, pull request, author, reviewers, reviewed source and adoption
@@ -263,7 +271,10 @@ runtime and write nothing.
   the validation store through its read-only capture reader. For every lane it
   reports the binding digest and, per surface, the latest stage, evidence
   digest, observation time, expiry and whether the capture verifier accepts it,
-  plus the product that produced the verified runtime-adapter capture. The
+  plus the product that produced the verified runtime-adapter capture and the
+  LIVE_OK row's persisted `recorded_at`. Check 11 requires both that row's
+  `observed_at` and its `recorded_at` to precede the paid attempts, because
+  `observed_at` is supplied by whoever published the capture. The
   product comes from the capture's own dialect and model: an OpenAI Responses
   envelope needs an OpenAI model (`gpt-`, `o<digit>`, `codex`, `chatgpt-`), a
   Codex capture needs a native Codex JSONL turn, a Grok Responses envelope a
@@ -365,10 +376,11 @@ runs and drills are repeated. The writer generation does not prove a restart,
 because the same owner token renews a live lease. This is an ordering check,
 not an execution record: a task created after the container but handled by a
 process the scorecard cannot see is still credited to the running image.
-Slack intake passes through the gateway, so 03, 08, 09, 10 and 20 also bind
-to the `--gateway` container: their freshness bound is the later of the
-Director's and the gateway's creation, and without a running `--gateway` of
-the deployment they are UNKNOWN. `--channel` accepts `C` and `G` Slack IDs.
+Slack intake passes through the gateway and n8n, so 03, 08, 09, 10 and 20 also
+bind to the `--gateway` container and the deployment's single n8n: their
+freshness bound is the latest creation of the Director, the gateway and n8n,
+and without a running `--gateway` and one running n8n of the deployment they
+are UNKNOWN. `--channel` accepts `C` and `G` Slack IDs.
 Check 10 reads only what Slack still shows: a deleted post leaves a tombstone,
 which 10 treats as a break, but a deleted post with no replies leaves nothing.
 
@@ -476,8 +488,9 @@ by attempt digest to every attempt the task made. Check 15 fails when an
 enrolled signed daily budget's held amount exceeds its limit or a usage-monitor
 provider exceeds its daily budget, and passes only when the paid task's budget
 rows, the usage-monitor accounting and a settled cost are all present. A
-budget row that fails that signed contract, or that binds no provider the paid
-task was charged against, is not an enrolled cap and leaves 15 UNKNOWN. It is
+budget row that fails that signed contract, or a charged attempt that does not
+join the signed budget of its own grant and provider, leaves 15 UNKNOWN, and an
+unverified usage receipt leaves 15 and 20 without actual cost (UNKNOWN). It is
 UNKNOWN when a budgeted usage-monitor provider has attempts today (a
 `request_count` that is not exactly zero), incomplete cost visibility and no
 reserved cost, because `reported_cost_usd` sums known costs only.
@@ -586,3 +599,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]] -->

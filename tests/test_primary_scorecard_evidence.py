@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | BEGIN]]
@@ -166,18 +167,24 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                                    langgraph_primary_required_providers=("claude",))
         identity = SimpleNamespace(candidate_commit="a" * 40, candidate_tree="b" * 40, postgres_schema="director_primary_v1",
                                    database_identity="postgres:sha256:" + "c" * 64, database_instance_id=str(uuid.uuid4()))
-        with self.capture_sources(store) as writes:
+        with self.capture_sources(store) as writes, \
+                patch.object(evidence, "_activation_recorded_at", return_value="2026-09-12T09:30:01+00:00") as recorded:
             report = evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
         writes.assert_not_called()
+        self.assertEqual(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"],
+                         "2026-09-12T09:30:01+00:00")
+        self.assertEqual(recorded.call_args.args[1:3], ("director_primary_v1", "claude"))
         self.assertEqual(report["version"], "director-activation-captures/v1")
         self.assertEqual(report["generation_manifest_sha256"], PIN)
         self.assertEqual(report["provider_bindings_sha256"], "d" * 64)
         self.assertEqual(report["lanes"]["claude"]["product"], "anthropic-claude")
         self.assertTrue(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"])
-        with self.capture_sources(store, output=b'{"type":"assistant"}'):
+        with self.capture_sources(store, output=b'{"type":"assistant"}'), \
+                patch.object(evidence, "_activation_recorded_at", return_value=None):
             self.assertIsNone(evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
                               ["lanes"]["claude"]["product"])
-        with self.capture_sources(store, verifier_present=False), self.assertRaises(ActivationEvidenceError):
+        with self.capture_sources(store, verifier_present=False), self.assertRaises(ActivationEvidenceError), \
+                patch.object(evidence, "_activation_recorded_at", return_value=None):
             evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
 
     def run_main(self, *argv):
@@ -459,18 +466,20 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 ("sha256:" + "a" * 64, json.dumps({"provider_id": "openai", "metering_evidence": metering})))
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
-                                             "approval_receipts": []})
+                                             "approval_receipts": [],
+                                             "verifier_secrets": {"route_verifier": False, "owner_authority": False}})
         rows = {row["attempt_digest"]: row for row in entry[task_id]["spend"]}
         self.assertEqual(len(rows), 2)
-        self.assertEqual((rows["sha256:" + "a" * 64]["actual_microusd"], rows["sha256:" + "a" * 64]["request_correlated"]),
-                         (300000, True))
+        # Correlated metering text without a verified usage receipt is not actual cost.
+        self.assertEqual((rows["sha256:" + "a" * 64]["actual_microusd"], rows["sha256:" + "a" * 64]["request_correlated"],
+                          rows["sha256:" + "a" * 64]["usage_verified"]), (300000, False, False))
         self.assertEqual((rows["sha256:" + "b" * 64]["actual_microusd"], rows["sha256:" + "b" * 64]["request_correlated"]),
                          (None, False))
         self.assertEqual(rows["sha256:" + "a" * 64]["budget_day"], "2026-09-12")
         self.assertEqual(entry[task_id]["budgets"], [{"task_id": task_id, "project_id": "fixture-project",
                                                        "day": "2026-09-12", "daily_limit_microusd": 5000000,
                                                        "day_held_microusd": 700000, "provider_id": None,
-                                                       "signature_verified": False}])
+                                                       "signature_verified": False, "authority_digest": "grant-fixture"}])
         json.dumps(entry, allow_nan=False)
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
@@ -485,8 +494,12 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     "attempt_reservation_microusd": 500000, "token_limit": 1000}
         document["owner_signature"] = hmac.new(secret.encode(), canonical_json_bytes(document), hashlib.sha256).hexdigest()
         forged = {**document, "task_id": task_id, "daily_limit_microusd": 9000000}
+        misfiled = {**document, "daily_limit_microusd": 7000000}
+        misfiled["owner_signature"] = hmac.new(secret.encode(), canonical_json_bytes(
+            {k: v for k, v in misfiled.items() if k != "owner_signature"}), hashlib.sha256).hexdigest()
         with self.handle.pool.connection() as connection:
-            for grant, doc in (("grant-signed", document), ("grant-forged", forged)):
+            # Stored under its own grant digest, under a forged copy's, and (validly signed) under another grant.
+            for grant, doc in (("c" * 64, document), ("f" * 64, forged), ("e" * 64, misfiled)):
                 connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest, document)"
                                    " VALUES (%s, %s::jsonb)", (grant, json.dumps(doc)))
         with tempfile.TemporaryDirectory() as folder:
@@ -495,10 +508,67 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.settings.entitlement_owner_authority_secret_file = str(path)
             rows = self.report(tasks=[task_id])["tasks"][task_id]["budgets"]
             self.assertEqual(sorted((row["daily_limit_microusd"], row["signature_verified"], row["provider_id"])
-                                    for row in rows), [(5000000, True, "openai"), (9000000, False, "openai")])
+                                    for row in rows), [(5000000, True, "openai"), (7000000, False, "openai"),
+                                                       (9000000, False, "openai")])
             self.settings.entitlement_owner_authority_secret_file = str(Path(folder) / "missing")
             rows = self.report(tasks=[task_id])["tasks"][task_id]["budgets"]
             self.assertEqual({row["signature_verified"] for row in rows}, {False})
+
+    def test_usage_receipts_are_verified_with_the_route_verifier(self):
+        import hmac
+        import tempfile
+        from director_orchestrator.entitlement_contracts import canonical_json_bytes
+        task_id = self.intake()
+        secret = "fixture-route-verifier-secret-0123456789abcdefghijk"
+
+        def receipt(attempt, grant, actual, key=secret):
+            document = {"schema_version": "primary-provider-usage/v1", "attempt_digest": attempt,
+                        "authority_digest": grant, "provider_id": "claude", "actual_microusd": actual,
+                        "observed_tokens": 100, "complete": True}
+            document["meter_signature"] = hmac.new(key.encode(), canonical_json_bytes(document), hashlib.sha256).hexdigest()
+            return document
+
+        attempts = {"sha256:" + "1" * 64: (receipt("sha256:" + "1" * 64, "c" * 64, 300000), 300000),
+                    "sha256:" + "2" * 64: (receipt("sha256:" + "2" * 64, "c" * 64, 300000, key=secret[::-1]), 300000),
+                    "sha256:" + "3" * 64: (receipt("sha256:" + "3" * 64, "d" * 64, 300000), 300000),
+                    "sha256:" + "4" * 64: (receipt("sha256:" + "4" * 64, "c" * 64, 300000), 0)}
+        with self.handle.pool.connection() as connection:
+            # Spend rows reference their budget grant (foreign key); the budget document itself is not under test here.
+            connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest, document)"
+                               " VALUES (%s, %s::jsonb)", ("c" * 64, json.dumps({"task_id": task_id})))
+            for attempt, (document, column) in attempts.items():
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_provider_spend(attempt_digest, grant_digest, provider_id,"
+                    " project_id, task_id, budget_day, reserved_microusd, token_limit)"
+                    " VALUES (%s, %s, 'claude', 'fixture-project', %s, '2026-09-12', 500000, 1000)",
+                    (attempt, "c" * 64, task_id))
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_provider_usage(attempt_digest, document, actual_microusd,"
+                    " observed_tokens) VALUES (%s, %s::jsonb, %s, 100)", (attempt, json.dumps(document), column))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "route-verifier-secret"
+            path.write_text(secret, encoding="utf-8")
+            self.settings.entitlement_route_verifier_secret_file = str(path)
+            entry = self.report(tasks=[task_id])["tasks"][task_id]
+        # Signed and bound; wrong key; another grant; cost column differs from the signed receipt.
+        self.assertEqual({row["attempt_digest"][-1]: row["usage_verified"] for row in entry["spend"]},
+                         {"1": True, "2": False, "3": False, "4": False})
+        self.assertEqual(entry["verifier_secrets"], {"route_verifier": True, "owner_authority": False})
+        self.assertEqual([row["grant_digest"] for row in entry["spend"]], ["c" * 64] * 4)
+
+    def test_activation_recorded_at_is_the_persisted_row_time(self):
+        from director_orchestrator.provider_activation import ACTIVATION_EVIDENCE_VERSION
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_provider_activation_evidence(provider_id, workspace_id,"
+                " provider_version, app_version, runtime_adapter_version, workspace_version, binding_version, surface,"
+                " revision, schema_version, stage, evidence_id, evidence_digest, observed_at, expires_at, recorded_at)"
+                " VALUES ('claude','w','p','a','r','w','b','runtime_adapter',1,%s,'LIVE_OK','e',%s,"
+                " '2020-01-01T00:00:00Z','2099-01-01T00:00:00Z','2026-09-12T10:00:10Z')",
+                (ACTIVATION_EVIDENCE_VERSION, "a" * 64))
+        recorded = evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "a" * 64)
+        self.assertEqual(datetime.fromisoformat(recorded), datetime(2026, 9, 12, 10, 0, 10, tzinfo=timezone.utc))
+        self.assertIsNone(evidence._activation_recorded_at(TEST_DSN, self.schema, "claude", "b" * 64))
 
 
 if __name__ == "__main__":
@@ -508,3 +578,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 20:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]

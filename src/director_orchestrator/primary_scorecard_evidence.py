@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -80,15 +81,15 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
     WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding,
  (SELECT count(*) FROM p WHERE NOT p.settled AND p.tc='OWNER_DECISION_REQUIRED') AS pending_owner_decisions"""
 
-_SPEND = """SELECT s.task_id,s.attempt_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
- s.reserved_microusd,u.actual_microusd,
+_SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
+ s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
  coalesce(length(u.document->'metering_evidence'->>'request_id'),0)>0
  AND coalesce(length(u.document->'metering_evidence'->>'response_id'),0)>0
  AND u.document->'metering_evidence'->>'cost_basis'='signed-tariff-metered-not-invoice' AS request_correlated
 FROM {s}.director_primary_provider_spend s LEFT JOIN {s}.director_primary_provider_usage u USING (attempt_digest)
 WHERE s.task_id = ANY(%(tasks)s) ORDER BY s.task_id,s.attempt_digest LIMIT 600"""
 
-_BUDGETS = """SELECT b.document AS document, b.document->>'task_id' AS task_id, b.document->>'project_id' AS project_id,
+_BUDGETS = """SELECT b.document AS document, b.authority_digest, b.document->>'task_id' AS task_id, b.document->>'project_id' AS project_id,
  b.document->>'day' AS day, (b.document->>'daily_limit_microusd')::bigint AS daily_limit_microusd,
  (SELECT coalesce(sum(GREATEST(s2.reserved_microusd,coalesce(u2.actual_microusd,0))),0)
     FROM {s}.director_primary_provider_spend s2 LEFT JOIN {s}.director_primary_provider_usage u2 USING (attempt_digest)
@@ -101,25 +102,46 @@ _RECEIPTS = """SELECT task_id, encode(sha256(convert_to(command_id,'UTF8')),'hex
 WHERE task_id = ANY(%(tasks)s) AND operation='approval_resume' ORDER BY task_id, recorded_at LIMIT 100"""
 
 
-def _owner_secret(settings):
-    """The entitlement owner-authority secret, or None: without it no budget verifies."""
+def _secret(settings, name):
+    """An entitlement secret file's contents, or None: without it nothing it signs verifies."""
     try:
         from .entitlement_control_plane import _read_secret_file
-        return _read_secret_file(getattr(settings, "entitlement_owner_authority_secret_file", "") or "")
-    except Exception:  # noqa: BLE001 - any failure leaves every budget unverified
+        return _read_secret_file(getattr(settings, name, "") or "")
+    except Exception:  # noqa: BLE001 - any failure leaves every such document unverified
         return None
 
 
-def _signed_budget(document, secret) -> bool:
-    """The existing ProviderBudget contract: closed schema, grant digest and owner HMAC signature."""
+def _signed_budget(document, authority_digest, secret) -> bool:
+    """ProviderBudget.verify, stored under its own grant (as PrimaryProviderBudgetAuthority.reserve requires)."""
     if secret is None:
         return False
     try:
         from .antigravity_team import ProviderBudget
-        ProviderBudget.model_validate(document).verify(secret)
+        budget = ProviderBudget.model_validate(document)
+        budget.verify(secret)
     except Exception:  # noqa: BLE001 - malformed, unsigned or wrongly signed: not evidence
         return False
-    return True
+    return budget.grant_digest == authority_digest
+
+
+def _signed_usage(document, row, observed_tokens, secret) -> bool:
+    """The ProviderUsageReceipt that record_usage accepts: route-verifier HMAC, and bound to this
+    attempt's reservation (grant, provider) and to the usage row's cost and tokens."""
+    if secret is None or document is None:
+        return False
+    try:
+        import hashlib
+        import hmac
+        from .antigravity_team import ProviderUsageReceipt
+        from .entitlement_contracts import canonical_json_bytes
+        receipt = ProviderUsageReceipt.model_validate(document)
+        expected = hmac.new(secret, canonical_json_bytes(receipt.signing_document()), hashlib.sha256).hexdigest()
+    except Exception:  # noqa: BLE001 - malformed or unsigned: no actual cost
+        return False
+    return (hmac.compare_digest(expected, receipt.meter_signature)
+            and (receipt.attempt_digest, receipt.authority_digest, receipt.provider_id)
+            == (row["attempt_digest"], row["grant_digest"], row["provider_id"])
+            and receipt.actual_microusd == row["actual_microusd"] and receipt.observed_tokens == observed_tokens)
 
 
 def _plain(value):
@@ -166,20 +188,27 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                     " to_regclass(%s) IS NOT NULL AS budget",
                     [f"{schema}.director_primary_provider_{name}" for name in ("spend", "usage", "budget")]).fetchone()
                 usage_tables = all(present.values())
-                spend, budgets = [], []
+                spend, budgets, verifiers = [], [], None
                 if usage_tables:
-                    spend = [_row(r) for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall()]
-                    secret = _owner_secret(settings)
-                    budgets = []
+                    route, owner = (_secret(settings, "entitlement_route_verifier_secret_file"),
+                                    _secret(settings, "entitlement_owner_authority_secret_file"))
+                    verifiers = {"route_verifier": route is not None, "owner_authority": owner is not None}
+                    for r in connection.execute(_SPEND.format(s=schema), {"tasks": tasks}).fetchall():
+                        row = _row(r)
+                        document, tokens = row.pop("usage_document"), row.pop("observed_tokens")
+                        row["usage_verified"] = _signed_usage(document, row, tokens, route)
+                        # Actual cost counts only from a receipt that verified.
+                        row["request_correlated"] = row["request_correlated"] is True and row["usage_verified"]
+                        spend.append(row)
                     for r in connection.execute(_BUDGETS.format(s=schema), {"tasks": tasks}).fetchall():
                         row = _row(r)
                         document = row.pop("document")
                         row["provider_id"] = document.get("provider_id") if isinstance(document, dict) else None
-                        row["signature_verified"] = _signed_budget(document, secret)
+                        row["signature_verified"] = _signed_budget(document, row["authority_digest"], owner)
                         budgets.append(row)
                 receipts = [_row(r) for r in connection.execute(_RECEIPTS.format(s=schema), {"tasks": tasks}).fetchall()]
                 for task_id in tasks:
-                    per_task[task_id] = {"usage_tables_present": usage_tables,
+                    per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
@@ -246,6 +275,22 @@ def _capture_product(provider, output: bytes):
     return None
 
 
+def _activation_recorded_at(dsn, schema, provider, digest):
+    """The database insertion time of the LIVE_OK runtime-adapter row carrying digest, or None."""
+    import psycopg
+    from psycopg.rows import dict_row
+    from .langgraph_postgres import _require_schema
+
+    schema = _require_schema(schema)
+    with psycopg.connect(dsn, connect_timeout=10, row_factory=dict_row,
+                         options="-c default_transaction_read_only=on -c statement_timeout=10000") as connection:
+        row = connection.execute(
+            f"SELECT recorded_at FROM {schema}.director_provider_activation_evidence WHERE provider_id=%s"
+            " AND surface='runtime_adapter' AND stage='LIVE_OK' AND evidence_digest=%s"
+            " ORDER BY revision DESC LIMIT 1", (provider, digest)).fetchone()
+    return _plain(row["recorded_at"]) if row else None
+
+
 def activation_capture_report(settings, identity, manifest) -> dict:
     """Latest per-lane capture digests and expiry through a load-only store."""
     from .langgraph_postgres import open_provider_activation_store
@@ -276,6 +321,10 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             row = verifier.store.load_capture(surface["evidence_digest"])
             product = _capture_product(provider, bytes(row[2])) if row is not None else None
         lane["product"] = product
+        if surface is not None:
+            # The persisted insertion time, not the caller-supplied observed_at, says when it gated anything.
+            surface["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
+                                                             identity.postgres_schema, provider, surface["evidence_digest"])
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": os.environ[_PIN],
             "provider_bindings_sha256": manifest["provider_bindings_sha256"],
             "observed_at": datetime.now(timezone.utc).isoformat(), "lanes": lanes}
@@ -285,3 +334,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]

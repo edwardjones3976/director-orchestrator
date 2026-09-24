@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
@@ -300,7 +301,15 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
    ,w.active AS workflow_active,w."activeVersionId" AS active_version,
      to_jsonb(e)->>'workflowVersionId' AS execution_version,w."updatedAt" AS workflow_updated_at,
      (SELECT h."createdAt" FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
-       AS active_version_at
+       AS active_version_at,
+     (SELECT EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Read Health'
+               AND n->>'type'='n8n-nodes-base.httpRequest' AND coalesce(n->'parameters'->>'method','GET')='GET'
+               AND n->'parameters'->>'url'='http://orchestrator:8080/health')
+             AND (SELECT count(*) FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Post Status'
+                    AND n->>'type'='n8n-nodes-base.slack')=1
+             AND h.connections::json->'Read Health'->'main'->0->0->>'node'='Diff Readiness'
+             AND h.connections::json->'Diff Readiness'->'main'->0->0->>'node'='Post Status'
+        FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_route_ok
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
@@ -750,9 +759,11 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         surface = (value.get("surfaces") or {}).get("runtime_adapter")
         # A capture that does not verify now, was minted after the attempt or expired before it ended
         # cannot attest the attempt: its missing product is unknown, not a substitution.
+        # observed_at is caller-supplied: the row's persisted recorded_at must also precede the attempts.
         if (not isinstance(surface, dict) or surface.get("capture_verified") is not True or not times
-                or not surface.get("observed_at")
-                or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])):
+                or not surface.get("observed_at") or not surface.get("recorded_at")
+                or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
+                or not _when(surface["recorded_at"]) <= min(times)):
             unbound.append(lane)
     facts = {"lanes_used": used, "products": products, "transports": transports}
     raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
@@ -860,16 +871,23 @@ def _selected_director_hop(runtime: _Runtime) -> bool | None:
 
 
 def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
-    """The runtime whose freshness bound is the later of the Director's and the selected gateway's creation.
+    """The runtime whose freshness bound is the latest creation of the Director, the selected gateway and
+    the deployment's n8n.
 
-    Slack intake passes through the gateway, so a drill, trial, approval or paid run handled by a
-    predecessor gateway cannot attest the one running now.
+    Slack intake passes through the gateway and n8n, so a drill, trial, approval or paid run handled by a
+    predecessor of either cannot attest the one running now.
     """
     row = _run_json(["docker", "inspect", gateway])[0]
     if (row.get("Name", "").lstrip("/") != gateway or row.get("State", {}).get("Running") is not True
             or not _gateway_launch(row) or _labels(row).get("com.docker.compose.project") != runtime.project):
         raise ValueError("the selected gateway is not a running gateway of this deployment")
-    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"])))
+    relays = _compose_ids(runtime.project, "n8n")
+    if len(relays) != 1:
+        raise ValueError("the selected deployment does not run exactly one n8n")
+    relay = _run_json(["docker", "inspect", relays[0]])[0]
+    if relay.get("Id") != relays[0] or relay.get("State", {}).get("Running") is not True:
+        raise ValueError("the deployment's n8n is not running")
+    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"]), _when(relay["Created"])))
 
 
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
@@ -892,6 +910,9 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
+    if execution.get("active_route_ok") is not True:
+        return _observation("04", None, "The active Director Status version is not the Read Health (GET "
+                            "orchestrator:8080/health) -> Diff Readiness -> Post Status route.", source, {}, at, **binding)
     out = _flatted(execution["data"])["resultData"]["runData"]["Post Status"][-1]["data"]["main"][0][0]["json"]
     ts = out.get("ts") or (out.get("message") or {}).get("ts")
     started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
@@ -1282,7 +1303,8 @@ def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float
     spend = entry.get("spend") or []
     if not attempts or {row.get("attempt_digest") for row in spend} != attempts:
         return None, None
-    if any(not _counter(row.get("actual_microusd")) or row.get("request_correlated") is not True for row in spend):
+    if any(not _counter(row.get("actual_microusd")) or row.get("request_correlated") is not True
+           or row.get("usage_verified") is not True for row in spend):
         return None, None
     return sum(row["actual_microusd"] for row in spend) / 1_000_000, "correlated_actual_charges"
 
@@ -1325,10 +1347,11 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     if isinstance(budgets, list):
         # A budget row counts only when the in-image report re-verified its owner signature
         # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
-        providers = {row.get("provider_id") for row in ((consistency or {}).get("tasks") or {}).get(
-            (paid or {}).get("task_id"), {}).get("spend") or []}
-        unsigned = any(row.get("signature_verified") is not True for row in budgets) or not providers <= {
-            row.get("provider_id") for row in budgets}
+        # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
+        spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
+        unsigned = any(row.get("signature_verified") is not True for row in budgets) or not all(
+            any(_same(budget.get("authority_digest"), charge.get("grant_digest"))
+                and budget.get("provider_id") == charge.get("provider_id") for budget in budgets) for charge in spend)
         budgets = [row for row in budgets if row.get("signature_verified") is True]
         for row in budgets:
             if not _counter(row["day_held_microusd"]) or not _counter(row["daily_limit_microusd"]):
@@ -1345,8 +1368,8 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         return _observation("15", None, "Usage-monitor cost is incomplete and unreserved for attempted providers: "
                             + ", ".join(unpriced) + "; unknown cost is not zero.", source, facts, at, **runtime.binding)
     if unsigned:
-        return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or does not "
-                            "bind a provider the paid task was charged against; it is not an enrolled cap.",
+        return _observation("15", None, "A budget row is unsigned, fails the owner-signed budget contract, or a charged "
+                            "attempt does not join the signed budget of its own grant and provider.",
                             source, facts, at, **runtime.binding)
     if monitored and isinstance(budgets, list) and budgets and cost is not None:
         return _observation("15", True, "Enrolled signed daily caps hold, usage-monitor accounting is within budget and the "
@@ -1482,8 +1505,8 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
             unknown(("07", "08", "11", "12", "15", "20"), reason, _CONSISTENCY_SOURCE)
             put([_observation("17", None, reason, _CONSISTENCY_SOURCE, {}, at, candidate_sha=candidate_sha)])
         if gateway_unbound and t is not None:
-            unknown(("03", "08", "09", "10", "20"), "No running --gateway of this deployment was resolved, so Slack "
-                    "intake evidence cannot be bound to the gateway that handled it.", _SLACK_SOURCE)
+            unknown(("03", "08", "09", "10", "20"), "No running --gateway and single n8n of this deployment were "
+                    "resolved, so Slack intake evidence cannot be bound to the relay that handled it.", _SLACK_SOURCE)
         if t is None:
             unknown(("11", "20"), _SLACK_UNAVAILABLE, _SLACK_SOURCE)
         elif paid_thread is not None and paid is None:
@@ -2165,3 +2188,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]

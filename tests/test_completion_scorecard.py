@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
@@ -150,7 +151,8 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
-                                          "workflow_active": True, "active_version": "v-2", "execution_version": None,
+                                          "workflow_active": True, "active_route_ok": True,
+                                          "active_version": "v-2", "execution_version": None,
                                           "active_version_at": "2026-09-12T09:00:00.000+00:00",
                                           "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
                                           "startedAt": "2026-09-12T09:59:00.000+00:00",
@@ -169,10 +171,12 @@ def consistency_fixture():
     counts = {key: 0 for key in sc._FAIL_COUNTS + sc._INFLIGHT_COUNTS}
     counts["graph_task_count"] = 12
     spend = {"task_id": PAID_TASK, "attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
+             "grant_digest": "c" * 64, "usage_verified": True,
              "project_id": "fixture-project", "budget_day": "2026-09-12", "reserved_microusd": 500000,
              "actual_microusd": 300000, "request_correlated": True}
     budget = {"task_id": PAID_TASK, "project_id": "fixture-project", "day": "2026-09-12",
               "daily_limit_microusd": 5000000, "day_held_microusd": 500000, "provider_id": "claude",
+              "authority_digest": "c" * 64,
               "signature_verified": True}
     return {"version": "director-primary-consistency/v1",
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
@@ -191,6 +195,7 @@ def approval_receipt(recorded_at=None):
 
 def captures_fixture():
     surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
+               "recorded_at": "2026-09-12T09:30:01+00:00",
                "expires_at": "2026-09-12T12:00:00+00:00", "capture_verified": True}
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
@@ -265,6 +270,7 @@ class World:
         self.root = Path(self._folder.name)
         self.rows = containers() + [item for item in topology() if item["Id"] in (N8N_ID, N8N_DB_ID)]
         self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway, created with the Director
+        self.rows[1]["Created"] = "2026-09-12T09:00:00Z"  # the deployment's n8n
         self.commit_tree = "d" * 40
         self.payload = health()
         self.consistency = consistency_fixture()
@@ -1480,6 +1486,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         new_gateway = self.world()
         new_gateway.rows[-1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(new_gateway.state("03"), "UNKNOWN")
+        new_n8n = self.world()
+        new_n8n.rows[1]["Created"] = "2026-09-12T11:00:00Z"
+        self.assertEqual(new_n8n.state("03"), "UNKNOWN")
         report = self.world().report(gateway=None)
         self.assertEqual(row(report, "03")["status"], "UNKNOWN")
         self.assertIn("--gateway", row(report, "03")["explanation"])
@@ -1572,6 +1581,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         recorded = self.world()
         recorded.status["execution"]["execution_version"] = "v-2"
         self.assertEqual(recorded.state("04"), "PASS")
+        for route in (False, None):
+            case = self.world()
+            case.status["execution"]["active_route_ok"] = route
+            with self.subTest(route=route):
+                self.assertEqual(case.state("04"), "UNKNOWN")
         # n8n resolving orchestrator to another container cannot attest the selected Director.
         detached = self.world()
         detached.rows[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64,
@@ -1808,6 +1822,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         expired_during = self.world()
         expired_during.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["expires_at"] = "2026-09-12T10:00:20+00:00"
         self.assertEqual(expired_during.state("11"), "UNKNOWN")
+        # A backdated observed_at does not help: the row's persisted insertion time must precede the attempts too.
+        published_later = self.world()
+        published_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = "2026-09-12T10:00:10+00:00"
+        self.assertEqual(published_later.state("11"), "UNKNOWN")
+        unrecorded = self.world()
+        unrecorded.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = None
+        self.assertEqual(unrecorded.state("11"), "UNKNOWN")
         undated = self.world()
         del undated.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"]
         self.assertEqual(undated.state("11"), "UNKNOWN")
@@ -1901,11 +1922,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         unsettled.consistency["tasks"][PAID_TASK]["spend"][0]["actual_microusd"] = None
         self.assertEqual(unsettled.state("15"), "UNKNOWN")
         # Only a re-verified, provider-bound signed budget is an enrolled cap.
-        for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"}):
+        for change in ({"signature_verified": False}, {"signature_verified": None}, {"provider_id": "grok"},
+                       {"authority_digest": "e" * 64}):
             case = self.world()
             case.consistency["tasks"][PAID_TASK]["budgets"][0].update(change)
             with self.subTest(change=change):
                 self.assertEqual(case.state("15"), "UNKNOWN")
+        # An unverified usage receipt is no actual cost, for 15 and 20 alike.
+        unmetered = self.world()
+        unmetered.consistency["tasks"][PAID_TASK]["spend"][0]["usage_verified"] = False
+        report = unmetered.report()
+        self.assertEqual([row(report, key)["status"] for key in ("15", "20")], ["UNKNOWN", "UNKNOWN"])
         uncorrelated = self.world()
         uncorrelated.consistency["tasks"][PAID_TASK]["spend"][0]["request_correlated"] = False
         self.assertEqual(uncorrelated.state("15"), "UNKNOWN")
@@ -2156,3 +2183,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
