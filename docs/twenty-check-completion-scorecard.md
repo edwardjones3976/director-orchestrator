@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
@@ -127,13 +128,18 @@ a container ID, never a name.
   project, and UNKNOWN when the gateway has no Compose labels. 01 also requires,
   from `docker inspect` alone, that the gateway and n8n share a Docker network
   (same network ID) on which n8n's aliases or DNS names include the relay
-  host: FAIL when they share none, UNKNOWN when either shows no network
-  attachments. No probe runs inside the gateway.
+  host, and likewise that n8n and the selected Director share a network on
+  which the Director answers to `orchestrator` (the host n8n's health probe and
+  intake request use). On that network no other container may answer to the
+  same name. FAIL when a hop has no such network or the name has another
+  owner, UNKNOWN when a container shows no network attachments. No probe runs
+  inside the gateway.
 - 03, 09: `--drill-thread` Slack threads, the bot's replies, the Director's
   `GET /v1/slack-thread-bindings` and the task readback (see below). A drill
-  whose thread holds a bot reply Slack reports as edited or with a subtype
-  cannot pass: the bot never edits, so its receipts and `BLOCKED` text are no
-  longer what was posted.
+  whose thread holds a bot reply Slack reports as edited or with a subtype is
+  UNKNOWN before anything in it is graded, and such a reply's text is never
+  parsed: the bot never edits, so its receipts and `BLOCKED` text are no longer
+  what was posted.
 - 04: the newest saved successful scheduled `Director Status` execution in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
   the Slack readback of the message it posted to `--channel`. An execution that
@@ -155,6 +161,10 @@ a container ID, never a name.
 - 13, 14: the workload journal from `--ledger`.
 - 15 (daily accounting): `/health` `usage_monitor.daily_accounting`.
 - 16: GitHub `ci.yml` runs and jobs at the exact head, or `--ci-replica-receipt`.
+  Runs are read page by page (100 per page, at most 10 pages) until GitHub's
+  `total_count` is reached, and each run's jobs must match its `total_count`;
+  an incomplete listing is UNKNOWN, so the receipt is never admitted on a
+  partial read.
 - 18: the native Security index for `--security-scan`. The sealed scan's base
   must equal the candidate's merge base with `main` (GitHub compare, GET only);
   any other base, or an unreadable merge base, is UNKNOWN, because a convenient
@@ -541,3 +551,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:39 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]] -->

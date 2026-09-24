@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
@@ -311,18 +312,28 @@ def _gateway_launch(container: dict[str, Any]) -> bool:
             or any(str(arg).replace("\\", "/").endswith("/slack_bot.py") for arg in command))
 
 
-def _relay_network(gateway: dict[str, Any], n8n: dict[str, Any] | None, host: str | None) -> bool | None:
-    """From docker inspect only: do gateway and n8n share a network on which n8n answers to host?"""
-    ours = (gateway.get("NetworkSettings") or {}).get("Networks")
-    theirs = ((n8n or {}).get("NetworkSettings") or {}).get("Networks")
-    if not isinstance(ours, dict) or not isinstance(theirs, dict) or not ours or not theirs:
+def _networks(row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    value = ((row or {}).get("NetworkSettings") or {}).get("Networks")
+    return [a for a in value.values() if isinstance(a, dict) and a.get("NetworkID")] if isinstance(value, dict) else []
+
+
+def _hop(source: dict[str, Any] | None, target: dict[str, Any] | None, host: str | None,
+         containers: list[dict[str, Any]]) -> bool | None:
+    """From docker inspect only: source and target share a network on which target, and no
+    other container, answers to host. None when either shows no network attachments."""
+    ours, theirs = _networks(source), _networks(target)
+    if not ours or not theirs:
         return None
-    for name, attach in theirs.items():
-        mine = ours.get(name)
-        if (isinstance(attach, dict) and isinstance(mine, dict) and attach.get("NetworkID")
-                and mine.get("NetworkID") == attach.get("NetworkID")
-                and host in {*(attach.get("Aliases") or []), *(attach.get("DNSNames") or [])}):
-            return True
+    shared = {attach["NetworkID"] for attach in ours}
+
+    def answers(attach: dict[str, Any]) -> bool:
+        return host in {*(attach.get("Aliases") or []), *(attach.get("DNSNames") or [])}
+
+    for attach in theirs:
+        if attach["NetworkID"] in shared and answers(attach):
+            # A second owner of the name makes resolution ambiguous: the hop is not bound to target.
+            return not any(row.get("Id") != (target or {}).get("Id") and other["NetworkID"] == attach["NetworkID"]
+                           and answers(other) for row in containers for other in _networks(row))
     return False
 
 
@@ -386,15 +397,17 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
              "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
              "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
-             "gateway_n8n_network_shared": _relay_network(gateway, n8n, relay.hostname),
+             "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
+             "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
              "n8n_upstream_environment": upstream.get("environment"),
              "active_intake": workflow,
              "containers_running": all(row is not None and row.get("State", {}).get("Running") is True
                                        for row in (director, gateway, n8n))}
     route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
                                    "gateway_n8n_route_matches": True, "containers_running": True,
-                                   "gateway_n8n_network_shared": True})
-    if route_pass is False and facts["gateway_n8n_network_shared"] is None and all(
+                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True})
+    hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
+    if route_pass is False and None in hops and False not in hops and all(
             facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
                                            "gateway_n8n_route_matches", "containers_running")):
         route_pass = None  # Network attachment not shown by docker inspect: unproven, not wrong.
@@ -555,11 +568,12 @@ def _thread_counts(t: _SlackThreads, thread: str,
     owner_inputs = sum(1 for m in messages if m.get("user") == t.owner and not m.get("bot_id") and t.m.unedited(m)
                        and (m.get("ts") == thread or m.get("thread_ts") == thread))
     replies = [m for m in messages if m.get("user") == t.bot and m.get("thread_ts") == thread]
-    bot = [html.unescape(str(m.get("text", ""))) for m in replies]
+    # The bot never edits its replies: an edited or subtyped one no longer shows what was
+    # posted, so its text is never parsed and the caller grades nothing in that thread.
+    altered = sum(1 for m in replies if not t.m.unedited(m))
+    bot = [html.unescape(str(m.get("text", ""))) for m in replies if t.m.unedited(m)]
     receipts = [match.group(1) for text in bot for match in _RECEIPT.finditer(text)]
     blocked = sum(1 for text in bot if "DIRECTOR — BLOCKED" in text)
-    # The bot never edits its replies: an edited or subtyped one no longer shows what was posted.
-    altered = sum(1 for m in replies if not t.m.unedited(m))
     return owner_inputs, receipts, blocked, altered
 
 
@@ -845,6 +859,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
 def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
     owner_inputs, receipts, blocked, altered = _thread_counts(t, thread, messages)
+    if altered:
+        return None, {"altered_bot_replies": altered, "verdict": None}
     bound = t.binding(thread)
     status = 404 if bound is None else 409 if bound == "AMBIGUOUS" else 200
     facts: dict[str, Any] = {"owner_inputs": owner_inputs, "blocked": blocked, "receipts": len(receipts),
@@ -932,7 +948,10 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
         else:
             passed = None
             stale = [kind for kind in kinds if (facts.get(kind) or {}).get("after_container_created") is False]
+            altered = [kind for kind in kinds if (facts.get(kind) or {}).get("altered_bot_replies")]
             explanation = ("Missing --drill-thread selections: " + ", ".join(missing) + "." if missing else
+                           "Drill threads hold edited or subtyped bot replies, so nothing in them is graded: "
+                           + ", ".join(altered) + "." if altered else
                            "Drills that predate the running Director container cannot attest it: " + ", ".join(stale) + "."
                            if stale else "A drill was not exercised or its evidence was incomplete or unavailable.")
         result.append(_observation(check, passed, explanation, _SLACK_SOURCE,
@@ -1466,6 +1485,7 @@ CI_JOBS = ("Contribution attribution", "Python 3.12 (ubuntu-latest)",
 # candidate: ci.yml itself routes to hosted or registered self-hosted runners.
 CI_WORKFLOW = ".github/workflows/ci.yml"
 _REPLICA_LANES = ("ubuntu-replica", "windows-postgres-lane")
+_RUN_PAGES = 10  # 1000 runs at one head; more is UNKNOWN, never a partial listing.
 _REPLICA_LANE_KEYS = {"lane", "head_tests_run", "base_tests_run", "head_failures", "base_failures", "command_sha256"}
 
 
@@ -1477,10 +1497,25 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
         # ci.yml job of the same name (hosted or self-hosted) can stand. A job of
         # any other workflow is renamed by its workflow path: it can still fail
         # 16, but it can never stand in for a required ci.yml job.
-        value = _run_json(["gh", *args])
+        # "No required job executed" admits the replica receipt, so absence is concluded
+        # only from a complete listing: every page of runs (bounded) and every job of a run.
         if "/jobs?" not in args[-1]:
-            paths.update((run["id"], run.get("path")) for run in value["workflow_runs"])
-            return value
+            if "&per_page=20" not in args[-1]:
+                raise ValueError("unexpected workflow-runs query")
+            runs: list[dict[str, Any]] = []
+            for page in range(1, _RUN_PAGES + 1):
+                value = _run_json(["gh", *args[:-1], args[-1].replace("&per_page=20", f"&per_page=100&page={page}")])
+                total, batch = value["total_count"], value["workflow_runs"]
+                runs.extend(batch)
+                if len(runs) >= total or not batch:
+                    break
+            if type(total) is not int or len(runs) != total or len({run["id"] for run in runs}) != total:
+                raise ValueError("workflow runs at this head were not listed completely")
+            paths.update((run["id"], run.get("path")) for run in runs)
+            return {"total_count": total, "workflow_runs": runs}
+        value = _run_json(["gh", *args])
+        if value.get("total_count") != len(value["jobs"]):
+            raise ValueError("a run's jobs were not listed completely")
         path = paths.get(int(args[-1].split("/runs/")[1].split("/")[0]))
         jobs = [job if path == CI_WORKFLOW else {**job, "name": f"{path}: {job.get('name')}"}
                 for job in value["jobs"] if job.get("steps")]
@@ -1998,3 +2033,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]

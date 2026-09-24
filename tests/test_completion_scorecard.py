@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]]
@@ -81,7 +82,10 @@ def containers():
                                 "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret", f"SLACK_OWNER_USER_ID={OWNER}",
                                 f"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256={PIN}",
                                 f"LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON={BINDINGS_JSON}"]},
-             "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18082"}]}}}]
+             "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18082"}]},
+                                 "Networks": {"edge-engine-director_default": {
+                                     "NetworkID": "a" * 64, "Aliases": ["orchestrator"],
+                                     "DNSNames": ["edge-engine-director-orchestrator-1", "orchestrator"]}}}}]
 
 
 def health():
@@ -548,7 +552,7 @@ def ledger_fixture(path, first_bounds=None):
     return ledger
 
 
-def gh_runs(jobs_by_run, paths=None, compare=None):
+def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None):
     """Runs come newest first; every run is ci.yml unless ``paths`` names another workflow."""
     def query(args, timeout=15):
         if args[0] != "gh":
@@ -556,11 +560,13 @@ def gh_runs(jobs_by_run, paths=None, compare=None):
         if "/compare/" in args[2]:
             return {"status": (compare or {}).get(args[2].split("/compare/")[1], "ahead")}
         if "/jobs?" in args[-1]:
-            return {"jobs": jobs_by_run[int(args[-1].split("/runs/")[1].split("/")[0])]}
+            jobs = jobs_by_run[int(args[-1].split("/runs/")[1].split("/")[0])]
+            return {"total_count": len(jobs), "jobs": jobs}
         if "head_sha=" + SHA not in args[-1]:
             raise AssertionError("CI query is not bound to the exact head")
-        return {"workflow_runs": [{"id": run_id, "path": (paths or {}).get(run_id, sc.CI_WORKFLOW)}
-                                  for run_id in jobs_by_run]}
+        runs = [{"id": run_id, "path": (paths or {}).get(run_id, sc.CI_WORKFLOW)} for run_id in jobs_by_run]
+        page = int(args[-1].split("&page=")[1]) if "&page=" in args[-1] else 1  # GitHub's default page
+        return {"total_count": len(runs) if total is None else total, "workflow_runs": runs[(page - 1) * size:page * size]}
     return query
 
 
@@ -1107,9 +1113,9 @@ class CompletionScorecardTests(unittest.TestCase):
             if args[0] == "docker":
                 raise ValueError("offline")
             if "/jobs?" in args[-1]:
-                return {"jobs": jobs}
+                return {"total_count": len(jobs), "jobs": jobs}
             self.assertIn("head_sha=" + SHA, args[-1])
-            return {"workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
+            return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
         with patch.object(sc, "_run_json", side_effect=external_query):
             observations = sc.collect(SHA, now=NOW, github=True)
             self.assertEqual(sc.score(SHA, observations, now=NOW)["checks"][15]["status"], "PASS")
@@ -1121,7 +1127,8 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
-            return {"jobs": []} if "/jobs?" in args[-1] else {"workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]}
+            return ({"total_count": 0, "jobs": []} if "/jobs?" in args[-1]
+                    else {"total_count": 1, "workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]})
         with patch.object(sc, "_run_json", side_effect=external_query):
             self.assertEqual(sc.score(SHA, sc.collect(SHA, now=NOW, github=True), now=NOW)["checks"][15]["status"], "FAIL")
 
@@ -1374,6 +1381,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         uninspected = topology()
         del uninspected[1]["NetworkSettings"]
         self.assertEqual(row(collect_topology(uninspected), "01")["status"], "UNKNOWN")
+        # n8n must reach the selected Director as orchestrator, and nothing else may answer to that name.
+        cut_off = topology()
+        cut_off[0]["NetworkSettings"]["Networks"] = {"other_default": {"NetworkID": "9" * 64, "Aliases": ["orchestrator"]}}
+        self.assertEqual(row(collect_topology(cut_off), "01")["status"], "FAIL")
+        shadowed = topology()
+        shadowed.append({"Id": "6" * 64, "Name": "/another-orchestrator", "State": {"Running": True}, "Config": {},
+                         "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64, "Aliases": ["orchestrator"]}}}})
+        self.assertEqual(row(collect_topology(shadowed), "01")["status"], "FAIL")
         relay = topology()
         relay[1]["Config"]["Env"][3] = "N8N_DIRECTOR_WEBHOOK_URL=http://edge-engine-director-n8n-1:5678/webhook/director-intake"
         self.assertEqual(row(collect_topology(relay), "01")["status"], "PASS")
@@ -1413,6 +1428,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited_refusal = self.world()
         edited_refusal.threads[ts(100)][1]["edited"] = {"user": BOT, "ts": ts(190)}
         self.assertEqual(edited_refusal.state("03"), "UNKNOWN")
+        # Receipt text added by an edit is never parsed, so it cannot turn the drill into a FAIL either.
+        forged = self.world()
+        forged.threads[ts(100)][1].update(text="*DIR-LG-5E — REQUEST RECEIVED*", edited={"user": BOT, "ts": ts(190)})
+        report = forged.report()
+        self.assertEqual(row(report, "03")["status"], "UNKNOWN")
+        self.assertIn("edited or subtyped", row(report, "03")["explanation"])
         unreserved = self.world()
         unreserved.bindings[ts(200)] = (404, None)
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
@@ -1801,8 +1822,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         unavailable.consistency = None
         self.assertEqual(unavailable.state("15"), "UNKNOWN")
 
-    def ci_report(self, jobs_by_run, paths=None, **options):
-        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths)):
+    def ci_report(self, jobs_by_run, paths=None, size=100, total=None, **options):
+        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths, size=size, total=total)):
             return sc.score(SHA, sc.collect(SHA, now=NOW, github=True, **options), now=NOW)
 
     def test_ci_self_hosted_16(self):
@@ -1820,7 +1841,13 @@ class ScorecardCollectorTests(unittest.TestCase):
             with patch.object(sc, "CI_REPLICA_KEY", public):
                 failed = self.ci_report({2: ci_jobs(steps=False), 1: ci_jobs(failed=("Secret hygiene",))},
                                         ci_replica_receipt=receipt)
+                # Page 1 (size 1) holds only another workflow's run; ci.yml ran and failed on page 2.
+                paged = self.ci_report({2: ci_jobs(), 1: ci_jobs(failed=("Secret hygiene",))},
+                                       paths={2: ".github/workflows/pr-added.yml"}, size=1, ci_replica_receipt=receipt)
+                unbounded = self.ci_report({2: ci_jobs(steps=False)}, total=5000, size=1, ci_replica_receipt=receipt)
         self.assertEqual(row(failed, "16")["status"], "FAIL")
+        self.assertEqual(row(paged, "16")["status"], "FAIL")
+        self.assertEqual(row(unbounded, "16")["status"], "UNKNOWN")
         self.assertEqual(row(self.ci_report({1: ci_jobs(steps=False)}), "16")["status"], "FAIL")
         # A same-named executed job of another workflow never stands in for a stubbed ci.yml job.
         impostor = self.ci_report({2: ci_jobs(steps=False), 1: ci_jobs()}, paths={1: ".github/workflows/pr-added.yml"})
@@ -2019,3 +2046,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:17 UTC | END]]
