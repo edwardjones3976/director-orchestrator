@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
@@ -269,7 +270,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.handle.close()
 
     def report(self, tasks=()):
-        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN}):
+        with patch.dict(os.environ, {"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256": PIN,
+                                     "DIRECTOR_RUNTIME_IMAGE_ID": "sha256:" + "c" * 64}):
             return evidence.consistency_report(self.settings, self.identity, tasks=tasks)
 
     def intake(self):
@@ -283,7 +285,8 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["version"], "director-primary-consistency/v1")
         self.assertEqual(report["generation"], {"manifest_sha256": PIN, "acceptance_mode": "provider-v2",
-                                                "candidate_commit": "a" * 40, "candidate_tree": "b" * 40, "adoption": None})
+                                                "candidate_commit": "a" * 40, "candidate_tree": "b" * 40, "adoption": None,
+                                                "image_id": "sha256:" + "c" * 64})
         self.assertEqual(report["intake_fencing_generation"], 1)
         self.assertEqual(report["counts"]["graph_task_count"], 1)
         for key in ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
@@ -665,3 +668,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
@@ -148,6 +149,8 @@ class Observation:
     digest: str = ""
     facts: Any = field(default_factory=dict)
     _origin: object = field(default=None, repr=False, compare=False)
+    # The latest final cutoff at which a PASS still holds (a capture's expiry less FRESH_FOR), if time-limited.
+    valid_until: Any = field(default=None, repr=False, compare=False)
 
 
 def _observation(check_id: str, passed: bool | None, explanation: str,
@@ -633,6 +636,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
              # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
              "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
+             "gateway_runs_director_image": gateway_image == runtime.image_id,
              "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
              "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
              "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
@@ -642,7 +646,7 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
                                    "gateway_n8n_route_matches": True, "containers_running": True,
                                    "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
-                                   "gateway_credentials_match": True})
+                                   "gateway_credentials_match": True, "gateway_runs_director_image": True})
     hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
     if route_pass is False and None in hops and False not in hops and all(
             facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
@@ -967,7 +971,11 @@ def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None
             passed, explanation, facts = _capture_verdict(at, runtime, captures)
         except _SOURCE_ERRORS:
             passed, explanation, facts = None, "The activation captures were malformed.", {}
-        obs12 = _observation("12", passed, explanation, _CAPTURES_SOURCE, facts, at, **binding)
+        expiries = [_when(surface["expires_at"]) for lane in facts.values() if isinstance(lane, dict)
+                    for surface in (lane.get("app"), lane.get("runtime_adapter")) if isinstance(surface, dict)]
+        # Valid only while the collection's final cutoff plus FRESH_FOR stays within every capture's expiry.
+        obs12 = _observation("12", passed, explanation, _CAPTURES_SOURCE, facts, at, **binding,
+                             valid_until=min(expiries) - FRESH_FOR if passed is True and expiries else None)
     latest = (paid or {}).get("latest")
     if not latest or captures is None:
         obs11 = _observation("11", None, "Requires the paid thread's collected readback with provider attempts and the "
@@ -1155,6 +1163,8 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
     # threads must hold the same ones (compared in constant time, never reported).
     if not _gateway_credentials_match(_environment(row), runtime.env):
         raise ValueError("the selected gateway does not hold the Director's Slack and bearer identities")
+    if row.get("Image") != runtime.image_id:  # the deployment binds the gateway to the Director's image
+        raise ValueError("the selected gateway does not run the Director's image")
     relays = _compose_ids(runtime.project, "n8n")
     if len(relays) != 1:
         raise ValueError("the selected deployment does not run exactly one n8n")
@@ -1263,11 +1273,23 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
 
 def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] | None) -> bool:
     """The one final-reply correlation every drill branch uses: a single terminal delivery row, DELIVERED
-    and read back with its Slack ts, matching the native final message."""
+    and read back with its Slack ts, matching the native final message, whose text is the Director's own
+    canonical terminal rendering (the check-20 rule): a correlated message with other text is not a final reply."""
     terminal = [r for r in (readback or {}).get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
     return (len(terminal) == 1 and terminal[0].get("state") == "DELIVERED" and bool(terminal[0].get("delivered_at"))
             and bool(terminal[0].get("slack_ts"))
-            and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True)
+            and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True
+            and _final_is_rendering(snapshot or {}))
+
+
+def _final_is_rendering(facts: dict[str, Any]) -> bool:
+    """The single unedited final reply's text is the Director's canonical terminal rendering of the record."""
+    finals = (facts.get("row") or {}).get("terminal_messages") or []
+    final = [m for m in facts.get("messages") or [] if len(finals) == 1 and m.get("ts") == finals[0]["ts"]]
+    rendered = facts.get("terminal_render")
+    if len(final) != 1 or facts.get("finals_unedited") is not True or not isinstance(rendered, str):
+        return False
+    return html.unescape(str(final[0].get("text", ""))) in (rendered, rendered.replace("\n", " "))
 
 
 def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
@@ -1290,7 +1312,7 @@ def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
 
 
 def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
-                   until: datetime | None = None) -> tuple[bool | None, dict[str, Any]]:
+                   until: datetime | None = None, sha: str | None = None) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
     owner_inputs, receipts, blocked, altered = _thread_counts(t, thread, messages)
     if altered:
@@ -1301,6 +1323,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
                              "altered_bot_replies": altered,
                              "binding_status": status, "thread_tasks": None}
     snapshot = _task_facts(t, thread, bound, (messages, complete, None)) if status == 200 and kind != "refusal-4xx" else None
+    if snapshot is not None and sha is not None and kind in ("duplicate-input", "ambiguous-post"):
+        snapshot = _with_rendering(t, snapshot, sha)
     readback = (snapshot or {}).get("readback")
     tasks = readback["task_scope_counters"]["thread_tasks"] if readback else None
     replies = snapshot["row"]["terminal_reply_count"] if snapshot else None
@@ -1362,7 +1386,7 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     facts: dict[str, Any] = {}
     for kind, thread in drills.items():
         try:
-            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.until())
+            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.until(), runtime.runtime_sha)
         except _SOURCE_ERRORS:
             verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
     result = []
@@ -2031,8 +2055,11 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         generation = (consistency or {}).get("generation")
         verified_commit = generation.get("candidate_commit") if isinstance(generation, dict) else None
         verified_tree = generation.get("candidate_tree") if isinstance(generation, dict) else None
+        # The manifest-verified image must be the one Docker says is running, not only the same commit and tree.
+        verified_image = generation.get("image_id") if isinstance(generation, dict) else None
         unbound = consistency is not None and not (
             _same(verified_commit, runtime.runtime_sha) and _same(verified_tree, runtime.runtime_tree)
+            and _same(verified_image, runtime.image_id)
             and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree))
         if captures is not None and not runtime.read_in_window(captures.get("observed_at")):
             captures = None  # a captures report not read during this collection attests nothing here
@@ -2510,8 +2537,21 @@ def collect(candidate_sha: str, *, deployment: str | None = None, channel: str |
         except _SOURCE_ERRORS:
             result.append(_observation("18", None, "The native Security index, seal, hashes or exact-candidate binding could not be verified.",
                                        "Codex Security native index", {}, at, candidate_sha=candidate_sha))
-    finished = collection_end()
-    return [replace(item, observed_at=finished, expires_at=finished + FRESH_FOR) for item in result]
+    return _finalize(result, collection_end())
+
+
+def _finalize(observations: list[Observation], finished: datetime) -> list[Observation]:
+    """Freeze one final cutoff after every source (deployment, GitHub, ledger, Security) was read: stamp every
+    observation at it, and revalidate every time-limited PASS against it, so none is emitted valid past the
+    evidence it rests on."""
+    out = []
+    for item in observations:
+        item = replace(item, observed_at=finished, expires_at=finished + FRESH_FOR)
+        if item.passed is True and item.valid_until is not None and finished > item.valid_until:
+            item = replace(item, passed=None, explanation="Time-limited evidence does not stay valid FRESH_FOR past "
+                           "the collection's final cutoff: " + item.explanation)
+        out.append(item)
+    return out
 
 
 RUN_RECORD_FIELDS = frozenset({
@@ -2795,3 +2835,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]

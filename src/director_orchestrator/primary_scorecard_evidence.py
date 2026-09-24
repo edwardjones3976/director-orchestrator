@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | BEGIN]]
@@ -247,7 +248,9 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
             "generation": {"manifest_sha256": os.environ[_PIN],
                            "acceptance_mode": settings.langgraph_primary_acceptance_mode,
                            "candidate_commit": identity.candidate_commit,
-                           "candidate_tree": identity.candidate_tree, "adoption": adoption},
+                           "candidate_tree": identity.candidate_tree, "adoption": adoption,
+                           # require_generation verified the manifest against this image before any read.
+                           "image_id": os.environ.get("DIRECTOR_RUNTIME_IMAGE_ID")},
             "captured_at": _plain(counts["captured_at"]),
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
             "counts": {key: int(counts[key]) for key in _COUNT_KEYS},
@@ -385,3 +388,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:37 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]

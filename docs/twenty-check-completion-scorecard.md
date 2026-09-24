@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]] -->
@@ -461,6 +462,16 @@ saved executions for its own default age. The scorecard reads only the last
 
 ### Execution-binding limits
 
+The consistency snapshot also returns the manifest-verified
+`DIRECTOR_RUNTIME_IMAGE_ID`, which must equal Docker's inspected image
+(otherwise 07, 08, 11, 12, 15, 17 and 20 are UNKNOWN), and the selected gateway
+must run the Director's image (01 FAILs; Slack-derived 03, 08, 09, 10 and 20
+are UNKNOWN). One final cutoff is frozen after every source (deployment,
+GitHub, ledger, Security) was read; every observation is stamped at it and a
+time-limited PASS (12's capture expiries) is revalidated against it. Upper
+bounds applied while grading use the time of that grading read, which is no
+later than the final cutoff. A drill's correlated final reply counts only when
+its text is the Director's canonical terminal rendering (the check-20 rule).
 Every upper bound and expiry reference uses the collection's end: check 12's
 capture observation and `FRESH_FOR` validity, and the CI replica, workload
 journal and Security seal times. Check 04 dates the newest scheduled run inside
@@ -758,3 +769,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]] -->

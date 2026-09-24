@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | BEGIN]]
@@ -226,7 +227,7 @@ def consistency_fixture():
               "signature_verified": True}
     return {"version": "director-primary-consistency/v1",
             "generation": {"manifest_sha256": PIN, "acceptance_mode": "owner-local-evidence-v1", "candidate_commit": SHA,
-                           "candidate_tree": "d" * 40, "adoption": adoption_fixture()},
+                           "candidate_tree": "d" * 40, "adoption": adoption_fixture(), "image_id": IMAGE},
             "captured_at": "2026-09-12T20:00:00+00:00", "intake_fencing_generation": 83, "counts": counts,
             "tasks": {PAID_TASK: {"usage_tables_present": True, "spend": [spend], "budgets": [budget],
                                   "approval_receipts": []},
@@ -2384,6 +2385,39 @@ class ScorecardCollectorTests(unittest.TestCase):
         tf.recount(readback)
         self.assertNotEqual(unsettled.state("06"), "PASS")
 
+    def test_generation_and_gateway_bind_to_the_inspected_image(self):
+        other_image = self.world()
+        other_image.consistency["generation"]["image_id"] = "sha256:" + "e" * 64
+        report = other_image.report()
+        for key in ("07", "11", "12", "17"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+        gateway_image = self.world()
+        gateway_image.rows[-1]["Image"] = "sha256:" + "e" * 64
+        report = gateway_image.report()
+        for key in ("03", "08", "09", "10", "20"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
+        rows = topology()
+        rows[1]["Image"] = "sha256:" + "e" * 64
+        self.assertEqual(row(collect_topology(rows), "01")["status"], "FAIL")
+
+    def test_time_limited_pass_is_revalidated_at_the_final_cutoff(self):
+        world = self.world()
+        obs12 = next(o for o in world.observe() if o.check_id == "12")
+        self.assertEqual(obs12.passed, True)
+        self.assertEqual(obs12.valid_until, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc) - sc.FRESH_FOR)
+        # A capture expiring between the grading read and the final cutoff: that PASS does not survive.
+        late = sc._finalize([obs12], obs12.valid_until + timedelta(seconds=1))[0]
+        self.assertIsNone(late.passed)
+        self.assertEqual(sc._finalize([obs12], obs12.valid_until)[0].passed, True)
+
+    def test_drill_final_reply_must_be_the_canonical_rendering_09(self):
+        for thread, final in ((ts(300), ts(330)), (ts(400), ts(430))):
+            case = self.world()
+            message = next(m for m in case.threads[thread] if m.get("ts") == final)
+            message["text"] = message["text"].replace("SUCCEEDED", "SUCCEEDED (see thread)")
+            with self.subTest(thread=thread):
+                self.assertNotEqual(case.state("09"), "PASS")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2914,3 +2948,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:09 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
