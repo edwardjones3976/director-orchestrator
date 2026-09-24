@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
@@ -75,6 +76,7 @@ from director_orchestrator.host_provider_bridge import (
 
 
 SECRET = "bridge-test-secret-that-is-longer-than-32-characters"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def request(*, nonce: str = "nonce-1", packet_key: str = "effect-key-1") -> BridgeRequest:
@@ -254,6 +256,87 @@ class HostProviderBridgeTests(unittest.TestCase):
         object.__setattr__(unsupported, "provider", "microsoft-365-copilot")
         with self.assertRaisesRegex(HostProviderBridgeError, "unallowlisted"):
             unsupported.validate(SECRET, now=1_000)
+
+    def attested_request(self, digest_value: str, *, argv_digest_in_signature: bool = True):
+        base = request(nonce="nonce-attested")
+        bindings = {key: getattr(base, key) for key in (
+            "timestamp", "nonce", "provider", "task_id", "assignment_id",
+            "idempotency_digest", "writer_generation", "packet_digest",
+            "writer_owner_token_digest")}
+        signature = bridge_signature(
+            SECRET, **bindings,
+            attested_argv_digest=digest_value if argv_digest_in_signature else "")
+        return BridgeRequest(**bindings, signature=signature, packet=base.packet,
+                             attested_argv_digest=digest_value)
+
+    def test_the_attested_argv_digest_is_signed_and_checked_before_execution(self) -> None:
+        """The host refuses, before spawning, an argv other than the attested one."""
+
+        from director_orchestrator.bridge_attestation import argv_digest
+        from director_orchestrator.host_provider_bridge import (
+            HostProviderBridgeAttestationMismatch,
+        )
+
+        argv = ("claude.exe", "--print")
+        pinned = argv_digest(argv)
+        self.attested_request(pinned).validate(SECRET, now=1_000)
+        # Stripped from, or forged outside, the signature: authentication fails.
+        for label, candidate in {
+            "stripped": self.attested_request(pinned),
+            "forged": self.attested_request("sha256:" + "9" * 64,
+                                            argv_digest_in_signature=False),
+        }.items():
+            if label == "stripped":
+                object.__setattr__(candidate, "attested_argv_digest", "")
+            with self.subTest(binding=label), self.assertRaisesRegex(
+                    HostProviderBridgeError, "authentication"):
+                candidate.validate(SECRET, now=1_000)
+        executor = WindowsHostProviderExecutor(
+            {"claude": argv}, cwd=self.temporary.name, writer_fence_verifier=_Verifier())
+        completed = subprocess.CompletedProcess(
+            args=argv, returncode=0, stdout=b'{"status":"SUCCEEDED"}', stderr=b"")
+        with patch("subprocess.run", return_value=completed) as run:
+            with self.assertRaises(HostProviderBridgeAttestationMismatch):
+                executor.execute(self.attested_request("sha256:" + "9" * 64))
+            run.assert_not_called()
+            self.assertEqual(b'{"status":"SUCCEEDED"}',
+                             executor.execute(self.attested_request(pinned)))
+            self.assertEqual(1, run.call_count)
+
+    def test_a_signed_mismatch_reaches_the_director_as_a_stale_attestation(self) -> None:
+        """End to end over HTTP: nothing is spawned, and the refusal is authenticated."""
+
+        from director_orchestrator.host_provider_bridge import (
+            HostBridgeAttestationStale,
+            HostBridgePacketTransport,
+        )
+        from director_orchestrator.host_provider_bridge_server import _Handler
+        from director_orchestrator.packet_routing import validated_compact_view
+
+        python = str(Path(sys.executable).resolve(strict=True))
+        marker = Path(self.temporary.name) / "spawned"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        server.bridge_secret = SECRET
+        server.claim_store = BridgeClaimStore(Path(self.temporary.name) / "claims.sqlite3")
+        server.executor = WindowsHostProviderExecutor(
+            {"grok": (python, "-c", f"open({str(marker)!r}, 'w').close()")},
+            cwd=self.temporary.name, writer_fence_verifier=_Verifier())
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        work = json.loads((ROOT / "docs/schemas/model-work-packet-v1.example.json").read_text())
+        work.update(allowed_tools=["READ_REPOSITORY"], allowed_external_effects=[])
+        transport = HostBridgePacketTransport(
+            "grok", f"http://127.0.0.1:{server.server_port}/v1/provider/dispatch", SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+            outbound_payload_builder=validated_compact_view,
+            result_normalizer=lambda packet, result: result,
+            read_only_argv_digest="sha256:" + "9" * 64)
+        context = SimpleNamespace(timeout_seconds=30, fencing_generation=7, deadline=None)
+        with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}), \
+                self.assertRaises(HostBridgeAttestationStale):
+            transport.send(canonical_json_bytes(work), context=context)
+        self.assertFalse(marker.exists())
 
     def test_executor_uses_one_shell_false_attempt(self) -> None:
         verifier = _Verifier()
@@ -1235,3 +1318,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -2927,6 +2928,9 @@ class DefaultPrimaryApplication:
                 self._delegation_tripped = True
                 return False
             exercised = sum(item.outcome is RecordedOutcome.PRE_AUTHORIZED for item in mine)
+            # Re-read after the history scan: the decision, its gate results
+            # and the record all use the time the decision is actually made.
+            now = datetime.now(timezone.utc)
             terms = self._standing_grant_terms(
                 record, grant, attested=attested, tripped=tripped,
                 exercised=exercised, now=now,
@@ -4181,41 +4185,48 @@ class DefaultPrimaryActivation:
                                 connection=connection,
                                 stage=stage,
                             )
-                        return adapter.dispatch(
-                            packet,
-                            context=ProviderAdapterContext(
-                                task_id=record.task_id,
-                                assignment_id=assignment_id,
-                                idempotency_key=attempt.attempt_digest,
-                                work_packet_digest=packet_digest,
-                                writer_token_digest=(
-                                    services._packet_router.writer_token(record).digest
+                        from .host_provider_bridge import HostBridgeAttestationStale
+                        try:
+                            return adapter.dispatch(
+                                packet,
+                                context=ProviderAdapterContext(
+                                    task_id=record.task_id,
+                                    assignment_id=assignment_id,
+                                    idempotency_key=attempt.attempt_digest,
+                                    work_packet_digest=packet_digest,
+                                    writer_token_digest=(
+                                        services._packet_router.writer_token(record).digest
+                                    ),
+                                    timeout_seconds=attempt_timeout_seconds,
+                                    budget_usd=attempt_budget_usd,
+                                    # A small task's reviewer cap only narrows.
+                                    total_token_limit=(
+                                        attempt.total_token_limit
+                                        if review_token_cap is None
+                                        else min(attempt.total_token_limit or review_token_cap,
+                                                 review_token_cap)
+                                    ),
+                                    max_hops=int(limits["max_hops"]),
+                                    max_revisions=int(limits["max_revisions"]),
+                                    allowed_tools=tuple(packet["allowed_tools"]),
+                                    allowed_external_effects=tuple(
+                                        packet["allowed_external_effects"]
+                                    ),
+                                    fencing_generation=writer.fencing_generation,
+                                    deadline=selected.deadline,
+                                    # Carried so the transport can bind the meter
+                                    # it actually resolves to the enrollment this
+                                    # selection checked, rather than trusting a
+                                    # comparison made before it resolved one.
+                                    enrollment_digest=selected.enrollment_digest,
+                                    authority_recheck=authority_recheck,
                                 ),
-                                timeout_seconds=attempt_timeout_seconds,
-                                budget_usd=attempt_budget_usd,
-                                # A small task's reviewer cap only narrows.
-                                total_token_limit=(
-                                    attempt.total_token_limit
-                                    if review_token_cap is None
-                                    else min(attempt.total_token_limit or review_token_cap,
-                                             review_token_cap)
-                                ),
-                                max_hops=int(limits["max_hops"]),
-                                max_revisions=int(limits["max_revisions"]),
-                                allowed_tools=tuple(packet["allowed_tools"]),
-                                allowed_external_effects=tuple(
-                                    packet["allowed_external_effects"]
-                                ),
-                                fencing_generation=writer.fencing_generation,
-                                deadline=selected.deadline,
-                                # Carried so the transport can bind the meter
-                                # it actually resolves to the enrollment this
-                                # selection checked, rather than trusting a
-                                # comparison made before it resolved one.
-                                enrollment_digest=selected.enrollment_digest,
-                                authority_recheck=authority_recheck,
-                            ),
-                        )
+                            )
+                        except HostBridgeAttestationStale as exc:
+                            # The host authenticated that it ran nothing: the same
+                            # proven hold as a stale attestation before the send.
+                            raise WorkloadAdmissionHold(
+                                "small_task_bridge_attestation_stale") from exc
 
                     try:
                         attempt_status, result, result_digest, attempt_reason = (
@@ -4767,3 +4778,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

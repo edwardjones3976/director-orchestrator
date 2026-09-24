@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
@@ -355,7 +356,10 @@ attended assignment that names no path keeps the first 64 entries outside
 prohibited paths, as the full packet gave it. The view is
 defined by `docs/schemas/director-compact-work-view-v1.schema.json`, and every
 view is validated against it before any transport sends it. For a small
-read-only task the view also carries the text of every path the request names,
+read-only task the view also carries the text of every path the request names
+(a path-shaped token, a conventional extensionless file such as `Makefile` or
+`Dockerfile`, or any token that is exactly a path in the snapshot, each of which
+must resolve to a snapshot entry),
 read from the git blob its snapshot binds at the packet's commit (never a
 working tree) and bound by that blob hash, so a tool-less lane such as OpenAI
 Responses can read them; the reviewer's objective names the same paths, so
@@ -390,7 +394,11 @@ Director re-checks that argv against the lane's read-only restriction set in
 re-challenges the bridge before admission, and again immediately before every
 bridge send, each producer retry and reviewer attempt included; if the
 attestation is gone, changed, or cannot be authenticated, nothing is sent
-(`small_task_bridge_attestation_stale`). The restriction sets use only flags this repository
+(`small_task_bridge_attestation_stale`). The signed dispatch request itself
+carries the pinned argv digest, and the bridge compares it, in constant time,
+with the digest of the argv it is about to run, immediately before starting it;
+a mismatch runs nothing and returns a signed refusal the Director also treats as
+`small_task_bridge_attestation_stale`. The restriction sets use only flags this repository
 already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
 `--disable-web-search`, `--no-subagents`, the canonical `--disallowed-tools`
 list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
@@ -654,3 +662,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->

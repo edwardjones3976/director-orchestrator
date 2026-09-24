@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
@@ -34,6 +35,7 @@ from pathlib import Path
 from .bridge_attestation import lane_attestations
 from .packet_contracts import canonical_json_bytes
 from .host_provider_bridge import (
+    HostProviderBridgeAttestationMismatch,
     BRIDGE_PROTOCOL,
     BridgeClaimStore,
     BridgeRequest,
@@ -351,6 +353,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "X-Director-Work-Packet-Digest", ""
                 ),
                 host_deadline=self.headers.get("X-Director-Host-Deadline", ""),
+                attested_argv_digest=self.headers.get("X-Director-Attested-Argv-Digest", ""),
             )
             if request.host_deadline and request.host_deadline.split(":", 1)[0] != self._clock_id:
                 raise HostProviderBridgeError("host deadline clock changed")
@@ -374,6 +377,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("X-Director-Response-Proof", proof)
             self.end_headers()
             self.wfile.write(result)
+        except HostProviderBridgeAttestationMismatch:
+            # Nothing ran. Signed, so the Director can trust that it did not.
+            body = json.dumps({"ok": False, "reason": "attestation_mismatch"},
+                              separators=(",", ":")).encode("utf-8")
+            response_digest = _digest(body)
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Director-Response-Digest", response_digest)
+            self.send_header("X-Director-Response-Proof", bridge_response_signature(
+                self.server.bridge_secret,  # type: ignore[attr-defined]
+                nonce=request.nonce, idempotency_digest=request.idempotency_digest,
+                response_digest=response_digest))
+            self.end_headers()
+            self.wfile.write(body)
         except HostProviderBridgeAmbiguous:
             self._json(409, {"ok": False, "reason": "reconciliation_required"})
         except (HostProviderBridgeError, ValueError):
@@ -475,3 +493,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

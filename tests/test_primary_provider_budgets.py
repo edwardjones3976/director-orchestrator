@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -380,6 +381,20 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual(2, current.call_count)
         self.assertEqual(1, len(sends))
 
+    def test_an_authenticated_host_refusal_is_a_stale_attestation(self):
+        from director_orchestrator.host_provider_bridge import HostBridgeAttestationStale
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        def refuse(_packet, *, context):
+            self.dispatch_contexts.append(context)
+            raise HostBridgeAttestationStale("the bridge refused an unattested argv")
+
+        self.adapter.dispatch = refuse
+        self.record.assignment_outcomes = []
+        with self.assertRaisesRegex(WorkloadAdmissionHold, "small_task_bridge_attestation_stale"):
+            self.run_assignment(0)
+        self.assertEqual(1, len(self.dispatch_contexts))
+
     def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
         self.activation.services._packet_router = packet_router(self.settings)
         reservation, _ = self.request(1)
@@ -447,3 +462,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -860,6 +861,35 @@ class CompactProviderViewTests(unittest.TestCase):
         with patch("director_orchestrator.packet_routing._BLOB_READER", None):
             self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
 
+    def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
+        """Extensionless files count: conventional names and any exact snapshot path."""
+
+        from director_orchestrator.packet_routing import git_blob_sha, small_task_named_contents
+        from director_orchestrator.policy import _read_only_request
+
+        files = {"Makefile": b"all:\n\techo ok\n", "Dockerfile": b"FROM scratch\n",
+                 "VERSION": b"1.2\n"}
+        by_sha = {git_blob_sha(data): data for data in files.values()}
+
+        def work(objective, blobs=files):
+            return {"objective": objective, "allowed_tools": ["READ_REPOSITORY"],
+                    "allowed_external_effects": [],
+                    "authority_snapshot": [
+                        {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": git_blob_sha(data)}
+                        for path, data in blobs.items()]}
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", by_sha.get):
+            contents = small_task_named_contents(work("Explain the Makefile and VERSION."))
+            self.assertEqual(["Makefile", "VERSION"], [item["path"] for item in contents])
+            self.assertEqual(["Dockerfile"], [item["path"] for item in small_task_named_contents(
+                work("Describe the Dockerfile targets."))])
+            # A conventional name the snapshot lacks is a missing file.
+            self.assertIsNone(small_task_named_contents(
+                work("Explain the Makefile.", {"Dockerfile": files["Dockerfile"]})))
+        # The request text names a conventional extensionless file.
+        self.assertTrue(_read_only_request("Explain the Makefile."))
+        self.assertTrue(_read_only_request("Describe the Dockerfile targets."))
+
     def test_unlabeled_identifier_formats_in_a_file_keep_the_button(self) -> None:
         """Raw values with no label, in otherwise innocuous files."""
 
@@ -1023,3 +1053,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -88,6 +89,17 @@ class HostProviderBridgeAmbiguous(HostProviderBridgeError):
     """An external attempt may have happened and cannot be resent."""
 
 
+class HostProviderBridgeAttestationMismatch(HostProviderBridgeError):
+    """The argv about to run is not the one the request's attestation pinned.
+
+    Raised before any process is started, so nothing was executed.
+    """
+
+
+class HostBridgeAttestationStale(RuntimeError):
+    """The bridge authenticated that it refused to run an unattested argv."""
+
+
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -111,6 +123,7 @@ def _signature_payload(
     writer_owner_token_digest: str,
     work_packet_digest: str = "",
     host_deadline: str = "",
+    attested_argv_digest: str = "",
 ) -> bytes:
     material = [
         BRIDGE_PROTOCOL,
@@ -132,6 +145,10 @@ def _signature_payload(
         material.append(work_packet_digest)
     if host_deadline:
         material.extend(("host-monotonic-deadline", host_deadline))
+    # A small read-only task's request carries the argv digest its lane was
+    # attested under; appended only when present, like the other bindings.
+    if attested_argv_digest:
+        material.extend(("attested-argv", attested_argv_digest))
     return "\n".join(material).encode("utf-8")
 
 
@@ -308,6 +325,7 @@ class BridgeRequest:
     # to reconstruct anything the host was deliberately not shown.
     work_packet_digest: str = ""
     host_deadline: str = ""
+    attested_argv_digest: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider not in SUPPORTED_HOST_LANES:
@@ -341,7 +359,12 @@ class BridgeRequest:
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=self.work_packet_digest,
             host_deadline=self.host_deadline,
+            attested_argv_digest=self.attested_argv_digest,
         )
+        if self.attested_argv_digest and (
+                not self.attested_argv_digest.startswith("sha256:")
+                or _HEX_64.fullmatch(self.attested_argv_digest[7:]) is None):
+            raise HostProviderBridgeError("attested argv digest is invalid")
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
         if self.host_deadline:
@@ -508,6 +531,14 @@ class WindowsHostProviderExecutor:
         verifier.verify(request)
         if time.monotonic() >= cutoff:
             raise HostProviderBridgeError("host bridge deadline expired before execution")
+        attested = getattr(request, "attested_argv_digest", "")
+        if attested:
+            # Immediately before execution: the argv about to run must be the
+            # one this request's lane was attested and pinned under.
+            from .bridge_attestation import argv_digest
+            if not hmac.compare_digest(argv_digest(command), attested):
+                raise HostProviderBridgeAttestationMismatch(
+                    "host argv differs from the attested argv")
         if request.provider == "openai":
             from types import SimpleNamespace
             from .packet_contracts import validate_packet
@@ -777,6 +808,14 @@ class HostBridgePacketTransport:
             work_packet_digest = _digest(work_packet_json)
         # The transport signature binds the exact bytes that leave this process.
         packet_digest = _digest(outbound)
+        # A small read-only task's packet (read tool only, no effect) binds the
+        # argv this lane was attested under; the host refuses any other argv.
+        attested_argv_digest = (
+            self.read_only_argv_digest
+            if self.read_only_argv_digest is not None
+            and packet.get("allowed_tools") == ["READ_REPOSITORY"]
+            and packet.get("allowed_external_effects") == []
+            else "")
         idempotency_digest = _digest(idempotency_key.encode("utf-8"))
         timestamp = int(time.time())
         nonce = hashlib.sha256(f"{time.time_ns()}:{packet_digest}".encode()).hexdigest()
@@ -792,6 +831,7 @@ class HostBridgePacketTransport:
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=work_packet_digest,
             host_deadline=host_deadline,
+            attested_argv_digest=attested_argv_digest,
         )
         headers = {
             "Content-Type": "application/json",
@@ -811,6 +851,8 @@ class HostBridgePacketTransport:
             headers["X-Director-Work-Packet-Digest"] = work_packet_digest
         if host_deadline:
             headers["X-Director-Host-Deadline"] = host_deadline
+        if attested_argv_digest:
+            headers["X-Director-Attested-Argv-Digest"] = attested_argv_digest
         request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
         remaining = context.timeout_seconds if cutoff is None else cutoff - time.monotonic()
         if remaining <= 0:
@@ -829,6 +871,20 @@ class HostBridgePacketTransport:
                 payload = response.read(_MAX_RESULT_BYTES + 1)
                 response_digest = response.headers.get("X-Director-Response-Digest", "")
                 response_proof = response.headers.get("X-Director-Response-Proof", "")
+        except urllib.error.HTTPError as exc:
+            # Only an authenticated refusal of the argv proves nothing ran.
+            if exc.code == 403 and attested_argv_digest:
+                body = exc.read(4096)
+                proof = bridge_response_signature(
+                    self.secret, nonce=nonce, idempotency_digest=idempotency_digest,
+                    response_digest=_digest(body))
+                if (exc.headers.get("X-Director-Response-Digest", "") == _digest(body)
+                        and hmac.compare_digest(
+                            exc.headers.get("X-Director-Response-Proof", ""), proof)
+                        and json.loads(body).get("reason") == "attestation_mismatch"):
+                    raise HostBridgeAttestationStale(
+                        "the bridge refused an argv other than the attested one") from exc
+            raise RuntimeError("host provider bridge outcome is ambiguous") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
         if cutoff is not None and time.monotonic() >= cutoff:
@@ -904,3 +960,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -25,7 +26,7 @@ import hashlib
 import hmac
 import re
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 
 from .approvals import assignment_is_approved
@@ -120,11 +121,20 @@ def _objective_tokens(objective: object) -> set[str]:
     return {token.strip("`'\"()[]{}<>,;:!?").rstrip(".") for token in str(objective).split()}
 
 
-def named_paths(text: object) -> list[str]:
-    """The path-shaped tokens a request names, in order, without repeats."""
+def named_paths(text: object, snapshot_paths: Collection[str] = ()) -> list[str]:
+    """The paths a request names, sorted, without repeats.
 
+    A token counts when it is path-shaped (a dot or slash), a conventional
+    extensionless file (LICENSE, Makefile, Dockerfile...), or exactly a path
+    in the snapshot inventory.
+    """
+
+    from .policy import KNOWN_EXTENSIONLESS_FILES
+
+    paths = set(snapshot_paths)
     return sorted({token for token in _objective_tokens(text)
-                   if _NAMED_PATH_TOKEN.fullmatch(token)})
+                   if _NAMED_PATH_TOKEN.fullmatch(token)
+                   or token in KNOWN_EXTENSIONLESS_FILES or token in paths})
 
 
 def _under(path: str, roots: Sequence[str]) -> bool:
@@ -151,7 +161,9 @@ def small_task_named_contents(work: Mapping[str, Any]) -> list[dict[str, str]] |
     reader = _BLOB_READER
     snapshot = {entry["path"]: entry for entry in work.get("authority_snapshot") or ()}
     prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
-    names = named_paths(work.get("objective", ""))
+    # Every named token resolves against the snapshot inventory exactly; one
+    # that does not (a missing file) keeps the task out below.
+    names = named_paths(work.get("objective", ""), snapshot)
     if reader is None or not names or len(names) > SMALL_TASK_CONTENT_MAX_FILES:
         return None
     contents: list[dict[str, str]] = []
@@ -571,7 +583,8 @@ class DirectorPacketTaskRouter:
             # producer: its objective names them too.
             producer = next((item for item in plan.assignments
                              if item.sequence in assignment.depends_on), None)
-            scope = named_paths(producer.task) if producer is not None else []
+            scope = (named_paths(producer.task, {entry["path"] for entry in snapshot})
+                     if producer is not None else [])
             if scope:
                 objective = f"{objective} Review scope: {' '.join(scope)}."
 
@@ -736,3 +749,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

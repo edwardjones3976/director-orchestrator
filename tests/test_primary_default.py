@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -75,7 +76,7 @@ from functools import partial
 from unittest.mock import patch
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1064,6 +1065,29 @@ class StandingGrantExerciseTests(unittest.TestCase):
             blocker.rollback()
             blocker.close()
         self.assertEqual(1, len(self.audit()))
+
+    def test_the_final_decision_uses_a_fresh_clock(self):
+        """A grant that expires during the history scan does not pre-authorize."""
+
+        import director_orchestrator.primary_default as module
+
+        start = datetime(2099, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=30)
+        later = start + timedelta(seconds=60)
+        calls = []
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                calls.append(tz)
+                return start if len(calls) == 1 else later
+
+        with patch.object(module, "datetime", Clock):
+            self.assertFalse(self.exercise(self.application(), self.record()))
+        [entry] = self.audit()
+        self.assertIs(RecordedOutcome.REFUSED, entry.outcome)
+        self.assertEqual(later, entry.recorded_at)
+        self.assertEqual({later}, {item.evaluated_at for item in entry.gate_results})
+        self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
 
     def test_the_append_verification_is_bounded_too(self):
         from director_orchestrator.store import DelegationAuditDeadlineExceeded
@@ -5643,3 +5667,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]

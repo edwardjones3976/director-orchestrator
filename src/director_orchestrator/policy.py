@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -537,7 +538,17 @@ _MUTATION_VERB = re.compile(
 # The request must name at least one path: the compact view keeps only
 # snapshot entries named in the objective or under owned paths, so a
 # repository-wide request would be answered from an empty inventory.
-_NAMED_PATH = re.compile(r"\w[\w-]*\.\w+|\w[\w.-]*/[\w./-]*\w")
+# Conventional files with no extension; any other extensionless name counts
+# only when it is exactly a path in the task's snapshot (packet_routing).
+KNOWN_EXTENSIONLESS_FILES = frozenset({
+    "LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "CHANGELOG",
+    "CONTRIBUTING", "CODEOWNERS", "README", "Makefile", "Dockerfile",
+    "Containerfile", "Procfile", "Gemfile", "Rakefile", "Vagrantfile",
+    "Jenkinsfile", "Pipfile", "Brewfile", "Justfile",
+})
+_NAMED_PATH = re.compile(
+    r"\w[\w-]*\.\w+|\w[\w.-]*/[\w./-]*\w"
+    r"|(?<![\w.-])(?:" + "|".join(sorted(KNOWN_EXTENSIONLESS_FILES)) + r")(?![\w-]|\.\w)")
 _DETERMINER = r"(?:the|a|an|its|their|this|that|these|those|each|every|both|all)"
 _OBJECT_LIST = re.compile(rf"(?:{_DETERMINER}\s+)*[\w./-]*[./_][\w./-]*", re.I)
 _TO_ACTION = re.compile(rf"\bto\s+(?!{_DETERMINER}\b)([\w./-]+)", re.I)
@@ -2006,3 +2017,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
