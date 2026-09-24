@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — project subsection
 
@@ -64,6 +65,7 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    Validate before pushing:
 
    ```powershell
+   Push-Location .worktrees\homemade-llm-<slug>   # the interpreter path below is relative to the worktree
    $env:PYTHONPATH = 'src'
    ..\..\.venv-win\Scripts\python.exe scripts\check_contribution_tags.py --base <main-sha> --head HEAD
    ```
@@ -111,9 +113,10 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 | PR-0 | This subsection merged | `main` contains `projects/homemade-llm/` | owner merge |
 | M0 | Foundation: `C:\llm` layout, Unsloth smoke fine-tune on the GPU, LM Studio serving a merged GGUF, Open WebUI reaching it, Ollama retired, mirror job | state report with every number verified | gate |
 | M1 | Base-model shootout | winner per family with license check; owner sign-off | gate |
-| M2 | DIRECTOR data v1 + adapter v0.1 → v0.3 | ≥ 60 % field-level acceptance on both held-out sets; no > 3-point general regression; week-4 early warning at < 45 % | gate |
+| M2 | DIRECTOR data v1 + adapter v0.1 → v0.3 | > 60 % field-level acceptance on both held-out sets; no > 3-point general regression; week-4 early warning at < 45 % | gate |
 | M3 | DIRECTOR v1.0 as a local provider lane (owner decision required; after PRs #263/#264) | **L1 DIRECTOR launch checklist** (`PLAN.md` §2.1), target 2026-11-12 | gate |
 | M4 | COMPANION Persona Bible + Stage A library | Bible and source list approved; Stage A perplexity gate | gate |
 | M5a/b | COMPANION Stage B / Stage C | **L2 COMPANION launch checklist** (`PLAN.md` §2.2), target 2026-12-17 | gate |
 | M6 | Hardening, runbooks, restore drill | fresh-machine restore < 1 day | gate |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
