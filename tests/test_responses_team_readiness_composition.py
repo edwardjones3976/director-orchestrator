@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-21 | 22:36 UTC | BEGIN]]
@@ -2023,6 +2024,13 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             owner_signature="0" * 64,
         ), fixtures.OWNER_SECRET)
 
+    # Late-settlement tests expire the enrollment through the meter's injected
+    # clock (two hours ahead), never through real time. Admission itself still
+    # checks the window on the real clock (the transport preflight inside
+    # `reserve_ready`), so the window must outlast a slow, contended runner:
+    # one second did not (CI run 35974305236). Must stay below that offset.
+    _LATE_EXPIRY_SECONDS = 60.0
+
     def _admitted_meter(self, *, expires_in_seconds=3600.0, clock=None,
                         api_key="test-secret-key", organization_id="org-synthetic",
                         api_project_id="proj-synthetic"):
@@ -2113,7 +2121,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         """
         from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
-        case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
+        case = self._admitted_meter(expires_in_seconds=self._LATE_EXPIRY_SECONDS, clock=lambda: expired)
         self.assertEqual([], self._usage_rows())
         # The production shape: the execution callback raises, exactly as the
         # transport's does once its budget is spent, and only the absolute
@@ -2150,7 +2158,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         """
         from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
-        case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
+        case = self._admitted_meter(expires_in_seconds=self._LATE_EXPIRY_SECONDS, clock=lambda: expired)
 
         def spent():
             raise RuntimeError("OpenAI transport timeout is exhausted")
@@ -2172,7 +2180,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             case.meter.settle(conflicting, case.headers, sent_at=case.sent_at, **late)
         self.assertEqual(rows, self._usage_rows())
         # An unconfirmed account association is refused before any write.
-        other = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
+        other = self._admitted_meter(expires_in_seconds=self._LATE_EXPIRY_SECONDS, clock=lambda: expired)
         with self.assertRaisesRegex(TeamAuthorizationError, "account association"):
             other.meter.settle(other.native,
                                 dict(other.headers, **{"openai-organization": "org-other"}),
@@ -2200,7 +2208,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         """
         from time import monotonic as _monotonic
         expired = datetime.now(timezone.utc) + timedelta(hours=2)
-        case = self._admitted_meter(expires_in_seconds=1.0, clock=lambda: expired)
+        case = self._admitted_meter(expires_in_seconds=self._LATE_EXPIRY_SECONDS, clock=lambda: expired)
 
         def spent():
             raise RuntimeError("OpenAI transport timeout is exhausted")
@@ -2703,3 +2711,4 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 22:50 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 00:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 15:10 UTC | END]]
