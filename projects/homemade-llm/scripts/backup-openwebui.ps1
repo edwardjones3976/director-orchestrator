@@ -15,33 +15,45 @@ $ErrorActionPreference = 'Stop'
 $Keep = 14   # newest archives kept; older ones are pruned only after a successful backup
 $ArchiveName = '^open-webui-\d{8}-\d{6}\.tgz$'
 
-# Restore, run in a helper container with the volume at /d and the archive dir at /b:
-#  0. recover an interrupted earlier restore: if /d/.pre-restore exists, drop whatever is beside it and move
-#     the preserved contents back, so the volume is exactly as it was before that run;
-#  1. extract into container scratch (/x): a missing or corrupt archive stops here, volume untouched;
-#  2. move the current contents aside into /d/.pre-restore (a rename on the same volume, needs no space);
-#  3. copy the extracted tree in; on success drop the rollback copy, on failure remove the partial copy
-#     and move the previous contents back (exit 3).
-# ./cache is not in archives; Open WebUI re-downloads it on start.
+# Restore, run in a helper container with the volume at /d and the archive dir at /b. A one-word journal,
+# /d/.restore-state, says what the entries beside /d/.pre-restore are, so recovery never deletes originals:
+#   moving  - originals may be split between /d and .pre-restore: everything beside it is original data;
+#             recovery only moves .pre-restore's contents back and deletes nothing.
+#   copying - every original is inside .pre-restore: what is beside it is the new, possibly partial, copy;
+#             recovery deletes that copy, then switches to 'moving' before moving the originals back.
+# No journal but a .pre-restore (an older version of this script): treated as 'moving', the safe case.
+# Steps: recover any interrupted run; extract into container scratch (/x), so a missing or corrupt archive
+# stops before the volume changes; move the current contents aside; copy in; drop the rollback copy.
+# ./cache, .pre-restore and .restore-state are never in archives; Open WebUI re-downloads ./cache on start.
 $RestoreSh = @'
 set -e
-rollback() {
-    find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore -exec rm -rf {} +
+journal() { printf '%s' "$1" > /d/.restore-state.tmp && mv -f /d/.restore-state.tmp /d/.restore-state; }
+undo_move() {
     find /d/.pre-restore -mindepth 1 -maxdepth 1 -exec mv -t /d {} +
     rmdir /d/.pre-restore
+    rm -f /d/.restore-state
+}
+undo_copy() {
+    find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore ! -name '.restore-state*' -exec rm -rf {} +
+    journal moving
+    undo_move
 }
 if [ -d /d/.pre-restore ]; then
     echo "recovering an interrupted restore: putting the previous contents back"
-    rollback
+    if [ "$(cat /d/.restore-state 2>/dev/null)" = copying ]; then undo_copy; else undo_move; fi
 fi
+rm -f /d/.restore-state /d/.restore-state.tmp
 mkdir /x
 tar xzf "/b/$ARCHIVE" -C /x
+journal moving
 mkdir /d/.pre-restore
-find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore -exec mv -t /d/.pre-restore {} +
+find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore ! -name '.restore-state*' -exec mv -t /d/.pre-restore {} +
+journal copying
 if cp -a /x/. /d/; then
     rm -rf /d/.pre-restore
+    rm -f /d/.restore-state
 else
-    rollback
+    undo_copy
     exit 3
 fi
 '@
@@ -92,7 +104,7 @@ try {
         # ./cache holds re-downloadable embedding/speech models (about 1 GB); chats, users and memory are the rest.
         # Write under .part and rename only on success, so a failed tar never leaves a file that looks like a
         # valid backup (which retention would count among the newest and use to prune real recovery points).
-        docker run --rm --entrypoint tar -v "${Volume}:/d:ro" -v "${OutDir}:/b" $image czf "/b/$name.part" --exclude=./cache -C /d .
+        docker run --rm --entrypoint tar -v "${Volume}:/d:ro" -v "${OutDir}:/b" $image czf "/b/$name.part" --exclude=./cache --exclude=./.pre-restore --exclude='./.restore-state*' -C /d .
         $tarExit = $LASTEXITCODE
         if ($tarExit -ne 0) {
             if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }

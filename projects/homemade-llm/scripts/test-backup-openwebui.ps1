@@ -54,15 +54,55 @@ try {
     Assert-Equal (In-Volume 'cat /d/sentinel.txt') 'v3' 'restore: refused name leaves data intact'
     Remove-Item -LiteralPath $evil
 
-    # Interrupted earlier restore: .pre-restore holds the real data, beside it a partial copy.
-    # The next run must put the real data back first, even if its own archive then turns out corrupt.
-    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo original > /d/.pre-restore/sentinel.txt; echo partial > /d/half.txt' | Out-Null
+    # Interrupted earlier restores. Each is recovered first, even when the new archive then turns out corrupt,
+    # so the check is purely the recovery. 'list' prints every entry, so nothing lost goes unnoticed.
     Set-Content $bad 'not gzip' -NoNewline
+    $list = 'cd /d && find . -mindepth 1 | sort | tr "\n" " "'
+    # (a) Interrupted mid-copy: every original inside .pre-restore, a partial new copy beside it.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo original > /d/.pre-restore/sentinel.txt; echo partial > /d/half.txt; printf copying > /d/.restore-state' | Out-Null
     Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
-    Assert-Equal (In-Volume 'cat /d/sentinel.txt') 'original' 'interrupted: previous contents recovered'
-    Assert-Equal (In-Volume 'test -e /d/half.txt && echo yes || echo no') 'no' 'interrupted: partial copy removed'
-    Assert-Equal (In-Volume 'test -e /d/.pre-restore && echo yes || echo no') 'no' 'interrupted: .pre-restore cleared'
+    Assert-Equal (In-Volume $list) './sentinel.txt' 'interrupted mid-copy: originals back, partial copy removed, journal cleared'
+    # (b) Interrupted mid-move: originals split between /d and .pre-restore. Nothing may be deleted.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo a > /d/.pre-restore/moved.txt; echo b > /d/unmoved.txt; mkdir /d/sub; echo c > /d/sub/deep.txt; printf moving > /d/.restore-state' | Out-Null
+    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
+    Assert-Equal (In-Volume $list) './moved.txt ./sub ./sub/deep.txt ./unmoved.txt' 'interrupted mid-move: every original kept, none deleted'
+    # (c) Created .pre-restore but moved nothing yet (the window the reviewer found).
+    In-Volume 'find /d -mindepth 1 -delete; echo only > /d/sentinel.txt; printf moving > /d/.restore-state; mkdir /d/.pre-restore' | Out-Null
+    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
+    Assert-Equal (In-Volume $list) './sentinel.txt' 'interrupted before any move: original kept'
+    # (d) Left by an older version of this script (no journal): treated as mid-move, so nothing is deleted.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo a > /d/.pre-restore/x.txt; echo b > /d/y.txt' | Out-Null
+    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
+    Assert-Equal (In-Volume $list) './x.txt ./y.txt' 'legacy leftover without journal: nothing deleted'
+    # (e) Interrupted during rollback after the journal switched back to moving: finish moving, delete nothing.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo back > /d/already-back.txt; echo in > /d/.pre-restore/still-in.txt; printf moving > /d/.restore-state' | Out-Null
+    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
+    Assert-Equal (In-Volume $list) './already-back.txt ./still-in.txt' 'interrupted mid-rollback: all originals kept'
     Remove-Item $bad
+    # Backups never capture restore bookkeeping.
+    In-Volume 'find /d -mindepth 1 -delete; echo v > /d/sentinel.txt; mkdir /d/.pre-restore; printf moving > /d/.restore-state' | Out-Null
+    $before = @(Get-ChildItem $out -Filter 'open-webui-*.tgz').Name
+    Invoke-Backup $common | Out-Null
+    $new = Get-ChildItem $out -Filter 'open-webui-*.tgz' | Where-Object Name -notin $before | Select-Object -First 1
+    $newList = (docker run --rm --entrypoint tar -v "${out}:/b:ro" $Image tzf "/b/$($new.Name)" | Out-String)
+    Assert-Equal ([bool]($newList -match 'pre-restore|restore-state')) $false 'backup: restore bookkeeping excluded'
+    In-Volume 'rm -rf /d/.pre-restore /d/.restore-state' | Out-Null
+    Remove-Item $new.FullName
+
+    # Fail closed on unreadable state: load Get-ContainerRunning and shadow docker with a fake.
+    $tokens0 = $null; $errs0 = $null
+    $ast0 = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens0, [ref]$errs0)
+    . ([scriptblock]::Create(($ast0.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-ContainerRunning' }, $true) | Select-Object -First 1).Extent.Text))
+    $threw = { try { Get-ContainerRunning 'x' | Out-Null; $false } catch { $true } }
+    function docker { $global:LASTEXITCODE = 1; '' }
+    Assert-Equal (& $threw) $true 'state: failed inspect throws (not "stopped")'
+    function docker { $global:LASTEXITCODE = 0; 'maybe' }
+    Assert-Equal (& $threw) $true 'state: unexpected output throws'
+    function docker { $global:LASTEXITCODE = 0; 'false' }
+    Assert-Equal (Get-ContainerRunning 'x') $false 'state: explicit false is stopped'
+    function docker { $global:LASTEXITCODE = 0; 'true' }
+    Assert-Equal (Get-ContainerRunning 'x') $true 'state: explicit true is running'
+    Remove-Item function:docker
 
     # Copy fails mid-restore (ENOSPC on a 20 MB tmpfs, 50 MB archive): previous contents rolled back, exit 3.
     $tokens = $null; $errs = $null
