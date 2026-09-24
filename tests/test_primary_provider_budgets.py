@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -51,7 +52,7 @@ def settings(**updates):
 def record_for(configuration):
     record = TaskRecord(task_id="DIR-LG-BUDGET", status=TaskStatus.QUEUED,
         intake=SlackIntake(source_event_id="budget", channel_id="C123", user_id="U123",
-            text="Review the bounded result", thread_ts="1.0"))
+            text="Review the bounded result in README.md", thread_ts="1.0"))
     record.plan = preview_plan(record.intake.text, configuration)
     with patch("director_orchestrator.primary_roster.select_primary_roster",
                return_value=SimpleNamespace(research=None, producer="grok", reviewer="claude")):
@@ -379,3 +380,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]

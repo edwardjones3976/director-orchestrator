@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
@@ -221,7 +222,8 @@ suspended, a workload hold, a deployment that cannot execute, or a ledger that
 is absent or latched) and an exercise lost to a concurrent writer write no
 record; nothing runs without the button in either case. Neither does an
 exercise whose audit history is too long or too slow to read within its bound
-(10,000 records or five seconds): it keeps the button.
+(10,000 records or five seconds, the deadline enforced inside the ledger's
+own verifying scan): it keeps the button.
 
 ## Standing grant for small read-only tasks
 
@@ -244,10 +246,16 @@ provider view described below; the producer is not implementation work; the
 intake and the producer's task are each a read-shaped request, meaning every
 sentence opens with a read verb (summarize, explain, describe, review, list,
 compare, answer, analyse), every clause of it does too (a sentence is split at
-commas, semicolons, colons and joining words such as and, then, so, but or or;
+any character that is not part of a word or a path, such as a comma, colon,
+dash, bracket, quote or bullet, and at joining words such as and, then, so,
+but or or;
 a clause after a split may otherwise be only paths or identifiers, the second
 object of "compare A and B"), every "to ..." and "...ing it" names a read
-action, and no shell syntax, dotfile, home, parent or
+action, no verb that asks for a change (improve, revise, make, fix, update,
+rename, format, set, open, file, post and a long list more, in any
+inflection) appears anywhere in it, it names at least one path (a
+repository-wide request would reach the model with an empty inventory), and
+no shell syntax, dotfile, home, parent or
 absolute path, secret-like word or variable name, write-shaped word, or outward
 or mutating verb appears (the gateway's `DIRECTOR` command word and a leading
 `Project:` value are not sentences, while every `Outcome:` and `Constraints:`
@@ -356,7 +364,9 @@ refused at dispatch unless delegation is still enabled and unsuspended under a
 live grant for the class (`small_task_pre_authorization_revoked`), the verified
 audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
 grant_id (`small_task_pre_authorization_unaudited`; an absent, unreadable or
-replaced ledger has none), and it still qualifies
+replaced ledger has none, and a history past its bound counts as unread),
+no `delegation_trip` for that grant_id exists anywhere in it
+(`small_task_pre_authorization_tripped`), and it still qualifies
 (`small_task_pre_authorization_lapsed`, for example after a restart under a
 lower reviewer cap or different lanes), rather than run without the class's
 bounds; a task whose graph keeps the button is never affected. That failure
@@ -576,3 +586,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
@@ -171,7 +172,7 @@ from .models import (
 )
 from .packet_contracts import canonical_json_bytes, document_digest, validate_packet
 from .packet_routing import DirectorPacketTaskRouter, compact_provider_view
-from .store import DelegationAuditAdvanced
+from .store import DelegationAuditAdvanced, DelegationAuditDeadlineExceeded
 from .packet_transports import (
     LocalGitAuthoritySnapshotResolver,
     canonical_github_remote_repository,
@@ -845,6 +846,31 @@ _AUDIT_HISTORY_MAX_RECORDS = 10_000
 _AUDIT_HISTORY_MAX_SECONDS = 5.0
 
 
+def _bounded_audit_history(ledger: Any) -> list | None:
+    """The whole verified audit history, or None past its record or time bound.
+
+    The deadline is passed into the ledger's own verifying traversal, so a
+    large or slow ledger stops mid-scan instead of blocking. Any other failure
+    is raised to the caller.
+    """
+
+    history, after = [], None
+    deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+    while True:
+        # ponytail: each page re-verifies the whole chain, so the read is bounded by record count and time instead of made linear; a per-grant ledger read when history grows past it
+        try:
+            page = ledger.delegation_audit_records(
+                limit=1_000, after_digest=after, deadline=deadline)
+        except DelegationAuditDeadlineExceeded:
+            return None
+        history.extend(page)
+        if len(page) < 1_000:
+            return history
+        if len(history) >= _AUDIT_HISTORY_MAX_RECORDS or monotonic() > deadline:
+            return None
+        after = page[-1].digest
+
+
 def _independent_lane_pair(lanes: Collection[str]) -> bool:
     """Whether two of these lanes belong to different provider families."""
 
@@ -886,25 +912,24 @@ def small_pre_authorization_refusal(
         return "small_task_pre_authorization_revoked"
     agent = f"director-langgraph:{record.task_id}"
     try:
-        found, read, after, started = False, 0, None, monotonic()
-        while not found:
-            page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
-            read += len(page)
-            found = any(
-                item.outcome is RecordedOutcome.PRE_AUTHORIZED
-                and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
-                and item.acting_agent == agent
-                and item.grant_id == grant.grant_id
-                for item in page)
-            if (len(page) < 1_000 or read >= _AUDIT_HISTORY_MAX_RECORDS
-                    or monotonic() - started > _AUDIT_HISTORY_MAX_SECONDS):
-                break
-            after = page[-1].digest
+        history = _bounded_audit_history(ledger)
     except Exception:
         # None, unreadable, or failing verification alike.
-        found = False
-    if not found:
+        history = None
+    # The whole bounded history is read: an unread tail could hold a trip.
+    if history is None or not any(
+            item.outcome is RecordedOutcome.PRE_AUTHORIZED
+            and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+            and item.acting_agent == agent
+            and item.grant_id == grant.grant_id
+            for item in history):
         return "small_task_pre_authorization_unaudited"
+    if any(item.grant_id == grant.grant_id
+           and item.outcome is RecordedOutcome.REFUSED
+           and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+           for item in history):
+        # Suspended in any process: no task it pre-authorized dispatches again.
+        return "small_task_pre_authorization_tripped"
     if not small_read_only_eligible(
             record, settings, compact_view_lanes=compact_view_lanes):
         return "small_task_pre_authorization_lapsed"
@@ -2733,20 +2758,11 @@ class DefaultPrimaryApplication:
                     self._delegation_tripped = True
                 return False
             try:
-                history, after = [], None
-                started = monotonic()
-                while True:
-                    # ponytail: each page re-verifies the whole chain, so the read is bounded by record count and time instead of made linear; a per-grant ledger read when history grows past it
-                    page = ledger.delegation_audit_records(limit=1_000, after_digest=after)
-                    history.extend(page)
-                    if len(page) < 1_000:
-                        break
-                    if (len(history) >= _AUDIT_HISTORY_MAX_RECORDS
-                            or monotonic() - started > _AUDIT_HISTORY_MAX_SECONDS):
-                        # Too long or too slow to read within its bound: the
-                        # exercise is refused and the button stays.
-                        return False
-                    after = page[-1].digest
+                history = _bounded_audit_history(ledger)
+                if history is None:
+                    # Too long or too slow to read within its bound: the
+                    # exercise is refused and the button stays.
+                    return False
                 mine = [item for item in history if item.grant_id == grant.grant_id]
                 tripped = any(
                     item.outcome is RecordedOutcome.REFUSED
@@ -4569,3 +4585,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]

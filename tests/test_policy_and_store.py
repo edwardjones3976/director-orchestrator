@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -1268,11 +1269,52 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
             "Compare README.md and AGENTS.md.",
             "Summarize README.md and describe AGENTS.md.",
             "List the tests in tests/test_policy_and_store.py, then review them for gaps.",
-            "Explain how requests reach the provider.",
             "Summarize the sections of README.md including the tables.",
         ):
             with self.subTest(read_shaped=text):
                 self.assertTrue(self.eligible(self.record(text=f"Project: demo\n{text}")))
+
+    def test_no_punctuation_hides_a_second_action(self) -> None:
+        """Any separator splits a clause, and a mutation verb anywhere leaves the class."""
+
+        separators = (" — ", " – ", " - ", " -- ", " (", " [", " / ", " • ",
+                      '; "', " → ", " | ", ": ", "\n* ", "\n- ", "\n", " ", ", ")
+        for mutation in self.MUTATIONS + ["improve the wording", "make it shorter",
+                                          "revise the intro", "fix typos"]:
+            for separator in separators:
+                text = f"Review README.md{separator}{mutation}."
+                with self.subTest(intake=text):
+                    self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+                    self.assertFalse(self.eligible(self.with_assignments({"task": text}, {})))
+        for text in (
+            "Review README.md — improve the wording.",
+            "Review README.md (improvements welcome).",
+            "Summarize README.md; the updated version.",
+            "Explain README.md, which was rewritten.",
+            "Review README.md…make it clearer.",
+            "Review README.md。improve it.",
+            "List README.md sections → tidied.",
+            "Review README.md.Improve it.",
+        ):
+            with self.subTest(intake=text):
+                self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+
+    def test_a_request_must_name_a_path(self) -> None:
+        """A repository-wide request would get an empty compact inventory."""
+
+        for text in (
+            "List repository files.",
+            "Summarize the repository.",
+            "Compare the two modules.",
+            "Explain how requests reach the provider.",
+            "Describe the retry loop.",
+        ):
+            with self.subTest(intake=text):
+                self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+                self.assertFalse(self.eligible(self.with_assignments({"task": text}, {})))
+        # The Project value is not a request and names no path for it.
+        self.assertFalse(self.eligible(self.record(
+            text="Project: docs/README.md\nSummarize the repository.")))
 
     def test_a_small_task_packet_may_grant_only_read_repository(self) -> None:
         packet = {"allowed_tools": ["READ_REPOSITORY"], "allowed_external_effects": []}
@@ -1369,3 +1411,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]

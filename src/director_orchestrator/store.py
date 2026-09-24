@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | BEGIN]]
@@ -43,6 +44,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
+from time import monotonic
 from typing import Any, Callable, Iterator, Protocol
 
 from .delegation_ledger import (
@@ -156,6 +158,14 @@ class DelegationAuditLedgerCorrupt(RuntimeError):
 
 class DelegationAuditAnchorUnavailable(RuntimeError):
     """No trustworthy external checkpoint can be read or durably advanced."""
+
+
+class DelegationAuditDeadlineExceeded(RuntimeError):
+    """A verifying read reached its caller's deadline before it finished.
+
+    Nothing is returned and nothing is claimed about the ledger: the caller
+    decides what an unread history means (a standing grant keeps the button).
+    """
 
 
 class DelegationAuditAnchor(Protocol):
@@ -3967,7 +3977,8 @@ class TaskStore:
         return self.save(record)
 
     def _verified_audit_snapshot(
-        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None
+        self, connection: sqlite3.Connection, *, limit: int = 0, after_digest: str | None = None,
+        deadline: float | None = None,
     ) -> tuple[tuple[int, str], list[sqlite3.Row]]:
         """Verify every row, retaining only the page from the same cursor.
 
@@ -4003,6 +4014,8 @@ class TaskStore:
             "FROM delegated_decision_audit ORDER BY ledger_id"
         ):
             count += 1
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit read reached its deadline")
             if row["ledger_id"] != count:
                 raise DelegationAuditLedgerCorrupt("audit sequence has a gap")
             chain = _audit_chain_digest(
@@ -4077,7 +4090,8 @@ class TaskStore:
         return digest
 
     def delegation_audit_records(
-        self, *, limit: int = 100, after_digest: str | None = None
+        self, *, limit: int = 100, after_digest: str | None = None,
+        deadline: float | None = None,
     ) -> list[DelegationAuditRecord]:
         """Read a bounded page from one cursor verified against the external anchor.
 
@@ -4091,6 +4105,9 @@ class TaskStore:
         A record is meant to be independently checkable by a reader who was not
         present when it was written, and that property is worth nothing if the
         reader that ships with the writer skips the check.
+
+        ``deadline`` is a ``time.monotonic()`` value; the traversal checks it
+        as it goes and raises DelegationAuditDeadlineExceeded mid-scan.
         """
 
         if isinstance(limit, bool) or not isinstance(limit, int):
@@ -4110,7 +4127,7 @@ class TaskStore:
             # In rollback-journal mode, the read lock can still delay writer commit.
             connection.execute("BEGIN")
             _, rows = self._verified_audit_snapshot(
-                connection, limit=limit, after_digest=after_digest
+                connection, limit=limit, after_digest=after_digest, deadline=deadline
             )
         records: list[DelegationAuditRecord] = []
         for row in rows:
@@ -4221,3 +4238,4 @@ class TaskStore:
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]

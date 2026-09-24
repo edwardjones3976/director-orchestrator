@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
@@ -769,6 +770,26 @@ class StandingGrantExerciseTests(unittest.TestCase):
         with patch.object(self.ledger, "delegation_audit_records",
                           side_effect=OSError("ledger unavailable")):
             self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
+        # A durable trip on the grant, written by any process after this
+        # task was pre-authorized, stops its dispatch too.
+        now = datetime.now(timezone.utc)
+        self.ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=RecordedOutcome.REFUSED,
+            grant_id="grant-small-1",
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-FAILED",
+            verdicts=(),
+            gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+            recorded_at=now,
+        ))
+        self.assertEqual("small_task_pre_authorization_tripped", refusal(self.ledger))
+        # A trip on another grant_id does not; nor, for an unread tail, may the
+        # record merely be found: a history past its bound refuses.
+        with patch("director_orchestrator.primary_default._AUDIT_HISTORY_MAX_SECONDS", -1.0):
+            self.assertEqual("small_task_pre_authorization_unaudited", refusal(self.ledger))
         # A readable ledger that lacks this task's own record: a fresh
         # replacement, or one holding only another task's pre-authorization.
         self.assertEqual("small_task_pre_authorization_unaudited",
@@ -844,6 +865,25 @@ class StandingGrantExerciseTests(unittest.TestCase):
                 self.assertFalse(self.exercise(application, self.record()))
                 self.assertEqual(3 if name == "records" else 1, read.call_count)
                 self.assertFalse(application._delegation_tripped)
+
+    def test_the_audit_deadline_stops_the_ledger_scan_itself(self):
+        """The deadline is enforced inside the verifying traversal, mid-scan."""
+
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        self.assertTrue(self.exercise(application, self.record()))
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.delegation_audit_records(limit=10, deadline=0.0)
+        self.assertEqual(2, len(self.ledger.delegation_audit_records(
+            limit=10, deadline=float("inf"))))
+        # An exercise whose read reaches the deadline keeps the button, writes
+        # no record and does not latch the process attended.
+        with patch("director_orchestrator.primary_default._AUDIT_HISTORY_MAX_SECONDS", -1.0):
+            self.assertFalse(self.exercise(application, self.record()))
+        self.assertFalse(application._delegation_tripped)
+        self.assertEqual(2, len(self.audit()))
 
     def test_a_paid_off_deployment_never_exercises_a_grant(self):
         application = self.application(
@@ -5350,3 +5390,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]

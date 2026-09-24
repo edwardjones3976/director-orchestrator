@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
@@ -486,7 +487,53 @@ _PERSONAL_DATA = re.compile(
 # "Compare A and B"). "to <verb>" and "<verb>ing it" name an action too and
 # must be read verbs. Anything else is a second action and leaves the class.
 _CLAUSE_BREAK = re.compile(
-    r"[,;:]|\b(?:and|then|also|plus|but|so|or|while|after|before|afterwards|once)\b", re.I)
+    # Any character that is not part of a word or a path (dashes, brackets,
+    # quotes, bullets, commas, colons...), a spaced dash or slash, or a joining word.
+    r"[^\w\s./'-]|\s[-/]\s|\s--?\s|\b(?:and|then|also|plus|but|so|or|while|after"
+    r"|before|afterwards|once|with|without|by|via|instead)\b", re.I)
+# A verb that asks for a change, in any inflection, anywhere in the request,
+# however its clauses are punctuated. Over-inclusive by design: a request
+# using any of these words as a noun leaves the class too.
+_MUTATION_BASES = (
+    "improve revise make fix change update edit rewrite refactor rename format "
+    "clean tidy polish adjust tweak bump upgrade downgrade migrate convert generate "
+    "create add remove delete move set configure enable disable deploy publish post "
+    "send reply open file comment commit push merge apply patch write save draft "
+    "compose correct shorten expand reorganize reorganise restructure fill resolve "
+    "sort insert append replace install uninstall implement build run execute "
+    "trigger schedule assign close reopen approve reject translate turn prepare "
+    "produce fork clone copy paste modify alter amend annotate reword rephrase "
+    "simplify optimize optimise extend trim cut strip split combine tag label mark "
+    "flag archive restore revert reset rebase squash cherry-pick release ship "
+    "submit upload download import export sync seed migrate reformat lint "
+    "scaffold bootstrap initialize initialise provision rebuild regenerate recompile "
+    "compile refresh wire connect disconnect grant revoke rotate raise lower "
+    "increase decrease clear erase drop purge wipe destroy kill stop start restart "
+    "cancel pay buy order book enroll register subscribe invite notify email "
+    "message tweet share forward"
+).split()
+
+
+def _inflections(base: str) -> set[str]:
+    stem = base[:-1] if base.endswith("e") else base
+    forms = {base, base + "s", base + "es", base + "ed", base + "d", stem + "ing",
+             stem + "ed", base + base[-1] + "ed", base + base[-1] + "ing"}
+    if base.endswith("y"):
+        forms |= {base[:-1] + "ies", base[:-1] + "ied"}
+    return forms
+
+
+_MUTATION_VERB = re.compile(
+    r"\b(?:" + "|".join(sorted(
+        {re.escape(form) for base in _MUTATION_BASES for form in _inflections(base)}
+        | {"made", "sent", "wrote", "written", "built", "ran", "set up", "cut"},
+        key=len, reverse=True)) + r")\b",
+    re.I,
+)
+# The request must name at least one path: the compact view keeps only
+# snapshot entries named in the objective or under owned paths, so a
+# repository-wide request would be answered from an empty inventory.
+_NAMED_PATH = re.compile(r"\w[\w-]*\.\w+|\w[\w.-]*/[\w./-]*\w")
 _DETERMINER = r"(?:the|a|an|its|their|this|that|these|those|each|every|both|all)"
 _OBJECT_LIST = re.compile(rf"(?:{_DETERMINER}\s+)*[\w./-]*[./_][\w./-]*", re.I)
 _TO_ACTION = re.compile(rf"\bto\s+(?!{_DETERMINER}\b)([\w./-]+)", re.I)
@@ -550,6 +597,8 @@ def _read_only_request(text: str) -> bool:
         and not _OUTSIDE_READ_ONLY.search(body)
         and not _WRITE_SCOPE.search(body)
         and not _PERSONAL_DATA.search(body)
+        and not _MUTATION_VERB.search(body)
+        and any(_NAMED_PATH.search(chunk) for chunk in request)
     )
 
 
@@ -1845,3 +1894,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
