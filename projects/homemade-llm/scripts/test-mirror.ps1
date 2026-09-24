@@ -42,6 +42,21 @@ try {
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "$($env:SystemDrive)\", '-List')) 1 'refuses an existing drive root (C:\)'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $env:SystemDrive, '-List')) 1 'refuses a bare drive (C:), which means the current directory'
     Assert-Equal (Invoke-Mirror @('-Source', "$($env:SystemDrive)\", '-Dest', $dst, '-List')) 1 'refuses a drive root source'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "\\?\$dst", '-List')) 1 'refuses an extended \\?\ destination'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "\\.\$dst", '-List')) 1 'refuses a device \\.\ destination'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "$dst.", '-List')) 1 'refuses a trailing-dot component'
+    Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', "$dst ", '-List')) 1 'refuses a trailing-space component'
+    # The resolved-path check is defence in depth: subst cannot target a dotted folder and links are
+    # refused earlier, so exercise Assert-Unambiguous directly, loaded from the script's syntax tree.
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
+    $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-Unambiguous' }, $true) | Select-Object -First 1
+    . ([scriptblock]::Create($fn.Extent.Text))
+    $threw = { param($p) try { Assert-Unambiguous $p 'test'; $false } catch { $true } }
+    Assert-Equal (& $threw 'C:\a\dotted.\m') $true 'resolved path with a dotted component is refused'
+    Assert-Equal (& $threw 'C:\a\spaced \m') $true 'resolved path with a trailing-space component is refused'
+    Assert-Equal (& $threw 'C:\a\b.txt\m') $false 'an interior dot is allowed'
+    Assert-Equal (& $threw 'C:\a\..\b') $false 'dot-dot segments are not treated as dotted names'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', (Join-Path $src 'inner'))) 1 'refuses a destination inside the source'
     Assert-Equal (Invoke-Mirror @('-Source', $src, '-Dest', $src)) 1 'refuses source equal to destination'
     Assert-Equal (Invoke-Mirror @('-Source', (Join-Path $work 'missing'), '-Dest', $dst)) 1 'refuses a missing source'

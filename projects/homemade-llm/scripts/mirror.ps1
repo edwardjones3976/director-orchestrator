@@ -42,6 +42,13 @@ function Get-NormalPath([string]$Path) {
     if ($full -eq [IO.Path]::GetPathRoot($full)) { $full } else { $full.TrimEnd('\') }
 }
 function Test-IsRoot([string]$Path) { $Path -eq [IO.Path]::GetPathRoot($Path) }
+# Win32 silently drops a trailing dot or space from a path component unless the path uses the \\?\ form,
+# so such a name can resolve to a different folder than the one validated. Refuse them outright.
+function Assert-Unambiguous([string]$Path, [string]$Label) {
+    if (($Path -split '[\\/]' | Where-Object { $_ -and $_ -match '[. ]$' -and $_ -notmatch '^\.{1,2}$' })) {
+        Write-Error "refusing a $Label with a component ending in a dot or space: $Path"
+    }
+}
 
 # A destination may not exist yet: resolve its nearest existing ancestor and re-append the rest.
 function Resolve-FinalPath([string]$Path) {
@@ -52,7 +59,9 @@ function Resolve-FinalPath([string]$Path) {
         $existing = Split-Path $existing -Parent
     }
     if (-not $existing) { return $full }
-    $final = Get-NormalPath ([MirrorFinalPath]::Of($existing))
+    $raw = [MirrorFinalPath]::Of($existing)
+    Assert-Unambiguous $raw 'resolved path'   # checked before GetFullPath can rewrite it
+    $final = Get-NormalPath $raw
     if ($tail.Count) { $final = Join-Path $final ($tail -join '\') }
     Get-NormalPath $final
 }
@@ -62,6 +71,9 @@ function Resolve-FinalPath([string]$Path) {
 foreach ($given in $Source, $Dest) {
     # "C:" or "C:foo" is drive-relative (resolved against C:'s current directory), never what a mirror means.
     if ($given -match '^[A-Za-z]:(?![\\/])') { Write-Error "refusing a drive-relative path: $given" }
+    # The mirror is local: UNC, extended (\\?\) and device (\\.\) forms are refused before any normalization.
+    if ($given -match '^[\\/]{2}') { Write-Error "refusing a UNC, extended or device path: $given" }
+    Assert-Unambiguous $given 'path'
     if (Test-IsRoot (Get-NormalPath $given)) { Write-Error "refusing a drive or share root: $given" }
 }
 $src = Resolve-FinalPath $Source
