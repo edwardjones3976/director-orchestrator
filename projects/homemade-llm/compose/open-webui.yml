@@ -1,6 +1,7 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | BEGIN]]
 # Homemade LLM chat UI (M0.5): Open WebUI + SearXNG in front of LM Studio. Nothing is reachable off-host:
-# only Open WebUI is published, on 127.0.0.1, and phone access goes through `tailscale serve` (never Funnel).
+# both ports are published on 127.0.0.1 only, and phone access goes through `tailscale serve` (never Funnel).
+# Operating steps (first boot, signup off, Tailscale, backup/restore): RUNBOOK.md next to this file.
 #   docker compose -p homemade-llm -f open-webui.yml --env-file .env.homemade-llm up -d
 # Copy .env.homemade-llm.example to .env.homemade-llm (gitignored) and fill it first.
 name: homemade-llm
@@ -42,7 +43,10 @@ services:
   searxng:
     image: ${SEARXNG_IMAGE:?set SEARXNG_IMAGE in .env.homemade-llm (pin a digest)}
     restart: unless-stopped
-    # No host port: Open WebUI reaches SearXNG as searxng:8080 on the compose network, so nothing is published.
+    # Open WebUI reaches SearXNG as searxng:8080 on the compose network; the loopback-only host port is for
+    # direct diagnostics (8080 on the host belongs to the orchestrator).
+    ports:
+      - "127.0.0.1:8088:8080"
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
@@ -50,5 +54,7 @@ services:
       SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env.homemade-llm}
 
 volumes:
-  open-webui-data:   # fresh volume; reusing the old xo-fleet Open WebUI data is an owner decision
+  # Named volume (SQLite on a Windows bind mount risks locking and corruption). It lives in Docker Desktop's
+  # VM, outside C:\llm, so scripts/backup-openwebui.ps1 archives it into C:\llm\state for the nightly mirror.
+  open-webui-data:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | END]]
