@@ -95,10 +95,13 @@ if ($dockerVer) {
 
 if (Get-Command lms -ErrorAction SilentlyContinue) {
     # lms prints its status line on stderr.
+    $global:LASTEXITCODE = 0
     $server = try { (lms server status 2>&1 | Out-String).Trim() } catch { $null }
+    $lmsExit = $LASTEXITCODE
     $line = if ($server) { ($server -split "`r?`n")[0] } else { 'installed; server status unknown' }
-    # OK only on a positive "running" status; stopped or unreadable is WARN (M0.4 starts the server).
-    Add-Row 'LM Studio (lms)' ($(if ($line -match 'server is running') { 'OK' } else { 'WARN' })) $line
+    # OK only on exit 0 with a positive "running" status; stopped, failed or unreadable is WARN (M0.4 starts the server).
+    $ok = ($lmsExit -eq 0) -and ($line -match 'server is running')
+    Add-Row 'LM Studio (lms)' ($(if ($ok) { 'OK' } else { 'WARN' })) ($(if ($lmsExit -ne 0) { "$line (exit $lmsExit)" } else { $line }))
 } else { Add-Row 'LM Studio (lms)' 'FAIL' 'lms not on PATH' }
 
 # wsl.exe writes UTF-16; strip NULs before reading it.
