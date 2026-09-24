@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation"
 
@@ -52,7 +53,7 @@ Reviews rotate Grok → Codex. Gated bases (Llama, Gemma) are an M1 owner stop, 
 
 ### M0.11: Base-model landscape brief
 
-- **Starting state:** shortlist from Director web research 2026-09-24 (see `PLAN.md` §R-T)
+- **Starting state:** shortlist from Director web research 2026-09-24 (see `PLAN.md` §4.1–§4.2)
 - **Target outcome:** one cited brief comparing four bases on structured-output quality, QLoRA VRAM on 12 GB, license, and GGUF support
 - **Scope:** public web only; no repository context
 - **Provider:** Perplexity
@@ -86,3 +87,4 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
