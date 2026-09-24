@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -57,7 +58,7 @@ class _AsyncByteStream(httpx.AsyncByteStream):
 class PaidOffSlackWorkerTests(unittest.TestCase):
     def test_paid_off_legacy_status_makes_no_slack_intent_or_call(self):
         engine = object.__new__(OrchestrationEngine)
-        engine.settings = SimpleNamespace(allow_paid_runs=False, slack_bot_token="fake")
+        engine.settings = SimpleNamespace(app_env="edge-engine", allow_paid_runs=False, slack_bot_token="fake")
         engine.store = Mock()
         engine.notifier = Mock()
         record = SimpleNamespace(collaboration_fallback_active=False)
@@ -803,3 +804,4 @@ if __name__ == "__main__":
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 17:48 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]

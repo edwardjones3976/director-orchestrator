@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | BEGIN]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -3803,7 +3804,7 @@ class OrchestrationEngine:
         provider work or acceptance review; those remain persisted in SQLite.
         """
 
-        if not self.settings.allow_paid_runs:
+        if self.settings.app_env == "edge-engine" and not self.settings.allow_paid_runs:
             return True, None
         if record.collaboration_fallback_active:
             return True, None
@@ -7023,3 +7024,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Codex | GPT-6 Sol | 2026-09-24 | 18:08 UTC | END]]
+# [[Codex | GPT-6 Sol | 2026-09-24 | 18:20 UTC | END]]
