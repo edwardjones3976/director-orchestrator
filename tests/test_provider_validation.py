@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]]
@@ -582,15 +587,10 @@ class PostgresValidationTests(unittest.TestCase):
             return remaining
         return remaining_seconds
 
-    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
-        import time
-        from types import SimpleNamespace
+    def _team_canary_grant(self):
         from tests.test_antigravity_team import grant
-        from tests import test_entitlement_control_plane as fixtures
         from director_orchestrator.antigravity_team import SourceBlob
-        from director_orchestrator.antigravity_team_worker import sign,DENIED
-        from director_orchestrator.entitlement_contracts import document_digest
-        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        from director_orchestrator.provider_validation_team import SYNTHETIC_SOURCE
         work=work_packet()
         work["project"]="uppercut"
         g=grant(task_id=work["task_id"],assignment_id=work["assignment_id"],project_id=work["project"],
@@ -598,6 +598,22 @@ class PostgresValidationTests(unittest.TestCase):
             operation="review",review_base=CANDIDATE,writable_paths=(),commands=(),
             binding_digest=digest(canonical_json_bytes(asdict(binding("antigravity")))) ,
             source=tuple(SourceBlob(path=p,sha256=digest(b)) for p,b in SYNTHETIC_SOURCE.items()))
+        return work,g
+
+    def _attempts_and_reserved(self,generation):
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        return attempts,reserved
+
+    def test_team_canary_uses_signed_worker_capture_and_only_validation_storage(self):
+        import time
+        from types import SimpleNamespace
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.antigravity_team_worker import sign,DENIED
+        from director_orchestrator.entitlement_contracts import document_digest
+        from director_orchestrator.provider_validation_team import TeamValidationRoute,SYNTHETIC_SOURCE
+        work,g=self._team_canary_grant()
         worker_key=b"w"*32
         calls=[]
         class Worker:
@@ -1299,6 +1315,21 @@ class PostgresValidationTests(unittest.TestCase):
             if thread is not None:
                 thread.join(5)
 
+    def test_service_openai_responses_refuses_runtime_bytes_changed_during_execution(self):
+        """The post-execution check rehashes bytes; a change mid-request refuses."""
+        from director_orchestrator import provider_validation as module
+        fixture=self._responses_service_fixture()
+        real=module._hash_runtime(Path(module.__file__).resolve().parents[2])
+        hashes=iter((real,"f"*64))
+        with patch.object(module,"_hash_runtime",side_effect=lambda _root:next(hashes)):
+            with self.assertRaisesRegex(ValidationError,"changed during execution"):
+                fixture["service"].run(ValidationRequest(generation=fixture["generation"],provider="openai"),OWNER)
+        self.assertEqual(1,len(fixture["sends"]))
+        with self.store.connect() as db:
+            succeeded=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s AND state='succeeded'",
+                                 (fixture["generation"],)).fetchone()[0]
+        self.assertEqual(0,succeeded)
+
     def test_service_openai_responses_control_uncontended_success(self):
         """The C3 control case: an uncontended run through the real service,
         store and capture verifier reaches 'succeeded' with exactly one
@@ -1380,6 +1411,159 @@ class PostgresValidationTests(unittest.TestCase):
                     service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
                 execute.assert_not_called()
 
+    def test_configuration_drift_burns_no_attempt_or_budget(self):
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        generation=self.generation()
+        with tempfile.TemporaryDirectory() as directory:
+            account=Path(directory)/"synthetic-auth";account.write_text("fixture")
+            executor=WindowsHostProviderExecutor({"claude":(str(Path(sys.executable).resolve(strict=True)),"-c","pass")},cwd=directory)
+            service=ValidationBridgeService(store=self.store,production_executor=executor,capture_key=KEY,
+                owner_token=OWNER,account_files={"claude":(str(account),)})
+            with self.assertRaisesRegex(ValidationError,"binding drift"):
+                service.run(ValidationRequest(generation=generation,provider="claude"),OWNER)
+        with self.store.connect() as db:
+            attempts=db.execute(f"SELECT count(*) FROM {SCHEMA}.attempts WHERE generation=%s",(generation,)).fetchone()[0]
+            reserved=db.execute(f"SELECT reserved_units FROM {SCHEMA}.generations WHERE generation=%s",(generation,)).fetchone()[0]
+        self.assertEqual((attempts,reserved),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected pin.
+        self.assertEqual(self.admit(generation)["provider"],"claude")
+
+    def test_team_configuration_drift_burns_no_attempt_or_budget(self):
+        from tests import test_entitlement_control_plane as fixtures
+        from director_orchestrator.provider_validation_team import TeamValidationRoute
+        work,g=self._team_canary_grant()
+        def no_worker(grant):
+            raise AssertionError("drift must be refused before any worker exists")
+        route=TeamValidationRoute(grant=g,owner_secret=fixtures.OWNER_SECRET,worker_secret=b"w"*32,
+            worker_factory=no_worker,configuration_digest=lambda:"d"*64)
+        generation=secrets.token_hex(32)
+        self.store.create_generation(generation=generation,candidate=CANDIDATE,tree=TREE,owner_token=OWNER,
+            expires_at=int(time.time())+600,budget_units=2,lanes={"antigravity":{
+            "binding":asdict(binding("antigravity")),"configuration_digest":"c"*64,"cost_units":2,"work_packet":work}})
+        service=ValidationBridgeService(store=self.store,production_executor=None,capture_key=KEY,owner_token=OWNER,
+            account_files={},team_route=route)
+        with self.assertRaisesRegex(ValidationError,"team validation binding or generation mismatch"):
+            service.run(ValidationRequest(generation=generation,provider="antigravity"),OWNER)
+        self.assertEqual(self._attempts_and_reserved(generation),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for a corrected fingerprint.
+        self.assertEqual(self.admit(generation,"antigravity")["provider"],"antigravity")
+
+    def test_responses_configuration_drift_burns_no_attempt_or_budget(self):
+        fixture=self._responses_service_fixture()
+        route=fixture["service"].openai_responses_route
+        registered=route.configuration_digest
+        request=ValidationRequest(generation=fixture["generation"],provider="openai")
+        with patch.object(route.transport,"model","gpt-fixture-drifted"):
+            self.assertNotEqual(route.configuration_digest,registered)
+            with self.assertRaisesRegex(ValidationError,"configuration digest drift"):
+                fixture["service"].run(request,OWNER)
+        self.assertEqual(fixture["sends"],[])
+        route.budget_authority.reserve.assert_not_called()
+        self.assertEqual(self._attempts_and_reserved(fixture["generation"]),(0,0))
+        # The UNIQUE(generation,provider) slot is still free for the registered configuration.
+        self.assertEqual(self.store.admit(request,OWNER,preserve_canary_identity=True)["provider"],"openai")
+
+    def test_expected_configuration_digest_is_a_read_only_lane_lookup(self):
+        generation=self.generation()
+        self.assertEqual(self.store.expected_configuration_digest(generation,"claude"),"c"*64)
+        self.assertIsNone(self.store.expected_configuration_digest(generation,"grok"))
+        self.assertIsNone(self.store.expected_configuration_digest(secrets.token_hex(32),"claude"))
+
+
+class RuntimePackageDigestTests(unittest.TestCase):
+    """Native and team digests bind every .py file in the running package."""
+
+    def test_runtime_package_digest_covers_every_module(self):
+        import shutil
+        from director_orchestrator import provider_validation as module
+        source = Path(module.__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "runtime"
+            for tree in ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts"):
+                shutil.copytree(source / tree, root / tree, ignore=shutil.ignore_patterns("__pycache__"))
+            before = module.runtime_package_digest(root)
+            package = root / "src" / "director_orchestrator"
+            (package / "__pycache__").mkdir()
+            (package / "__pycache__" / "ignored.py").write_text("IGNORED = 1\n")
+            self.assertEqual(module.runtime_package_digest(root), before)
+            # Code, and every non-Python asset the runtime reads.
+            for relative in ("src/director_orchestrator/response_meter.py",
+                             "docs/schemas/model-work-packet-v1.schema.json",
+                             "docs/provider-profiles/routes.yaml", "prompts/director-system.md"):
+                with self.subTest(changed=relative):
+                    previous = module.runtime_package_digest(root)
+                    with (root / relative).open("a") as handle:
+                        handle.write("\n")
+                    self.assertNotEqual(module.runtime_package_digest(root), previous)
+
+    def test_same_size_same_mtime_replacement_changes_the_digest(self):
+        from director_orchestrator import provider_validation as module
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "docs" / "schemas" / "packet.json"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b'{"a":1}')
+            stamp = target.stat()
+            before = module.runtime_package_digest(root)
+            target.write_bytes(b'{"a":2}')
+            os.utime(target, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            self.assertEqual((target.stat().st_size, target.stat().st_mtime_ns),
+                             (stamp.st_size, stamp.st_mtime_ns))
+            self.assertNotEqual(module.runtime_package_digest(root), before)
+
+    def test_request_scope_rehashes_bytes_at_each_security_point(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64, "c" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            token = module._RUNTIME_SCOPE.set({"digest": None})
+            try:
+                self.assertEqual(module.rehash_runtime_scope(), "a" * 64)  # pre-admission
+                self.assertEqual(module.runtime_package_digest(), "a" * 64)  # between points
+                self.assertEqual(module.rehash_runtime_scope(), "b" * 64)  # post-execution
+                self.assertEqual(module.runtime_package_digest(), "b" * 64)
+            finally:
+                module._RUNTIME_SCOPE.reset(token)
+            # Outside a request every call hashes the bytes again.
+            self.assertEqual(module.runtime_package_digest(), "c" * 64)
+
+    def test_security_point_outside_a_request_retains_nothing(self):
+        from director_orchestrator import provider_validation as module
+        hashes = iter(("a" * 64, "b" * 64))
+        with patch.object(module, "_hash_runtime", side_effect=lambda _root: next(hashes)):
+            self.assertEqual(module.rehash_runtime_scope(), "a" * 64)
+            self.assertEqual(module.runtime_package_digest(), "b" * 64)
+
+    def test_native_and_team_digests_bind_the_runtime_package(self):
+        from director_orchestrator import provider_validation_team as team
+        from director_orchestrator.host_provider_bridge import WindowsHostProviderExecutor
+        from tests.test_antigravity_team import grant
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            account = root / "account.json"
+            account.write_text("synthetic fixture account, not a credential")
+            python = str(Path(sys.executable).resolve(strict=True))
+            executor = WindowsHostProviderExecutor({"claude": (python, "-c", "pass")}, cwd=root)
+            names = ("owner_key_file", "worker_key_file", "ssh", "identity_file", "known_hosts")
+            config = {name: str(root / name) for name in names}
+            for name in names:
+                Path(config[name]).write_bytes(name.encode())
+            (root / "grant.json").write_text(grant().model_dump_json())
+            config.update(grant_file=str(root / "grant.json"), ssh_sha256="a" * 64, host="host.invalid",
+                          user="fixture", worker_command="worker")
+            (root / "team.json").write_text(json.dumps(config))
+            captured = {}
+            with patch.dict(os.environ, {"DIRECTOR_PROVIDER_VALIDATION_TEAM_CONFIG": str(root / "team.json")}), \
+                    patch.object(team, "TeamValidationRoute", side_effect=lambda **kwargs: captured.update(kwargs)):
+                team.team_route_from_environment()
+            observed = {}
+            for runtime in ("a" * 64, "b" * 64):
+                with patch("director_orchestrator.provider_validation.runtime_package_digest", return_value=runtime):
+                    observed[runtime] = (
+                        production_configuration_digest(executor, "claude", account_files=(str(account),)),
+                        captured["configuration_digest"]())
+            self.assertNotEqual(observed["a" * 64][0], observed["b" * 64][0])
+            self.assertNotEqual(observed["a" * 64][1], observed["b" * 64][1])
+
 
 if __name__=="__main__":unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:25 UTC | END]]
@@ -1397,3 +1581,8 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]

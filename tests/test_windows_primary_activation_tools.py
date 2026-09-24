@@ -1,3 +1,10 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | BEGIN]]
@@ -34,8 +41,10 @@ from __future__ import annotations
 
 import re
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -393,13 +402,488 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertIn('Assert-RunningCandidate -AsgiApp "director_orchestrator.primary_staging:app"', text)
         self.assertIn("Primary activation failed and was unwound", text)
         self.assertIn("acquire_intake_authority(intake_owner='legacy'", text)
+        activate = 'if ($Action -in @("Activate", "ActivateOffline"))'
         self.assertLess(
-            text.index("Stop-And-Prove-AllIntake", text.index('if ($Action -eq "Activate")')),
+            text.index("Stop-And-Prove-AllIntake", text.index(activate)),
             text.index('LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"'),
         )
-        activation = text[text.index('if ($Action -eq "Activate")'):text.index('if ($Action -eq "Rollback")')]
+        activation = text[text.index(activate):text.index('if ($Action -eq "Rollback")')]
         self.assertLess(activation.index("bind-legacy-inventory"), activation.index("require-ready"))
         self.assertIn("finally { Write-Switches", activation)
+        # Services are found by Compose labels only; no stored ID is restarted.
+        self.assertNotIn("docker start", text)
+        container = text[text.index("function Get-ServiceContainer"):text.index("function Get-ServiceImageId")]
+        self.assertIn("label=com.docker.compose.project=$script:ComposeProject", container)
+        self.assertIn("label=com.docker.compose.service=$Service", container)
+        # The gateway is created stopped and read back before anything starts it.
+        self.assertIn("up --no-start --no-deps --no-build --force-recreate slackbot", activation)
+        self.assertIn("Assert-ServiceImage -Service slackbot -Expected $runtimeImageId -Created", activation)
+        self.assertNotIn("up -d --no-deps --no-build --force-recreate slackbot", text)
+        # Rollback restores the separately recorded prior images; only a missing
+        # record falls back to the candidate image, and says so.
+        rollback = text[text.index('if ($Action -eq "Rollback")'):]
+        self.assertLess(rollback.index("Read-PriorImages"), rollback.index("Stop-And-Prove-AllIntake"))
+        self.assertEqual(re.findall(r"Assert-ServiceImage [^\n]*", rollback), [
+            "Assert-ServiceImage -Service orchestrator -Expected $orchestratorImage",
+            "Assert-ServiceImage -Service slackbot -Expected $gatewayImage -Created",
+        ])
+        self.assertEqual(rollback.count("$runtimeImageId"), 2)
+        self.assertIn("[string]$prior.orchestrator_image_id } else { $runtimeImageId }", rollback)
+        self.assertIn("[string]$prior.gateway_image_id } else { $runtimeImageId }", rollback)
+        stage = text[text.index('if ($Action -eq "StageRuntime")'):text.index('if ($Action -eq "ValidateProviders")')]
+        self.assertLess(stage.index("Save-PriorImages"),
+                        stage.index("up -d --no-deps --no-build --force-recreate orchestrator"))
+        digest = text[text.index("function Get-ResolvedDeploymentDigest"):text.index("function Assert-RunningCandidate")]
+        self.assertNotIn("| & docker", digest)
+        self.assertIn("Invoke-NativeBytes", digest)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_native_bytes_transport_is_exact(self) -> None:
+        harness = r'''
+param($Source, $Python, $InputPath, $OutputPath, $WorkDirectory)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'control script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-NativeBytes'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+$echo = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import sys;sys.stdout.buffer.write(sys.stdin.buffer.read())') -InputBytes ([IO.File]::ReadAllBytes($InputPath))
+[IO.File]::WriteAllBytes($OutputPath, $echo)
+Set-Location -LiteralPath $WorkDirectory
+$cwd = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import os,sys;sys.stdout.buffer.write(os.getcwd().encode())')
+'cwd=' + [Text.Encoding]::UTF8.GetString($cwd)
+try { $null = Invoke-NativeBytes -FilePath $Python -ArgumentList @('-c', 'import sys;sys.exit(3)'); 'exit=accepted' }
+catch { 'exit=refused' }
+'''
+        payload = "config {\"é☃\": 1}\r\nlast".encode("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            (root / "input.bin").write_bytes(payload)
+            work = root / "work"
+            work.mkdir()
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-langgraph-primary-control.ps1"), sys.executable,
+                 str(root / "input.bin"), str(root / "output.bin"), str(work)],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual((root / "output.bin").read_bytes(), payload)
+            observed = next(line for line in result.stdout.splitlines() if line.startswith("cwd="))
+            self.assertEqual(Path(observed[4:]).resolve(), work.resolve())
+            self.assertIn("exit=refused", result.stdout)
+            self.assertNotIn("exit=accepted", result.stdout)
+
+    def test_bridge_install_registers_a_supervised_task_without_starting_it(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        self.assertIn('[ValidateSet("Preflight", "Run", "CheckEnvironment", "Install")]', text)
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        self.assertIn("[string]::IsNullOrWhiteSpace($InstallRoot)", install)
+        self.assertLess(install.index("if (-not $pinnedEnvironmentFile)"), install.index("Install-BridgeRuntime"))
+        self.assertIn("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", install)
+        self.assertLess(install.index("Get-CleanBridgeSource"), install.index("Install-BridgeRuntime"))
+        self.assertIn('"$destination.source.json"', install)
+        self.assertLess(install.index("Install-BridgeRuntime"), install.index("-Action CheckEnvironment"))
+        self.assertLess(install.index("-Action CheckEnvironment"), install.index("Register-BridgeTask"))
+        self.assertIn("no task was registered", install)
+        register = text[text.index("function Register-BridgeTask"):text.index("$environmentPath = (Resolve-Path")]
+        for required in ("-RestartCount", "-MultipleInstances IgnoreNew", "-LogonType Interactive", "-Action Run"):
+            self.assertIn(required, register)
+        for forbidden in ("Start-ScheduledTask", "Unregister-ScheduledTask", "schtasks", "-Password"):
+            self.assertNotIn(forbidden, text)
+        # The launcher runs the code beside it and never inherits a stale pinned file.
+        self.assertIn('[Environment]::SetEnvironmentVariable("PYTHONPATH", (Join-Path (Split-Path -Parent $PSScriptRoot) "src"), "Process")', text)
+        self.assertIn('foreach ($name in $validationNames + @("DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE", '
+                      '"DIRECTOR_HOST_PROVIDER_PROFILE_AUTH_NAMES"))', text)
+        # The clean-source check covers exactly the directories the manifest copies.
+        manifest = text[text.index("function Get-BridgeRuntimeManifest"):text.index("function Get-CleanBridgeSource")]
+        clean = text[text.index("function Get-CleanBridgeSource"):text.index("function Install-BridgeRuntime")]
+        copied = re.search(r'foreach \(\$directory in @\(([^)]+)\)\)', manifest).group(1)
+        self.assertIn(" ".join(re.findall(r'"([^"]+)"', copied)) + " scripts/windows-host-provider-bridge.ps1", clean)
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and git are required")
+    def test_bridge_install_requires_a_clean_committed_runtime_source(self) -> None:
+        # Only the clean-source helper executes against a throwaway repository.
+        harness = r"""
+param($Source, $Root)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-CleanBridgeSource'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+'source=' + ((Get-CleanBridgeSource -Root $Root) -join '|')
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repository = root / "repository"
+            files = {
+                "src/director_orchestrator/__init__.py": "# package\n",
+                "docs/schemas/packet.json": "{}\n",
+                "docs/provider-profiles/claude.md": "profile\n",
+                "prompts/director-system.md": "prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": "# launcher\n",
+                "README.md": "outside the runtime\n",
+                ".gitignore": "__pycache__/\n*.local\n",
+            }
+            for relative, content in files.items():
+                (repository / relative).parent.mkdir(parents=True, exist_ok=True)
+                (repository / relative).write_text(content, encoding="utf-8")
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def git(*arguments):
+                return subprocess.run(["git", "-C", str(repository), "-c", "core.autocrlf=false", *arguments],
+                                      capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout.strip()
+
+            git("init", "-q")
+            git("add", "-A")
+            git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture")
+            expected = git("rev-parse", "HEAD^{commit}") + "|" + git("rev-parse", "HEAD^{tree}")
+
+            def check():
+                return subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(repository)],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+
+            # Bytecode caches and edits outside the runtime paths do not block.
+            (repository / "src/director_orchestrator/__pycache__").mkdir()
+            (repository / "src/director_orchestrator/__pycache__/module.cpython-312.pyc").write_bytes(b"\x00")
+            (repository / "README.md").write_text("edited\n", encoding="utf-8")
+            result = check()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("source=" + expected, result.stdout)
+
+            dirty = {
+                "modified": ("prompts/director-system.md", "edited prompt\n"),
+                "untracked": ("src/director_orchestrator/extra.py", "VALUE = 1\n"),
+                "ignored": ("docs/schemas/operator.local", "not committed\n"),
+            }
+            for case, (relative, content) in dirty.items():
+                with self.subTest(case=case):
+                    path = repository / relative
+                    original = path.read_text(encoding="utf-8") if path.exists() else None
+                    path.write_text(content, encoding="utf-8")
+                    try:
+                        result = check()
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("clean checkout of the bridge runtime files", result.stderr)
+                        self.assertNotIn("source=", result.stdout)
+                    finally:
+                        if original is None:
+                            path.unlink()
+                        else:
+                            path.write_text(original, encoding="utf-8")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_bridge_runtime_install_is_content_addressed_and_verified(self) -> None:
+        # Only the manifest and copy helpers execute; the Install branch and
+        # task registration are never run, even with mocks.
+        harness = r"""
+param($Source, $SourceRoot, $InstallRoot)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+'destination=' + (Install-BridgeRuntime -SourceRoot $SourceRoot -InstallRoot $InstallRoot)
+"""
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, target = root / "source", root / "install"
+            files = {
+                "src/director_orchestrator/__init__.py": b"# package\n",
+                "src/director_orchestrator/nested/module.py": "VALUE = 'é'\r\n".encode("utf-8"),
+                "docs/schemas/packet.json": b'{"type":"object"}',
+                "docs/provider-profiles/claude.md": b"profile\n",
+                "prompts/director-system.md": b"prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": b"# launcher\n",
+            }
+            excluded = {
+                "src/director_orchestrator/__pycache__/module.cpython-312.pyc": b"\x00bytecode",
+                "README.md": b"not runtime\n",
+                "scripts/other.ps1": b"# not runtime\n",
+            }
+            for relative, content in {**files, **excluded}.items():
+                (source / relative).parent.mkdir(parents=True, exist_ok=True)
+                (source / relative).write_bytes(content)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def install():
+                result = subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(source), str(target)],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+                lines = [line for line in result.stdout.splitlines() if line.startswith("destination=")]
+                return result, (Path(lines[-1][len("destination="):]) if lines else None)
+
+            def address(contents):
+                manifest = sorted(f"{hashlib.sha256(data).hexdigest()}  {relative}" for relative, data in contents.items())
+                return hashlib.sha256(("\n".join(manifest) + "\n").encode("utf-8")).hexdigest()
+
+            result, first = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(first, target / address(files))
+            from director_orchestrator.provider_validation import runtime_package_digest
+            self.assertEqual(runtime_package_digest(first), first.name)
+            copied = {path.relative_to(first).as_posix(): path.read_bytes() for path in first.rglob("*") if path.is_file()}
+            self.assertEqual(copied, files)
+            self.assertFalse(any("__pycache__" in path.parts for path in first.rglob("*")))
+
+            result, again = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(again, first)
+            self.assertEqual(list(target.glob(".staging-*")), [])
+
+            edited = dict(files, **{"prompts/director-system.md": b"edited prompt\n"})
+            (source / "prompts/director-system.md").write_bytes(edited["prompts/director-system.md"])
+            result, second = install()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(second, target / address(edited))
+            self.assertNotEqual(second, first)
+            self.assertEqual((first / "prompts/director-system.md").read_bytes(), files["prompts/director-system.md"])
+
+            (source / "prompts/director-system.md").write_bytes(files["prompts/director-system.md"])
+            (first / "docs/schemas/packet.json").write_bytes(b'{"type":"tampered"}')
+            result, _ = install()
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("does not match its content address", result.stderr)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_bridge_install_requires_an_explicit_interpreter_outside_the_checkout(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        call = install.index('Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python"))')
+        self.assertLess(call, install.index("Get-CleanBridgeSource"))
+        self.assertLess(call, install.index("Register-BridgeTask"))
+        harness = r"""
+param($Source, $SourceRoot, $Requested)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Resolve-FinalPath', 'Assert-ExternalInterpreter')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$null = Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
+'accepted'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            checkout = root / "checkout"
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            cases = {
+                "": "explicit absolute -Python",
+                ".venv-win\\Scripts\\python.exe": "explicit absolute -Python",
+                str(checkout / ".venv-win" / "Scripts" / "python.exe"): "inside the source checkout",
+                str(checkout / "tools" / ".." / "python.exe"): "inside the source checkout",
+                str(root / "runtime" / "python.exe"): None,
+                str(root / "checkout-sibling" / "python.exe"): None,
+            }
+            for requested, refusal in cases.items():
+                with self.subTest(requested=requested):
+                    result = subprocess.run(
+                        [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                         str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(checkout), requested],
+                        capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                    )
+                    if refusal is None:
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        self.assertIn("accepted", result.stdout)
+                    else:
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn(refusal, result.stderr)
+                        self.assertNotIn("accepted", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh") and shutil.which("git"), "PowerShell and git are required")
+    def test_bridge_install_reproves_installed_bytes_against_the_recorded_commit(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        proof = install.index("Assert-InstalledMatchesCommit -Root $sourceRoot -Destination $destination -Commit $source[0]")
+        self.assertLess(install.index("Install-BridgeRuntime -SourceRoot"), proof)
+        self.assertLess(proof, install.index('"$destination.source.json"'))
+        self.assertLess(proof, install.index("Register-BridgeTask"))
+        harness = r"""
+param($Source, $Repository, $InstallRoot, $Commit)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime', 'Assert-InstalledMatchesCommit')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$destination = Install-BridgeRuntime -SourceRoot $Repository -InstallRoot $InstallRoot
+Assert-InstalledMatchesCommit -Root $Repository -Destination $destination -Commit $Commit
+'proved'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            repository = root / "repository"
+            files = {
+                "src/director_orchestrator/__init__.py": b"# package\n",
+                "docs/schemas/packet.json": b"{}\n",
+                "docs/provider-profiles/claude.md": b"profile\n",
+                "prompts/director-system.md": b"prompt\n",
+                "scripts/windows-host-provider-bridge.ps1": b"# launcher\n",
+            }
+            for relative, content in files.items():
+                (repository / relative).parent.mkdir(parents=True, exist_ok=True)
+                (repository / relative).write_bytes(content)
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+
+            def git(*arguments):
+                return subprocess.run(["git", "-C", str(repository), *arguments], capture_output=True,
+                                      text=True, check=True, stdin=subprocess.DEVNULL).stdout.strip()
+
+            git("init", "-q")
+            git("add", "-A")
+            git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture")
+            commit = git("rev-parse", "HEAD^{commit}")
+
+            def install(target):
+                return subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                     str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(repository),
+                     str(root / target), commit],
+                    capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                )
+
+            result = install("install-clean")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("proved", result.stdout)
+            # A runtime file changed after the clean-source check: the copy is
+            # self-consistent, but it is not the recorded commit.
+            for relative, content in (("prompts/director-system.md", b"raced prompt\n"),
+                                      ("src/director_orchestrator/extra.py", b"RACED = 1\n")):
+                with self.subTest(raced=relative):
+                    path = repository / relative
+                    original = path.read_bytes() if path.exists() else None
+                    path.write_bytes(content)
+                    try:
+                        result = install("install-" + path.stem)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("does not match the recorded commit", result.stderr)
+                        self.assertNotIn("proved", result.stdout)
+                    finally:
+                        if original is None:
+                            path.unlink()
+                        else:
+                            path.write_bytes(original)
+
+    @unittest.skipUnless(shutil.which("pwsh") and os.name == "nt", "PowerShell junctions on Windows are required")
+    def test_bridge_install_resolves_interpreter_and_checkout_aliases(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        self.assertIn("$pythonPath = Assert-ExternalInterpreter -Requested", install)
+        harness = r"""
+param($Source, $Root)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Resolve-FinalPath', 'Assert-ExternalInterpreter')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$checkout = Join-Path $Root 'checkout'; $external = Join-Path $Root 'external'
+$null = New-Item -ItemType Directory -Path (Join-Path $checkout 'venv'), $external
+Set-Content -LiteralPath (Join-Path $checkout 'venv\python.exe') -Value 'x'
+Set-Content -LiteralPath (Join-Path $external 'python.exe') -Value 'x'
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'alias-in') -Target (Join-Path $checkout 'venv')
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'alias-out') -Target $external
+$null = New-Item -ItemType Junction -Path (Join-Path $Root 'checkout-alias') -Target $checkout
+function Probe($Name, $Requested, $SourceRoot) {
+    try { "$Name=accepted:" + (Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot) }
+    catch { "$Name=refused:" + $_.Exception.Message }
+}
+Probe 'alias-in' (Join-Path $Root 'alias-in\python.exe') $checkout
+Probe 'alias-out' (Join-Path $Root 'alias-out\python.exe') $checkout
+Probe 'checkout-alias' (Join-Path $checkout 'venv\python.exe') (Join-Path $Root 'checkout-alias')
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(root / "work")],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            lines = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            self.assertTrue(lines["alias-in"].startswith("refused:"), lines)
+            self.assertIn("inside the source checkout", lines["alias-in"])
+            self.assertTrue(lines["checkout-alias"].startswith("refused:"), lines)
+            self.assertEqual(Path(lines["alias-out"].removeprefix("accepted:")),
+                             root / "work" / "external" / "python.exe")
+            for junction in ("alias-in", "alias-out", "checkout-alias"):
+                os.rmdir(root / "work" / junction)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_installed_bridge_runtime_is_reverified_before_every_launch(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        launch = text[text.index('if ($Action -eq "Install")'):]
+        self.assertLess(launch.index("Assert-InstalledBridgeRuntime -Root (Split-Path -Parent $PSScriptRoot)"),
+                        launch.index("& $pythonPath -m director_orchestrator.host_provider_bridge_server"))
+        harness = r"""
+param($Source, $SourceRoot, $InstallRoot)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+foreach ($name in @('Get-BridgeRuntimeManifest', 'Resolve-FinalPath', 'Install-BridgeRuntime', 'Assert-InstalledBridgeRuntime')) {
+    $node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true))
+    if ($node.Count -ne 1) { throw 'expected one production helper' }
+    . ([scriptblock]::Create($node[0].Extent.Text))
+}
+$destination = Install-BridgeRuntime -SourceRoot $SourceRoot -InstallRoot $InstallRoot
+Assert-InstalledBridgeRuntime -Root $SourceRoot
+Assert-InstalledBridgeRuntime -Root $destination
+'verified-clean'
+Set-Content -LiteralPath (Join-Path $destination 'src/director_orchestrator/__init__.py') -Value 'TAMPERED = 1'
+Assert-InstalledBridgeRuntime -Root $destination
+'verified-tampered'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / "source"
+            for relative in ("src/director_orchestrator/__init__.py", "docs/schemas/packet.json",
+                             "docs/provider-profiles/claude.md", "prompts/director-system.md",
+                             "scripts/windows-host-provider-bridge.ps1"):
+                (source / relative).parent.mkdir(parents=True, exist_ok=True)
+                (source / relative).write_bytes(b"fixture\n")
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                 str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(source), str(root / "install")],
+                capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("verified-clean", result.stdout)
+            self.assertNotIn("verified-tampered", result.stdout)
+            self.assertIn("does not match its content address; the bridge was not started", result.stderr)
 
     def test_host_wrapper_preserves_unsupported_lane_rejection(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
@@ -479,6 +963,18 @@ $global:gitCalls | ForEach-Object { Write-Output $_ }
         self.assertIn("try { Stop-Lane; $laneRemoved = $true } catch", test_section)
         self.assertIn("may still be running; rerun -Action Stop", test_section)
         self.assertIn("if (-not $laneRemoved) { throw", test_section)
+
+    def test_stage_a_runbook_lists_every_control_action_and_the_scripted_offline_path(self) -> None:
+        script = self.text("windows-langgraph-primary-control.ps1")
+        actions = re.findall(r'"(\w+)"', re.search(
+            r"\[ValidateSet\(([^)]*)\)\]\s*\[string\]\$Action", script).group(1))
+        runbook = (ROOT / "docs" / "langgraph-primary-stage-a-runbook.md").read_text(encoding="utf-8")
+        listed = runbook.split("`-Action` set is", 1)[1].split("Confirm the ValidateSet", 1)[0]
+        self.assertEqual(re.findall(r"`(\w+)`", listed), actions)
+        # Stage A is the scripted ActivateOffline action; the hand edit is only a fallback.
+        execution = runbook.split("\n## Execution", 1)[1].split("\n## Verification", 1)[0]
+        self.assertIn("-Action ActivateOffline", execution)
+        self.assertIn("**Fallback only.**", execution)
 
     def test_postgres_test_lane_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -624,3 +1120,10 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:52 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]

@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Grok | grok-4.6 | 2026-09-22 | 22:10 UTC | BEGIN]]
@@ -1444,6 +1448,26 @@ class DefaultDryRunServices:
             record, effect_grant=effect_grant, execution_mode=execution_mode
         )
 
+    def paid_dispatch_allowed(self, task_id: str) -> bool:
+        """Allow paid dispatch only for a task persisted exactly as ``live``.
+
+        A live composition may recover a task approved in another mode, or a
+        historical projection with no label (``unknown``) or a malformed one;
+        its persisted label, not the current composition, decides paid dispatch.
+        """
+        with self._lock:
+            return self._execution_modes.get(task_id) == "live"
+
+    def offline_dispatch_allowed(self, task_id: str) -> bool:
+        """Fail closed for a task not approved as simulation or paid-off.
+
+        An offline composition may recover a live-approved task (for example
+        after a failed paid activation); simulated output must never settle it.
+        An unlabelled task is refused too.
+        """
+        with self._lock:
+            return self._execution_modes.get(task_id) in {"offline_simulation", "paid_off"}
+
     def discard(self, task_id: str) -> None:
         with self._lock:
             owners = self._owners.get(task_id, 0)
@@ -1480,10 +1504,14 @@ class DefaultDryRunServices:
         raw = application.get("task_record")
         if not isinstance(raw, Mapping):
             raise RuntimeError("primary recovery projection lacks its task record")
+        # The recovered label is kept exactly (an empty or blank string stays
+        # as it is and is held); only a missing or non-string label becomes
+        # ``unknown``. Hydration never takes the composition's default.
+        recovered = application.get("execution_mode", "unknown")
         return self._acquire_record(
             TaskRecord.model_validate(dict(raw)),
             effect_grant=application.get("effect_grant"),
-            execution_mode=application.get("execution_mode", "unknown"),
+            execution_mode=recovered if isinstance(recovered, str) else "unknown",
             exclusive=exclusive,
         )
 
@@ -1507,7 +1535,9 @@ class DefaultDryRunServices:
             self._effect_grants[task_id] = (
                 None if effect_grant is None else dict(effect_grant)
             )
-            self._execution_modes[task_id] = execution_mode or (
+            # Only a new record (execution_mode None) takes the composition's
+            # mode; any given value, falsy or not, is stored unchanged.
+            self._execution_modes[task_id] = execution_mode if execution_mode is not None else (
                 "offline_simulation"
                 if self.settings.langgraph_primary_offline_simulation_enabled
                 else "live" if self._live_composition else "paid_off"
@@ -1893,6 +1923,11 @@ def build_offline_parallel_dispatcher(
         evidence.
         """
 
+        if not services.offline_dispatch_allowed(reservation.task_id):
+            # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never a simulated
+            # settlement of a task approved for live dispatch.
+            from .primary_workload import WorkloadAdmissionHold
+            raise WorkloadAdmissionHold("live_task_requires_live_dispatch")
         if not services.has_ledger_double(reservation.provider_id):
             # Settled, not raised. This failure is known before any execution
             # begins, and an exception would reach the ledger as AMBIGUOUS,
@@ -2921,6 +2956,10 @@ class DefaultPrimaryActivation:
                 def dispatch_parallel_assignment(
                     reservation: ParallelReservation,
                 ) -> ParallelDispatchOutcome:
+                    if not services.paid_dispatch_allowed(reservation.task_id):
+                        # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never ambiguous.
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold("task_not_approved_for_live_dispatch")
                     record = services._record(reservation.task_id)
                     if record.plan is None:
                         raise RuntimeError("parallel dispatch has no durable plan")
@@ -3357,6 +3396,8 @@ class DefaultPrimaryActivation:
                     # check fail at readiness even though it matches at dispatch.
                     from .packet_contracts import canonical_json_bytes
                     try:
+                        if not services.paid_dispatch_allowed(reservation.task_id):
+                            raise PaidSetupHold()
                         record = services._record(reservation.task_id)
                         if record.plan is None:
                             raise PaidSetupHold()
@@ -3795,3 +3836,7 @@ class DefaultPrimaryActivation:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

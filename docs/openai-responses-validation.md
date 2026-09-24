@@ -1,3 +1,7 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | BEGIN]] -->
@@ -28,7 +32,17 @@ The route requires:
 - a `configuration_digest` from `responses_validation_configuration_digest` that
   binds model, API URL, credential digest, enrollment organization/project ids,
   meter enrollment digest, token limit, and the transport's
-  `maximum_timeout_seconds` ceiling (changing the ceiling changes the identity)
+  `maximum_timeout_seconds` ceiling (changing the ceiling changes the identity),
+  plus `responses_runtime_binding`: the executing package directory (an
+  installed bridge copy's content address), the runtime content address
+  (every file Install copies, including `docs/schemas`, so a schema-only change
+  counts), the proxies urllib resolves (registry fallback included), the
+  content of the `SSL_CERT_FILE` bundle or of every file in `SSL_CERT_DIR`
+  (absolute paths only), and the
+  proxy/CA/key-log names httpx and `ssl` honour (`SSLKEYLOGFILE` too) (`HTTP_PROXY`, `HTTPS_PROXY`,
+  `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, any case), so replacing the runtime
+  or its proxy/CA environment refuses an older pin as drift
 - signed admission and fence verification before any HTTP request
 - provider-returned account headers and usage at meter settlement (missing headers
   refuse; they are never invented)
@@ -312,3 +326,7 @@ exact, real-PostgreSQL-confirmed test counts as of this revision, and the
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 20:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Sonnet 5 high | 2026-09-14 | 21:26 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->

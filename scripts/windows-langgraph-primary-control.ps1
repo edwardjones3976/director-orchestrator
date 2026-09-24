@@ -1,3 +1,11 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 11:42 UTC | BEGIN]]
@@ -26,7 +34,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "PrepareOfflineHandoff", "ValidateProviders", "PublishProviderEvidence", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "Rollback")]
+    [ValidateSet("PrepareAcceptance", "BootstrapDatabaseIdentity", "SelectGeneration", "StageRuntime", "PrepareOfflineHandoff", "ValidateProviders", "PublishProviderEvidence", "Challenge", "Preflight", "Accept", "Migrate", "Backup", "RestoreDrill", "Health", "Activate", "ActivateOffline", "Rollback")]
     [string]$Action,
     [string]$EnvironmentFile,
     [string]$ComposeProject,
@@ -101,14 +109,44 @@ function Invoke-Compose {
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose command failed." }
 }
 
+function Invoke-NativeBytes {
+    # PowerShell pipes decode native output with the console code page and
+    # re-encode it on the way in; this transport keeps the exact bytes.
+    param([string]$FilePath, [string[]]$ArgumentList, [byte[]]$InputBytes)
+    $start = [Diagnostics.ProcessStartInfo]::new($FilePath)
+    foreach ($argument in $ArgumentList) { $start.ArgumentList.Add($argument) }
+    $start.UseShellExecute = $false
+    # Set-Location does not change the process CWD; Compose must find this checkout.
+    $start.WorkingDirectory = (Get-Location).ProviderPath
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardInput = $null -ne $InputBytes
+    # Stderr stays inherited, never redirected, so it cannot deadlock.
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        if ($null -ne $InputBytes) {
+            $process.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+            $process.StandardInput.Close()
+        }
+        $output = [IO.MemoryStream]::new()
+        $process.StandardOutput.BaseStream.CopyTo($output)
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "Native command failed." }
+        return ,$output.ToArray()
+    }
+    finally { $process.Dispose() }
+}
+
 function Get-ResolvedDeploymentDigest {
-    $configuration = @(Invoke-Compose config --format json) -join [Environment]::NewLine
+    $configuration = Invoke-NativeBytes -FilePath docker -ArgumentList @(
+        "compose", "--project-name", $script:ComposeProject, "--env-file", $script:environmentPath,
+        "config", "--format", "json")
     # Compute inside the exact candidate image with no network or host mounts.
     # Resolved secrets stay on stdin; only the digest is returned.
-    $result = @($configuration | & docker run --rm -i --network none --entrypoint python $script:runtimeImageId `
-        -m director_orchestrator.primary_generation compose-digest --image-id $script:runtimeImageId)
-    $observed = [string]($result | Select-Object -Last 1)
-    if ($LASTEXITCODE -ne 0 -or $observed -cnotmatch '^[0-9a-f]{64}$') { throw "Resolved deployment configuration is not verified." }
+    $result = Invoke-NativeBytes -FilePath docker -InputBytes $configuration -ArgumentList @(
+        "run", "--rm", "-i", "--network", "none", "--entrypoint", "python", $script:runtimeImageId,
+        "-m", "director_orchestrator.primary_generation", "compose-digest", "--image-id", $script:runtimeImageId)
+    $observed = [string](@([Text.Encoding]::UTF8.GetString($result) -split '\r?\n' | Where-Object { $_ }) | Select-Object -Last 1)
+    if ($observed -cnotmatch '^[0-9a-f]{64}$') { throw "Resolved deployment configuration is not verified." }
     return $observed
 }
 
@@ -123,6 +161,105 @@ function Assert-RunningCandidate {
     if ([string]$observed.Image -cne $script:runtimeImageId -or
         (@($observed.Config.Cmd) -join "|") -cne ($expectedCommand -join "|")) {
         throw "Running container image or command differs from the verified candidate."
+    }
+}
+
+function Get-ServiceContainer {
+    # Compose labels select the service; container IDs are never stored.
+    param([string]$Service, [switch]$Running, [switch]$AllowAbsent)
+    $filters = @(
+        "--filter", "label=com.docker.compose.project=$script:ComposeProject",
+        "--filter", "label=com.docker.compose.service=$Service",
+        "--filter", "label=com.docker.compose.oneoff=False"
+    )
+    if ($Running) { $filters += @("--filter", "status=running") }
+    $containers = @(& docker ps -a --no-trunc -q @filters | Where-Object { $_ })
+    if ($LASTEXITCODE -eq 0 -and $containers.Count -eq 0 -and $AllowAbsent) { return $null }
+    if ($LASTEXITCODE -ne 0 -or $containers.Count -ne 1) {
+        throw "Expected exactly one $Service container in the Compose project."
+    }
+    return [string]$containers[0]
+}
+
+function Get-ServiceImageId {
+    param([string]$Service, [switch]$Running, [switch]$AllowAbsent)
+    $container = Get-ServiceContainer -Service $Service -Running:$Running -AllowAbsent:$AllowAbsent
+    if ($null -eq $container) { return $null }
+    $image = [string](@(& docker inspect --format "{{.Image}}" $container) | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $image -cnotmatch '^sha256:[0-9a-f]{64}$') {
+        throw "The $Service image identity could not be read back."
+    }
+    return $image
+}
+
+function Assert-ServiceImage {
+    # -Created reads back a container created with --no-start, before it can serve.
+    param([string]$Service, [string]$Expected, [switch]$Created)
+    if ((Get-ServiceImageId -Service $Service -Running:(-not $Created)) -cne $Expected) {
+        throw "Running $Service image differs from its expected content identity."
+    }
+}
+
+# The prior-image record lives beside, never inside, the env file: the env file
+# is the orchestrator env_file, so a new key would change the resolved digest.
+function Get-PriorImagesPath {
+    $generation = [string]$script:values["LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"]
+    if ($generation -cnotmatch '^[0-9a-f]{64}$') { $generation = "unselected" }
+    return "$script:environmentPath.prior-images.$generation.$($script:runtimeImageId.Substring(7)).json"
+}
+
+function Get-OfflineAttemptPath {
+    # Beside the profile, like the prior-image record: an ActivateOffline that
+    # started the runtime from a proved-quiescent plane and has not finished.
+    return (Get-PriorImagesPath) -replace '\.prior-images\.', '.offline-attempt.'
+}
+
+function Read-PriorImages {
+    $path = Get-PriorImagesPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Prior orchestrator and gateway images were not recorded for this candidate."
+    }
+    try {
+        $record = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $names = @($record.PSObject.Properties.Name | Sort-Object) -join "|"
+        if ($names -cne "candidate_image_id|compose_project|gateway_image_id|orchestrator_image_id|version" -or
+            [string]$record.version -cne "director-prior-images/v1" -or
+            [string]$record.compose_project -cne $script:ComposeProject -or
+            [string]$record.candidate_image_id -cne $script:runtimeImageId -or
+            [string]$record.orchestrator_image_id -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+            [string]$record.gateway_image_id -cnotmatch '^sha256:[0-9a-f]{64}$') {
+            throw "invalid"
+        }
+    }
+    catch { throw "The prior-image record is invalid." }
+    return $record
+}
+
+function Save-PriorImages {
+    $path = Get-PriorImagesPath
+    # Recorded once, before the first candidate recreate; validated and reused, never replaced.
+    if (Test-Path -LiteralPath $path) { $null = Read-PriorImages; return }
+    $orchestrator = Get-ServiceImageId -Service orchestrator -AllowAbsent
+    $gateway = Get-ServiceImageId -Service slackbot -AllowAbsent
+    # An absent container (fresh stack, or after compose down) or one already on
+    # the candidate has no prior image: that is Rollback's documented no-record case.
+    if ($null -eq $orchestrator -or $null -eq $gateway -or
+        $script:runtimeImageId -cin @($orchestrator, $gateway)) { return }
+    $record = [ordered]@{
+        version = "director-prior-images/v1"
+        compose_project = $script:ComposeProject
+        candidate_image_id = $script:runtimeImageId
+        orchestrator_image_id = $orchestrator
+        gateway_image_id = $gateway
+    }
+    $temporary = "$path.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, ($record | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+        # Move refuses an existing destination, so a concurrent record is never overwritten.
+        [IO.File]::Move($temporary, $path)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
     }
 }
 
@@ -380,6 +517,50 @@ function Get-LegacyInventory {
     return $inventory.Split('|')
 }
 
+function Assert-PrimaryQuiescent {
+    # Activation in either mode would recover the other mode's unfinished work
+    # (simulated under live dispatch, or live under simulation), so the primary
+    # plane must hold none.
+    # Both checks require the full rollback_safe set, writer leases included.
+    # -AfterStop waits (bounded: the 60 s default lease plus margin) only while
+    # writer leases are the sole blocker, so the stopped process's leases can
+    # lapse; any other unfinished work refuses at once, and a lease still live
+    # after the bound refuses too, since another engine may hold it.
+    # -WritersOnly (with -AfterStop) proves only that no writer lease is live
+    # after the same bounded wait: a same-mode retry recovers its own work, but
+    # never beside a foreign live writer.
+    param([switch]$AfterStop, [switch]$WritersOnly)
+    $leaseWaitSeconds = if ($AfterStop) { 75 } else { 0 }
+    $otherWork = if ($WritersOnly) { "False" } else { "(m.active_provider_dispatch_count or m.active_assignment_count or m.unresolved_reconciliation_count or m.unsettled_claim_count)" }
+    $passes = if ($WritersOnly) { "not m.live_writer_claim_count" } else { "m.rollback_safe" }
+    try {
+        Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+            "import time; from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); metrics=h.claim_store.primary_quiescence_metrics; end=time.monotonic()+$leaseWaitSeconds; m=metrics(); exec('while m.live_writer_claim_count and not $otherWork and time.monotonic() < end:\n    time.sleep(2); m=metrics()'); h.close(); raise SystemExit(0 if $passes else 3)"
+    }
+    catch {
+        $state = if ($AfterStop) { "Intake remains stopped and no switch was changed." } else { "Nothing was stopped or switched." }
+        throw "Activation refused: the primary plane is not quiescent (unfinished dispatches, assignments, writer claims, reconciliation or claims, possibly from another execution mode). Finish or reconcile that work first. $state"
+    }
+}
+
+function Test-ActivatedChain {
+    # Read-only: true only when this exact identity's chain already ends in ACTIVATED.
+    try { $null = Invoke-Evidence -Command require-activated; return $true }
+    catch { return $false }
+}
+
+function Assert-PrimaryOwnsIntake {
+    # Resume is same-mode only. After Rollback returned new intake to legacy,
+    # legacy work may exist that no inventory bound, so a new generation is required.
+    try {
+        Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
+            "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$script:databaseIdentity', accepted_instance_id='$script:databaseInstanceId'); c=h.claim_store.current_intake_authority(); h.close(); raise SystemExit(0 if c.intake_owner == 'langgraph' else 3)"
+    }
+    catch {
+        throw "Activation resume refused: new intake is no longer owned by the primary (for example after Rollback); a new generation is required. Nothing was stopped or switched."
+    }
+}
+
 function Stop-And-Prove-AllIntake {
     Invoke-Compose stop slackbot n8n orchestrator
     Assert-AllIntakeStopped
@@ -387,11 +568,11 @@ function Stop-And-Prove-AllIntake {
 
 function Assert-OfflineHandoffProfile {
     if ($script:acceptanceMode -cnotin @("provider-v2", "provider-v3-two-party")) {
-        throw "PrepareOfflineHandoff requires a selected provider-v2 generation or provider-v3-two-party generation."
+        throw "The offline handoff requires a selected provider-v2 generation or provider-v3-two-party generation."
     }
     foreach ($name in @("ALLOW_PAID_RUNS", "LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "DIRECTOR_PROVIDER_VALIDATION_ENABLED")) {
         if (-not $script:values.ContainsKey($name) -or [string]$script:values[$name] -cne "false") {
-            throw "PrepareOfflineHandoff requires explicit false in the initial generation-bound profile: $name."
+            throw "The offline handoff requires explicit false in the initial generation-bound profile: $name."
         }
     }
 }
@@ -407,7 +588,7 @@ function Assert-AllIntakeStopped {
 
 function Invoke-Evidence {
     param(
-        [ValidateSet("record", "require-ready", "require-staged", "require-accepted", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
+        [ValidateSet("record", "require-ready", "require-staged", "require-accepted", "require-activated", "verify-backup", "bind-legacy-inventory", "challenge")][string]$Command,
         [string]$Stage,
         [string]$FactsJson = "{}",
         [string]$AcceptanceArtifactPath,
@@ -837,6 +1018,7 @@ if ($Action -eq "StageRuntime") {
     # Legacy inventory is intentionally deferred until the final stopped cutover.
     Invoke-Evidence -Command require-staged
     Stop-And-Prove-AllIntake
+    Save-PriorImages
     Write-Switches @{
         DIRECTOR_ASGI_APP = "director_orchestrator.primary_staging:app"
         ALLOW_PAID_RUNS = "false"
@@ -900,33 +1082,119 @@ if ($Action -eq "PrepareOfflineHandoff") {
     Write-Host "Offline handoff inventory prepared; selected-project intake remains stopped. No runtime was started or activated."
     return
 }
-if ($Action -eq "Activate") {
-    Stop-And-Prove-AllIntake
-    $legacyInventory = Get-LegacyInventory
-    Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
-    Invoke-Evidence -Command require-ready
+if ($Action -in @("Activate", "ActivateOffline")) {
+    $offline = $Action -eq "ActivateOffline"
+    # Paid resume: ACTIVATED is already recorded for this exact identity (a
+    # post-record n8n or Slack start failed and was unwound). Only the start
+    # steps are retried, behind the same switches, readbacks and health proof;
+    # the chain is never re-recorded and intake still reopens last.
+    $resume = (-not $offline) -and (Test-ActivatedChain)
+    if ($resume) {
+        # Only the unwound failed-start state resumes: every intake surface is
+        # already stopped. A running ACTIVATED deployment is never stopped here,
+        # since that could interrupt provider I/O with no quiescence check.
+        try { Assert-AllIntakeStopped }
+        catch { throw "Activation refused: this generation is already ACTIVATED and its intake surfaces are running. Nothing was stopped or switched." }
+        Assert-PrimaryOwnsIntake
+        Stop-And-Prove-AllIntake
+        Assert-PrimaryQuiescent -AfterStop -WritersOnly
+    }
+    else {
+        # Offline activation needs the same profile PrepareOfflineHandoff requires,
+        # checked before anything stops.
+        if ($offline) { Assert-OfflineHandoffProfile }
+        if ($offline -and (Test-Path -LiteralPath (Get-OfflineAttemptPath) -PathType Leaf)) {
+            # Same-mode retry of a failed ActivateOffline. Its runtime serves the
+            # API with intake on before the health proof can pass (the proof
+            # requires active offline intake), so it may have admitted offline
+            # work that full quiescence would strand. That attempt started from a
+            # proved-quiescent plane and paid Activate clears the marker, so any
+            # unfinished work is offline (the offline dispatcher holds any other
+            # label); only a foreign live writer lease refuses.
+            Stop-And-Prove-AllIntake
+            Assert-PrimaryQuiescent -AfterStop -WritersOnly
+        }
+        else {
+            # Both directions need a quiescent plane: work approved under one mode must
+            # never be recovered by the other mode's dispatcher. Checked before the stop
+            # (nothing touched on refusal) and again after it, since the running service
+            # could admit work in between.
+            Assert-PrimaryQuiescent
+            Stop-And-Prove-AllIntake
+            Assert-PrimaryQuiescent -AfterStop
+            # A proved-quiescent plane ends any earlier offline attempt.
+            if (-not $offline) { Remove-Item -LiteralPath (Get-OfflineAttemptPath) -Force -ErrorAction SilentlyContinue }
+        }
+        $legacyInventory = Get-LegacyInventory
+        Invoke-Evidence -Command bind-legacy-inventory -LegacyTaskCount ([int]$legacyInventory[0]) -LegacyInventoryDigest ([string]$legacyInventory[1])
+        # PREFLIGHT..RESTORE_PROVED plus the bound inventory; provider readiness is
+        # a separate health gate that only paid activation requires.
+        Invoke-Evidence -Command require-ready
+        Save-PriorImages
+        if ($offline) { [IO.File]::WriteAllText((Get-OfflineAttemptPath), "director-offline-attempt/v1") }
+    }
     try {
-        Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; ALLOW_PAID_RUNS = "true"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"; LANGGRAPH_PARALLEL_KILL_SWITCH = "false" }
+        if ($offline) {
+            # Simulated providers only: offline simulation excludes live dispatch
+            # (config.py) and paid runs stay off. The offline path does not read
+            # the parallel kill switch; it stays closed as defence in depth.
+            Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; ALLOW_PAID_RUNS = "false"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "true"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "false"; LANGGRAPH_PARALLEL_KILL_SWITCH = "true" }
+        }
+        else {
+            Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; ALLOW_PAID_RUNS = "true"; LANGGRAPH_PRIMARY_ENABLED = "true"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "true"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "true"; LANGGRAPH_PARALLEL_KILL_SWITCH = "false" }
+        }
         Invoke-Compose up -d --no-build --force-recreate orchestrator
         Assert-RunningCandidate -AsgiApp "director_orchestrator.main:app"
         $primary = (Wait-Health).langgraph_primary
-        foreach ($field in @("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres", "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready", "reconciliation_worker_ready", "primary_runtime_active", "legacy_new_intake_disabled")) {
+        # primary_runtime_active requires live dispatch; offline intake is proven
+        # by paid_off_primary_intake_active, which requires paid runs off.
+        $runtimeField = if ($offline) { "paid_off_primary_intake_active" } else { "primary_runtime_active" }
+        foreach ($field in @("primary_graph_constructed", "primary_router_wired", "checkpoint_backend_postgres", "checkpoint_schema_current", "claim_store_ready", "effect_ledger_ready", "writer_lease_ready", "reconciliation_worker_ready", $runtimeField, "legacy_new_intake_disabled")) {
             if (-not [bool]$primary.$field) { throw "Primary activation health failed at $field." }
         }
-        if ([string]$primary.new_intake_owner -cne "langgraph" -or -not [bool]$primary.provider_activation.combined_live_ready -or [int]$primary.ambiguous_effect_count -ne 0) { throw "Primary activation ownership/provider/reconciliation proof failed." }
-        Invoke-Evidence -Command record -Stage ACTIVATED -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
-        Invoke-Compose up -d n8n slackbot
-        Write-Host "Primary activation health passed and authenticated intake was reopened."
+        if ([string]$primary.new_intake_owner -cne "langgraph" -or
+            (-not $offline -and -not [bool]$primary.provider_activation.combined_live_ready) -or
+            ($offline -and [bool]$primary.primary_runtime_active) -or
+            [int]$primary.ambiguous_effect_count -ne 0) { throw "Primary activation ownership/provider/reconciliation proof failed." }
+        # The gateway is created stopped and read back, so it never serves an
+        # unverified image and a gateway failure does not burn the generation.
+        Invoke-Compose up --no-start --no-deps --no-build --force-recreate slackbot
+        Assert-ServiceImage -Service slackbot -Expected $runtimeImageId -Created
+        # ACTIVATED is terminal. Recording it offline would consume the chain that
+        # paid Activate's require-ready needs; runtime acceptance already accepts
+        # the stages without ACTIVATED. It is recorded before n8n and Slack reopen,
+        # so a failed evidence write unwinds with that intake still closed.
+        if (-not $offline -and -not $resume) {
+            Invoke-Evidence -Command record -Stage ACTIVATED -FactsJson ("{`"intake_fencing_generation`":$([int]$primary.intake_fencing_generation)}")
+        }
+        Invoke-Compose up -d n8n
+        Invoke-Compose start slackbot
+        if ($resume) {
+            Write-Host "Activation resumed on the already-ACTIVATED chain; health and image readbacks passed and authenticated intake was reopened. Nothing was re-recorded."
+        }
+        elseif (-not $offline) {
+            Write-Host "Primary activation health passed and authenticated intake was reopened."
+        }
+        else {
+            Remove-Item -LiteralPath (Get-OfflineAttemptPath) -Force
+            Write-Host "Offline primary activation passed with paid runs and live dispatch off; intake reopened on the verified gateway image; no ACTIVATED stage was recorded."
+        }
         return
     }
     catch {
-        try { Invoke-Compose stop orchestrator }
-        finally { Write-Switches @{ ALLOW_PAID_RUNS = "false"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "false"; LANGGRAPH_PARALLEL_KILL_SWITCH = "true" } }
+        # The gateway or n8n may already be up, so every intake surface is closed.
+        try { Stop-And-Prove-AllIntake }
+        finally { Write-Switches @{ ALLOW_PAID_RUNS = "false"; LANGGRAPH_PRIMARY_NEW_INTAKE_ENABLED = "false"; LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED = "false"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false"; LANGGRAPH_PARALLEL_KILL_SWITCH = "true" } }
         throw "Primary activation failed and was unwound; Slack, API, and n8n intake remain stopped. $($_.Exception.Message)"
     }
 }
 
 if ($Action -eq "Rollback") {
+    # An invalid record refuses before anything is stopped. With no record the
+    # fenced return to legacy still runs, on the candidate image, and says so.
+    $prior = if (Test-Path -LiteralPath (Get-PriorImagesPath) -PathType Leaf) { Read-PriorImages } else { $null }
+    $orchestratorImage = if ($prior) { [string]$prior.orchestrator_image_id } else { $runtimeImageId }
+    $gatewayImage = if ($prior) { [string]$prior.gateway_image_id } else { $runtimeImageId }
     Stop-And-Prove-AllIntake
     Write-Switches @{
         ALLOW_PAID_RUNS = "false"
@@ -938,10 +1206,32 @@ if ($Action -eq "Rollback") {
     Invoke-Compose run --rm --no-deps --pull never -T --entrypoint python orchestrator -c `
         "from director_orchestrator.config import Settings; from director_orchestrator.langgraph_postgres import open_postgres_control_plane; s=Settings(); h=open_postgres_control_plane(s.langgraph_primary_postgres_dsn, schema=s.langgraph_primary_postgres_schema, allow_insecure_local_transport=s.langgraph_primary_allow_insecure_local_postgres, accepted_storage_identity='$databaseIdentity', accepted_instance_id='$databaseInstanceId'); c=h.claim_store.current_intake_authority(); m=h.claim_store.primary_control_plane_metrics(); q=h.claim_store.primary_quiescence_metrics(); (_ for _ in ()).throw(RuntimeError('ambiguous effects block rollback')) if m.ambiguous_effect_count != 0 else None; (_ for _ in ()).throw(RuntimeError('active provider dispatches, assignments, writer claims, reconciliation, or claims block rollback')) if not q.rollback_safe else None; n=h.claim_store.acquire_intake_authority(intake_owner='legacy', owner_token=s.langgraph_primary_owner_token, expected_generation=c.fencing_generation); (_ for _ in ()).throw(RuntimeError('legacy intake CAS did not complete')) if n.legacy_new_intake_disabled else None; h.close()"
     Write-Switches @{ DIRECTOR_ASGI_APP = "director_orchestrator.main:app"; LANGGRAPH_PRIMARY_ENABLED = "false"; LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED = "false" }
-    Invoke-Compose up -d --no-build --force-recreate orchestrator
-    $null = Wait-Health
-    Invoke-Compose up -d n8n slackbot
-    Write-Host "Fenced rollback returned new intake to legacy; primary evidence was preserved."
+    try {
+        # Image selection is a process override only; the profile is not changed.
+        $env:DIRECTOR_RUNTIME_IMAGE = $orchestratorImage; $env:DIRECTOR_RUNTIME_IMAGE_ID = $orchestratorImage
+        Invoke-Compose up -d --no-build --force-recreate orchestrator
+        Assert-ServiceImage -Service orchestrator -Expected $orchestratorImage
+        $null = Wait-Health
+        # --no-deps is mandatory: re-rendering orchestrator now would move it onto the gateway image.
+        $env:DIRECTOR_RUNTIME_IMAGE = $gatewayImage
+        Invoke-Compose up --no-start --no-deps --no-build --force-recreate slackbot
+        Assert-ServiceImage -Service slackbot -Expected $gatewayImage -Created
+        Invoke-Compose up -d n8n
+        Invoke-Compose start slackbot
+    }
+    catch {
+        # The CAS already returned new intake to legacy; no surface may serve it
+        # from an unverified image, so every intake surface is closed again.
+        $failure = $_.Exception.Message
+        Stop-And-Prove-AllIntake
+        throw "Rollback returned new intake to legacy, but its restore failed and was unwound; Slack, API, and n8n intake remain stopped. $failure"
+    }
+    if ($prior) {
+        Write-Host "Fenced rollback returned new intake to legacy on the recorded prior orchestrator and gateway images; primary evidence was preserved."
+    }
+    else {
+        Write-Host "Fenced rollback returned new intake to legacy; no prior-image record existed, so no image was restored and the orchestrator and gateway run the candidate image with paid runs and primary off. Primary evidence was preserved."
+    }
 }
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 18:02 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:36 UTC | END]]
@@ -975,3 +1265,11 @@ if ($Action -eq "Rollback") {
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 05:35 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 06:11 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:40 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]

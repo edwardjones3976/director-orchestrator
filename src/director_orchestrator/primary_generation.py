@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | BEGIN]]
@@ -52,6 +53,9 @@ def resolved_deployment_digest(document, image_id):
         service = observed["services"]["orchestrator"]
         if service["image"] != image_id:
             raise ValueError("Compose image is not the verified immutable ID")
+        # The Slack gateway is an intake surface: bind its content ID, never a mutable name.
+        if observed["services"]["slackbot"]["image"] != image_id:
+            raise ValueError("gateway image is not the verified immutable ID")
         command = service["command"]
         valid_apps = {"director_orchestrator.main:app", "director_orchestrator.primary_staging:app"}
         if command not in [["uvicorn", app, "--host", "0.0.0.0", "--port", "8080"] for app in valid_apps]:
@@ -299,3 +303,4 @@ if __name__ == "__main__":
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 16:58 UTC | END]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:35 UTC | END]]

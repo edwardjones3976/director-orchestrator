@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | BEGIN]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | BEGIN]]
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | BEGIN]]
@@ -20,6 +24,52 @@ from .provider_validation import ValidationError, digest, MAX_CAPTURE_BYTES
 
 
 RESPONSES_VALIDATION_TRANSPORT = "responses-api"
+
+
+def responses_runtime_binding() -> str:
+    """Digest of the code and transport environment executing this route.
+
+    The runtime root carries an installed copy's content address and every
+    runtime file (code, schemas, profiles, prompts, launcher) is hashed, so a
+    replaced runtime or any changed dependency changes the route digest.
+    Proxy/CA/key-log names are bound by value (only hashed), and so are the
+    proxies urllib resolves, which on Windows fall back to the registry when
+    no proxy variable is set. The trust material httpx loads from
+    SSL_CERT_FILE or SSL_CERT_DIR is bound by content, rehashed on every call;
+    either path must be absolute.
+    """
+    import os
+    import urllib.request
+    from .host_provider_bridge import _TRANSPORT_ENV
+    from .provider_validation import runtime_package_digest
+    root = Path(__file__).resolve().parents[2]
+    return digest(canonical_json_bytes({
+        "package": str(root),
+        "modules": runtime_package_digest(root),
+        "transport_environment": {key: value for key, value in sorted(os.environ.items())
+                                  if key.upper() in _TRANSPORT_ENV},
+        "resolved_proxies": dict(sorted(urllib.request.getproxies().items())),
+        "trust_material": _trust_material_digests(os.environ),
+    }))
+
+
+def _trust_material_digests(environment) -> dict:
+    """Content digests of the CA file and every regular file in the CA dir."""
+    bound = {}
+    for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        value = environment.get(name)
+        if value is None:
+            continue
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValidationError(f"{name} must be an absolute path")
+        if name == "SSL_CERT_FILE":
+            bound[name] = digest(path.read_bytes()) if path.is_file() else "unavailable"
+        else:
+            bound[name] = ({entry.name: digest(entry.read_bytes())
+                            for entry in sorted(path.iterdir()) if entry.is_file()}
+                           if path.is_dir() else "unavailable")
+    return bound
 
 
 class OpenAIResponsesValidationRoute:
@@ -133,6 +183,7 @@ class OpenAIResponsesValidationRoute:
             meter_enrollment_digest=self.meter_enrollment_digest,
             total_token_limit=self.total_token_limit,
             maximum_timeout_seconds=maximum_timeout_seconds,
+            runtime_binding=responses_runtime_binding(),
         )
 
     @property
@@ -256,6 +307,7 @@ def responses_validation_configuration_digest(
     meter_enrollment_digest: str,
     total_token_limit: int,
     maximum_timeout_seconds: float | int,
+    runtime_binding: str,
 ) -> str:
     """Pin Responses validation identity without inventing account proof.
 
@@ -264,6 +316,9 @@ def responses_validation_configuration_digest(
     capture minted under one ceiling must not qualify a route running under
     another.
 
+    ``runtime_binding`` (responses_runtime_binding) ties the identity to the
+    executing runtime, so an older generation's pin refuses replaced code.
+
     Organization and project ids here are the enrollment routing intention that
     settlement later matches against provider-returned headers. Missing provider
     headers still refuse qualification.
@@ -271,6 +326,7 @@ def responses_validation_configuration_digest(
     if (not model or not api_url or not credential_digest or not organization_id
             or not api_project_id or not meter_enrollment_digest
             or type(total_token_limit) is not int or total_token_limit < 1
+            or not runtime_binding
             or isinstance(maximum_timeout_seconds, bool)
             or type(maximum_timeout_seconds) not in (int, float)
             or not maximum_timeout_seconds > 0):
@@ -286,6 +342,7 @@ def responses_validation_configuration_digest(
         "total_token_limit": total_token_limit,
         # Canonicalised as a number; 180 and 180.0 are one identity.
         "maximum_timeout_seconds": float(maximum_timeout_seconds),
+        "runtime_binding": runtime_binding,
     }))
 
 
@@ -559,3 +616,7 @@ def responses_route_from_environment() -> OpenAIResponsesValidationRoute | None:
 # [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 18:30 UTC | END]]
 # [[Z.ai | GLM-5.3-Flash | 2026-09-14 | 05:12 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-20 | 06:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]

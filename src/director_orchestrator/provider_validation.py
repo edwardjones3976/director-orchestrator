@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
@@ -24,6 +29,7 @@ an explicit operator action; constructing a store or verifying evidence does no 
 """
 from __future__ import annotations
 
+import contextvars
 from dataclasses import asdict, dataclass
 import hashlib
 import hmac
@@ -375,6 +381,19 @@ class PostgresValidationStore:
                         binding=spec["binding"],configuration_digest=spec["configuration_digest"],
                         packet=raw,owner_digest=row[2])
 
+    def expected_configuration_digest(self, generation: str, provider: str, *,
+                                      remaining_seconds=None) -> str | None:
+        """Read-only lookup so a drifted lane pin is refused before any attempt row exists."""
+        with self._connect_bounded(remaining_seconds) as db:
+            db.execute("SET TRANSACTION READ ONLY")
+            if remaining_seconds is not None:
+                self._bind_deadline(db, remaining_seconds)
+            row = db.execute(f"SELECT configuration FROM {SCHEMA}.generations WHERE generation=%s",
+                             (generation,)).fetchone()
+        # Index the jsonb in Python: configuration->%s is ambiguous for an untyped parameter.
+        spec = None if row is None else row[0].get(provider)
+        return spec.get("configuration_digest") if isinstance(spec, dict) else None
+
     def claim_execution(self, admission: dict, *, remaining_seconds=None) -> None:
         with self._connect_bounded(remaining_seconds) as db:
             if remaining_seconds is not None:
@@ -681,6 +700,68 @@ def pinned_path_manifest(value: str) -> dict:
             raise ValidationError("pinned runtime contains a special file or hardlink")
     return manifest
 
+# Set for one validation request by ValidationBridgeService.run: bytes are
+# hashed at the pre-admission point and rehashed at each post-execution point,
+# never trusted from file metadata.
+# The value is a per-request holder, so a security point outside a request
+# never leaves a sticky digest behind.
+_RUNTIME_SCOPE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "director_runtime_digest", default=None)
+# The trees Install copies (Get-BridgeRuntimeManifest in
+# scripts/windows-host-provider-bridge.ps1): code plus every non-Python asset
+# the runtime reads (packet and profile schemas, provider profiles, prompts).
+_RUNTIME_TREES = ("src/director_orchestrator", "docs/schemas", "docs/provider-profiles", "prompts")
+_RUNTIME_LAUNCHER = "scripts/windows-host-provider-bridge.ps1"
+
+
+def _hash_runtime(root) -> str:
+    """Hash every runtime byte now; no metadata shortcut."""
+    from pathlib import Path
+    root = Path(root)
+    files = [path for tree in _RUNTIME_TREES if (root / tree).is_dir()
+             for path in (root / tree).rglob("*")
+             if path.is_file() and "__pycache__" not in path.relative_to(root).parts]
+    if (root / _RUNTIME_LAUNCHER).is_file():
+        files.append(root / _RUNTIME_LAUNCHER)
+    lines = sorted(f"{digest(path.read_bytes())}  {path.relative_to(root).as_posix()}" for path in files)
+    return digest(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def runtime_package_digest(root=None) -> str:
+    """Content address of the running bridge runtime.
+
+    The same manifest Install copies: every file under the runtime trees plus
+    the launcher, bytecode caches excluded, as sorted ``sha256  path`` lines
+    hashed together, so an installed copy's digest equals its directory name.
+    Each lane's configuration digest binds it, so a change to any code or
+    runtime-read asset is configuration drift. Outside a validation request
+    every call rehashes the bytes. Inside one, the value bytes-hashed at the
+    request's latest security point (pre-admission, then each post-execution
+    check via rehash_runtime_scope) is returned, so the checks between those
+    points cost nothing and none trusts file metadata.
+    """
+    from pathlib import Path
+    default = Path(__file__).resolve().parents[2]
+    root = default if root is None else Path(root)
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None and scope.get("digest") is not None and root == default:
+        return scope["digest"]
+    return _hash_runtime(root)
+
+
+def rehash_runtime_scope() -> str:
+    """Security point: rehash every runtime byte and bind it for the request.
+
+    Outside a request the fresh value is returned and nothing is retained.
+    """
+    from pathlib import Path
+    value = _hash_runtime(Path(__file__).resolve().parents[2])
+    scope = _RUNTIME_SCOPE.get()
+    if scope is not None:
+        scope["digest"] = value
+    return value
+
+
 def production_configuration_digest(executor, provider: str, *, account_files: tuple[str,...]) -> str:
     """Pin the real executable, argv files, workspace, adapter and auth material.
 
@@ -708,7 +789,8 @@ def production_configuration_digest(executor, provider: str, *, account_files: t
     from .host_provider_bridge import _SAFE_OS_ENV, _LANE_AUTH_ENV
     environment={k:v for k,v in os.environ.items() if k.upper() in _SAFE_OS_ENV or k in _LANE_AUTH_ENV[provider]}
     return digest(canonical_json_bytes({"argv":list(argv),"files":files,
-                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment))}))
+                  "workspace":str(executor.cwd),"environment_digest":digest(canonical_json_bytes(environment)),
+                  "runtime":runtime_package_digest()}))
 
 
 class ValidationBridgeService:
@@ -730,17 +812,28 @@ class ValidationBridgeService:
     def run(self, request: ValidationRequest, owner_token: str) -> dict:
         if not hmac.compare_digest(owner_token,self.owner_token):
             raise ValidationError("validation owner authentication failed")
+        # One request scope: runtime bytes are hashed here, before admission,
+        # and rehashed at each post-execution check.
+        scope = _RUNTIME_SCOPE.set({"digest": None})
+        try:
+            rehash_runtime_scope()
+            return self._run_lane(request, owner_token)
+        finally:
+            _RUNTIME_SCOPE.reset(scope)
+
+    def _run_lane(self, request: ValidationRequest, owner_token: str) -> dict:
         if request.provider == "antigravity":
             if self.team_route is None:
                 raise ValidationError("Antigravity team SSH validation route is unbound")
             return self.team_route.run(self,request,owner_token)
         if request.provider == "openai" and self.openai_responses_route is not None:
             return self._run_openai_responses(request, owner_token)
+        pin=production_configuration_digest(self.production,request.provider,
+                                           account_files=self.account_files.get(request.provider,()))
+        self.refuse_configuration_drift(request,pin,"production executable/account/workspace/adapter binding drift")
         admission=self.store.admit(request,owner_token)
         raw_captures=[]
         try:
-            pin=production_configuration_digest(self.production,request.provider,
-                                               account_files=self.account_files.get(request.provider,()))
             if pin!=admission["configuration_digest"]:
                 raise ValidationError("production executable/account/workspace/adapter binding drift")
             self.store.claim_execution(admission)
@@ -762,6 +855,7 @@ class ValidationBridgeService:
             executor.execute(bridge,execution_observer=observe)
             if len(raw_captures)!=1:
                 raise ValidationError("native transport discarded its execution capture")
+            rehash_runtime_scope()
             if pin!=production_configuration_digest(self.production,request.provider,
                     account_files=self.account_files.get(request.provider,())):
                 raise ValidationError("native configuration changed during execution")
@@ -780,6 +874,19 @@ class ValidationBridgeService:
             except Exception:
                 pass
             raise
+
+    def refuse_configuration_drift(self, request: ValidationRequest, pin: str, message: str, *,
+                                   remaining_seconds=None) -> None:
+        """Refuse a drifted lane pin before admission on every lane.
+
+        The comparison uses a read-only lookup, so drift creates no attempt row
+        and burns neither budget nor the one-attempt lane slot. Each lane keeps
+        its post-admission and post-execution checks.
+        """
+        expected=self.store.expected_configuration_digest(request.generation,request.provider,
+                                                          remaining_seconds=remaining_seconds)
+        if expected is not None and pin!=expected:
+            raise ValidationError(message)
 
     def _run_openai_responses(self, request: ValidationRequest, owner_token: str) -> dict:
         """Explicit Responses API validation; never falls back to native Codex.
@@ -830,6 +937,9 @@ class ValidationBridgeService:
                 raise ValidationError("Responses validation cleanup allowance is exhausted")
             return rem
 
+        self.refuse_configuration_drift(request, route.configuration_digest,
+                                        "Responses validation configuration digest drift",
+                                        remaining_seconds=remaining_seconds)
         admission = self.store.admit(request, owner_token, preserve_canary_identity=True,
                                      remaining_seconds=remaining_seconds)
         raw_captures: list[bytes] = []
@@ -896,6 +1006,7 @@ class ValidationBridgeService:
             if len(raw_captures) != 1:
                 raise ValidationError("Responses transport discarded its execution capture")
             self.store.verify_fence(bridge, remaining_seconds=remaining_seconds)
+            rehash_runtime_scope()
             if route.configuration_digest != admission["configuration_digest"]:
                 raise ValidationError("Responses validation configuration changed during execution")
             remaining_seconds()
@@ -1036,3 +1147,8 @@ def read_only_lane_preflight(lanes=None, *, fixture: dict | None = None,
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
