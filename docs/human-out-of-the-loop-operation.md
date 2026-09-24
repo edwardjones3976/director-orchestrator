@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
@@ -233,7 +234,10 @@ exercise whose audit history is too long or too slow to read within its bound
 (10,000 records or five seconds, the deadline enforced inside the ledger's
 own verifying scan, and in the verification every audit append repeats; the
 wait for the store's lock and SQLite's busy wait spend the same deadline, which
-is checked again before the audit anchor advances): it keeps the button.
+is checked again before the audit anchor advances, and every anchor read and
+advance is given only what is left of it; an anchor read that runs out refuses
+cleanly, while an advance that runs out is an anchor failure, since the
+checkpoint may have moved): it keeps the button.
 
 ## Standing grant for small read-only tasks
 
@@ -361,7 +365,8 @@ read-only task the view also carries the text of every path the request names
 `Dockerfile`, or any token that is exactly a path in the snapshot, each of which
 must resolve to a snapshot entry),
 read from the git blob its snapshot binds at the packet's commit (never a
-working tree) and bound by that blob hash, so a tool-less lane such as OpenAI
+working tree; the blob's size is checked before it is read, and the read is
+streamed and stops at the cap) and bound by that blob hash, so a tool-less lane such as OpenAI
 Responses can read them; the reviewer's objective names the same paths, so
 both models see the same text. Each file is at most 4 KB, the total at most
 8 KB, and at most eight files. A named path missing from the snapshot,
@@ -663,3 +668,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->

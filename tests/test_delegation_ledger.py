@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | BEGIN]]
@@ -143,10 +144,10 @@ class MemoryAnchor:
     def __init__(self):
         self.head = (0, "0" * 64)
 
-    def read_head(self):
+    def read_head(self, *, timeout=None):
         return self.head
 
-    def compare_and_set(self, expected, updated):
+    def compare_and_set(self, expected, updated, *, timeout=None):
         if self.head != expected:
             raise RuntimeError("anchor changed")
         self.head = updated
@@ -1301,3 +1302,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 05:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]

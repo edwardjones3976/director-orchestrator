@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
@@ -861,6 +862,67 @@ class CompactProviderViewTests(unittest.TestCase):
         with patch("director_orchestrator.packet_routing._BLOB_READER", None):
             self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
 
+    def test_blob_reads_check_the_size_first_and_stream_a_bounded_read(self) -> None:
+        """A large blob is refused on its size, never read into memory."""
+
+        import subprocess as subprocess_module
+        import tempfile as tempfile_module
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        with tempfile_module.TemporaryDirectory() as root:
+            def git(*args, data=None):
+                return subprocess_module.run(
+                    ("git", "-c", f"safe.directory={root}", *args), cwd=root, check=True,
+                    input=data, capture_output=True).stdout.strip().decode()
+
+            git("init", "-q")
+            small = git("hash-object", "-w", "--stdin", data=b"small file\n")
+            large = git("hash-object", "-w", "--stdin", data=b"x" * 5_000_000)
+            reader = git_blob_reader(root)
+            self.assertEqual(b"small file\n", reader(small))
+            real_popen = subprocess_module.Popen
+
+            def refuse_blob_reads(args, *rest, **kwargs):
+                # subprocess.run uses Popen too: only the blob read is refused.
+                if "blob" in args:
+                    raise AssertionError("large blob was read")
+                return real_popen(args, *rest, **kwargs)
+
+            with patch("director_orchestrator.packet_routing.subprocess.Popen",
+                       side_effect=refuse_blob_reads):
+                self.assertIsNone(reader(large))
+            # A size that lies still cannot fill memory: the stream stops at
+            # the cap plus one byte and the blob is refused.
+            reads = []
+
+            class Recording:
+                def __init__(self, *args, **kwargs):
+                    self._process = real_popen(*args, **kwargs)
+                    original = self._process.stdout.read
+                    self._process.stdout.read = lambda size=-1: (
+                        reads.append(size) or original(size))
+                    self.stdout = self._process.stdout
+
+                def poll(self):
+                    return self._process.poll()
+
+                def kill(self):
+                    self._process.kill()
+
+                def wait(self, timeout=None):
+                    return self._process.wait(timeout)
+
+                @property
+                def returncode(self):
+                    return self._process.returncode
+
+            lying = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+            with patch("director_orchestrator.packet_routing.subprocess.run",
+                       return_value=lying), \
+                    patch("director_orchestrator.packet_routing.subprocess.Popen", Recording):
+                self.assertIsNone(reader(large))
+            self.assertEqual([4097], reads)
+
     def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
         """Extensionless files count: conventional names and any exact snapshot path."""
 
@@ -1054,3 +1116,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]

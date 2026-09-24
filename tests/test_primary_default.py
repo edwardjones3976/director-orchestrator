@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
@@ -418,18 +419,44 @@ class _MemoryAuditAnchor:
     def __init__(self):
         self.head = (0, "0" * 64)
 
-    def read_head(self):
+    def read_head(self, *, timeout=None):
         return self.head
 
-    def compare_and_set(self, expected, updated):
+    def compare_and_set(self, expected, updated, *, timeout=None):
         if self.head != expected:
             raise RuntimeError("anchor changed")
         self.head = updated
 
 
 class _UnreadableAuditAnchor(_MemoryAuditAnchor):
-    def read_head(self):
+    def read_head(self, *, timeout=None):
         raise OSError("anchor unavailable")
+
+
+class _SlowAuditAnchor(_MemoryAuditAnchor):
+    """Each call takes ``latency`` seconds, but honors the caller's timeout."""
+
+    def __init__(self, latency):
+        super().__init__()
+        self.latency = latency
+        self.timeouts = []
+
+    def _spend(self, timeout):
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+        import time as time_module
+        self.timeouts.append(timeout)
+        if timeout is not None and timeout < self.latency:
+            time_module.sleep(timeout)
+            raise DelegationAuditDeadlineExceeded("anchor call timed out")
+        time_module.sleep(self.latency)
+
+    def read_head(self, *, timeout=None):
+        self._spend(timeout)
+        return self.head
+
+    def compare_and_set(self, expected, updated, *, timeout=None):
+        self._spend(timeout)
+        super().compare_and_set(expected, updated)
 
 
 SMALL_GRANT = {
@@ -1088,6 +1115,48 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual(later, entry.recorded_at)
         self.assertEqual({later}, {item.evaluated_at for item in entry.gate_results})
         self.assertIs(GateStatus.FAIL, gate_statuses(entry)["authorization"])
+
+    def test_a_slow_anchor_gets_only_the_remaining_deadline(self):
+        """Every anchor call is bounded by what is left; a read that runs out
+        refuses cleanly, an advance that runs out is an anchor failure."""
+
+        import time as time_module
+        from director_orchestrator.store import (
+            DelegationAuditAnchorUnavailable,
+            DelegationAuditDeadlineExceeded,
+        )
+
+        record = lambda agent: DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=None, grant_snapshot=None,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent=agent, verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL,
+                                     datetime.now(timezone.utc)),),
+            recorded_at=datetime.now(timezone.utc))
+        anchor = _SlowAuditAnchor(latency=2.0)
+        ledger = TaskStore(str(Path(self.directory) / "slow.sqlite3"),
+                           delegation_audit_anchor=anchor)
+        started = time_module.monotonic()
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            ledger.delegation_audit_records(limit=10, deadline=started + 0.3)
+        self.assertLess(time_module.monotonic() - started, 1.5)
+        self.assertLess(anchor.timeouts[-1], 0.31)
+        # The advance itself runs out: never a clean refusal.
+        anchor.latency = 0.0
+        ledger.append_delegation_audit_record(record("director-langgraph:DIR-LG-A"))
+        anchor.latency, anchor.timeouts = 2.0, []
+        original_read = anchor.read_head
+        anchor.read_head = lambda *, timeout=None: (anchor.head)  # the verifying read is fast
+        with self.assertRaises(DelegationAuditAnchorUnavailable):
+            ledger.append_delegation_audit_record(
+                record("director-langgraph:DIR-LG-B"), deadline=time_module.monotonic() + 0.3)
+        self.assertTrue(anchor.timeouts and anchor.timeouts[0] < 0.31)
+        anchor.read_head = original_read
+        # Unbounded callers keep the old call shape: no timeout is passed.
+        anchor.latency, anchor.timeouts = 0.0, []
+        ledger.delegation_audit_records(limit=10)
+        self.assertEqual([None], anchor.timeouts)
 
     def test_the_append_verification_is_bounded_too(self):
         from director_orchestrator.store import DelegationAuditDeadlineExceeded
@@ -5668,3 +5737,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]

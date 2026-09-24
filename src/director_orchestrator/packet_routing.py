@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -99,20 +100,47 @@ def git_blob_sha(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def git_blob_reader(root: str) -> Callable[[str], bytes | None]:
-    """Read one blob by its hash from the snapshot repository, never the worktree."""
+def git_blob_reader(
+    root: str, *, max_bytes: int = SMALL_TASK_CONTENT_FILE_MAX_BYTES,
+) -> Callable[[str], bytes | None]:
+    """Read one blob by its hash from the snapshot repository, never the worktree.
+
+    The blob's size is asked first and a blob over ``max_bytes`` is refused
+    without reading it. The read itself is streamed and stops at max_bytes + 1,
+    so a size the object store misreports still cannot fill memory.
+    """
+
+    git = ("git", "-c", f"safe.directory={root}", "cat-file")
 
     def read(blob_sha: str) -> bytes | None:
         if re.fullmatch(r"[0-9a-f]{40}", blob_sha) is None:
             return None
         try:
-            completed = subprocess.run(
-                ("git", "-c", f"safe.directory={root}", "cat-file", "blob", blob_sha),
-                cwd=root, shell=False, check=False, capture_output=True, timeout=10,
+            size = subprocess.run(
+                (*git, "-s", blob_sha), cwd=root, shell=False, check=False,
+                capture_output=True, timeout=10,
             )
-        except (OSError, subprocess.TimeoutExpired):
+            if size.returncode != 0 or int(size.stdout.strip() or b"-1") > max_bytes:
+                return None
+            process = subprocess.Popen(
+                (*git, "blob", blob_sha), cwd=root, shell=False,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             return None
-        return completed.stdout if completed.returncode == 0 else None
+        try:
+            data = process.stdout.read(max_bytes + 1)
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                return None
+        if len(data) > max_bytes or process.returncode not in (0, -9, 1):
+            return None
+        return data
 
     return read
 
@@ -750,3 +778,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]

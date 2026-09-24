@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
@@ -186,13 +187,36 @@ class DelegationAuditAnchor(Protocol):
     supplied anchor the ledger fails closed. Checkpoint advancement occurs before
     SQLite commit: an ambiguous failure or crash can leave a mismatch, which
     requires external recovery and must never be silently rebased or retried.
+
+    A bounded caller passes ``timeout``: the seconds left of its absolute
+    deadline. An implementation must spend no more than that on the call
+    (socket, lock and database busy timeouts set from it) and raise
+    DelegationAuditDeadlineExceeded when it runs out. A compare-and-set that
+    times out is ambiguous (the checkpoint may have advanced), so the store
+    treats it as an anchor failure, never as a clean refusal.
     """
 
-    def read_head(self) -> tuple[int, str]: ...
+    def read_head(self, *, timeout: float | None = None) -> tuple[int, str]: ...
 
     def compare_and_set(
-        self, expected: tuple[int, str], updated: tuple[int, str]
+        self, expected: tuple[int, str], updated: tuple[int, str],
+        *, timeout: float | None = None,
     ) -> None: ...
+
+
+def _anchor_timeout(deadline: float | None) -> dict[str, float]:
+    """The keyword a bounded anchor call gets: the remainder of the deadline.
+
+    Unbounded callers pass nothing, so anchors outside the bounded paths keep
+    their existing call shape.
+    """
+
+    if deadline is None:
+        return {}
+    left = deadline - monotonic()
+    if not left > 0:
+        raise DelegationAuditDeadlineExceeded("audit deadline reached before the anchor call")
+    return {"timeout": left}
 
 
 def _audit_chain_digest(
@@ -3997,7 +4021,10 @@ class TaskStore:
         if self._audit_anchor is None:
             raise DelegationAuditAnchorUnavailable("external audit anchor is required")
         try:
-            expected = self._audit_anchor.read_head()
+            expected = self._audit_anchor.read_head(**_anchor_timeout(deadline))
+        except DelegationAuditDeadlineExceeded:
+            # A read changes nothing: out of time is a clean refusal.
+            raise
         except Exception as exc:
             raise DelegationAuditAnchorUnavailable("external audit anchor is unreadable") from exc
         if (
@@ -4124,11 +4151,18 @@ class TaskStore:
                 # cannot be undone, so the deadline is checked before it.
                 if deadline is not None and monotonic() > deadline:
                     raise DelegationAuditDeadlineExceeded("audit append reached its deadline")
+                # The store lock and this transaction are held across the
+                # anchor advance, because the advance and the SQLite commit
+                # must stay one unit; each anchor call is instead bounded by
+                # what is left of the deadline.
                 try:
-                    self._audit_anchor.compare_and_set(previous, updated)
-                    if self._audit_anchor.read_head() != updated:
+                    self._audit_anchor.compare_and_set(
+                        previous, updated, **_anchor_timeout(deadline))
+                    if self._audit_anchor.read_head(**_anchor_timeout(deadline)) != updated:
                         raise RuntimeError("checkpoint was not durably acknowledged")
                 except Exception as exc:
+                    # Ambiguous, a timeout included: the checkpoint may have
+                    # advanced. Never a clean refusal.
                     raise DelegationAuditAnchorUnavailable("audit anchor advance failed") from exc
         except sqlite3.IntegrityError as exc:
             # Both the UNIQUE constraint and the no-replace trigger surface
@@ -4288,3 +4322,4 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
