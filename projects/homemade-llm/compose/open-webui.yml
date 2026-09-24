@@ -1,0 +1,61 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | BEGIN]]
+# Homemade LLM chat UI (M0.5): Open WebUI + SearXNG in front of LM Studio. Nothing is reachable off-host:
+# both ports are published on 127.0.0.1 only, and phone access goes through `tailscale serve` (never Funnel).
+# Operating steps (first boot, signup off, Tailscale, backup/restore): RUNBOOK.md next to this file.
+#   docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env up -d
+# The env file lives outside the repo in the ACL-restricted secrets folder; create it from
+# .env.homemade-llm.example as described in RUNBOOK.md section 0.
+name: homemade-llm
+
+services:
+  open-webui:
+    image: ${OPEN_WEBUI_IMAGE:?set OPEN_WEBUI_IMAGE in C:\llm\secrets\open-webui.env (pin a digest)}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # LM Studio on the host (bound to 127.0.0.1; Docker Desktop forwards host.docker.internal to it).
+      OPENAI_API_BASE_URL: "http://host.docker.internal:1234/v1"
+      OPENAI_API_KEY: "lm-studio"   # LM Studio ignores the key; Open WebUI requires a value
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in C:\llm\secrets\open-webui.env}
+      # Open WebUI persists settings such as ENABLE_SIGNUP and WEBUI_URL and lets the saved value win over
+      # the environment. Turning persistence off keeps this env file authoritative, so flipping signup off
+      # (or setting the Tailscale URL) and recreating the container takes effect. Admin-panel edits to these
+      # settings then do not survive a restart; make them here instead.
+      ENABLE_PERSISTENT_CONFIG: "false"
+      WEBUI_URL: ${WEBUI_URL:-http://127.0.0.1:3000}
+      # First boot creates the admin; set ENABLE_SIGNUP=false in the env file afterwards and recreate.
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      DEFAULT_USER_ROLE: "pending"
+      ENABLE_WEB_SEARCH: "true"
+      WEB_SEARCH_ENGINE: "searxng"
+      SEARXNG_QUERY_URL: "http://searxng:8080/search?q=<query>"
+      ANONYMIZED_TELEMETRY: "false"
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+    depends_on:
+      - searxng
+
+  searxng:
+    image: ${SEARXNG_IMAGE:?set SEARXNG_IMAGE in C:\llm\secrets\open-webui.env (pin a digest)}
+    restart: unless-stopped
+    # Open WebUI reaches SearXNG as searxng:8080 on the compose network; the loopback-only host port is for
+    # direct diagnostics (8080 on the host belongs to the orchestrator).
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: "http://searxng:8080/"
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in C:\llm\secrets\open-webui.env}
+
+volumes:
+  # Named volume (SQLite on a Windows bind mount risks locking and corruption). It lives in Docker Desktop's
+  # VM, outside C:\llm, so scripts/backup-openwebui.ps1 archives it into C:\llm\state for the nightly mirror.
+  open-webui-data:
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | END]]
