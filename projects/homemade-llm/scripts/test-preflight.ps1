@@ -46,16 +46,21 @@ try {
     Assert-Equal (Get-Row $r 'C:\llm size') 'FAIL' 'cap: 2 KB over 1 KB is FAIL although it displays 0 GB'
     Assert-Equal $res.exit 1 'cap: FAIL exits 1'
 
-    $free = (Get-Volume -DriveLetter C).SizeRemaining / 1GB
+    # Extreme floors keep these cases stable while C: free space churns; the raw-byte
+    # (no rounding) comparison is covered by the cap case above.
     $r = New-Root -WithReports
-    $res = Invoke-Preflight $r @('-Report', '-FloorGB', [string]($free + 0.25))
-    Assert-Equal (Get-Row $r 'drive C (hot)') 'FAIL' 'floor: 0.25 GB above free is FAIL'
+    $res = Invoke-Preflight $r @('-Report', '-FloorGB', '1000000')
+    Assert-Equal (Get-Row $r 'drive C (hot)') 'FAIL' 'floor: above any free space is FAIL'
     Assert-Equal $res.exit 1 'floor: FAIL exits 1'
 
-    $free = (Get-Volume -DriveLetter C).SizeRemaining / 1GB
     $r = New-Root -WithReports
-    Invoke-Preflight $r @('-Report', '-FloorGB', [string]($free - 0.25)) | Out-Null
-    Assert-Equal (Get-Row $r 'drive C (hot)') 'OK' 'floor: 0.25 GB below free is OK'
+    Invoke-Preflight $r @('-Report', '-FloorGB', '1') | Out-Null
+    Assert-Equal (Get-Row $r 'drive C (hot)') 'OK' 'floor: 1 GB is OK'
+
+    $r = New-Root -WithReports
+    Invoke-Preflight $r @('-Report') | Out-Null
+    Invoke-Preflight $r @('-Report') | Out-Null
+    Assert-Equal @(Get-ChildItem (Join-Path $r 'reports')).Count 2 'two reports never overwrite each other'
 
     $r = New-Root
     $res = Invoke-Preflight $r @('-Report')

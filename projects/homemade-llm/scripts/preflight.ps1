@@ -58,7 +58,8 @@ foreach ($letter in $roles.Keys) {
             Add-Row 'drive E (archive)' 'OK' "$detail; cold archive only$(if ($v.FileSystem -eq 'exFAT') { ' (exFAT: no git/DVC/HF cache)' })"
         }
         default {
-            $status = if ($v.FileSystem -eq 'NTFS') { 'OK' } else { 'WARN' }
+            # The mirror must be NTFS (D-003); D: is optional overflow, so a non-NTFS D: only warns.
+            $status = if ($v.FileSystem -eq 'NTFS') { 'OK' } elseif ($role -eq 'mirror') { 'FAIL' } else { 'WARN' }
             Add-Row "drive $letter ($role)" $status $detail
         }
     }
@@ -90,7 +91,8 @@ Add-Row 'GPU' ($(if ($gpu) { 'OK' } else { 'FAIL' })) ($(if ($gpu) { $gpu } else
 $dockerVer = Invoke-Quiet { docker version --format '{{.Server.Version}}' }
 if ($dockerVer) {
     $runtimes = Invoke-Quiet { docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' }
-    Add-Row 'Docker' 'OK' "server $dockerVer; runtimes: $runtimes"
+    if ($runtimes) { Add-Row 'Docker' 'OK' "server $dockerVer; runtimes: $runtimes" }
+    else { Add-Row 'Docker' 'FAIL' "server $dockerVer; runtime query (docker info) failed" }
 } else { Add-Row 'Docker' 'FAIL' 'docker server not reachable (is Docker Desktop running?)' }
 
 if (Get-Command lms -ErrorAction SilentlyContinue) {
@@ -130,9 +132,11 @@ $fails = @($rows | Where-Object status -eq 'FAIL').Count
 Write-Output "preflight: $($rows.Count) checks, $fails FAIL, $(@($rows | Where-Object status -eq 'WARN').Count) WARN"
 
 if ($writeReport) {
-    $file = Join-Path $reports ("preflight-{0}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss'))
-    [pscustomobject]@{ generated_utc = (Get-Date).ToUniversalTime().ToString('o'); init = [bool]$Init; checks = $rows } |
-        ConvertTo-Json -Depth 4 | Set-Content -Path $file -Encoding utf8
+    # Millisecond stamp plus a random suffix; CreateNew refuses to overwrite an earlier report.
+    $file = Join-Path $reports ("preflight-{0}-{1}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff'), [guid]::NewGuid().ToString('N').Substring(0, 6))
+    $json = [pscustomobject]@{ generated_utc = (Get-Date).ToUniversalTime().ToString('o'); init = [bool]$Init; checks = $rows } | ConvertTo-Json -Depth 4
+    $stream = [IO.File]::Open($file, [IO.FileMode]::CreateNew)
+    try { $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false)); $writer.Write($json); $writer.Flush() } finally { $stream.Dispose() }
     Write-Output "report: $file"
 }
 exit ([int]($fails -gt 0))
