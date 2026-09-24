@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
@@ -873,6 +874,46 @@ _AUDIT_HISTORY_MAX_RECORDS = 10_000
 _AUDIT_HISTORY_MAX_SECONDS = 5.0
 
 
+def _failed_pre_authorized_task(coordinator: Any, records) -> str | None:
+    """The first task these records pre-authorized that must trip its grant.
+
+    Read from durable state, so a task settled through a provider callback,
+    one left with an ambiguous slot, and one whose process died after its
+    terminal was persisted all count the same way. A terminal other than
+    SUCCEEDED counts, and so does an unreadable task. A task with no
+    projection never started: its intake failed after the audit record.
+    """
+
+    for item in records:
+        if item.outcome is not RecordedOutcome.PRE_AUTHORIZED:
+            continue
+        task_id = item.acting_agent.removeprefix("director-langgraph:")
+        try:
+            projection = coordinator.get_projection(task_id)
+        except Exception:
+            return task_id
+        if projection is None:
+            continue
+        classification = projection.projection.get("terminal_classification")
+        if classification is not None:
+            if classification != "SUCCEEDED":
+                return task_id
+            continue
+        if not isinstance(projection.projection.get("parallel_plan_digest"), str):
+            # Its plan is not registered yet, so nothing has dispatched.
+            continue
+        try:
+            aggregate = coordinator.parallel_aggregate(task_id)
+        except Exception:
+            return task_id
+        # A terminal, failed aggregate the graph never classified (resume
+        # raised, or the process stopped before it) counts as well.
+        if aggregate.ambiguous_slot_count or (
+                aggregate.terminal and not aggregate.succeeded):
+            return task_id
+    return None
+
+
 def _bounded_audit_history(ledger: Any) -> list | None:
     """The whole verified audit history, or None past its record or time bound.
 
@@ -912,7 +953,7 @@ def _independent_lane_pair(lanes: Collection[str]) -> bool:
 
 def small_pre_authorization_refusal(
     record: TaskRecord, settings: Settings, ledger: Any, *,
-    approval_free: bool, compact_view_lanes: Collection[str],
+    approval_free: bool, compact_view_lanes: Collection[str], coordinator: Any,
 ) -> str | None:
     """Why a task a standing grant pre-authorized may not be dispatched, if at all.
 
@@ -977,6 +1018,14 @@ def small_pre_authorization_refusal(
            and any(gate.gate == "delegation_trip" for gate in item.gate_results)
            for item in history):
         # Suspended in any process: no task it pre-authorized dispatches again.
+        return "small_task_pre_authorization_tripped"
+    # A failure no later intake has recorded yet: derived here from the
+    # durable state of every task this grant pre-authorized.
+    if _failed_pre_authorized_task(coordinator, [
+            item for item in history
+            if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+            and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+            and item.grant_id == grant.grant_id]) is not None:
         return "small_task_pre_authorization_tripped"
     if not small_read_only_eligible(
             record, settings, compact_view_lanes=compact_view_lanes):
@@ -2462,6 +2511,12 @@ class DefaultPrimaryApplication:
         # None, the production default while no anchor exists, holds every
         # standing-grant exercise, so the execution button is unchanged.
         self._delegation_ledger = delegation_ledger
+        # (b): a pre-authorized task's failed terminal records its grant's trip
+        # when the coordinator persists it.
+        try:
+            coordinator.terminal_observer = self._trip_on_failed_terminal
+        except AttributeError:
+            pass
         # Lanes whose configured transport shows the model only the compact
         # provider view; empty, the default, admits no task to the small class.
         self._compact_view_lanes = frozenset(compact_view_lanes)
@@ -2657,6 +2712,8 @@ class DefaultPrimaryApplication:
         terms: Mapping[str, bool], now: datetime, **conditions: Any,
     ) -> None:
         sha = self.authority.starting_sha
+        # The append re-verifies the whole chain: it is bounded like a read.
+        conditions.setdefault("deadline", monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
         ledger.append_delegation_audit_record(DelegationAuditRecord(
             schema_version=AUDIT_SCHEMA_VERSION,
             outcome=outcome,
@@ -2674,44 +2731,54 @@ class DefaultPrimaryApplication:
         ), **conditions)
 
     def _failed_prior_exercise(self, records) -> str | None:
-        """The first task this grant pre-authorized that must trip it, if any.
+        """The first task this grant pre-authorized that must trip it, if any."""
 
-        Read from durable state at every exercise, so a task settled through a
-        provider callback, one left with an ambiguous slot, and one whose
-        process died after its terminal was persisted all trip the same way.
-        A terminal other than SUCCEEDED trips, and so does an unreadable task.
-        A task with no projection never started: its intake failed after the
-        audit record, so it consumed an exercise and ran nothing.
+        return _failed_pre_authorized_task(self.coordinator, records)
+
+    def _trip_on_failed_terminal(self, task_id: str, classification: str) -> None:
+        """Record the trip when a pre-authorized task reaches a failed terminal.
+
+        Called by the coordinator after it persists a terminal other than
+        SUCCEEDED. The trip names the grant that authorized the task, from its
+        own PRE_AUTHORIZED record. Best effort: the next exercise and every
+        recovery also derive failures from durable state.
         """
 
-        for item in records:
-            if item.outcome is not RecordedOutcome.PRE_AUTHORIZED:
-                continue
-            task_id = item.acting_agent.removeprefix("director-langgraph:")
-            try:
-                projection = self.coordinator.get_projection(task_id)
-            except Exception:
-                return task_id
-            if projection is None:
-                continue
-            classification = projection.projection.get("terminal_classification")
-            if classification is not None:
-                if classification != "SUCCEEDED":
-                    return task_id
-                continue
-            if not isinstance(projection.projection.get("parallel_plan_digest"), str):
-                # Its plan is not registered yet, so nothing has dispatched.
-                continue
-            try:
-                aggregate = self.coordinator.parallel_aggregate(task_id)
-            except Exception:
-                return task_id
-            # A terminal, failed aggregate the graph never classified (resume
-            # raised, or the process stopped before it) trips as well.
-            if aggregate.ambiguous_slot_count or (
-                    aggregate.terminal and not aggregate.succeeded):
-                return task_id
-        return None
+        ledger = self._delegation_ledger
+        if classification == "SUCCEEDED" or ledger is None:
+            return
+        agent = f"director-langgraph:{task_id}"
+        try:
+            history = _bounded_audit_history(ledger)
+            if history is None:
+                return
+            authorized = [item for item in history
+                          if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                          and item.acting_agent == agent and item.grant_id is not None]
+            if not authorized:
+                return
+            source = authorized[-1]
+            if any(item.grant_id == source.grant_id
+                   and item.outcome is RecordedOutcome.REFUSED
+                   and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+                   for item in history):
+                return
+            now = datetime.now(timezone.utc)
+            ledger.append_delegation_audit_record(DelegationAuditRecord(
+                schema_version=AUDIT_SCHEMA_VERSION,
+                outcome=RecordedOutcome.REFUSED,
+                grant_id=source.grant_id,
+                grant_snapshot=source.grant_snapshot,
+                decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                candidate_sha=source.candidate_sha,
+                acting_agent=agent,
+                verdicts=(),
+                gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+                recorded_at=now,
+            ), expected_sequence=len(history),
+                deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+        except Exception:
+            return
 
     def _executes(self) -> bool:
         """Mirrors resume_approval: a paid-off deployment cannot execute."""
@@ -2811,6 +2878,9 @@ class DefaultPrimaryApplication:
                 try:
                     self._audit_small_class(ledger, grant, record.task_id,
                                             RecordedOutcome.REFUSED, {"eligibility": False}, now)
+                except DelegationAuditDeadlineExceeded:
+                    # Too slow to record: refused, the button stays, no latch.
+                    pass
                 except Exception:
                     self._delegation_tripped = True
                 return False
@@ -2821,6 +2891,9 @@ class DefaultPrimaryApplication:
                 try:
                     self._audit_small_class(ledger, grant, record.task_id,
                                             RecordedOutcome.REFUSED, {"authorization": False}, now)
+                except DelegationAuditDeadlineExceeded:
+                    # Too slow to record: refused, the button stays, no latch.
+                    pass
                 except Exception:
                     self._delegation_tripped = True
                 return False
@@ -2845,7 +2918,7 @@ class DefaultPrimaryApplication:
                                             {"delegation_trip": False}, now,
                                             expected_sequence=sequence)
                     tripped, sequence = True, sequence + 1
-            except DelegationAuditAdvanced:
+            except (DelegationAuditAdvanced, DelegationAuditDeadlineExceeded):
                 return False
             except Exception:
                 self._delegation_tripped = True
@@ -2864,7 +2937,7 @@ class DefaultPrimaryApplication:
                     RecordedOutcome.PRE_AUTHORIZED if granted else RecordedOutcome.REFUSED,
                     terms, now, expected_sequence=sequence,
                 )
-            except DelegationAuditAdvanced:
+            except (DelegationAuditAdvanced, DelegationAuditDeadlineExceeded):
                 return False
             except Exception:
                 self._delegation_tripped = True
@@ -3759,7 +3832,7 @@ class DefaultPrimaryActivation:
                     pre_authorization_refusal = small_pre_authorization_refusal(
                         record, settings, delegation_ledger,
                         approval_free=services.execution_approval_free(record.task_id),
-                        compact_view_lanes=compact_view_lanes)
+                        compact_view_lanes=compact_view_lanes, coordinator=coordinator)
                     if pre_authorization_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
@@ -4689,3 +4762,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]

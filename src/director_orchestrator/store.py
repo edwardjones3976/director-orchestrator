@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]]
@@ -4033,7 +4034,8 @@ class TaskStore:
         return (count, chain), page
 
     def append_delegation_audit_record(
-        self, record: DelegationAuditRecord, *, expected_sequence: int | None = None
+        self, record: DelegationAuditRecord, *, expected_sequence: int | None = None,
+        deadline: float | None = None,
     ) -> str:
         """Append one immutable delegation audit record and return its digest.
 
@@ -4062,7 +4064,9 @@ class TaskStore:
         try:
             with self._lock, self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                previous, _ = self._verified_audit_snapshot(connection)
+                # ``deadline`` bounds this verification like a read; nothing
+                # is written if it is reached.
+                previous, _ = self._verified_audit_snapshot(connection, deadline=deadline)
                 if expected_sequence is not None and previous[0] != expected_sequence:
                     raise DelegationAuditAdvanced("audit ledger advanced since it was read")
                 cursor = connection.execute(
@@ -4239,3 +4243,4 @@ class TaskStore:
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
@@ -779,7 +780,7 @@ class StandingGrantExerciseTests(unittest.TestCase):
         def refusal(ledger, settings=self.settings, lanes=SMALL_LANES, *, approval_free=True):
             return small_pre_authorization_refusal(
                 record, settings, ledger, approval_free=approval_free,
-                compact_view_lanes=lanes)
+                compact_view_lanes=lanes, coordinator=self.coordinator(None))
 
         # Still in the class with its ledger: its bounds apply, nothing is refused.
         self.assertIsNone(refusal(self.ledger))
@@ -833,7 +834,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
         moved.plan = moved.plan.model_copy(update={"prestage": moved.plan.prestage.model_copy(
             update={"repository": "owner/other-repository"})})
         self.assertEqual("small_task_pre_authorization_revoked", small_pre_authorization_refusal(
-            moved, self.settings, self.ledger, approval_free=True, compact_view_lanes=SMALL_LANES))
+            moved, self.settings, self.ledger, approval_free=True, compact_view_lanes=SMALL_LANES,
+            coordinator=self.coordinator(None)))
         # A readable ledger that lacks this task's own record: a fresh
         # replacement, or one holding only another task's pre-authorization.
         self.assertEqual("small_task_pre_authorization_unaudited",
@@ -931,6 +933,101 @@ class StandingGrantExerciseTests(unittest.TestCase):
                 self.assertFalse(self.exercise(application, self.record()))
                 self.assertEqual(3 if name == "records" else 1, read.call_count)
                 self.assertFalse(application._delegation_tripped)
+
+    def test_recovery_refuses_when_another_task_of_the_grant_failed_unrecorded(self):
+        """Task A failed and no intake since wrote its trip: task B still stops."""
+
+        application = self.application()
+        first, second = self.record(), self.record()
+        self.assertTrue(self.exercise(application, first))
+        self.assertTrue(self.exercise(application, second))
+        states = {first.task_id: {"terminal_classification": "FAILED",
+                                  "parallel_plan_digest": digest("plan")},
+                  second.task_id: RUNNING}
+        coordinator = SimpleNamespace(
+            get_projection=lambda task_id: SimpleNamespace(projection=states[task_id]),
+            parallel_aggregate=lambda task_id: SimpleNamespace(
+                ambiguous_slot_count=0, terminal=False, succeeded=False))
+        self.assertEqual([], [entry for entry in self.audit()
+                              if "delegation_trip" in gate_statuses(entry)])
+        self.assertEqual("small_task_pre_authorization_tripped", small_pre_authorization_refusal(
+            second, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=coordinator))
+        # Ambiguous or unreadable prior tasks count the same way.
+        for name, prior in {
+            "ambiguous": SimpleNamespace(
+                get_projection=lambda task_id: SimpleNamespace(projection=RUNNING),
+                parallel_aggregate=lambda task_id: SimpleNamespace(
+                    ambiguous_slot_count=1, terminal=False, succeeded=False)),
+            "unreadable": SimpleNamespace(
+                get_projection=lambda task_id: (_ for _ in ()).throw(OSError("down")),
+                parallel_aggregate=lambda task_id: None),
+        }.items():
+            with self.subTest(prior=name):
+                self.assertEqual("small_task_pre_authorization_tripped",
+                                 small_pre_authorization_refusal(
+                                     second, self.settings, self.ledger, approval_free=True,
+                                     compact_view_lanes=SMALL_LANES, coordinator=prior))
+        # With every prior task still running, nothing is refused.
+        self.assertIsNone(small_pre_authorization_refusal(
+            second, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(RUNNING)))
+
+    def test_a_failed_terminal_records_its_grants_trip_at_once(self):
+        application = self.application()
+        failed, other = self.record(), self.record()
+        self.assertTrue(self.exercise(application, failed))
+        # A success, or a task no grant pre-authorized, records nothing.
+        application._trip_on_failed_terminal(failed.task_id, "SUCCEEDED")
+        application._trip_on_failed_terminal(other.task_id, "FAILED")
+        self.assertEqual(1, len(self.audit()))
+        application._trip_on_failed_terminal(failed.task_id, "POLICY_BLOCKED")
+        pre, trip = self.audit()
+        self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+        self.assertEqual("grant-small-1", trip.grant_id)
+        self.assertEqual(pre.grant_snapshot, trip.grant_snapshot)
+        self.assertTrue(trip.acting_agent.endswith(failed.task_id))
+        # Once is enough; and the grant then pre-authorizes nothing more.
+        application._trip_on_failed_terminal(failed.task_id, "FAILED")
+        self.assertEqual(2, len(self.audit()))
+        self.assertFalse(self.exercise(application, self.record()))
+        # The application wires itself as the coordinator's terminal observer.
+        self.assertEqual(application._trip_on_failed_terminal,
+                         application.coordinator.terminal_observer)
+
+    def test_the_append_verification_is_bounded_too(self):
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        [entry] = self.audit()
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=entry.grant_id, grant_snapshot=entry.grant_snapshot,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent="director-langgraph:DIR-LG-LATE", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, entry.recorded_at),),
+            recorded_at=entry.recorded_at)
+        with self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.append_delegation_audit_record(record, deadline=0.0)
+        self.assertEqual(1, len(self.audit()))
+        # Every exercise append carries a deadline; one it reaches keeps the
+        # button, writes nothing and does not latch the process attended.
+        calls = []
+        real = self.ledger.append_delegation_audit_record
+
+        def late(record, **kwargs):
+            calls.append(kwargs)
+            raise DelegationAuditDeadlineExceeded("audit append reached its deadline")
+
+        with patch.object(self.ledger, "append_delegation_audit_record", side_effect=late):
+            self.assertFalse(self.exercise(application, self.record()))
+            self.assertFalse(self.exercise(application, self.record(user="UOTHER")))
+        self.assertTrue(all(isinstance(item.get("deadline"), float) for item in calls))
+        self.assertEqual(2, len(calls))
+        self.assertFalse(application._delegation_tripped)
+        self.assertEqual(1, len(self.audit()))
+        self.assertIsNotNone(real)
 
     def test_the_audit_deadline_stops_the_ledger_scan_itself(self):
         """The deadline is enforced inside the verifying traversal, mid-scan."""
@@ -3037,6 +3134,20 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(trip.acting_agent.endswith(failed_task_id))
         self.assertIs(RecordedOutcome.REFUSED, refused.outcome)
         self.assertTrue(refused.acting_agent.endswith(after.task_id))
+
+    def test_a_failed_granted_terminal_trips_before_any_later_intake(self):
+        """The trip is recorded when the failed terminal is persisted."""
+
+        def dispatch(reservation):
+            return ParallelDispatchOutcome(
+                ParallelAssignmentStatus.FAILED, None, "provider_result_failed")
+
+        ledger = self.use_standing_grant(dispatch)
+        failed = self.attested_intake("tripped-at-terminal")
+        pre, trip = ledger.delegation_audit_records(limit=10)
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertEqual(["delegation_trip"], [item.gate for item in trip.gate_results])
+        self.assertTrue(trip.acting_agent.endswith(failed.task_id))
 
     def test_a_failed_aggregate_left_unclassified_trips_the_grant(self):
         """resume_parallel_aggregate raised, so the graph never classified it."""
@@ -5460,3 +5571,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]

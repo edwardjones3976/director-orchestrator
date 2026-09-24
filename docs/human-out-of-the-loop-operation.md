@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
@@ -228,7 +229,8 @@ is absent or latched) and an exercise lost to a concurrent writer write no
 record; nothing runs without the button in either case. Neither does an
 exercise whose audit history is too long or too slow to read within its bound
 (10,000 records or five seconds, the deadline enforced inside the ledger's
-own verifying scan): it keeps the button.
+own verifying scan, and in the verification every audit append repeats): it
+keeps the button.
 
 ## Standing grant for small read-only tasks
 
@@ -335,7 +337,10 @@ an ambiguous slot, or one that cannot be read writes a `delegation_trip` record,
 which suspends that grant. That covers a task settled through a provider
 callback and one whose process stopped after its terminal was persisted. A task
 whose intake failed after its `PRE_AUTHORIZED` record never started; it spends
-an exercise and trips nothing. An absent, unreadable, or unwritable audit ledger
+an exercise and trips nothing. The trip is also recorded as soon as a
+pre-authorized task's failed terminal is persisted, without waiting for another
+intake; that write is best effort, so the derivation at each exercise and at
+each recovery stays the authority. An absent, unreadable, or unwritable audit ledger
 holds the process attended, as described under operating states. Clearing a
 trip takes an explicit owner action, a new grant_id.
 
@@ -412,7 +417,9 @@ branch and both lanes (`small_task_pre_authorization_revoked`), the verified
 audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
 grant_id (`small_task_pre_authorization_unaudited`; an absent, unreadable or
 replaced ledger has none, and a history past its bound counts as unread),
-no `delegation_trip` for that grant_id exists anywhere in it
+no `delegation_trip` for that grant_id exists anywhere in it and no task that
+grant pre-authorized has failed, stopped ambiguous, or become unreadable
+according to durable task state, whether or not a trip was written yet
 (`small_task_pre_authorization_tripped`), and it still qualifies
 (`small_task_pre_authorization_lapsed`, for example after a restart under a
 lower reviewer cap or different lanes), rather than run without the class's
@@ -639,3 +646,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->

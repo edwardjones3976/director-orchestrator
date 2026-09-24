@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 18:52 UTC | BEGIN]]
@@ -333,6 +334,10 @@ class PrimaryTaskCoordinator:
             on_renewal_outcome(not failed)
         return renewed
 
+    # Told (task_id, classification) after a terminal other than SUCCEEDED is
+    # persisted; the Default application records a standing grant's trip.
+    terminal_observer: Callable[[str, str], None] | None = None
+
     def _persist_outcome(
         self, outcome: PrimaryOutcome, writer: TaskWriterLease,
         *, deadline: float | None = None,
@@ -356,13 +361,22 @@ class PrimaryTaskCoordinator:
             and current.projection.get("state_digest") == outcome.state_digest
         ):
             return current
-        return self._store.update_primary_task_projection(
+        persisted = self._store.update_primary_task_projection(
             task_id=outcome.task_id,
             owner_token=self._owner_token,
             fencing_generation=writer.fencing_generation,
             projection=payload,
             deadline=deadline,
         )
+        classification = payload.get("terminal_classification")
+        if self.terminal_observer is not None and classification not in (None, "SUCCEEDED"):
+            try:
+                self.terminal_observer(outcome.task_id, classification)
+            except Exception:
+                # Never fails the persisted outcome; the durable derivation
+                # at the next exercise and at recovery remains.
+                pass
+        return persisted
 
     def create_intake(self, command: PrimaryRequest) -> PrimaryTaskProjection:
         """Create or replay one new LangGraph-owned task without dual intake."""
@@ -1098,3 +1112,4 @@ class PrimaryTaskCoordinator:
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
