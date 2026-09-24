@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
@@ -584,6 +585,66 @@ _SECRET_SHAPED = re.compile(
 )
 
 
+# Raw identifier formats, recognised without any label: e-mail addresses, US
+# social security numbers, phone numbers, IPv4 and IPv6 addresses, street
+# addresses, dates next to a birth label, and passport-like identifiers. Card,
+# IBAN and routing numbers are matched as digit runs and then checksummed.
+# Over-inclusive by design: a four-part version number reads as an IPv4
+# address and some long numeric identifiers pass a checksum by chance; such a
+# task keeps the button.
+_IDENTIFIER_FORMATS = re.compile(
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
+    r"|\b\d{3}-\d{2}-\d{4}\b"
+    r"|(?<![\w.-])(?:\+\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b"
+    r"|(?<![\w.-])\+\d{1,3}(?:[\s.-]?\d{2,4}){2,5}\b"
+    r"|\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
+    r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}(?![\w:])"
+    r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){1,6}:(?:[0-9A-Fa-f]{1,4})?(?![\w:])"
+    r"|\b\d{1,6}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard"
+    r"|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Parkway|Pkwy|Highway|Hwy)\b"
+    r"|(?i:\b(?:born|dob|date\s+of\s+birth|birth\s*date)\b[^\n]{0,24}?"
+    r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b)"
+    r"|(?i:\bpassport\b[^\n]{0,24}?\b[A-Z0-9]{6,9}\b)"
+    r"|\b[A-Z]{1,2}\d{6,8}\b"
+)
+_DIGIT_RUN = re.compile(r"(?<![\w.-])\d(?:[ -]?\d){8,18}(?![\w-]|\.\d)")
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b")
+
+
+def _luhn(digits: str) -> bool:
+    total = 0
+    for index, character in enumerate(reversed(digits)):
+        value = int(character) * (2 if index % 2 else 1)
+        total += value - 9 if value > 9 else value
+    return total % 10 == 0
+
+
+def _aba(digits: str) -> bool:
+    d = [int(character) for character in digits]
+    return (3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + d[2] + d[5] + d[8]) % 10 == 0
+
+
+def _iban(candidate: str) -> bool:
+    value = candidate.replace(" ", "")
+    rearranged = value[4:] + value[:4]
+    try:
+        return int("".join(str(int(character, 36)) for character in rearranged)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def holds_identifier_format(text: str) -> bool:
+    """Whether text holds a raw personal or financial identifier, unlabeled."""
+
+    if _IDENTIFIER_FORMATS.search(text):
+        return True
+    for match in _DIGIT_RUN.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if (13 <= len(digits) <= 19 and _luhn(digits)) or (len(digits) == 9 and _aba(digits)):
+            return True
+    return any(_iban(match.group(0)) for match in _IBAN.finditer(text))
+
+
 def small_task_content_screened(text: str) -> bool:
     """Whether a file's text may not be shown to a small task's models.
 
@@ -598,7 +659,8 @@ def small_task_content_screened(text: str) -> bool:
     reasons = {reason for form in forms for reason in deterministic_approval_reasons(form)}
     return (bool(reasons & {"sensitive data", "credential or permission change"})
             or any(_PERSONAL_DATA.search(form) for form in forms)
-            or _SECRET_SHAPED.search(text) is not None)
+            or _SECRET_SHAPED.search(text) is not None
+            or holds_identifier_format(text))
 
 
 def _read_only_sentence(sentence: str) -> bool:
@@ -641,6 +703,7 @@ def _read_only_request(text: str) -> bool:
             for pattern in (_OUTSIDE_READ_ONLY, _WRITE_SCOPE, _PERSONAL_DATA, _MUTATION_VERB)
             for form in (body, _identifier_words(body)))
         and any(_NAMED_PATH.search(chunk) for chunk in request)
+        and not holds_identifier_format(body)
     )
 
 
@@ -1942,3 +2005,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

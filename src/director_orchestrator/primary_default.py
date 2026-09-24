@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
@@ -801,8 +802,10 @@ def _bridge_attestations_current(live_dependencies: Any, lane: str) -> bool:
 
     from .host_provider_bridge import HostBridgePacketTransport
 
+    # One shared window for every transport of the lane, not one each.
+    deadline = monotonic() + 5
     return all(
-        transport.read_only_attestation_current(deadline=monotonic() + 5)
+        transport.read_only_attestation_current(deadline=deadline)
         for transport in _lane_transports(live_dependencies, lane)
         if isinstance(transport, HostBridgePacketTransport))
 
@@ -4763,3 +4766,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

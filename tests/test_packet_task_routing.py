@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -859,6 +860,47 @@ class CompactProviderViewTests(unittest.TestCase):
         with patch("director_orchestrator.packet_routing._BLOB_READER", None):
             self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
 
+    def test_unlabeled_identifier_formats_in_a_file_keep_the_button(self) -> None:
+        """Raw values with no label, in otherwise innocuous files."""
+
+        from director_orchestrator.policy import holds_identifier_format, small_task_content_screened
+
+        # Built at runtime, like any credential- or identity-shaped fixture.
+        dash = "-"
+        values = {
+            "email": "reach " + "jane.doe" + "@" + "example.org" + " for notes",
+            "ssn": "ref " + dash.join(("123", "45", "6789")),
+            "us_phone": "call (555) 867" + dash + "5309 after lunch",
+            "intl_phone": "dial +44 20 7946 0958 today",
+            "card_spaced": "code 4111 1111 1111 1111 on file",
+            "card_plain": "entry 5555555555554444 recorded",
+            "iban": "pay GB82 WEST 1234 5698 7654 32 next",
+            "routing": "bank 021000021 listed",
+            "ipv4": "host 192.168.10.44 responded",
+            "ipv6": "host 2001:0db8:85a3:0000:0000:8a2e:0370:7334 responded",
+            "ipv6_short": "host fe80::1 responded",
+            "street": "meet at 221 Baker Street at noon",
+            "dob": "born on 04/12/1987 in spring",
+            "passport": "passport AB1234567 stamped",
+            "passport_bare": "id X12345678 stamped",
+        }
+        for name, text in values.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_identifier_format(text))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{text}.\n"))
+        # Ordinary code and docs: versions, commit SHAs, dates, counts, PR
+        # numbers and durations do not trip it.
+        for text in (
+            "Version 1.2.3 of the package.",
+            "Commit 0b3cdbba19bc650c01687da9d402f01dfb06ce1e was merged on 2026-09-24.",
+            "Ran 3457 tests in 1113.536s.",
+            "See pull request 263 and issue 48.",
+            "timeout_seconds = 120; retries = 3",
+            "Python 3.12, port 8080.",
+        ):
+            with self.subTest(ordinary=text):
+                self.assertFalse(holds_identifier_format(text))
+
     def test_the_compact_view_has_a_v1_schema_every_view_is_validated_against(self) -> None:
         from director_orchestrator.packet_contracts import (
             PacketContractError,
@@ -980,3 +1022,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

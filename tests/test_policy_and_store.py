@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
@@ -1325,6 +1326,14 @@ class SmallReadOnlyEligibilityTests(unittest.TestCase):
                 self.assertFalse(self.eligible(self.record(
                     text=f"Project: demo\nSummarize {name} in README.md.")))
 
+    def test_a_request_holding_a_raw_identifier_leaves_the_class(self) -> None:
+        dash = "-"
+        for value in ("(555) 867" + dash + "5309", dash.join(("123", "45", "6789")),
+                      "4111 1111 1111 1111", "10.0.0.12", "221 Baker Street"):
+            text = f"Summarize README.md for {value}."
+            with self.subTest(value=value):
+                self.assertFalse(self.eligible(self.record(text=f"Project: demo\n{text}")))
+
     def test_a_request_must_name_a_path(self) -> None:
         """A repository-wide request would get an empty compact inventory."""
 
@@ -1439,3 +1448,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

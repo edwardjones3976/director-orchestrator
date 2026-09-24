@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
@@ -994,6 +995,75 @@ class StandingGrantExerciseTests(unittest.TestCase):
         # The application wires itself as the coordinator's terminal observer.
         self.assertEqual(application._trip_on_failed_terminal,
                          application.coordinator.terminal_observer)
+
+    def test_lock_busy_wait_and_anchor_advance_spend_the_same_deadline(self):
+        """A contended or slow ledger refuses at the deadline and writes nothing."""
+
+        import threading
+        import time as time_module
+        from director_orchestrator import store as store_module
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        application = self.application()
+        self.assertTrue(self.exercise(application, self.record()))
+        [entry] = self.audit()
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=entry.grant_id, grant_snapshot=entry.grant_snapshot,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=SHA, acting_agent="director-langgraph:DIR-LG-BOUND", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, entry.recorded_at),),
+            recorded_at=entry.recorded_at)
+        # The in-process lock, held by another thread past the deadline.
+        held, release = threading.Event(), threading.Event()
+
+        def hold():
+            with self.ledger._lock:
+                held.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold)
+        worker.start()
+        held.wait(5)
+        try:
+            started = time_module.monotonic()
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.append_delegation_audit_record(
+                    record, deadline=time_module.monotonic() + 0.2)
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.delegation_audit_records(
+                    limit=10, deadline=time_module.monotonic() + 0.2)
+            self.assertLess(time_module.monotonic() - started, 3)
+        finally:
+            release.set()
+            worker.join()
+        # Verification finishes, but the deadline passes before the anchor
+        # would advance: the anchor is never touched and nothing is written.
+        real = self.ledger._verified_audit_snapshot
+
+        def slow(*args, **kwargs):
+            result = real(*args, **kwargs)
+            time_module.sleep(0.3)
+            return result
+
+        with patch.object(self.ledger, "_verified_audit_snapshot", side_effect=slow), \
+                patch.object(self.ledger._audit_anchor, "compare_and_set",
+                             side_effect=AssertionError("anchor advanced")), \
+                self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.append_delegation_audit_record(
+                record, deadline=time_module.monotonic() + 0.2)
+        self.assertEqual(1, len(self.audit()))
+        # SQLite's busy wait is the remainder too: a writer holding the file.
+        blocker = store_module.sqlite3.connect(self.ledger.path)
+        blocker.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(DelegationAuditDeadlineExceeded):
+                self.ledger.append_delegation_audit_record(
+                    record, deadline=time_module.monotonic() + 0.3)
+        finally:
+            blocker.rollback()
+            blocker.close()
+        self.assertEqual(1, len(self.audit()))
 
     def test_the_append_verification_is_bounded_too(self):
         from director_orchestrator.store import DelegationAuditDeadlineExceeded
@@ -5572,3 +5642,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

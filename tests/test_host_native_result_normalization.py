@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
@@ -282,6 +283,48 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 side_effect=[outcome]):
                 self.assertIs(current, transport.read_only_attestation_current())
 
+    def test_bridge_challenges_spend_one_shared_deadline(self):
+        from time import monotonic
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.primary_default import _bridge_attestations_current
+
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset({"grok"}), "sha256:" + "c" * 64, 1,
+                    read_only_attested={"grok": ATTESTED_PINS["grok"]}),
+                host_bridge_attested_argv={"grok": ATTESTED_PINS["grok"]},
+            )
+        bridge = transports["grok"]
+        evidence = HostBridgeChallengeEvidence(
+            frozenset({"grok"}), "sha256:" + "c" * 64, 2,
+            read_only_attested={"grok": ATTESTED_PINS["grok"]})
+        target = "director_orchestrator.host_provider_bridge.challenge_host_provider_bridge"
+        # Nothing left: refused without a request.
+        with patch(target, side_effect=AssertionError("challenged")):
+            self.assertFalse(bridge.read_only_attestation_current(deadline=monotonic() - 1))
+        # The HTTP timeout is the remainder, never a fresh five seconds.
+        with patch(target, return_value=evidence) as challenge:
+            self.assertTrue(bridge.read_only_attestation_current(deadline=monotonic() + 1.5))
+        self.assertLessEqual(challenge.call_args.kwargs["timeout_seconds"], 1.5)
+        # Every transport of a lane shares one window.
+        seen = []
+        attempt = PacketBoundaryAdapter("grok", bridge)
+        dependencies = SimpleNamespace(
+            adapters={"grok": PacketBoundaryAdapter("grok", bridge)},
+            attempt_adapters={"grok": {("json", "a"): attempt, ("text", "b"): attempt}})
+        with patch.object(type(bridge), "read_only_attestation_current",
+                          lambda self, *, deadline=None: seen.append(deadline) or True):
+            self.assertTrue(_bridge_attestations_current(dependencies, "grok"))
+        self.assertEqual(3, len(seen))
+        self.assertEqual(1, len(set(seen)))
+
     def test_no_native_lane_joins_the_small_class(self):
         """Owner ruling 2026-09-24: native lanes send the compact view but are
         never small-class capable; readiness and eligibility never count them."""
@@ -526,3 +569,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

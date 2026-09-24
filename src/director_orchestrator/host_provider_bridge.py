@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
@@ -192,7 +193,7 @@ def challenge_host_provider_bridge(
     endpoint: str,
     secret: str,
     *,
-    timeout_seconds: int = 5,
+    timeout_seconds: float = 5,
     now: int | None = None,
     deadline: float | None = None,
 ) -> HostBridgeChallengeEvidence:
@@ -715,9 +716,14 @@ class HostBridgePacketTransport:
 
         if self.read_only_argv_digest is None:
             return False
+        # The HTTP timeout is what is left of the caller's shared deadline,
+        # never a fresh window; nothing left refuses without a request.
+        timeout = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+        if timeout <= 0:
+            return False
         try:
             evidence = challenge_host_provider_bridge(
-                self.endpoint, self.secret, deadline=deadline)
+                self.endpoint, self.secret, timeout_seconds=timeout, deadline=deadline)
         except HostProviderBridgeError:
             return False
         return (self.provider in evidence.configured_providers
@@ -897,3 +903,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

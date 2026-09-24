@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -36,6 +37,7 @@
 from __future__ import annotations
 
 import hmac
+import math
 import json
 import secrets
 import sqlite3
@@ -4033,6 +4035,43 @@ class TaskStore:
             raise ValueError("after_digest is not in this ledger")
         return (count, chain), page
 
+    @contextmanager
+    def _audit_connection(self, deadline: float | None) -> Iterator[sqlite3.Connection]:
+        """The store lock and a connection, both acquired within ``deadline``.
+
+        The in-process lock is waited on only for the time left, and SQLite's
+        busy wait is set to the same remainder, so a contended ledger raises
+        DelegationAuditDeadlineExceeded instead of blocking past the deadline.
+        """
+
+        if deadline is not None and math.isinf(deadline) and deadline > 0:
+            deadline = None  # an unbounded caller
+        remaining = None if deadline is None else deadline - monotonic()
+        if remaining is not None and not remaining > 0:
+            # Reached, or not a number: refused either way.
+            raise DelegationAuditDeadlineExceeded("audit deadline already reached")
+        if not self._lock.acquire(timeout=-1 if remaining is None else remaining):
+            raise DelegationAuditDeadlineExceeded("audit store lock not acquired in time")
+        try:
+            with self._connect() as connection:
+                if deadline is not None:
+                    left = deadline - monotonic()
+                    if left <= 0:
+                        raise DelegationAuditDeadlineExceeded("audit deadline reached")
+                    connection.execute(f"PRAGMA busy_timeout = {max(1, int(left * 1000))}")
+                yield connection
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _begin(connection: sqlite3.Connection, statement: str, deadline: float | None) -> None:
+        try:
+            connection.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if deadline is not None and "locked" in str(exc).lower():
+                raise DelegationAuditDeadlineExceeded("audit ledger busy past its deadline") from exc
+            raise
+
     def append_delegation_audit_record(
         self, record: DelegationAuditRecord, *, expected_sequence: int | None = None,
         deadline: float | None = None,
@@ -4062,8 +4101,8 @@ class TaskStore:
             raise TypeError("delegation audit ledger accepts validated records only")
         digest = record.digest
         try:
-            with self._lock, self._connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
+            with self._audit_connection(deadline) as connection:
+                self._begin(connection, "BEGIN IMMEDIATE", deadline)
                 # ``deadline`` bounds this verification like a read; nothing
                 # is written if it is reached.
                 previous, _ = self._verified_audit_snapshot(connection, deadline=deadline)
@@ -4081,6 +4120,10 @@ class TaskStore:
                     previous[1], cursor.lastrowid, digest, record.canonical_json(),
                     record.recorded_at.isoformat(),
                 ))
+                # Last point at which nothing is written: the anchor advance
+                # cannot be undone, so the deadline is checked before it.
+                if deadline is not None and monotonic() > deadline:
+                    raise DelegationAuditDeadlineExceeded("audit append reached its deadline")
                 try:
                     self._audit_anchor.compare_and_set(previous, updated)
                     if self._audit_anchor.read_head() != updated:
@@ -4123,13 +4166,13 @@ class TaskStore:
             or any(c not in "0123456789abcdef" for c in after_digest)
         ):
             raise ValueError("after_digest must be a full record digest")
-        with self._lock, self._connect() as connection:
+        with self._audit_connection(deadline) as connection:
             # A deferred read transaction needs no writer reservation: the cursor
             # supplies one SQLite snapshot, and the retained page must match the
             # observed external head before anything returns. A concurrent append
             # may cause a fail-closed mismatch; never retry or rebase that anchor.
             # In rollback-journal mode, the read lock can still delay writer commit.
-            connection.execute("BEGIN")
+            self._begin(connection, "BEGIN", deadline)
             _, rows = self._verified_audit_snapshot(
                 connection, limit=limit, after_digest=after_digest, deadline=deadline
             )
@@ -4244,3 +4287,4 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]

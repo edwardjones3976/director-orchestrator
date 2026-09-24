@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
@@ -229,8 +230,9 @@ is absent or latched) and an exercise lost to a concurrent writer write no
 record; nothing runs without the button in either case. Neither does an
 exercise whose audit history is too long or too slow to read within its bound
 (10,000 records or five seconds, the deadline enforced inside the ledger's
-own verifying scan, and in the verification every audit append repeats): it
-keeps the button.
+own verifying scan, and in the verification every audit append repeats; the
+wait for the store's lock and SQLite's busy wait spend the same deadline, which
+is checked again before the audit anchor advances): it keeps the button.
 
 ## Standing grant for small read-only tasks
 
@@ -260,7 +262,8 @@ a clause after a split may otherwise be only paths or identifiers, the second
 object of "compare A and B"), every "to ..." and "...ing it" names a read
 action (every term check below also reads identifiers split into words, so
 `openai_api_key`, `db-password`, `auth.token` or `authToken` count as their
-words), no verb that asks for a change (improve, revise, make, fix, update,
+words), no raw identifier of the kinds listed under Bounded provider traffic
+appears, no verb that asks for a change (improve, revise, make, fix, update,
 rename, format, set, open, file, post and a long list more, in any
 inflection) appears anywhere in it, it names at least one path (a
 repository-wide request would reach the model with an empty inventory), and
@@ -360,8 +363,11 @@ both models see the same text. Each file is at most 4 KB, the total at most
 8 KB, and at most eight files. A named path missing from the snapshot,
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
 credential approval gate or the request text's personal-data exclusion (as
-written or with identifiers split into words), or holding a secret-shaped
-value keeps the task out
+written or with identifiers split into words), holding a secret-shaped value,
+or holding a raw identifier with no label (an e-mail address, social security
+number, phone number, card, IBAN or routing number that passes its checksum,
+IP address, street address, a date next to a birth label, or a passport-like
+identifier) keeps the task out
 of the class: the grant is refused on `eligibility` at intake, and a dispatch
 fails with `small_task_named_contents_unavailable`. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
@@ -647,3 +653,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
