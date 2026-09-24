@@ -18,6 +18,11 @@ function Invoke-Backup([string[]]$Arguments) { & pwsh -NoProfile -File $script @
 function In-Volume([string]$Cmd) { (docker run --rm --entrypoint sh -v "${vol}:/d" $Image -c $Cmd | Out-String).Trim() }
 function Seed([string]$Sentinel) { In-Volume "find /d -mindepth 1 -delete; echo $Sentinel > /d/sentinel.txt; mkdir -p /d/cache; echo big > /d/cache/model.bin" | Out-Null }
 
+# Durability ordering cannot be exercised without a power cut; assert the flushes stay in place.
+$src = Get-Content -Raw $script
+Assert-Equal ([bool]($src -match "mv -f /d/\.restore-state\.tmp /d/\.restore-state && sync; \}")) $true 'durability: each journal change is synced'
+Assert-Equal ([bool]($src -match "cp -a /x/\. /d/ && sync; then")) $true 'durability: restored tree synced before it is marked done'
+
 New-Item -ItemType Directory -Force $out | Out-Null
 docker volume create $vol | Out-Null
 docker create --name $ctr -v "${vol}:/app/backend/data" $Image | Out-Null   # stopped: stands in for Open WebUI

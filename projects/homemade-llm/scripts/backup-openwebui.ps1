@@ -36,7 +36,9 @@ $ArchiveName = '^open-webui-\d{8}-\d{6}\.tgz$'
 # ./cache, .pre-restore and .restore-state are never in archives; Open WebUI re-downloads ./cache on start.
 $RestoreSh = @'
 set -e
-journal() { printf '%s' "$1" > /d/.restore-state.tmp && mv -f /d/.restore-state.tmp /d/.restore-state; }
+# Each state change is flushed before the next step (sync), so after a power loss the journal on disk never
+# runs ahead of the data it describes.
+journal() { printf '%s' "$1" > /d/.restore-state.tmp && mv -f /d/.restore-state.tmp /d/.restore-state && sync; }
 undo_move() {
     find /d/.pre-restore -mindepth 1 -maxdepth 1 -exec mv -t /d {} +
     rmdir /d/.pre-restore
@@ -67,7 +69,7 @@ journal moving
 mkdir /d/.pre-restore
 find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore ! -name '.restore-state*' -exec mv -t /d/.pre-restore {} +
 journal copying
-if cp -a /x/. /d/; then
+if cp -a /x/. /d/ && sync; then   # the restored tree is durable before it is marked done
     journal done
     rm -rf /d/.pre-restore
     rm -f /d/.restore-state
