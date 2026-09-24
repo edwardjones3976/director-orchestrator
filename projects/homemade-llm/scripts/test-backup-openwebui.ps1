@@ -78,6 +78,10 @@ try {
     In-Volume 'find /d -mindepth 1 -delete; mkdir /d/.pre-restore; echo back > /d/already-back.txt; echo in > /d/.pre-restore/still-in.txt; printf moving > /d/.restore-state' | Out-Null
     Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
     Assert-Equal (In-Volume $list) './already-back.txt ./still-in.txt' 'interrupted mid-rollback: all originals kept'
+    # (f) Interrupted while dropping the rollback copy after a completed copy: keep the new copy, finish cleanup.
+    In-Volume 'find /d -mindepth 1 -delete; mkdir -p /d/.pre-restore/half-gone; echo old > /d/.pre-restore/half-gone/x.txt; echo new > /d/restored.txt; printf done > /d/.restore-state' | Out-Null
+    Invoke-Backup ($common + @('-Restore', $bad)) | Out-Null
+    Assert-Equal (In-Volume $list) './restored.txt' 'interrupted during cleanup after a completed copy: new copy kept'
     Remove-Item $bad
     # Backups never capture restore bookkeeping.
     In-Volume 'find /d -mindepth 1 -delete; echo v > /d/sentinel.txt; mkdir /d/.pre-restore; printf moving > /d/.restore-state' | Out-Null

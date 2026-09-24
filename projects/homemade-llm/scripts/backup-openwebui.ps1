@@ -22,6 +22,8 @@ $ArchiveName = '^open-webui-\d{8}-\d{6}\.tgz$'
 #             recovery only moves .pre-restore's contents back and deletes nothing.
 #   copying - every original is inside .pre-restore: what is beside it is the new, possibly partial, copy;
 #             recovery deletes that copy, then switches to 'moving' before moving the originals back.
+#   done    - the copy completed: what is beside .pre-restore is the full new copy and .pre-restore is only
+#             the rollback copy being dropped; recovery finishes dropping it and keeps the new copy.
 # No journal but a .pre-restore (an older version of this script): treated as 'moving', the safe case.
 # Steps: recover any interrupted run; extract into container scratch (/x), so a missing or corrupt archive
 # stops before the volume changes; move the current contents aside; copy in; drop the rollback copy.
@@ -41,7 +43,11 @@ undo_copy() {
 }
 if [ -d /d/.pre-restore ]; then
     echo "recovering an interrupted restore: putting the previous contents back"
-    if [ "$(cat /d/.restore-state 2>/dev/null)" = copying ]; then undo_copy; else undo_move; fi
+    case "$(cat /d/.restore-state 2>/dev/null)" in
+        copying) undo_copy ;;
+        done) echo "(the previous restore had completed; finishing its cleanup)"; rm -rf /d/.pre-restore ;;
+        *) undo_move ;;
+    esac
 fi
 rm -f /d/.restore-state /d/.restore-state.tmp
 mkdir /x
@@ -51,6 +57,7 @@ mkdir /d/.pre-restore
 find /d -mindepth 1 -maxdepth 1 ! -name .pre-restore ! -name '.restore-state*' -exec mv -t /d/.pre-restore {} +
 journal copying
 if cp -a /x/. /d/; then
+    journal done
     rm -rf /d/.pre-restore
     rm -f /d/.restore-state
 else
