@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]] -->
@@ -413,9 +414,16 @@ saved executions for its own default age. The scorecard reads only the last
 
 One freshness rule (`_is_current`) runs before any grading in every runtime
 collector (03, 04, 06, 08, 09, 10, 11, 20): evidence whose moments (a Slack
-post, a task's creation, an execution's start) precede the latest creation of
-the containers that handled it grades nothing, so its outcome is UNKNOWN,
-never PASS and never FAIL. For 04 that is the Director and n8n; for Slack
+post, a task's creation or update, an execution's start or stop) are not all
+between the latest creation of the containers that handled it and the
+collection time grades nothing, so its outcome is UNKNOWN, never PASS and
+never FAIL. The same upper bound applies to the consistency snapshot's
+`captured_at` (07), each capture's `observed_at` (12), the paid attempts (11)
+and the approval decision (08), whose command authorization must also have
+been claimed before its receipt and inside its signed-proof window. Both
+workflow contracts also compare the workflow-level `settings` with the file
+and require no pinned node data; tags and static data change nothing at run
+time and are not compared. For 04 that is the Director and n8n; for Slack
 intake evidence the Director, the `--gateway` and n8n, where the gateway must
 also hold the Director's Slack bot token, owner, channel and bearer secret
 (compared in constant time, never reported).
@@ -664,3 +672,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]] -->

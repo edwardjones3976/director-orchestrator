@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
@@ -210,21 +211,23 @@ class _Runtime:
     health: dict = field(repr=False)
     env: dict = field(repr=False)  # holds secrets: memory only, never in facts
     runtime_tree: str = ""  # the image's tree label; "" when absent or malformed
+    collected_at: datetime | None = None  # the collection time: the upper bound of every evidence moment
 
     @property
     def binding(self) -> dict[str, str]:
         return {"runtime_sha": self.runtime_sha, "image_id": self.image_id}
 
 
-def _is_current(since: datetime, *moments: datetime | None) -> bool:
+def _is_current(since: datetime, until: datetime | None, *moments: datetime | None) -> bool:
     """The one freshness rule every collector applies before grading anything, positive or negative.
 
     Evidence counts only when each of its moments (a Slack post, a task's creation, an execution's
-    start) is at or after ``since``: the latest creation of the components that handled it. No
-    producer records the executing image, so older evidence belongs to a predecessor and grades
-    nothing here: its outcome is UNKNOWN, never PASS and never FAIL.
+    start) lies in [since, until]: at or after the latest creation of the components that handled it,
+    and no later than the collection time. No producer records the executing image, so older evidence
+    belongs to a predecessor, and a moment after the collection had not happened when it was read:
+    either grades nothing here, and its outcome is UNKNOWN, never PASS and never FAIL.
     """
-    return all(moment is not None and moment >= since for moment in moments)
+    return until is not None and all(moment is not None and since <= moment <= until for moment in moments)
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -277,7 +280,7 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
         raise ValueError("primary health is malformed")
     runtime = _Runtime(project, ids[0], image_id, runtime_sha, _when(service["Created"]),
                        _when(service["State"]["StartedAt"]), environment, health_url,
-                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree)
+                       f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at)
     binding = runtime.binding
     result = []
     # The persisted owner row alone is not ownership: this process must hold the live writer lease.
@@ -315,7 +318,7 @@ SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",
 'supported_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'method'='POST' AND n->'parameters'->>'url'='http://orchestrator:8080/v1/intake'),
 'supported_webhook',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Slack Gateway Webhook' AND n->>'type'='n8n-nodes-base.webhook' AND n->'parameters'->>'httpMethod'='POST' AND n->'parameters'->>'path'='director-intake'),
 'direct_connection',h.connections::json->'Slack Gateway Webhook'->'main'->0->0->>'node'='Create Director Task',
-'nodes',h.nodes::json,'connections',h.connections::json)
+'nodes',h.nodes::json,'connections',h.connections::json,'settings',w.settings::json,'pin_data',w."pinData"::json)
 FROM workflow_entity w LEFT JOIN workflow_history h ON h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
 WHERE w.id='directorIntake'; COMMIT;"""
 # Newest saved, successful, scheduled Director Status run that posted, within the
@@ -330,7 +333,8 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
      (SELECT h.nodes::json FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId")
        AS active_nodes,
      (SELECT h.connections::json FROM workflow_history h
-        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_connections,
+     w.settings::json AS workflow_settings, w."pinData"::json AS pin_data
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
@@ -344,7 +348,8 @@ _WORKFLOW_DEPLOY_FIELDS = frozenset({"id", "position", "webhookId", "credentials
 
 
 def _workflow_matches(reference: str, nodes: Any, connections: Any,
-                      bound: dict[str, tuple[tuple[str, ...], Any]] | None = None) -> bool:
+                      bound: dict[str, tuple[tuple[str, ...], Any]] | None = None, *,
+                      settings: Any, pin_data: Any) -> bool:
     """The active workflow version is exactly n8n/workflows/<reference>, node for node and edge for edge.
 
     Allowed to differ: node ids, canvas positions, webhookId, credential ids and names (the credential
@@ -369,7 +374,11 @@ def _workflow_matches(reference: str, nodes: Any, connections: Any,
             target = target[key]
         target[path[-1]] = value
     active = {node.get("name"): normal(node) for node in nodes}
-    return len(active) == len(nodes) and active == expected and connections == document["connections"]
+    # Workflow-level settings (execution order, timeouts, save-data policy, error workflow, timezone) change
+    # how n8n runs the graph, so they must equal the file too; pinned node data must be absent. Tags and
+    # static data (trigger bookkeeping) change nothing at run time and are not compared.
+    return (len(active) == len(nodes) and active == expected and connections == document["connections"]
+            and settings == document["settings"] and pin_data in (None, {}))
 
 
 def _environment(container: dict[str, Any]) -> dict[str, str]:
@@ -522,7 +531,9 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
     if isinstance(workflow, dict):
         # Headers, signed body, timeout, redirect, response and wiring exactly as the repository's intake workflow.
         workflow["forwarding_contract"] = _workflow_matches("director-intake.json", workflow.pop("nodes", None),
-                                                            workflow.pop("connections", None))
+                                                            workflow.pop("connections", None),
+                                                            settings=workflow.pop("settings", None),
+                                                            pin_data=workflow.pop("pin_data", None))
     workflow_ok = _all_fields(workflow or {}, {"active": True, "http_node_count": 1, "supported_request": True,
                                              "supported_webhook": True, "direct_connection": True,
                                              "forwarding_contract": True})
@@ -766,7 +777,9 @@ def _reconciliation_observation(at: datetime, runtime: _Runtime, consistency: di
         return _observation("07", False, "Authoritative records are unresolved, ambiguous or conflicting: " + ", ".join(failing) + ".",
                             _CONSISTENCY_SOURCE, facts, at, **binding)
     pin = generation.get("manifest_sha256")
+    captured = consistency.get("captured_at")
     if (not isinstance(pin, str) or not _HEX64.fullmatch(pin)
+            or not isinstance(captured, str) or _when(captured) > at
             or not _same(pin, runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"))
             or type(fence) is not int or fence != primary.get("intake_fencing_generation")):
         return _observation("07", None, "The consistency snapshot is not bound to the running generation pin and intake fence.",
@@ -804,7 +817,10 @@ def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[b
             expires = _when(surface["expires_at"])
             lane_facts[name] = {"stage": surface.get("stage"), "expires_at": expires.isoformat(),
                                 "capture_verified": surface.get("capture_verified")}
-            if surface.get("stage") != "LIVE_OK" or surface.get("capture_verified") is not True or expires < at + FRESH_FOR:
+            # A capture not yet observed at collection time is future-dated, not current.
+            observed = _when(surface["observed_at"]) if surface.get("observed_at") else None
+            if (surface.get("stage") != "LIVE_OK" or surface.get("capture_verified") is not True or expires < at + FRESH_FOR
+                    or observed is None or observed > at):
                 ok = False
         facts[lane] = lane_facts
         if not ok:
@@ -860,7 +876,8 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         if (not isinstance(surface, dict) or surface.get("capture_verified") is not True or not times
                 or not surface.get("observed_at") or not surface.get("recorded_at")
                 or not _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
-                or not _when(surface["recorded_at"]) <= min(times)):
+                or not _when(surface["recorded_at"]) <= min(times)
+                or runtime.collected_at is None or max(times) > runtime.collected_at):
             unbound.append(lane)
     facts = {"lanes_used": used, "products": products, "transports": transports}
     raw = runtime.env.get("LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON")
@@ -1045,7 +1062,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
     if not _workflow_matches("director-status.json", execution.get("active_nodes"), execution.get("active_connections"),
-                             {"Post Status": (("channelId", "value"), t.channel)}):
+                             {"Post Status": (("channelId", "value"), t.channel)},
+                             settings=execution.get("workflow_settings"), pin_data=execution.get("pin_data")):
         return _observation("04", None, "The active Director Status version is not exactly "
                             "n8n/workflows/director-status.json (every node, setting and edge), posting to the "
                             "project channel.",
@@ -1068,7 +1086,7 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if not _is_current(max(runtime.created_at, n8n_created), started):
+    if not _is_current(max(runtime.created_at, n8n_created), runtime.collected_at, started, stopped):
         return _observation("04", None, "The newest saved status execution started before the running Director "
                             "container or the running n8n was created, so it cannot attest them.",
                             source, facts, at, **binding)
@@ -1101,7 +1119,8 @@ def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] |
             and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True)
 
 
-def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) -> tuple[bool | None, dict[str, Any]]:
+def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
+                   until: datetime | None = None) -> tuple[bool | None, dict[str, Any]]:
     messages, complete, _ = t.replies(thread)
     owner_inputs, receipts, blocked, altered = _thread_counts(t, thread, messages)
     if altered:
@@ -1118,7 +1137,7 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime) ->
     facts.update(thread_tasks=tasks, terminal_reply_count=replies)
     # No producer records the executing image: a drill posted, or a task created,
     # before the running container was created cannot attest it.
-    current = _is_current(since, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
+    current = _is_current(since, until, datetime.fromtimestamp(float(Decimal(thread)), timezone.utc),
                           *([_when(readback["task_created_at"])] if readback else []))
     facts["after_container_created"] = current
     verdict: bool | None = None
@@ -1170,7 +1189,7 @@ def _drill_observations(at: datetime, runtime: _Runtime, t: _SlackThreads,
     facts: dict[str, Any] = {}
     for kind, thread in drills.items():
         try:
-            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at)
+            verdicts[kind], facts[kind] = _drill_verdict(t, kind, thread, runtime.created_at, runtime.collected_at)
         except _SOURCE_ERRORS:
             verdicts[kind], facts[kind] = None, {"verdict": None, "source_unavailable": True}
     result = []
@@ -1248,7 +1267,8 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         return [_observation(key, None, reason, _SLACK_SOURCE, {}, at, **binding) for key in ("06", "08")]
     # Only a container set that already existed when the approval task was created can have handled it:
     # a predecessor's approval evidence grades nothing here, positive or negative.
-    if not _is_current(runtime.created_at, _when(readback["task_created_at"])):
+    if not _is_current(runtime.created_at, runtime.collected_at, _when(readback["task_created_at"]),
+                       _when(readback["task_updated_at"])):
         reason = ("The approval task was created before the running Director container, gateway or n8n, so it "
                   "cannot attest this runtime.")
         return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
@@ -1279,7 +1299,10 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         continued = (any(_when(e["recorded_at"]) > runtime.started_at for e in readback["provider_attempts"])
                      or _when(readback["task_updated_at"]) > runtime.started_at)
         facts06["continued_after_start"] = continued
+        # Every moment the resume rests on happened before the collection.
         spans = (len(terminal) == 1 and processed and continued
+                 and _is_current(runtime.created_at, runtime.collected_at, _when(terminal[0]["created_at"]),
+                                 *(_when(e["recorded_at"]) for e in readback["provider_attempts"]))
                  and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
         resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
@@ -1323,6 +1346,13 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             and receipt.get("authorized") is True and receipt.get("authorized_command_digest") is True
             and receipt.get("authorized_fence") is True and receipt.get("proof_version") == _APPROVAL_PROOF_VERSION
             and _same(receipt.get("actor_id"), runtime.env.get("SLACK_OWNER_USER_ID"))
+            # The authorization was claimed before the receipt, inside its signed-proof window, and before
+            # the collection; the decision itself was not future-dated.
+            and isinstance(receipt.get("authorization_claimed_at"), str)
+            and isinstance(receipt.get("authorization_proof_expires_at"), str)
+            and _when(receipt["authorization_claimed_at"]) <= _when(receipt["recorded_at"])
+            and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
+            and runtime.collected_at is not None and decided <= runtime.collected_at
             for receipt in receipts)
         if not (delivery.get("state") == "DELIVERED" and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
@@ -1360,7 +1390,8 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
         delivery_ambiguous = True if "AMBIGUOUS" in states else None
     # Only a container that already existed when the task was created can be
     # the image that executed it; no producer records the executing image.
-    bound = readback is not None and _is_current(runtime.created_at, _when(readback["task_created_at"]))
+    bound = readback is not None and _is_current(runtime.created_at, runtime.collected_at,
+                                                 _when(readback["task_created_at"]), _when(readback["task_updated_at"]))
     return {"run_id": row.get("task_id"),
             "mode": "offline" if offline else ("paid" if counters is not None and counters["attempt_ordinals"] >= 1 else None),
             "actual_owner_event": (row.get("owner_account_input_matched") is True and row.get("task_api_gateway_attested") is True
@@ -2414,3 +2445,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]

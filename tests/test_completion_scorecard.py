@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
@@ -62,6 +63,9 @@ SHA = "a" * 40
 OTHER = "b" * 40
 IMAGE = "sha256:" + "c" * 64
 NOW = datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)
+# The World collects after its last fixture event (the approval thread at 19:06); every evidence moment
+# must now precede the collection time.
+WORLD_NOW = datetime(2026, 9, 12, 20, 0, tzinfo=timezone.utc)
 GATEWAY = "director-orchestrator-slackbot-release-879c4eb4a375-pre193-02"
 OLD_GATEWAY = "director-orchestrator-slackbot-explicit-alias"
 DEPLOYMENT = "edge-engine-director"
@@ -179,6 +183,8 @@ def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_nodes": status_nodes(),
                                           "active_connections": json.loads(json.dumps(STATUS_WORKFLOW["connections"])),
+                                          "workflow_settings": json.loads(json.dumps(STATUS_WORKFLOW["settings"])),
+                                          "pin_data": None,
                                           "active_version": "v-2", "execution_version": None,
                                           "active_version_at": "2026-09-12T09:00:00.000+00:00",
                                           "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
@@ -219,13 +225,14 @@ def approval_receipt(recorded_at=None):
     return {"command_id_sha256": hashlib.sha256(b"owner-command-1").hexdigest(), "command_digest": "sha256:" + "6" * 64,
             "resulting_projection_digest": "sha256:" + "7" * 64, "recorded_at": recorded_at or iso(1789210000 + 30010),
             "authorized": True, "authorized_command_digest": True, "authorized_fence": True, "proof_version": "v1",
-            "actor_id": OWNER}
+            "actor_id": OWNER, "authorization_claimed_at": iso(1789210000 + 30009),
+            "authorization_proof_expires_at": iso(1789210000 + 30300)}
 
 
 def captures_fixture():
     surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
                "recorded_at": "2026-09-12T09:30:01+00:00",
-               "expires_at": "2026-09-12T12:00:00+00:00", "capture_verified": True}
+               "expires_at": "2026-09-13T12:00:00+00:00", "capture_verified": True}
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
             "observed_at": "2026-09-12T09:59:59+00:00",
@@ -303,7 +310,8 @@ def workflow_fixture():
         node.update(id=f"deployed-{index}", position=[index * 100, 0])  # deploy-time fields may differ
     return {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
             "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True,
-            "nodes": nodes, "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"]))}
+            "nodes": nodes, "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"])),
+            "settings": json.loads(json.dumps(INTAKE_WORKFLOW["settings"])), "pin_data": {}}
 
 
 def node(workflow_nodes, name):
@@ -322,6 +330,7 @@ class World:
         self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway, created with the Director
         self.rows[1]["Created"] = "2026-09-12T09:00:00Z"  # the deployment's n8n
         self.commit_tree = "d" * 40
+        self.now = WORLD_NOW
         self.payload = health()
         self.consistency = consistency_fixture()
         self.captures = captures_fixture()
@@ -477,12 +486,12 @@ class World:
         with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack):
             opener.return_value.open.return_value = response
-            observations = sc.collect(SHA, now=NOW, **selected)
+            observations = sc.collect(SHA, now=self.now, **selected)
             self.opened = [call.args[0] for call in opener.return_value.open.call_args_list]
         return observations
 
     def report(self, **options):
-        return sc.score(SHA, self.observe(**options), now=NOW, runtime_sha=SHA, image_id=IMAGE)
+        return sc.score(SHA, self.observe(**options), now=self.now, runtime_sha=SHA, image_id=IMAGE)
 
     def state(self, check, **options):
         return row(self.report(**options), check)["status"]
@@ -493,6 +502,7 @@ def runtime_observations(payload=None, rows=None):
     world = World()
     world.payload = payload if payload is not None else health()
     world.consistency = world.captures = None
+    world.now = NOW
     if rows is not None:
         world.rows = rows
     try:
@@ -1509,6 +1519,14 @@ class ScorecardCollectorTests(unittest.TestCase):
             mutate(workflow["nodes"])
             with self.subTest(label=label):
                 self.assertEqual(row(collect_topology(topology(), workflow=workflow), "01")["status"], "FAIL")
+        # Workflow-level settings and pinned data are part of the contract.
+        for label, change in (("execution timeout", {"settings": {**INTAKE_WORKFLOW["settings"], "executionTimeout": 5}}),
+                              ("execution order", {"settings": {**INTAKE_WORKFLOW["settings"], "executionOrder": "v0"}}),
+                              ("pinned data", {"pin_data": {"Create Director Task": [{"json": {"statusCode": 202}}]}})):
+            workflow = workflow_fixture()
+            workflow.update(change)
+            with self.subTest(label=label):
+                self.assertEqual(row(collect_topology(topology(), workflow=workflow), "01")["status"], "FAIL")
         rewired = workflow_fixture()
         rewired["connections"]["Create Director Task"]["main"][0][0]["node"] = "Accepted"
         self.assertEqual(row(collect_topology(topology(), workflow=rewired), "01")["status"], "FAIL")
@@ -1653,6 +1671,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         new_n8n = self.world()
         new_n8n.rows[1]["Created"] = "2026-09-12T11:00:00Z"
         self.assertEqual(new_n8n.state("03"), "UNKNOWN")
+        # Evidence dated after the collection had not happened when it was read.
+        early_collection = self.world()
+        early_collection.now = datetime(2026, 9, 12, 10, 50, tzinfo=timezone.utc)
+        report = early_collection.report()
+        self.assertEqual([row(report, key)["status"] for key in ("03", "09")], ["UNKNOWN", "UNKNOWN"])
         # A stale drill grades nothing: its negative outcome is UNKNOWN too, not FAIL.
         stale_failure = self.world()
         stale_failure.bindings[ts(100)] = (200, "DIR-LG-5E")
@@ -1772,6 +1795,16 @@ class ScorecardCollectorTests(unittest.TestCase):
         rewired = self.world()
         rewired.status["execution"]["active_connections"]["Read Health"]["main"][0][0]["node"] = "Post Status"
         self.assertEqual(rewired.state("04"), "UNKNOWN")
+        for change in ({"workflow_settings": {**STATUS_WORKFLOW["settings"], "saveDataSuccessExecution": "none"}},
+                       {"pin_data": {"Read Health": [{"json": {}}]}}):
+            case = self.world()
+            case.status["execution"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("04"), "UNKNOWN")
+        # An execution that stopped after the collection is future-dated.
+        future = self.world()
+        future.now = datetime(2026, 9, 12, 9, 59, 1, tzinfo=timezone.utc)
+        self.assertEqual(future.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
         other_bot = self.world()
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
@@ -1870,7 +1903,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(retimed.state("08"), "UNKNOWN")
         # The receipt must join the owner's durable, signature-verified command authorization.
         for change in ({"authorized": False}, {"authorized_command_digest": False}, {"authorized_fence": False},
-                       {"proof_version": "v0"}, {"actor_id": "USOMEONEELSE"}):
+                       {"proof_version": "v0"}, {"actor_id": "USOMEONEELSE"},
+                       {"authorization_claimed_at": iso(1789210000 + 30011)},
+                       {"authorization_proof_expires_at": iso(1789210000 + 30009)},
+                       {"authorization_claimed_at": None}):
             case = self.world()
             case.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0].update(change)
             with self.subTest(change=change):
@@ -1937,6 +1973,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         busy = self.world()
         busy.consistency["counts"]["live_writer_claims"] = 1
         self.assertEqual(busy.state("07"), "UNKNOWN")
+        future_snapshot = self.world()
+        future_snapshot.consistency["captured_at"] = "2026-09-12T21:00:00+00:00"
+        self.assertEqual(future_snapshot.state("07"), "UNKNOWN")
         held = self.world()
         held.consistency["counts"]["pending_owner_decisions"] = 1
         self.assertEqual(held.state("07"), "UNKNOWN")
@@ -2074,6 +2113,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
+        future_capture = self.world()
+        for lane in future_capture.captures["lanes"].values():
+            lane["surfaces"]["app"]["observed_at"] = "2026-09-12T21:00:00+00:00"
+        self.assertNotEqual(future_capture.state("12"), "PASS")
         minted_later = self.world()
         minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = "2026-09-12T10:00:10+00:00"
         self.assertEqual(minted_later.state("11"), "UNKNOWN")
@@ -2395,7 +2438,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         world.slack_down = True
         with patch.object(sc, "_native_security_index", return_value=world.root / "missing-index.sqlite3"):
             observations = world.observe(**{key: value for key, value in selections.items() if key != "deployment"})
-        report = sc.score(SHA, observations, now=NOW)
+        report = sc.score(SHA, observations, now=world.now)
         self.assertEqual(len(report["checks"]), 20)
         self.assertEqual({item["id"] for item in report["checks"] if item["status"] == "PASS"}, {"05", "19"})
         for key in ("03", "04", "06", "08", "09", "10", "11", "20"):
@@ -2464,3 +2507,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:39 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]

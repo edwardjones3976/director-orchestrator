@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
@@ -474,6 +475,10 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                                                         "proof_version", "actor_id")},
                          {"authorized": True, "authorized_command_digest": True, "authorized_fence": True,
                           "proof_version": "v1", "actor_id": "UOWNER1"})
+        # The authorization's claim time and proof expiry come back for the scorecard's ordering checks.
+        claimed = datetime.fromisoformat(joined["authorization_claimed_at"])
+        self.assertGreater(claimed, datetime.fromisoformat(joined["recorded_at"]))  # inserted after the receipt here
+        datetime.fromisoformat(joined["authorization_proof_expires_at"])
         # The table is append-only: a second command whose authorization names another digest and fence.
         with self.handle.pool.connection() as connection:
             connection.execute(
@@ -627,3 +632,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
@@ -112,7 +113,8 @@ FROM {s}.director_primary_provider_budget b WHERE b.document->>'task_id' = ANY(%
 _RECEIPTS = """SELECT r.task_id, encode(sha256(convert_to(r.command_id,'UTF8')),'hex') AS command_id_sha256,
  r.command_digest, r.resulting_projection_digest, r.recorded_at,
  a.nonce_digest IS NOT NULL AS authorized, a.command_digest = r.command_digest AS authorized_command_digest,
- a.writer_fencing_generation = r.writer_fencing_generation AS authorized_fence, a.proof_version, a.actor_id
+ a.writer_fencing_generation = r.writer_fencing_generation AS authorized_fence, a.proof_version, a.actor_id,
+ a.claimed_at AS authorization_claimed_at, a.proof_expires_at AS authorization_proof_expires_at
 FROM {s}.director_primary_command_receipt r LEFT JOIN {s}.director_primary_command_authorization a
  ON a.task_id = r.task_id AND a.operation = r.operation AND a.command_id = r.command_id
 WHERE r.task_id = ANY(%(tasks)s) AND r.operation='approval_resume' ORDER BY r.task_id, r.recorded_at LIMIT 100"""
@@ -353,3 +355,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:58 UTC | END]]
