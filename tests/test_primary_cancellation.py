@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:50 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | BEGIN]]
@@ -404,7 +405,12 @@ class AuthenticatedCancellationTests(unittest.TestCase):
 
     def test_proof_expiring_while_projection_locked_cannot_admit(self):
         self.expire()
-        arguments = {**self.admission(self.signed()), "proof_expires_at": int(time.time()) + 2}
+        # Derive the expiry from the database clock, rounded up, so the proof is
+        # live for at least 2 s at the first check whatever the host clock says.
+        with self.handle.pool.connection() as probe:
+            expires = probe.execute(
+                "SELECT ceil(extract(epoch FROM clock_timestamp()))::bigint + 2 AS expires").fetchone()["expires"]
+        arguments = {**self.admission(self.signed()), "proof_expires_at": int(expires)}
         before = self.snapshot()
         entered = threading.Event()
         original = self.handle.claim_store._one_row
@@ -418,8 +424,20 @@ class AuthenticatedCancellationTests(unittest.TestCase):
                                    "WHERE task_id=%s FOR UPDATE", (self.task,))
                 future = executor.submit(self.coordinator.authorize_cancellation, **arguments)
                 self.assertTrue(entered.wait(timeout=5))
-                # This sleep is test-controlled lock contention, not a live retry.
-                time.sleep(max(0, arguments["proof_expires_at"] - time.time()) + 0.1)
+                # Hold the projection lock until the database itself reports the
+                # proof expired. A host-clock sleep assumed the Docker VM clock
+                # keeps pace with the host; it lags under load, and admission
+                # resumed on a still-live proof (2 of 4 lane runs on 5e0114c).
+                deadline = time.monotonic() + 10
+                while True:  # Deliberate local lock-contention test, not live polling.
+                    with self.handle.pool.connection() as probe:
+                        expired = probe.execute(
+                            "SELECT to_timestamp(%s) <= clock_timestamp() AS expired",
+                            (arguments["proof_expires_at"],)).fetchone()["expired"]
+                    if expired:
+                        break
+                    self.assertLess(time.monotonic(), deadline, "proof never expired by the database clock")
+                    time.sleep(0.05)
             with self.assertRaisesRegex(PostgresControlPlaneError, "expired during admission"):
                 future.result(timeout=5)
         self.assertEqual(before, self.snapshot())
@@ -430,3 +448,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 16:46 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-10 | 17:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 09:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:50 UTC | END]]
