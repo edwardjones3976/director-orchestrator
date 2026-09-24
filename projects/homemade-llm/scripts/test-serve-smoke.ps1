@@ -27,6 +27,8 @@ Assert-Equal (Test-Reply 'x' @((Body '{"task_id":"a","objective":"b","x":1}'), '
 Assert-Equal (Test-Reply 'x' @((Body $good), '500') 0).schema_valid $false 'reply: HTTP 500 fails'
 Assert-Equal (Test-Reply 'x' @((Body $good), '200') 7).schema_valid $false 'reply: curl exit 7 fails'
 Assert-Equal (Test-Reply 'x' @('not json', '200') 0).schema_valid $false 'reply: non-JSON body fails'
+Assert-Equal (Test-Reply 'x' @((Body '{"Task_ID":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: differently-cased keys fail'
+Assert-Equal (Test-Reply 'x' @((Body '{"task_id":"a","Objective":"b"}'), '200') 0).schema_valid $false 'reply: one differently-cased key fails'
 
 $p = 'homemade-llm/smoke/new.gguf'
 $m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }
@@ -63,6 +65,11 @@ Assert-Equal ([bool]($start -and $preBind -and $start -lt $preBind -and $preBind
 Assert-Equal ([bool]($unload -and $unload -lt $load)) $true 'order: an existing smoke model is unloaded before the reload'
 Assert-Equal ([bool]$load) $true 'order: the model is (re)loaded with --ttl $TtlSeconds'
 Assert-Equal ([bool]($postLoad -and $load -lt $postLoad -and $postLoad -lt $curl)) $true 'order: Test-LoadedModel verifies the load before any request'
+# A late exposure must take the server down: after the final loopback check there is an unload and a stop.
+$finalBind = ($cmds | Where-Object { $_.Extent.Text -match '^Test-LoopbackOnly \$listeners' } | Select-Object -First 1).Extent.StartOffset
+$lateStop = ($cmds | Where-Object { $_.Extent.Text -match '^lms server stop' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
+$lateUnload = ($cmds | Where-Object { $_.Extent.Text -match '^lms unload smoke' -and $_.Extent.StartOffset -gt $finalBind } | Select-Object -First 1).Extent.StartOffset
+Assert-Equal ([bool]($finalBind -and $lateUnload -and $lateStop)) $true 'order: a failed final loopback check unloads and stops the server'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-smoke-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $work | Out-Null

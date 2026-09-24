@@ -38,10 +38,14 @@ $dockerArgs = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '
     '--entrypoint', 'python', $Image, '/code/smoke_train.py')
 $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
 if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
-    docker stop $name 2>&1 | Out-Null
-    Receive-Job $job -Wait | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
+    # Every cleanup step is bounded: stop (then kill if stop fails), wait at most 60 s for the job, then
+    # force-remove it, so the script itself can never hang past the timeout.
+    docker stop --time 20 $name 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { docker kill $name 2>&1 | Out-Null }
+    if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
     Remove-Job $job -Force
-    Write-Error "training exceeded ${TimeoutMinutes} min; container $name stopped and removed"
+    $left = docker ps -a --filter "name=^$name$" --format '{{.Names}}'
+    Write-Error "training exceeded ${TimeoutMinutes} min; container $name $(if ($left) { 'could NOT be removed; run: docker rm -f ' + $name } else { 'stopped and removed' })"
 }
 $out = @(Receive-Job $job); Remove-Job $job
 $out | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host

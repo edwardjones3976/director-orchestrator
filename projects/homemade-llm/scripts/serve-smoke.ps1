@@ -89,8 +89,13 @@ function Test-Reply([string]$Label, [string[]]$Lines, [int]$CurlExit) {
         $body = $Lines[0..($Lines.Count - 2)] -join "`n"
         $content = ($body | ConvertFrom-Json).choices[0].message.content
         $obj = $content | ConvertFrom-Json
-        $keys = (@($obj.PSObject.Properties.Name | Sort-Object) -join ',') -eq 'objective,task_id'
-        $types = ($obj.task_id -is [string]) -and ($obj.objective -is [string]) -and $obj.task_id -and $obj.objective
+        # JSON property names are case-sensitive; PowerShell's -eq and member access are not, so compare
+        # names with -ceq and read values by exact name.
+        $names = @($obj.PSObject.Properties.Name | Sort-Object -CaseSensitive)
+        $keys = ($names -join ',') -ceq 'objective,task_id'
+        $val = { param($n) ($obj.PSObject.Properties | Where-Object { $_.Name -ceq $n } | Select-Object -First 1).Value }
+        $tid = & $val 'task_id'; $obv = & $val 'objective'
+        $types = ($tid -is [string]) -and ($obv -is [string]) -and $tid -and $obv
         $ok = ($CurlExit -eq 0) -and ($status -eq '200') -and $keys -and $types
     } catch { $ok = $false }
     [pscustomobject]@{ caller = $Label; curl = $CurlExit; http = $status; schema_valid = $ok; content = $content }
@@ -115,6 +120,11 @@ try {
 # Checked again at the end in case the binding changed during the run.
 $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 1234 -ErrorAction SilentlyContinue)
 $loopbackOnly = Test-LoopbackOnly $listeners
+if (-not $loopbackOnly) {
+    # Exposure appeared during the run: take the model and the server down now, not at TTL expiry.
+    lms unload smoke 2>&1 | Out-Null
+    lms server stop 2>&1 | Out-Null
+}
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Output
 Write-Output "port 1234 listeners: $(($listeners.LocalAddress | Sort-Object -Unique) -join ', ') (loopback only: $loopbackOnly)"
 $pass = (@($results | Where-Object schema_valid).Count -eq 2) -and $loopbackOnly
