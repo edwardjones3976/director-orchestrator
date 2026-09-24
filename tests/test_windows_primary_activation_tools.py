@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
@@ -658,6 +659,53 @@ foreach ($name in @('Get-BridgeRuntimeManifest', 'Install-BridgeRuntime')) {
             self.assertIn("does not match its content address", result.stderr)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
+    def test_bridge_install_requires_an_explicit_interpreter_outside_the_checkout(self) -> None:
+        text = self.text("windows-host-provider-bridge.ps1")
+        install = text[text.index('if ($Action -eq "Install")'):text.index("$optional = @(")]
+        call = install.index('Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python"))')
+        self.assertLess(call, install.index("Get-CleanBridgeSource"))
+        self.assertLess(call, install.index("Register-BridgeTask"))
+        harness = r"""
+param($Source, $SourceRoot, $Requested)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'bridge script parse failed' }
+$node = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-ExternalInterpreter'}, $true))
+if ($node.Count -ne 1) { throw 'expected one production helper' }
+. ([scriptblock]::Create($node[0].Extent.Text))
+Assert-ExternalInterpreter -Requested $Requested -SourceRoot $SourceRoot
+'accepted'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            checkout = root / "checkout"
+            (root / "harness.ps1").write_text(harness, encoding="utf-8")
+            cases = {
+                "": "explicit absolute -Python",
+                ".venv-win\\Scripts\\python.exe": "explicit absolute -Python",
+                str(checkout / ".venv-win" / "Scripts" / "python.exe"): "inside the source checkout",
+                str(checkout / "tools" / ".." / "python.exe"): "inside the source checkout",
+                str(root / "runtime" / "python.exe"): None,
+                str(root / "checkout-sibling" / "python.exe"): None,
+            }
+            for requested, refusal in cases.items():
+                with self.subTest(requested=requested):
+                    result = subprocess.run(
+                        [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(root / "harness.ps1"),
+                         str(ROOT / "scripts" / "windows-host-provider-bridge.ps1"), str(checkout), requested],
+                        capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL,
+                    )
+                    if refusal is None:
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        self.assertIn("accepted", result.stdout)
+                    else:
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn(refusal, result.stderr)
+                        self.assertNotIn("accepted", result.stdout)
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is required")
     def test_installed_bridge_runtime_is_reverified_before_every_launch(self) -> None:
         text = self.text("windows-host-provider-bridge.ps1")
         launch = text[text.index('if ($Action -eq "Install")'):]
@@ -941,3 +989,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]

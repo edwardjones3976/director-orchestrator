@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]] -->
@@ -442,7 +443,9 @@ their mere presence:
   recomputes its manifest and refuses to start on a mismatch; that detects
   drift, not a same-user edit, since that user can also edit the task. The
   `-Python` interpreter and its packages are neither copied nor hashed: the task
-  runs them in place, so install from an interpreter that outlives the checkout.
+  runs them in place, so Install requires an explicit absolute `-Python` path
+  outside the source checkout and refuses the in-checkout `.venv-win` default
+  or any interpreter under the checkout, before copying anything.
   Install is persistent host configuration and needs owner
   approval. Generations must pin the digests printed by the installed copy,
   and for the routed `openai` and `antigravity` lanes the digests the running
@@ -827,3 +830,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 17:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]] -->

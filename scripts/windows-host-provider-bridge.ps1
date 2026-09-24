@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | BEGIN]]
@@ -109,6 +110,20 @@ function Assert-InstalledBridgeRuntime {
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
     if ($digest -cne $name) {
         throw "Installed bridge runtime does not match its content address; the bridge was not started."
+    }
+}
+
+function Assert-ExternalInterpreter {
+    # The task runs -Python in place, so Install needs an explicit absolute
+    # interpreter that outlives the source checkout it copies from.
+    param([string]$Requested, [string]$SourceRoot)
+    if ([string]::IsNullOrWhiteSpace($Requested) -or -not [IO.Path]::IsPathFullyQualified($Requested)) {
+        throw "Install requires an explicit absolute -Python interpreter path outside the source checkout."
+    }
+    $source = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
+    $python = [IO.Path]::GetFullPath($Requested)
+    if ($python.StartsWith($source + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Install refuses a -Python interpreter inside the source checkout; removing the checkout would break the Scheduled Task."
     }
 }
 
@@ -274,6 +289,7 @@ if ($Action -eq "Install") {
         throw "Install requires DIRECTOR_HOST_PROVIDER_PROCESS_ENVIRONMENT_FILE in the bridge profile."
     }
     $sourceRoot = Split-Path -Parent $PSScriptRoot
+    Assert-ExternalInterpreter -Requested $(if ($PSBoundParameters.ContainsKey("Python")) { $Python } else { "" }) -SourceRoot $sourceRoot
     $source = Get-CleanBridgeSource -Root $sourceRoot
     $destination = Install-BridgeRuntime -SourceRoot $sourceRoot -InstallRoot $InstallRoot
     # Provenance sits beside, never inside, the content-addressed copy.
@@ -342,3 +358,4 @@ finally {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 22:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:51 UTC | END]]
