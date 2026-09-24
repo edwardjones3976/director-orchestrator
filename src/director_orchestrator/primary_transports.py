@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -1599,7 +1600,11 @@ def sends_compact_provider_view(transport: object) -> bool:
     if isinstance(transport, OpenAIResponsesPacketTransport):
         return True
     if isinstance(transport, HostBridgePacketTransport):
-        return transport.outbound_payload_builder is compact_provider_view
+        # Owner ruling, 2026-09-24, "Bridge with attested sandbox": a bridge
+        # lane counts only with a fresh authenticated read-only attestation
+        # matching the pinned argv; dispatch re-checks it before each attempt.
+        return (transport.outbound_payload_builder is compact_provider_view
+                and transport.read_only_argv_digest is not None)
     return False
 
 
@@ -1617,6 +1622,7 @@ def discover_local_primary_command_transports(
     host_bridge_secret: str = "",
     host_bridge_writer_owner_token_digest: str = "",
     host_bridge_challenge: HostBridgeChallengeEvidence | None = None,
+    host_bridge_attested_argv: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, RawProviderTransport], dict[str, PrimaryProviderCapability]]:
     """Discover documented noninteractive CLIs; never launch or authenticate them."""
 
@@ -1737,6 +1743,12 @@ def discover_local_primary_command_transports(
                     if redacted
                     else partial(_normalize_host_native_result, provider_id)
                     if provider_id in {"claude", "grok"}
+                    else None
+                ),
+                read_only_argv_digest=(
+                    attested
+                    if (attested := (host_bridge_challenge.read_only_attested or {}).get(provider_id))
+                    and attested == (host_bridge_attested_argv or {}).get(provider_id)
                     else None
                 ),
             )
@@ -1892,3 +1904,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

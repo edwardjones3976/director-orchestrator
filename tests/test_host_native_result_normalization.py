@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -20,6 +21,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from director_orchestrator.host_provider_bridge import (
+    HostProviderBridgeError,
     HostBridgeChallengeEvidence,
     bridge_response_signature,
 )
@@ -48,6 +50,8 @@ from tests.test_provider_validation import work_packet
 
 
 SECRET = "fixture-bridge-secret-" + "x" * 32
+# Pinned argv digests for attested bridge lanes (values are opaque here).
+ATTESTED_PINS = {"claude": "sha256:" + "1" * 64, "grok": "sha256:" + "2" * 64}
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -202,8 +206,11 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
                 host_bridge_secret=SECRET,
                 host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                # Both lanes attested and pinned: the owner's 2026-09-24 ruling.
                 host_bridge_challenge=HostBridgeChallengeEvidence(
-                    frozenset(lanes), "sha256:" + "c" * 64, 1),
+                    frozenset(lanes), "sha256:" + "c" * 64, 1,
+                    read_only_attested=ATTESTED_PINS),
+                host_bridge_attested_argv=ATTESTED_PINS,
             )
         for provider in lanes:
             with self.subTest(provider=provider):
@@ -215,6 +222,65 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 # A lane that posts the full packet can never join the small
                 # class, so its reviewer is never measured on a view it was not sent.
                 self.assertIs(compact, sends_compact_provider_view(transports[provider]))
+
+    def test_a_bridge_lane_needs_a_fresh_attestation_matching_its_pin(self):
+        """Owner ruling 2026-09-24, "Bridge with attested sandbox"."""
+
+        from director_orchestrator.primary_default import _independent_lane_pair
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+
+        def discover(attested, pins):
+            with TemporaryDirectory() as directory, patch(
+                "director_orchestrator.primary_transports._which", return_value=None
+            ):
+                transports, _ = discover_local_primary_command_transports(
+                    cwd=directory, authenticated={},
+                    host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                    host_bridge_secret=SECRET,
+                    host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                    host_bridge_challenge=HostBridgeChallengeEvidence(
+                        frozenset({"claude", "grok"}), "sha256:" + "c" * 64, 1,
+                        read_only_attested=attested),
+                    host_bridge_attested_argv=pins,
+                )
+            return transports
+
+        grok_pin = {"grok": ATTESTED_PINS["grok"]}
+        cases = {
+            "attested_and_pinned": (grok_pin, grok_pin, True),
+            "no_attestation": (None, grok_pin, False),
+            "not_attested": ({}, grok_pin, False),
+            "no_pin": (grok_pin, {}, False),
+            "pin_mismatch": (grok_pin, {"grok": "sha256:" + "3" * 64}, False),
+        }
+        for name, (attested, pins, admitted) in cases.items():
+            with self.subTest(case=name):
+                transports = discover(attested, pins)
+                self.assertIs(admitted, sends_compact_provider_view(transports["grok"]))
+                # Readiness: OpenAI plus an attested Grok bridge is an
+                # independent pair; without the attestation there is none.
+                lanes = frozenset(
+                    lane for lane, transport in {
+                        **transports,
+                        "openai": OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"),
+                    }.items() if sends_compact_provider_view(transport))
+                self.assertIs(admitted, _independent_lane_pair(lanes))
+
+        # Each small-task attempt re-challenges: a lost, changed or
+        # unauthenticated attestation stops it.
+        transport = discover(grok_pin, grok_pin)["grok"]
+        evidence = lambda attested: HostBridgeChallengeEvidence(
+            frozenset({"grok"}), "sha256:" + "c" * 64, 2, read_only_attested=attested)
+        for name, outcome, current in (
+            ("unchanged", evidence(grok_pin), True),
+            ("argv_changed", evidence({"grok": "sha256:" + "3" * 64}), False),
+            ("attestation_lost", evidence({}), False),
+            ("bad_hmac", HostProviderBridgeError("host bridge challenge authentication failed"), False),
+        ):
+            with self.subTest(recheck=name), patch(
+                "director_orchestrator.host_provider_bridge.challenge_host_provider_bridge",
+                side_effect=[outcome]):
+                self.assertIs(current, transport.read_only_attestation_current())
 
     def test_no_native_lane_joins_the_small_class(self):
         """Owner ruling 2026-09-24: native lanes send the compact view but are
@@ -274,8 +340,11 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
                 host_bridge_secret=SECRET,
                 host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                # Both lanes attested and pinned: the owner's 2026-09-24 ruling.
                 host_bridge_challenge=HostBridgeChallengeEvidence(
-                    frozenset(lanes), "sha256:" + "c" * 64, 1),
+                    frozenset(lanes), "sha256:" + "c" * 64, 1,
+                    read_only_attested=ATTESTED_PINS),
+                host_bridge_attested_argv=ATTESTED_PINS,
             )
         adapters = {lane: PacketBoundaryAdapter(lane, transports[lane]) for lane in lanes}
         adapters["openai"] = PacketBoundaryAdapter(
@@ -456,3 +525,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
@@ -345,7 +346,28 @@ the host workspace with its own tools and web access this deployment does not
 control, and native Cursor and GitHub Copilot also never refuse a result whose
 reported usage exceeds the admitted attempt. Native lanes stay available for
 every other task; the small class runs only on the OpenAI Responses and
-host-bridge lanes, and `/health` counts only those toward readiness. The Director keeps the full packet and rebinds
+host-bridge lanes, and `/health` counts only those toward readiness.
+
+**Attested bridge lanes.** Owner ruling, 2026-09-24: "Bridge with attested
+sandbox". A host-bridge lane joins the class only when the bridge's
+HMAC-authenticated challenge reports the exact argv it runs for that lane, the
+Director re-checks that argv against the lane's read-only restriction set in
+`bridge_attestation.py`, and its digest equals the owner's pin in
+`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. Every attempt of a small
+task re-challenges the bridge first and fails with
+`small_task_bridge_attestation_stale` if the attestation is gone, changed, or
+cannot be authenticated. The restriction sets use only flags this repository
+already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
+`--disable-web-search`, `--no-subagents`, the canonical `--disallowed-tools`
+list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
+permission mode, an empty `--tools` value, `--strict-mcp-config` with an empty
+MCP configuration, and `--safe-mode`; the bridge refuses empty argv items, so
+the Claude bridge lane cannot currently be attested. This attests the CLI's
+configured command line, not an operating-system sandbox: the CLI still runs as
+a host process in the bridge workspace, and the restrictions are the CLI's own
+flags. The argv is also bound into each lane's configuration digest, which the
+bridge's `/v1/provider/configuration-digest` endpoint reports with the per-lane
+verdicts. The Director keeps the full packet and rebinds
 every result to it by digest. The compact view a small task's reviewer is sent
 is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
 also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
@@ -587,3 +609,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -477,6 +478,27 @@ class Settings:
             "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", ""
         )
     )
+    # {"lane": "sha256:<argv digest>"}: the only bridge argv the owner has
+    # pinned as read-only for the small class. Empty admits no bridge lane.
+    langgraph_primary_host_bridge_attested_argv_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON", ""
+        ).strip()
+    )
+
+    def host_bridge_attested_argv(self) -> dict[str, str]:
+        """The pinned per-lane argv digests; malformed or absent pins none."""
+
+        try:
+            pins = json.loads(self.langgraph_primary_host_bridge_attested_argv_json or "{}")
+        except ValueError:
+            return {}
+        if not isinstance(pins, dict) or not all(
+                isinstance(lane, str) and isinstance(value, str)
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+                for lane, value in pins.items()):
+            return {}
+        return dict(pins)
     langgraph_primary_allow_insecure_local_postgres: bool = field(
         default_factory=lambda: _bool(
             "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
@@ -2558,3 +2580,4 @@ class Settings:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

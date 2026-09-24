@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -30,6 +31,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .bridge_attestation import lane_attestations
+from .packet_contracts import canonical_json_bytes
 from .host_provider_bridge import (
     BRIDGE_PROTOCOL,
     BridgeClaimStore,
@@ -221,15 +224,26 @@ class _Handler(BaseHTTPRequestHandler):
                     json.dumps(configured, separators=(",", ":")).encode("utf-8")
                 )
                 host_monotonic = self._clock_id + ":" + time.monotonic().hex()
+                # The exact argv each restricted lane runs, and whether it
+                # carries that lane's read-only restriction set (owner ruling
+                # 2026-09-24, "Bridge with attested sandbox"). Bound into the
+                # proof, so a stripped or altered attestation fails.
+                attestations = lane_attestations({
+                    lane: argv for lane, argv in self.server.executor.commands.items()  # type: ignore[attr-defined]
+                    if lane in configured})
+                attestation_digest = "sha256:" + _digest(canonical_json_bytes(attestations))
                 self._json(200, {
                     "ok": True, "protocol": BRIDGE_PROTOCOL,
                     "configured_providers": configured,
                     "command_map_digest": command_map_digest,
                     "host_monotonic": host_monotonic,
+                    "lane_attestations": attestations,
+                    "lane_attestation_digest": attestation_digest,
                     "proof": bridge_challenge_signature(
                         self.server.bridge_secret, timestamp=timestamp, nonce=nonce,  # type: ignore[attr-defined]
                         command_map_digest=command_map_digest,
                         host_monotonic=host_monotonic,
+                        lane_attestation_digest=attestation_digest,
                     ),
                 })
             except (HostProviderBridgeError, ValueError):
@@ -257,8 +271,14 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json(409, {"ok": False, "reason": "configuration_unavailable"})
                 return
+            # Digests and verdicts only; the argv itself is reported on the
+            # HMAC challenge, and each lane's configuration digest binds it.
+            attestations = {
+                lane: {key: item[key] for key in ("argv_digest", "read_only_attested")}
+                for lane, item in lane_attestations(service.production.commands).items()}
             self._json(200, {
                 "ok": True, "configuration_digests": digests,
+                "lane_attestations": attestations,
                 "pinned_environment": bool(getattr(self.server, "pinned_environment", False)),
             })
             return
@@ -454,3 +474,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

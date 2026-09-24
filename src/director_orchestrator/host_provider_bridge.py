@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
@@ -156,7 +157,7 @@ def bridge_response_signature(
 
 def bridge_challenge_signature(
     secret: str, *, timestamp: int, nonce: str, command_map_digest: str = "",
-    host_monotonic: str = "",
+    host_monotonic: str = "", lane_attestation_digest: str = "",
 ) -> str:
     if len(secret) < 32:
         raise HostProviderBridgeError("bridge secret must contain at least 32 characters")
@@ -165,6 +166,10 @@ def bridge_challenge_signature(
     )
     if host_monotonic:
         material += "\nhost-monotonic-deadline\n" + host_monotonic
+    # Appended only when present, so a bridge without attestations keeps a
+    # byte-identical proof and a stripped attestation fails authentication.
+    if lane_attestation_digest:
+        material += "\nlane-attestations\n" + lane_attestation_digest
     material = material.encode("utf-8")
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
@@ -178,6 +183,9 @@ class HostBridgeChallengeEvidence:
     observed_at: int
     host_monotonic: float | None = None
     clock_id: str = ""
+    # lane -> argv digest, for lanes whose reported argv this side re-checked
+    # and found carrying its whole read-only restriction set.
+    read_only_attested: Mapping[str, str] | None = None
 
 
 def challenge_host_provider_bridge(
@@ -253,13 +261,32 @@ def challenge_host_provider_bridge(
         or not isinstance(proof, str)
     ):
         raise HostProviderBridgeError("host bridge challenge bindings are invalid")
+    attestations = decoded.get("lane_attestations")
+    attestation_digest = ""
+    attested: dict[str, str] = {}
+    if attestations is not None:
+        from .bridge_attestation import argv_digest, read_only_attested
+        if not isinstance(attestations, dict):
+            raise HostProviderBridgeError("host bridge lane attestations are malformed")
+        attestation_digest = "sha256:" + _digest(canonical_json_bytes(attestations))
+        if decoded.get("lane_attestation_digest") != attestation_digest:
+            raise HostProviderBridgeError("host bridge lane attestations are not bound")
+        for lane, item in attestations.items():
+            argv = item.get("argv") if isinstance(item, dict) else None
+            if (not isinstance(argv, list) or not all(isinstance(value, str) for value in argv)
+                    or item.get("argv_digest") != argv_digest(argv)):
+                raise HostProviderBridgeError("host bridge lane attestation is malformed")
+            # Re-checked here: the host's own verdict is required, never trusted.
+            if item.get("read_only_attested") is True and read_only_attested(lane, argv):
+                attested[lane] = item["argv_digest"]
     expected = bridge_challenge_signature(
         secret, timestamp=timestamp, nonce=nonce, command_map_digest=digest,
-        host_monotonic=host_clock,
+        host_monotonic=host_clock, lane_attestation_digest=attestation_digest,
     )
     if not hmac.compare_digest(proof, expected):
         raise HostProviderBridgeError("host bridge challenge authentication failed")
-    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value, clock_id)
+    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value,
+                                       clock_id, attested)
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,6 +657,7 @@ class HostBridgePacketTransport:
             [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
         ]
         | None = None,
+        read_only_argv_digest: str | None = None,
     ) -> None:
         if provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
@@ -675,6 +703,26 @@ class HostBridgePacketTransport:
         self.writer_owner_token_digest = writer_owner_token_digest
         self.outbound_payload_builder = outbound_payload_builder
         self.result_normalizer = result_normalizer
+        # Set only from a fresh authenticated attestation whose argv digest
+        # equals the Director's pinned binding for this lane.
+        self.read_only_argv_digest = read_only_argv_digest
+
+    def read_only_attestation_current(self, *, deadline: float | None = None) -> bool:
+        """Re-challenge the bridge: the lane is still attested with the same argv.
+
+        Any failure, a changed argv, or a lost attestation is False.
+        """
+
+        if self.read_only_argv_digest is None:
+            return False
+        try:
+            evidence = challenge_host_provider_bridge(
+                self.endpoint, self.secret, deadline=deadline)
+        except HostProviderBridgeError:
+            return False
+        return (self.provider in evidence.configured_providers
+                and (evidence.read_only_attested or {}).get(self.provider)
+                == self.read_only_argv_digest)
 
     def preflight(self, work_packet_json: bytes, *, context) -> None:
         """Check deadline support through the authenticated, non-dispatch probe."""
@@ -848,3 +896,4 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

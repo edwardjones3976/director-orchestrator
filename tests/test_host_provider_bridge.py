@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
@@ -726,6 +727,86 @@ class HostProviderBridgeTests(unittest.TestCase):
                 "http://host.docker.internal:18766/v1/provider/dispatch",
             )
 
+    def test_the_challenge_carries_bound_lane_attestations(self) -> None:
+        """Owner ruling 2026-09-24: the bridge attests each lane's exact argv."""
+
+        from director_orchestrator.bridge_attestation import argv_digest, lane_attestations
+        from director_orchestrator.native_acceptance_streams import GROK_DENY_TOOLS
+
+        grok = ["grok.exe", "--output-format", "json", "--permission-mode", "plan",
+                "--max-turns", "1", "--disable-web-search", "--no-subagents",
+                "--disallowed-tools", GROK_DENY_TOOLS, "--deny", "Bash", "--deny", "Edit",
+                "--deny", "Write", "--deny", "MCPTool"]
+        claude = ["claude.exe", "--print", "--output-format", "json", "--permission-mode", "plan"]
+        providers = ["claude", "grok"]
+        command_map_digest = "sha256:" + _digest(
+            json.dumps(providers, separators=(",", ":")).encode())
+
+        def respond(attestations, *, tamper=None, secret=SECRET, bind=True):
+            digest_value = "sha256:" + _digest(canonical_json_bytes(attestations))
+
+            class _Opener:
+                def open(inner_self, candidate, timeout):
+                    nonce = candidate.headers["X-director-bridge-nonce"]
+                    body = {
+                        "ok": True, "protocol": "director-host-provider-bridge/v1",
+                        "configured_providers": providers,
+                        "command_map_digest": command_map_digest,
+                        "lane_attestations": tamper or attestations,
+                        "lane_attestation_digest": digest_value,
+                        "proof": bridge_challenge_signature(
+                            secret, timestamp=1_000, nonce=nonce,
+                            command_map_digest=command_map_digest,
+                            lane_attestation_digest=digest_value if bind else ""),
+                    }
+                    return _ChallengeResponse(json.dumps(body).encode())
+
+            with patch("urllib.request.build_opener", return_value=_Opener()):
+                return challenge_host_provider_bridge(
+                    "https://host.docker.internal:18765/v1/provider/dispatch", SECRET, now=1_000)
+
+        attestations = lane_attestations({"claude": claude, "grok": grok})
+        self.assertEqual({"grok": argv_digest(grok)}, respond(attestations).read_only_attested)
+        # The host's verdict is required but re-checked: a claimed attestation
+        # for an argv that lacks the set is not accepted.
+        claimed = {**attestations, "claude": {**attestations["claude"], "read_only_attested": True}}
+        self.assertNotIn("claude", respond(claimed).read_only_attested)
+        # Web search enabled, shell allowed, or another permission mode.
+        for name, argv in {
+            "web_search": [item for item in grok if item != "--disable-web-search"],
+            "shell": [item for index, item in enumerate(grok)
+                      if not (item == "Bash" or (item == "--deny" and grok[index + 1] == "Bash"))],
+            "permission_mode": [("auto" if item == "plan" else item) for item in grok],
+            "two_turns": [("2" if item == "1" else item) for item in grok],
+            "skip_permissions": [*grok, "--dangerously-skip-permissions"],
+        }.items():
+            with self.subTest(argv=name):
+                self.assertEqual({}, respond(lane_attestations({"grok": argv})).read_only_attested)
+        # Tampered, unbound or unauthenticated attestations fail the challenge.
+        altered = {"grok": {**attestations["grok"], "argv": [*grok, "--add-dir", "C:/"]}}
+        for name, kwargs in {
+            "tampered": {"tamper": altered},
+            "unbound_proof": {"bind": False},
+            "bad_hmac": {"secret": "wrong-bridge-secret-" + "y" * 32},
+        }.items():
+            with self.subTest(failure=name), self.assertRaises(HostProviderBridgeError):
+                respond(attestations, **kwargs)
+        # A bridge that reports nothing attests nothing.
+        self.assertEqual({}, respond({}).read_only_attested)
+
+    def test_the_claude_restriction_set_cannot_be_configured_on_the_bridge(self) -> None:
+        """Its empty --tools value is an empty argv item, which the executor refuses."""
+
+        from director_orchestrator.bridge_attestation import read_only_attested
+
+        full = ["claude.exe", "--print", "--permission-mode", "plan", "--tools", "",
+                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--safe-mode"]
+        self.assertTrue(read_only_attested("claude", full))
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(ValueError):
+            WindowsHostProviderExecutor({"claude": full}, cwd=directory)
+        self.assertFalse(read_only_attested("claude", [item for item in full if item != ""]))
+        self.assertFalse(read_only_attested("claude", [*full[:4], "--tools=", *full[6:]]))
+
     def test_signed_challenge_authenticates_observed_command_map(self) -> None:
         providers = ["claude", "grok"]
         command_map_digest = "sha256:" + _digest(
@@ -1072,8 +1153,16 @@ class PinnedProcessEnvironmentTests(unittest.TestCase):
         status, body = get("Bearer " + self.OWNER)
         self.assertEqual(status, 200)
         expected = production_configuration_digest(self.executor, "claude", account_files=(str(self.account),))
-        self.assertEqual(json.loads(body), {"ok": True, "configuration_digests": {"claude": expected},
-                                            "pinned_environment": False})
+        from director_orchestrator.bridge_attestation import argv_digest
+        self.assertEqual(json.loads(body), {
+            "ok": True, "configuration_digests": {"claude": expected},
+            # Digests and verdicts only, never the argv or its paths; these
+            # fixture commands carry no restriction set.
+            "lane_attestations": {
+                lane: {"argv_digest": argv_digest(self.executor.commands[lane]),
+                       "read_only_attested": False}
+                for lane in ("claude", "grok")},
+            "pinned_environment": False})
         text = body.decode("utf-8")
         for secret_or_path in (self.OWNER, str(self.account), json.dumps(str(self.account))[1:-1], self.account.name):
             self.assertNotIn(secret_or_path, text)
@@ -1145,3 +1234,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

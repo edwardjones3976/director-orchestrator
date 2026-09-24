@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
@@ -779,6 +780,29 @@ def _small_review_view_bytes(packet: Mapping[str, Any]) -> int:
     return len(canonical_json_bytes(compact_provider_view(packet)))
 
 
+def _lane_transports(live_dependencies: Any, lane: str) -> list[Any]:
+    attempt = getattr(live_dependencies, "attempt_adapters", None) or {}
+    adapters = [live_dependencies.adapters.get(lane),
+                *dict(attempt.get(lane, {})).values()]
+    return [getattr(item, "_transport", None) for item in adapters if item is not None]
+
+
+def _bridge_attestations_current(live_dependencies: Any, lane: str) -> bool:
+    """Every host-bridge transport of this lane is still attested read-only now.
+
+    A fresh authenticated challenge per transport, before any admission: the
+    argv the bridge runs must still carry the restriction set and match the
+    pinned digest the lane was admitted under.
+    """
+
+    from .host_provider_bridge import HostBridgePacketTransport
+
+    return all(
+        transport.read_only_attestation_current(deadline=monotonic() + 5)
+        for transport in _lane_transports(live_dependencies, lane)
+        if isinstance(transport, HostBridgePacketTransport))
+
+
 def _compact_view_lanes(live_dependencies: Any) -> frozenset[str]:
     """Lanes whose every configured adapter shows the model only the compact view."""
 
@@ -1451,7 +1475,7 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-
+        host_bridge_attested_argv=settings.host_bridge_attested_argv(),
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -3709,6 +3733,11 @@ class DefaultPrimaryActivation:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
                             "small_task_packet_not_read_only")
+                    if small_class and not _bridge_attestations_current(
+                            live_dependencies, provider):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            "small_task_bridge_attestation_stale")
                     # A live lane needs a trusted positive per-lane and
                     # per-attempt limit bounded by the configured task budget
                     # before any attempt reservation or paid provider call.
@@ -4586,3 +4615,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
