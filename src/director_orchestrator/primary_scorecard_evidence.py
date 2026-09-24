@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
@@ -42,7 +43,7 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
-               "batches_pending_projection_binding", "pending_owner_decisions")
+               "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
@@ -92,6 +93,9 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NULL AND NOT p.settled) AS batches_pending_projection_binding,
  (SELECT count(*) FROM p WHERE NOT p.settled AND p.tc='OWNER_DECISION_REQUIRED') AS pending_owner_decisions,
+ -- Every projection not yet in a settled terminal classification is in flight in itself, with or without
+ -- subordinate rows (admitted before its batch exists, or assignments settled before its terminal projection).
+ (SELECT count(*) FROM p WHERE NOT p.settled) AS nonterminal_projections,
  (SELECT count(*) FROM p WHERE p.tc='SUCCEEDED' AND EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
     WHERE x.task_id=p.task_id AND x.status<>'SUCCEEDED')) AS succeeded_projections_with_unsucceeded_assignments,
  (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
@@ -420,3 +424,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]

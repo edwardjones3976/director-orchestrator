@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | BEGIN]]
@@ -339,6 +340,27 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         connection.execute(
             f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
             f" projection = {projection} WHERE task_id = %s", (*values, task_id))
+
+    def test_every_nonterminal_projection_is_in_flight(self):
+        task_id = self.intake()
+        # Admitted before its batch exists: no subordinate row, still in flight.
+        counts = self.report()["counts"]
+        self.assertEqual((counts["nonterminal_projections"], counts["active_assignments"]), (1, 0))
+        # Every assignment settled, but no terminal projection written: still in flight.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_parallel_batch"
+                "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
+                " VALUES (%s, %s, 'default-director-owner', 1, 1)", (task_id, "sha256:" + "3" * 64))
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"
+                " provider_id, deployment_id, dependencies, write_surfaces, retry_limit, status)"
+                " VALUES (%s, 'a1', 1, 'claude', 'fixture', '[]'::jsonb, '[]'::jsonb, 3, 'SUCCEEDED')", (task_id,))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["nonterminal_projections"], counts["active_assignments"]), (1, 0))
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, task_id, "SUCCEEDED", "sha256:" + "3" * 64)
+        self.assertEqual(self.report()["counts"]["nonterminal_projections"], 0)
 
     def test_blocked_dependents_and_owner_holds_are_not_open_terminal_work(self):
         task_id = self.intake()
@@ -717,3 +739,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]

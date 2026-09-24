@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
@@ -915,7 +916,7 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
-                    "batches_pending_projection_binding", "pending_owner_decisions")
+                    "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections")
 _CONSISTENCY_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation consistency (READ ONLY)"
 _CAPTURES_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation activation-captures"
 
@@ -1256,11 +1257,12 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     # failures is not operational delivery. (Runs post only on a readiness change, so the graded post
     # may be older than a newer successful run that had nothing to post.)
     latest = found.get("latest") if isinstance(found.get("latest"), dict) else {}
-    marks = [latest.get("startedAt"), *([latest["stoppedAt"]] if latest.get("stoppedAt") else [])]
-    if not all(isinstance(mark, str) for mark in marks) or not _is_current(
+    marks = [latest.get("startedAt"), latest.get("stoppedAt")]
+    if not all(isinstance(mark, str) for mark in marks) or not _ordered(*marks) or not _is_current(
             max(runtime.created_at, n8n_created), runtime.until(), *(_when(mark) for mark in marks)):
-        return _observation("04", None, "The newest scheduled Director Status run started before the running Director "
-                            "container or n8n was created, or after the collection ended.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
+        return _observation("04", None, "The newest scheduled Director Status run lacks a start or stop time, stopped "
+                            "before it started, started before the running Director container or n8n was created, "
+                            "or ran after the collection ended.", source, {"latest_execution_id": latest.get("id")}, at, **binding)
     if latest.get("status") in ("error", "crashed", "failed", "canceled"):
         return _observation("04", False, "The newest scheduled Director Status run did not succeed.",
                             source, {"latest_execution_id": latest.get("id")}, at, **binding)
@@ -1302,7 +1304,7 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             "latest update.", source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if not _is_current(max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
+    if started > stopped or not _is_current(max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
         return _observation("04", None, "The newest saved status execution started before the running Director "
                             "container or the running n8n was created, so it cannot attest them.",
                             source, facts, at, **binding)
@@ -1399,6 +1401,11 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
     if snapshot is not None and sha is not None and kind in ("duplicate-input", "ambiguous-post"):
         snapshot = _with_rendering(t, snapshot, sha)
     readback = (snapshot or {}).get("readback")
+    # The one correlation every task-backed drill verdict needs: the task is the one this thread's owner input
+    # created (task_record_bound) through the attested gateway (task_api_gateway_attested).
+    correlated = snapshot is not None and all(snapshot["row"].get(key) is True
+                                              for key in ("task_record_bound", "task_api_gateway_attested"))
+    facts["task_correlated"] = correlated
     tasks = readback["task_scope_counters"]["thread_tasks"] if readback else None
     replies = snapshot["row"]["terminal_reply_count"] if snapshot else None
     facts.update(thread_tasks=tasks, terminal_reply_count=replies)
@@ -1423,7 +1430,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
         if status == 409 or (tasks is not None and tasks > 1):
             verdict = False
         # A receipt means the gateway answered 202, so the reserved 5xx was not exercised.
-        elif status == 200 and complete and owner_inputs == 1 and blocked == 1 and tasks == 1 and not receipts:
+        elif (status == 200 and correlated and complete and owner_inputs == 1 and blocked == 1 and tasks == 1
+              and not receipts):
             verdict = True
     elif kind == "transport-failure":
         # No status reached the gateway: the task may or may not exist, but never twice.
@@ -1431,12 +1439,12 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
         if status == 409 or (tasks is not None and tasks > 1):
             verdict = False
         elif (complete and owner_inputs == 1 and blocked == 1 and not receipts
-              and (status == 404 or (status == 200 and tasks == 1))):
+              and (status == 404 or (status == 200 and correlated and tasks == 1))):
             verdict = True
     elif kind == "duplicate-input":
         if status == 409 or len(set(receipts)) > 1 or (tasks or 0) > 1 or (replies or 0) > 1:
             verdict = False
-        elif (len(receipts) >= 2 and status == 200 and complete and owner_inputs == 1
+        elif (len(receipts) >= 2 and status == 200 and correlated and complete and owner_inputs == 1
               and set(receipts) == {bound} and tasks == 1 and replies == 1 and _delivered_final(readback, snapshot)):
             verdict = True
     else:
@@ -1446,7 +1454,8 @@ def _drill_verdict(t: _SlackThreads, kind: str, thread: str, since: datetime,
         if ((replies or 0) > 1 or (tasks is not None and tasks > 1)
                 or (row.get("state") == "AMBIGUOUS" and row.get("readback_attempts") == 2)):
             verdict = False
-        elif (status == 200 and complete and owner_inputs == 1 and tasks == 1 and row.get("acknowledged_at") is None
+        elif (status == 200 and correlated and complete and owner_inputs == 1 and tasks == 1
+              and row.get("acknowledged_at") is None
               # PrimarySlackDelivery.readback increments readback_attempts (at most twice) before it can settle
               # an unacknowledged row as DELIVERED: zero attempts is not that recovery.
               and type(row.get("readback_attempts")) is int and 1 <= row["readback_attempts"] <= 2
@@ -1712,10 +1721,29 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
         return 1
     attempts = (latest or {}).values() if isinstance(latest, dict) else []
-    settled = (all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
+    # Every attempt's events and every effect's lifecycle must be chronological: an impossible order settles nothing.
+    chains: dict[Any, list[Any]] = {}
+    for event in sorted(readback.get("provider_attempts") or [], key=lambda event: event.get("event_sequence") or 0):
+        chains.setdefault((event.get("assignment_id"), event.get("attempt_ordinal")), []).append(event.get("recorded_at"))
+    ordered = (all(all(chain) and _ordered(*chain) for chain in chains.values())
+               and all(_ordered(effect.get("reserved_at"), effect.get("execution_started_at"), effect.get("bound_at"),
+                                effect.get("terminal_recorded_at"))
+                       and (not effect.get("terminal_disposition")
+                            or bool(effect.get("reserved_at") and effect.get("terminal_recorded_at")))
+                       for effect in readback.get("effects") or []))
+    settled = (ordered and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
                and all(effect.get("terminal_disposition") or not effect.get("execution_started_at")
                        for effect in readback.get("effects") or []))
     return 0 if settled else None
+
+
+def _ordered(*moments: Any) -> bool:
+    """The present moments (absent ones skipped) are parseable and chronological."""
+    try:
+        times = [_when(moment) for moment in moments if moment]
+    except (ValueError, TypeError):
+        return False
+    return all(earlier <= later for earlier, later in zip(times, times[1:]))
 
 
 def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, label: str) -> dict[str, Any]:
@@ -1983,11 +2011,8 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
                 or not _same(assignment.get("result_digest"), digest)):
             return False
         # Settled means completed after it was reserved (both also bound by _moments' freshness window).
-        try:
-            if not (assignment.get("reserved_at") and assignment.get("completed_at")
-                    and _when(assignment["reserved_at"]) <= _when(assignment["completed_at"])):
-                return False
-        except ValueError:
+        if not (assignment.get("reserved_at") and assignment.get("completed_at")
+                and _ordered(assignment["reserved_at"], assignment["completed_at"])):
             return False
         if attempts:
             # The latest event of the assignment's last attempt (latest is keyed per attempt).
@@ -2039,7 +2064,12 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
              and monitor.get("gate_state") == "open" and monitor.get("unsupported_providers") == []
              and monitor.get("missing_or_stale_providers") == []
              and monitor.get("all_configured_have_recent_signal") is True)
-    monitored = ready and isinstance(accounting, dict) and bool(accounting)
+    # Every budget and cost read must be a finite, non-negative number (JSON admits NaN and Infinity, which
+    # compare false against everything); anything else is not monitored accounting.
+    monitored = ready and isinstance(accounting, dict) and bool(accounting) and all(
+        isinstance(value, dict) and all(value.get(key) is None or _amount(value.get(key))
+                                        for key in ("daily_budget_usd", "reported_cost_usd", "reserved_cost_usd"))
+        for value in accounting.values())
     uncapped: list[str] = []
     if monitored:
         for provider, value in sorted(accounting.items()):
@@ -2598,7 +2628,7 @@ def _workload_observation(path: Path, at: datetime) -> list[Observation]:
         return (isinstance(bounds, dict)
                 and all(type(bounds.get(key)) is int and bounds[key] > 0
                         for key in ("timeout_seconds", "call_limit", "turn_limit", "output_bytes_limit"))
-                and type(bounds.get("usd_limit")) in (int, float) and bounds["usd_limit"] > 0
+                and _amount(bounds.get("usd_limit")) and bounds["usd_limit"] > 0
                 and bounds.get("hard_usd_cap_verified") is True)
 
     uncapped = sum(1 for row in rows if not isinstance(row.get("bounds"), dict) or row["bounds"].get("usd_limit") is None
@@ -2744,7 +2774,7 @@ def evaluate_run_record(row: dict[str, Any], *, mode: str,
         return False, "Run IDs must be distinct."
     try:
         values = [row[key] for key in ("wall_seconds", "owner_pause_seconds", "machine_seconds", "actual_cost_usd")]
-        if any(type(value) not in {int, float} for value in values):
+        if any(not _amount(value) for value in values):
             return None, "Measurements must be finite numeric values."
         wall, pause, machine, cost = values
         if not (0 <= pause <= wall < 60 and 0 <= machine < 60 and abs(wall - pause - machine) < 0.001 and 0 <= cost < 1):
@@ -2809,6 +2839,11 @@ QUALIFICATION_RECORD_FIELDS = frozenset({
 _STATUS_RECEIPT_KEYS = ("tasks_created", "assignments_created", "provider_attempts_created", "deduplicated_receipts")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 _ASSERTED = "asserted links only; authenticated collector correlation is a separate requirement"
+
+
+def _amount(value: Any) -> bool:
+    """A finite, non-negative int or float; booleans, NaN and Infinity are not amounts."""
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
 def _counter(value: Any) -> bool:
@@ -3022,3 +3057,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]

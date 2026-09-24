@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]]
@@ -433,12 +434,13 @@ class World:
         self.history_extra, self.history_hidden = [], set()
         for offset in (100, 150, 200):
             self.threads[ts(offset)] = [
-                {"ts": ts(offset), "user": OWNER, "client_msg_id": f"drill-{offset}", "text": f"<@{BOT}> drill"},
+                {"ts": ts(offset), "user": OWNER, "client_msg_id": f"drill-{offset}",
+                 "text": f"<@{BOT}> DIRECTOR drill"},
                 {"ts": ts(offset + 1), "thread_ts": ts(offset), "user": BOT,
                  "text": "*DIRECTOR — BLOCKED*\nThe Director did not accept the request."}]
         self.bindings[ts(100)] = (404, None)
         self.bindings[ts(150)] = (404, None)
-        self.add(task_entry("DIR-LG-5E", 200), thread=False)
+        self.add(task_entry("DIR-LG-5E", 200, text="DIRECTOR drill"), thread=False)
         self.bindings[ts(200)] = (200, "DIR-LG-5E")
         duplicate = self.add(task_entry("DIR-LG-D0", 300))
         duplicate["messages"].append({"ts": ts(302), "thread_ts": ts(300), "user": BOT, "text": "*DIR-LG-D0 — REQUEST RECEIVED*"})
@@ -1905,8 +1907,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(unreserved.state("03"), "UNKNOWN")
         # The transport failure is its own path: a reserved task (200, one task) passes, a conflict fails.
         reserved_transport = self.world()
-        reserved_transport.bindings[ts(150)] = (200, "DIR-LG-5E")
+        # A task this thread's own owner post created (not another drill's task).
+        reserved_transport.add(task_entry("DIR-LG-7E", 150, text="DIRECTOR drill"), thread=False)
+        reserved_transport.bindings[ts(150)] = (200, "DIR-LG-7E")
         self.assertEqual(reserved_transport.state("03"), "PASS")
+        borrowed_transport = self.world()
+        borrowed_transport.bindings[ts(150)] = (200, "DIR-LG-5E")  # another thread's task: not correlated
+        self.assertEqual(borrowed_transport.state("03"), "UNKNOWN")
         conflicting_transport = self.world()
         conflicting_transport.bindings[ts(150)] = (409, None)
         self.assertEqual(conflicting_transport.state("03"), "FAIL")
@@ -2342,7 +2349,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertNotEqual(world.state("20"), "PASS")
         # The record's ambiguous-effect count itself: zero only when everything is terminal.
         row_of = lambda state: {"qualification_evidence": {"effect_state": state}}
-        readback = {"effects": [{"execution_started_at": "2026-09-12T10:00:00+00:00", "terminal_disposition": "COMPLETED"}]}
+        readback = {"effects": [{"reserved_at": "2026-09-12T09:59:59+00:00", "execution_started_at": "2026-09-12T10:00:00+00:00",
+                                 "terminal_disposition": "COMPLETED", "terminal_recorded_at": "2026-09-12T10:00:01+00:00"}]}
         self.assertEqual(sc._ambiguous_effects(row_of("PROVIDER_EFFECT_RECORDED"), readback,
                                                {"a": {"status": "SUCCEEDED"}}), 0)
         self.assertIsNone(sc._ambiguous_effects(row_of(None), readback, {"a": {"status": "STARTED"}}))
@@ -2660,6 +2668,51 @@ class ScorecardCollectorTests(unittest.TestCase):
             if delivery.get("notification_key") == "terminal":
                 delivery["readback_attempts"] = 0
         self.assertNotEqual(unread.state("09"), "PASS")
+
+    def test_latest_status_run_needs_both_times_in_order_04(self):
+        self.assertEqual(self.world().state("04"), "PASS")
+        for change in ({"stoppedAt": None}, {"stoppedAt": "2026-09-12T09:58:59+00:00"}):
+            case = self.world()
+            case.status["latest"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(case.state("04"), "UNKNOWN")
+
+    def test_lifecycles_must_be_chronological_06_20(self):
+        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
+            for change in ({"terminal_recorded_at": "2026-09-12T10:00:26+00:00"},
+                           {"execution_started_at": "2026-09-12T10:00:25+00:00"}):
+                case = self.world()
+                case.tasks[task_id]["qualification_evidence"]["effects"][0].update(change)
+                with self.subTest(check=key, change=change):
+                    self.assertNotEqual(case.state(key), "PASS")
+        # An attempt whose terminal event predates its start is not settled (the collector's readback also
+        # refuses that order upstream).
+        readback = {"effects": [], "provider_attempts": [
+            {"assignment_id": "a", "attempt_ordinal": 1, "event_sequence": 1, "recorded_at": "2026-09-12T10:00:08+00:00"},
+            {"assignment_id": "a", "attempt_ordinal": 1, "event_sequence": 2, "recorded_at": "2026-09-12T10:00:07+00:00"}]}
+        self.assertIsNone(sc._ambiguous_effects({"qualification_evidence": {}}, readback, {"a": {"status": "SUCCEEDED"}}))
+
+    def test_usage_amounts_must_be_finite_and_non_negative_15(self):
+        for key, value in (("daily_budget_usd", float("nan")), ("daily_budget_usd", float("inf")),
+                           ("reported_cost_usd", float("nan")), ("reserved_cost_usd", -0.1)):
+            case = self.world()
+            case.payload["usage_monitor"]["daily_accounting"]["grok"][key] = value
+            with self.subTest(key=key, value=value):
+                self.assertEqual(case.state("15"), "UNKNOWN")
+        self.assertFalse(any(sc._amount(value) for value in (float("nan"), float("inf"), -1, True, "1")))
+
+    def test_every_task_backed_drill_needs_the_task_correlation_03_09(self):
+        self.assertEqual([self.world().state(key) for key in ("03", "09")], ["PASS", "PASS"])
+        # The reserved-5xx thread bound to a task another Slack event created.
+        other = self.world()
+        other.tasks["DIR-LG-5E"]["intake"]["source_event_id"] = CHANNEL_FIXTURE + ":" + ts(999)
+        self.assertEqual(other.state("03"), "UNKNOWN")
+        for task_id in ("DIR-LG-D0", "DIR-LG-A0"):
+            case = self.world()
+            case.tasks[task_id]["intake"]["source_event_id"] = CHANNEL_FIXTURE + ":" + ts(999)
+            with self.subTest(task_id=task_id):
+                self.assertNotEqual(case.state("09"), "PASS")
 
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
@@ -3198,3 +3251,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]

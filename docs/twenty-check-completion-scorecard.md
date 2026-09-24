@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | BEGIN]] -->
@@ -509,7 +510,15 @@ dependency read. Each assignment's `reserved_at` and `completed_at` are
 settlement evidence: both must be present, in order and inside the freshness
 window. The ambiguous-post drill (09) needs a DELIVERED terminal row that was
 never acknowledged and was settled by one or two readback attempts, as
-`PrimarySlackDelivery.readback` does.
+`PrimarySlackDelivery.readback` does. Check 07 counts every nonterminal
+projection as in flight (`nonterminal_projections`), even with no subordinate
+row. Check 04's newest run needs both its start and stop time, in order and
+inside the window. Settlement (06, 10, 20) needs every attempt's events and every
+effect's lifecycle (reserved, started, bound, terminal) in chronological order.
+Every budget, cost, limit and run measurement read must be a finite, non-negative
+number. Every task-backed drill verdict (reserved-5xx, task-backed
+transport-failure, duplicate-input, ambiguous-post) needs the same correlation:
+`task_record_bound` and `task_api_gateway_attested`.
 
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
@@ -838,3 +847,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]] -->
