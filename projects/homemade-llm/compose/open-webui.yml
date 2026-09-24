@@ -1,6 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:03 UTC | BEGIN]]
 # Homemade LLM chat UI (M0.5): Open WebUI + SearXNG in front of LM Studio. Nothing is reachable off-host:
-# both ports are published on 127.0.0.1, and phone access goes through `tailscale serve` (never Funnel).
+# only Open WebUI is published, on 127.0.0.1, and phone access goes through `tailscale serve` (never Funnel).
 #   docker compose -p homemade-llm -f open-webui.yml --env-file .env.homemade-llm up -d
 # Copy .env.homemade-llm.example to .env.homemade-llm (gitignored) and fill it first.
 name: homemade-llm
@@ -21,6 +21,11 @@ services:
       OPENAI_API_KEY: "lm-studio"   # LM Studio ignores the key; Open WebUI requires a value
       ENABLE_OLLAMA_API: "false"
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env.homemade-llm}
+      # Open WebUI persists settings such as ENABLE_SIGNUP and WEBUI_URL and lets the saved value win over
+      # the environment. Turning persistence off keeps this env file authoritative, so flipping signup off
+      # (or setting the Tailscale URL) and recreating the container takes effect. Admin-panel edits to these
+      # settings then do not survive a restart; make them here instead.
+      ENABLE_PERSISTENT_CONFIG: "false"
       WEBUI_URL: ${WEBUI_URL:-http://127.0.0.1:3000}
       # First boot creates the admin; set ENABLE_SIGNUP=false in the env file afterwards and recreate.
       ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
@@ -37,12 +42,11 @@ services:
   searxng:
     image: ${SEARXNG_IMAGE:?set SEARXNG_IMAGE in .env.homemade-llm (pin a digest)}
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8088:8080"   # 8080 on the host belongs to the orchestrator
+    # No host port: Open WebUI reaches SearXNG as searxng:8080 on the compose network, so nothing is published.
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
-      SEARXNG_BASE_URL: "http://127.0.0.1:8088/"
+      SEARXNG_BASE_URL: "http://searxng:8080/"
       SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env.homemade-llm}
 
 volumes:
