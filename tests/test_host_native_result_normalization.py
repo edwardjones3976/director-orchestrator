@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
@@ -215,17 +216,47 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 # class, so its reviewer is never measured on a view it was not sent.
                 self.assertIs(compact, sends_compact_provider_view(transports[provider]))
 
-    def test_only_native_lanes_that_enforce_the_attempt_cap_join_the_small_class(self):
-        """Every native lane is sent the compact view; only Claude refuses every
-        result whose reported usage exceeds the admitted attempt."""
+    def test_no_native_lane_joins_the_small_class(self):
+        """Owner ruling 2026-09-24: native lanes send the compact view but are
+        never small-class capable; readiness and eligibility never count them."""
+
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.policy import preview_plan, small_read_only_eligible
+        from director_orchestrator.primary_default import _compact_view_lanes, _independent_lane_pair
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import SlackIntake, TaskRecord, TaskStatus
+        from dataclasses import replace
 
         with TemporaryDirectory() as directory:
-            for provider in ("claude", "grok", "cursor", "github-copilot"):
-                with self.subTest(provider=provider):
-                    transport = NativeCommandPacketTransport(
-                        provider, (f"{provider}.exe", "--print"), cwd=directory)
-                    self.assertEqual("work-packet", transport.payload_mode)
-                    self.assertIs(provider == "claude", sends_compact_provider_view(transport))
+            natives = {
+                provider: NativeCommandPacketTransport(
+                    provider, (f"{provider}.exe", "--print"), cwd=directory)
+                for provider in ("claude", "grok", "cursor", "github-copilot")
+            }
+        for provider, transport in natives.items():
+            with self.subTest(provider=provider):
+                self.assertEqual("work-packet", transport.payload_mode)
+                self.assertFalse(sends_compact_provider_view(transport))
+        adapters = {lane: PacketBoundaryAdapter(lane, transport)
+                    for lane, transport in natives.items()}
+        adapters["openai"] = PacketBoundaryAdapter(
+            "openai", OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"))
+        lanes = _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters={}))
+        self.assertEqual(frozenset({"openai"}), lanes)
+        # Readiness needs an independent pair among these: native lanes add none.
+        self.assertFalse(_independent_lane_pair(lanes))
+        # A native-Claude producer or a native-Cursor reviewer leaves the task
+        # outside the class under this deployment's lanes.
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        text = "Project: demo\nSummarize README.md for the owner."
+        record = TaskRecord(task_id="DIR-NATIVE", status=TaskStatus.QUEUED, intake=SlackIntake(
+            source_event_id="evt-native", channel_id="C1", thread_ts="1.1", user_id="U1", text=text))
+        record.plan = preview_plan(text, settings)
+        self.assertEqual({"claude", "cursor"}, {item.agent.value for item in record.plan.assignments})
+        self.assertTrue(small_read_only_eligible(
+            record, settings, compact_view_lanes=frozenset({"claude", "cursor"})))
+        self.assertFalse(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
 
     def test_compact_view_lanes_admits_only_lanes_whose_every_adapter_is_compact(self):
         """The production composition used at intake and at dispatch alike."""
@@ -252,6 +283,7 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
         self.assertEqual(
             frozenset({"claude", "grok", "openai"}),
             _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters={})))
+        # These are the host-bridge Claude and Grok lanes; native ones never count.
         # One attempt adapter that posts the full packet takes its lane out.
         attempts = {
             "claude": {("json", "full"): PacketBoundaryAdapter("claude", transports["cursor"])},
@@ -423,3 +455,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]

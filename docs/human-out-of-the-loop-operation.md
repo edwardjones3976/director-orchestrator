@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
@@ -329,10 +330,14 @@ compact view of the work packet: its commit, digest, and file count, plus only
 the snapshot entries under owned paths or named in the objective. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
 full packet or a closed directive, so a task using any of them is outside the
-class and keeps the button. Native Cursor and GitHub Copilot, and native Grok,
-are outside the class as well although they send the compact view: their
-transports do not refuse every result whose reported usage exceeds the admitted
-attempt, so the reviewer's token cap would only be advisory there. The Director keeps the full packet and rebinds
+class and keeps the button. Every native CLI lane (Claude, Grok, Cursor, GitHub
+Copilot) is outside the class as well although it sends the compact view, by
+the owner's ruling of 2026-09-24 ("Exclude native lanes"): a native CLI runs in
+the host workspace with its own tools and web access this deployment does not
+control, and native Cursor and GitHub Copilot also never refuse a result whose
+reported usage exceeds the admitted attempt. Native lanes stay available for
+every other task; the small class runs only on the OpenAI Responses and
+host-bridge lanes, and `/health` counts only those toward readiness. The Director keeps the full packet and rebinds
 every result to it by digest. The compact view a small task's reviewer is sent
 is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
 also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
@@ -570,3 +575,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -1587,17 +1588,16 @@ def sends_compact_provider_view(transport: object) -> bool:
     github-copilot, openai (native Codex) and antigravity bridge lanes, is
     treated as posting the full packet or a different document.
 
-    A native CLI lane also has to refuse a result whose reported usage exceeds
-    the admitted attempt, or the reviewer's token cap is advisory. Only native
-    Claude does that for every reply (send() above); native Grok does it for a
-    Responses-shaped reply only, and native Cursor and GitHub Copilot never,
-    so those lanes stay outside the class although they send the compact view.
+    No native CLI lane is small-class capable (owner ruling, 2026-09-24:
+    "Exclude native lanes"). A native CLI runs in the host workspace with its
+    own tools, and its web access is not controlled by this deployment; native
+    Cursor and GitHub Copilot also never refuse over-cap usage. Native lanes
+    still send the compact view and stay available for every other task; the
+    small class runs only on the OpenAI Responses and host-bridge lanes.
     """
 
     if isinstance(transport, OpenAIResponsesPacketTransport):
         return True
-    if isinstance(transport, NativeCommandPacketTransport):
-        return transport.payload_mode == "work-packet" and transport.provider_id == "claude"
     if isinstance(transport, HostBridgePacketTransport):
         return transport.outbound_payload_builder is compact_provider_view
     return False
@@ -1891,3 +1891,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
