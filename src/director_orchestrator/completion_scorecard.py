@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
@@ -277,13 +278,16 @@ def _runtime(at: datetime, project: str) -> tuple[list[Observation], _Runtime]:
                        f"http://127.0.0.1:{int(port)}", health, env, runtime_tree)
     binding = runtime.binding
     result = []
-    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True})
+    # The persisted owner row alone is not ownership: this process must hold the live writer lease.
+    owner = _all_fields(primary, {"new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
+                                  "writer_lease_ready": True})
     generation = primary.get("intake_fencing_generation")
     if owner is not None:
         owner = owner and type(generation) is int and generation > 0
     result.append(_observation("05", owner, "Observed database-derived intake owner and fencing health.",
                                health_url, {key: primary.get(key) for key in
-                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation")}, at, **binding))
+                               ("new_intake_owner", "legacy_new_intake_disabled", "intake_fencing_generation",
+                                "writer_lease_ready")}, at, **binding))
     active = _all_fields(primary, {"primary_runtime_active": True, "effect_executor_ready": True,
                                    "reconciliation_worker_ready": True})
     if active is not None:
@@ -330,7 +334,10 @@ SELECT json_build_object('workflows',(SELECT count(*) FROM workflow_entity WHERE
                     AND n->>'type'='n8n-nodes-base.slack')=1
              AND h.connections::json->'Read Health'->'main'->0->0->>'node'='Diff Readiness'
              AND h.connections::json->'Diff Readiness'->'main'->0->0->>'node'='Post Status'
-        FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_route_ok
+        FROM workflow_history h WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId") AS active_route_ok,
+     (SELECT json_agg(n) FROM workflow_history h, json_array_elements(h.nodes::json) n
+        WHERE h."workflowId"=w.id AND h."versionId"=w."activeVersionId"
+          AND n->>'name' IN ('Diff Readiness','Post Status')) AS status_nodes
    FROM workflow_entity w JOIN execution_entity e ON e."workflowId"=w.id JOIN execution_data d ON d."executionId"=e.id
    WHERE w.name='Director Status' AND e.status='success' AND e.finished AND e.mode='trigger'
      AND e."stoppedAt" > now()-interval '72 hours' AND length(d.data)<=600000 AND d.data LIKE '%"Post Status"%'
@@ -353,6 +360,26 @@ def _intake_contract(parameters: Any, connections: Any) -> bool:
             and connections == reference["connections"])
 
 
+def _status_nodes_match(nodes: Any, channel: str) -> bool:
+    """The active Diff Readiness code is exactly n8n/workflows/director-status.json's, and Post Status posts
+    that code's $json.text to the project channel through a Slack API credential, as the repository does."""
+    path = Path(__file__).resolve().parents[2] / "n8n" / "workflows" / "director-status.json"
+    reference = {node["name"]: node for node in json.loads(path.read_text(encoding="utf-8"))["nodes"]}
+    active = {node.get("name"): node for node in nodes if isinstance(node, dict)} if isinstance(nodes, list) else {}
+    diff, post = active.get("Diff Readiness"), active.get("Post Status")
+    if len(nodes or []) != 2 or not isinstance(diff, dict) or not isinstance(post, dict):
+        return False
+    want = reference["Post Status"]["parameters"]
+    parameters = post.get("parameters") or {}
+    return (diff.get("type") == reference["Diff Readiness"]["type"]
+            and diff.get("parameters") == reference["Diff Readiness"]["parameters"]
+            and post.get("type") == reference["Post Status"]["type"]
+            and set(post.get("credentials") or {}) == set(reference["Post Status"]["credentials"])
+            and parameters.get("select") == want["select"] and parameters.get("text") == want["text"]
+            and parameters.get("otherOptions") == want["otherOptions"]
+            and parameters.get("channelId") == {**want["channelId"], "value": channel})
+
+
 def _environment(container: dict[str, Any]) -> dict[str, str]:
     return dict(value.split("=", 1) for value in container.get("Config", {}).get("Env", []) if "=" in value)
 
@@ -366,6 +393,14 @@ def _container_name(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value):
         raise ValueError("expected gateway must be an exact Docker container name")
     return value
+
+
+_GATEWAY_IDENTITIES = ("SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET")
+
+
+def _gateway_credentials_match(gateway_env: dict[str, str], director_env: dict[str, str]) -> bool:
+    """The gateway holds the Director's Slack bot, owner, channel and bearer (constant time, never reported)."""
+    return all(_same(gateway_env.get(name), director_env.get(name)) for name in _GATEWAY_IDENTITIES)
 
 
 def _slack_app_id(token: str) -> str | None:
@@ -467,6 +502,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
              "n8n_port_loopback": _loopback(n8n, 5678) if n8n is not None else None,
              "n8n_services_found": [len(n8n_rows), len(db_rows)], "gateway_in_deployment": in_deployment,
              "gateway_channel_matches": channel_ok, "gateway_n8n_route_matches": route_ok,
+             # n8n forwards the gateway's Authorization unchanged: another bearer is refused by the Director.
+             "gateway_credentials_match": _gateway_credentials_match(gateway_env, runtime.env),
              "gateway_n8n_network_shared": _hop(gateway, n8n, relay.hostname, containers),
              "n8n_director_network_shared": _hop(n8n, director, "orchestrator", containers),
              "n8n_upstream_environment": upstream.get("environment"), "n8n_store_bound": store,
@@ -475,7 +512,8 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
                                        for row in (director, gateway, n8n))}
     route_pass = _all_fields(facts, {"director_port_loopback": True, "n8n_port_loopback": True, "gateway_channel_matches": True,
                                    "gateway_n8n_route_matches": True, "containers_running": True,
-                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True})
+                                   "gateway_n8n_network_shared": True, "n8n_director_network_shared": True,
+                                   "gateway_credentials_match": True})
     hops = (facts["gateway_n8n_network_shared"], facts["n8n_director_network_shared"])
     if route_pass is False and None in hops and False not in hops and all(
             facts[key] is True for key in ("director_port_loopback", "n8n_port_loopback", "gateway_channel_matches",
@@ -965,9 +1003,7 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
         raise ValueError("the selected gateway is not a running gateway of this deployment")
     # The readback uses the Director's Slack bot, owner, channel and bearer: the gateway that handled the
     # threads must hold the same ones (compared in constant time, never reported).
-    mine = _environment(row)
-    if not all(_same(mine.get(name), runtime.env.get(name)) for name in (
-            "SLACK_BOT_TOKEN", "SLACK_OWNER_USER_ID", "SLACK_DIRECTOR_CHANNEL_ID", "ORCHESTRATOR_SHARED_SECRET")):
+    if not _gateway_credentials_match(_environment(row), runtime.env):
         raise ValueError("the selected gateway does not hold the Director's Slack and bearer identities")
     relays = _compose_ids(runtime.project, "n8n")
     if len(relays) != 1:
@@ -1001,9 +1037,11 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     if execution.get("workflow_active") is not True:
         return _observation("04", None, "The Director Status workflow is not active now; a retained execution cannot "
                             "show that status delivery is operational.", source, {}, at, **binding)
-    if execution.get("active_route_ok") is not True:
+    if execution.get("active_route_ok") is not True or not _status_nodes_match(execution.get("status_nodes"), t.channel):
         return _observation("04", None, "The active Director Status version is not the Read Health (GET "
-                            "orchestrator:8080/health) -> Diff Readiness -> Post Status route.", source, {}, at, **binding)
+                            "orchestrator:8080/health) -> Diff Readiness -> Post Status route with the repository's "
+                            "Diff Readiness code and a Post Status of $json.text to the project channel.",
+                            source, {}, at, **binding)
     out = _flatted(execution["data"])["resultData"]["runData"]["Post Status"][-1]["data"]["main"][0][0]["json"]
     ts = out.get("ts") or (out.get("message") or {}).get("ts")
     started, stopped = _when(execution["startedAt"]), _when(execution["stoppedAt"])
@@ -1221,7 +1259,12 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
                          if t.m.notification_key_family(r.get("notification_key")) == "approval")
                      or any(_when(e["recorded_at"]) < runtime.started_at for e in readback["provider_attempts"]))
         facts06["processed_before_start"] = processed
-        spans = (len(terminal) == 1 and processed
+        # A terminal notification enqueued after the restart is not the graph resuming: a provider attempt
+        # recorded, or the task projection updated, after the process start must show that it did.
+        continued = (any(_when(e["recorded_at"]) > runtime.started_at for e in readback["provider_attempts"])
+                     or _when(readback["task_updated_at"]) > runtime.started_at)
+        facts06["continued_after_start"] = continued
+        spans = (len(terminal) == 1 and processed and continued
                  and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
         resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
@@ -1423,6 +1466,10 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path) -> bool:
     if len(final) != 1 or paid.get("finals_unedited") is not True:
         return False
     text = html.unescape(str(final[0].get("text", "")))
+    # An expected substring the owner's question already contains is satisfied by quoting the question.
+    question = html.unescape(str((paid["task"].get("intake") or {}).get("text", "")))
+    if any(item in question for item in rubric["expected_answer_substrings"]):
+        return False
     return all(item in text for item in rubric["expected_answer_substrings"])
 
 
@@ -2342,3 +2389,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]

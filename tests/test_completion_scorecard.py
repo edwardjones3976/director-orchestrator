@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]]
@@ -99,7 +100,7 @@ def containers():
 def health():
     return {"environment": "local", "paid_runs_enabled": True, "langgraph_primary": {
         "new_intake_owner": "langgraph", "legacy_new_intake_disabled": True,
-        "intake_fencing_generation": 83, "ambiguous_effect_count": 0,
+        "intake_fencing_generation": 83, "ambiguous_effect_count": 0, "writer_lease_ready": True,
         "historical_parallel_plan_hold_count": 0, "reconciliation_worker_ready": True,
         "reconciliation_hold_reason": None,
         "primary_runtime_active": True, "effect_executor_ready": True,
@@ -153,11 +154,25 @@ def flatted(value):
     return json.dumps(table)
 
 
+STATUS_WORKFLOW = json.loads((Path(__file__).resolve().parents[1] / "n8n/workflows/director-status.json")
+                             .read_text(encoding="utf-8"))
+
+
+def status_nodes(channel=CHANNEL_FIXTURE):
+    nodes = json.loads(json.dumps([n for n in STATUS_WORKFLOW["nodes"] if n["name"] in ("Diff Readiness", "Post Status")]))
+    for node in nodes:
+        if node["name"] == "Post Status":
+            node["parameters"]["channelId"]["value"] = channel
+            node["credentials"]["slackApi"] = {"id": "deployed-credential", "name": "Director Slack bot"}
+    return nodes
+
+
 def status_fixture(ts_value=STATUS_TS, channel=CHANNEL_FIXTURE, ok=True):
     run = {"resultData": {"runData": {"Post Status": [{"data": {"main": [[{"json": {
         "ok": ok, "channel": channel, "ts": ts_value, "message": {"text": "*STATUS — readiness changed*"}}}]]}}]}}}
     return {"workflows": 1, "execution": {"id": "4411", "status": "success", "finished": True, "mode": "trigger",
                                           "workflow_active": True, "active_route_ok": True,
+                                          "status_nodes": status_nodes(),
                                           "active_version": "v-2", "execution_version": None,
                                           "active_version_at": "2026-09-12T09:00:00.000+00:00",
                                           "workflow_updated_at": "2026-09-12T09:00:00.000+00:00",
@@ -1436,6 +1451,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         malformed[1]["Config"]["Env"][0] = "SLACK_APP_TOKEN=fixture-app-token"
         self.assertEqual(row(collect_topology(malformed), "02")["status"], "UNKNOWN")
 
+    def test_intake_owner_needs_the_live_writer_lease_05(self):
+        self.assertEqual(self.world().state("05"), "PASS")
+        expired = self.world()
+        expired.payload["langgraph_primary"]["writer_lease_ready"] = False
+        self.assertEqual(expired.state("05"), "FAIL")
+
     def test_paid_runtime_needs_live_activated_providers_19(self):
         self.assertEqual(self.world().state("19"), "PASS")
         dormant = self.world()
@@ -1444,6 +1465,15 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_intake_forwarding_contract_01(self):
         self.assertEqual(row(collect_topology(topology()), "01")["status"], "PASS")
+        # n8n forwards the gateway's bearer: a gateway holding another one cannot reach the Director.
+        for name in ("ORCHESTRATOR_SHARED_SECRET", "SLACK_BOT_TOKEN"):
+            rows = topology()
+            rows[1]["Config"]["Env"] = [e for e in rows[1]["Config"]["Env"] if not e.startswith(name + "=")] \
+                + [name + "=something-else"]
+            with self.subTest(name=name):
+                report = collect_topology(rows)
+                self.assertEqual(row(report, "01")["status"], "FAIL")
+                self.assertNotIn("something-else", json.dumps(report))
         workflow = workflow_fixture()
         workflow["create_task_parameters"]["headerParameters"]["parameters"] = [
             header for header in workflow["create_task_parameters"]["headerParameters"]["parameters"]
@@ -1664,6 +1694,19 @@ class ScorecardCollectorTests(unittest.TestCase):
         new_n8n = self.world()
         new_n8n.rows[1]["Created"] = "2026-09-12T09:59:30Z"
         self.assertEqual(new_n8n.state("04"), "UNKNOWN")
+        # The active nodes themselves, not only their edges, must be the repository's status route.
+        for mutate in (lambda nodes: nodes[0]["parameters"].update(jsCode="return [{json: {text: '*STATUS — ok*'}}];")
+                       if nodes[0]["name"] == "Diff Readiness" else nodes[1]["parameters"].update(
+                           jsCode="return [{json: {text: '*STATUS — ok*'}}];"),
+                       lambda nodes: [n["parameters"].update(text="*STATUS — static*") for n in nodes
+                                      if n["name"] == "Post Status"],
+                       lambda nodes: [n["parameters"]["channelId"].update(value="COTHERCHAN1") for n in nodes
+                                      if n["name"] == "Post Status"],
+                       lambda nodes: nodes.pop()):
+            case = self.world()
+            mutate(case.status["execution"]["status_nodes"])
+            with self.subTest(mutate=mutate):
+                self.assertEqual(case.state("04"), "UNKNOWN")
         # Another bot at the correlated ts is not the Director's status post.
         other_bot = self.world()
         other_bot.threads[STATUS_TS][0]["user"] = "UOTHERBOT1"
@@ -1775,6 +1818,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         queued_only.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["created_at"] = (
             "2026-09-12T10:00:02+00:00")
         self.assertEqual(queued_only.state("06"), "UNKNOWN")
+        # A terminal notification enqueued after the restart is not a resume without a post-start graph step.
+        notification_only = self.world()
+        readback = notification_only.tasks[APPROVAL_TASK]["qualification_evidence"]
+        for event in readback["provider_attempts"]:
+            event["recorded_at"] = "2026-09-12T09:25:00+00:00"
+        readback["task_updated_at"] = "2026-09-12T09:26:00+00:00"
+        self.assertEqual(notification_only.state("06"), "UNKNOWN")
         late_start = self.world()
         late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T10:30:00Z"
         self.assertEqual(late_start.state("06"), "UNKNOWN")
@@ -2233,6 +2283,11 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited_receipt = self.world()
         edited_receipt.threads[ts(20000)][1]["edited"] = {"user": BOT, "ts": ts(20090)}
         self.assertEqual(edited_receipt.state("20"), "UNKNOWN")
+        # A rubric the question already answers is satisfied by quoting it: not correctness.
+        quoted = self.world()
+        quoted.add(task_entry(PAID_TASK, 20000, offline=False, text=quoted.paid_text + " Is the answer is 42?",
+                              answer="You asked: Is the answer is 42?"))
+        self.assertEqual(quoted.state("20"), "FAIL")
         simulated = self.world()
         simulated.add(task_entry(PAID_TASK, 20000, text=simulated.paid_text))
         self.assertEqual(simulated.state("20"), "FAIL")
@@ -2330,3 +2385,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]]

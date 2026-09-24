@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | BEGIN]] -->
@@ -136,7 +137,9 @@ a container ID, never a name.
   (same network ID) on which n8n's aliases or DNS names include the relay
   host (on every network the source is attached to, no other container may
   answer to that name), that the active intake `Create Director Task` node
-  forwards exactly as `n8n/workflows/director-intake.json` (Authorization and
+  forwards exactly as `n8n/workflows/director-intake.json` (the gateway must
+  hold the Director's bot token, owner, channel and bearer, compared in
+  constant time, since n8n forwards its Authorization unchanged; Authorization and
   the three `X-Director-Intake-*` headers, the signed body, timeout, no
   redirects, full response, and the same connections), and that n8n's own `DB_*` settings name the queried
   `n8n-db` (PostgreSQL, database and user `n8n`, port 5432, a host only that
@@ -162,7 +165,9 @@ a container ID, never a name.
   saved successful scheduled `Director Status` execution of a workflow that is
   active now, whose active version is the `Read Health` GET of
   `http://orchestrator:8080/health` -> `Diff Readiness` -> one Slack
-  `Post Status` route, which ran its active version (the execution's recorded version
+  `Post Status` route whose `Diff Readiness` code is exactly the repository's
+  and whose `Post Status` sends `$json.text` to the project channel through a
+  Slack API credential, which ran its active version (the execution's recorded version
   where n8n stores one, otherwise a start after both that version's history
   entry and the workflow's last update; UNKNOWN when neither shows it), in the
   last 72 hours, read in a read-only n8n database transaction, correlated with
@@ -174,7 +179,8 @@ a container ID, never a name.
   (`xapp-<n>-<APP_ID>-...`), so a rotated or second token of the same app is
   still a duplicate gateway; a token whose app cannot be read is unclassified
   and leaves 02 UNKNOWN.
-- 05, 19: the Director's `/health`.
+- 05, 19: the Director's `/health`; 05 also requires `writer_lease_ready`, the
+  database-derived live writer lease, not only the persisted owner row.
 - 06, 08: the `--approval-task` readback, its deliveries and its Slack thread;
   08 also the task's `approval_resume` command receipts from `consistency`.
   08 needs a complete thread readback, and each prompt's approve button must
@@ -324,7 +330,8 @@ non-zero and the dependent checks read UNKNOWN.
 
 The owner's paid Slack input must carry `rubric-sha256:<sha256 of the file's
 bytes>`, `declared_at` must not follow the input, the task must be `DONE` with
-exactly one final reply, and every substring must appear in that reply. A
+exactly one final reply, and every substring must appear in that reply and
+none in the owner's question (a quoted question would otherwise satisfy it). A
 paid thread with any bot reply Slack reports as edited, or with any subtype,
 is UNKNOWN (the task receipt lookup refuses it), and such a final reply is
 never graded correct: Slack keeps its original timestamp, which the wall time
@@ -403,8 +410,10 @@ No producer records which image or process executed a task. Checks 10, 11 and
 the task was. Checks 03 and 09 do the same for each drill (the drill post and,
 when a task is bound, its creation), and check 08 for the approval task. Check
 06 requires the current process start to fall between the task's creation and
-its terminal delivery, and a durable processing step (an approval prompt
-enqueued or a provider attempt recorded) before it; a task that was only
+its terminal delivery, a durable processing step (an approval prompt
+enqueued or a provider attempt recorded) before it, and a durable graph step
+after it (a provider attempt recorded or the task projection updated), since a
+terminal notification enqueued after a restart is not the graph resuming; a task that was only
 created or queued before the restart is UNKNOWN. A later container recreation, such as an activation that
 force-recreates the Director, therefore makes those checks UNKNOWN until the
 runs and drills are repeated. The writer generation does not prove a restart,
@@ -637,3 +646,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 06:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:22 UTC | END]] -->
