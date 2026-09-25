@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
@@ -269,7 +270,7 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 artifacts = []
                 for r in connection.execute(
                         "SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,"
-                        f" writer_fencing_generation FROM {schema}.director_primary_result_packet_artifact"
+                        f" writer_fencing_generation, recorded_at FROM {schema}.director_primary_result_packet_artifact"
                         " WHERE task_id = ANY(%(tasks)s) ORDER BY task_id, assignment_id", {"tasks": tasks}).fetchall():
                     try:
                         packet = _result_packet_artifact_from_row(r).packet
@@ -278,7 +279,8 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                         outcome, provider, verified = None, None, False
                     artifacts.append({"task_id": r["task_id"], "assignment_id": r["assignment_id"],
                                       "document_digest": r["document_digest"], "outcome": outcome,
-                                      "provider": provider, "verified": verified})
+                                      "provider": provider, "verified": verified,
+                                      "recorded_at": _plain(r["recorded_at"])})
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
                                          "result_artifacts": [{k: v for k, v in a.items() if k != "task_id"}
@@ -413,7 +415,7 @@ def activation_capture_report(settings, identity, manifest) -> dict:
         # The persisted insertion time, not the caller-supplied observed_at, says when each surface gated anything;
         # provider_ready needs both surfaces, so both are reported.
         for name, each in lane["surfaces"].items():
-            if each is not None:
+            if each is not None and each.get("chain_valid") is True:
                 each["recorded_at"] = _activation_recorded_at(settings.langgraph_primary_postgres_dsn,
                                                               identity.postgres_schema, bindings[provider],
                                                               each["evidence_digest"], name, identity=identity)
@@ -442,3 +444,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

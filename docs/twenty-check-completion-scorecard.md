@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]] -->
@@ -573,6 +574,33 @@ one is UNKNOWN. Check 07 counts every persisted result packet that names no
 durable assignment of its task as a conflict
 (`result_artifacts_without_assignment`); the table has no such foreign key.
 
+Every durable timestamp an evidence row carries, and every store the
+evidence lives in, is bounded. The intake claim's own `created_at` must be
+timezone-aware, no earlier than the correlated owner post and no later than the
+task's creation and the readback's capture; it, every status receipt and every
+reconciliation event join the freshness moments with the rest of the readback.
+The freshness bound is the latest creation of every container whose state the
+evidence rests on: the Director and the `langgraph-primary-db` its
+`LANGGRAPH_PRIMARY_POSTGRES_DSN` host resolves to (the same hop rule as n8n's
+store; otherwise the Director is unverified), plus, for Slack intake, the
+gateway, n8n and `n8n-db`. Activation captures (11, 12) are read through
+`ProviderActivationRegistry._validated_records`, never the store's last row:
+a surface whose chain does not validate reports `chain_valid: false`, a
+surface lapses with its earliest-expiring stage (`chain_expires_at`), and its
+persisted `recorded_at` must follow its `observed_at` and precede the
+collection's end (for 11, the attempts). Each result packet's `recorded_at` lies
+between its assignment's reservation and completion. A paid attempt's spend row
+counts only when its `budget_day` lies between the UTC days of its assignment's
+reservation and its attempt's first event. A native Security seal must follow
+the scan's completion.
+Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
+(bounded above, and by check 15's accounting day); the n8n status query reads the
+newest run on purpose (it is graded first) and `_activation_recorded_at` reads
+the newest row only to match the validated chain's terminal LIVE_OK digest;
+`/health`'s `_live_captures_valid` reads the last row only after
+`readiness()` validated the chain; CI runs, the replica receipt and the
+Security scan are bound to the candidate SHA, not to a runtime.
+
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
 `auth.test` names), to a run after the Slack credential's last update in n8n,
@@ -920,3 +948,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]] -->

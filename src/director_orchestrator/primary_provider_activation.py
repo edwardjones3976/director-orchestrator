@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | BEGIN]]
@@ -189,24 +190,38 @@ class PrimaryProviderActivationService:
         }
 
     def capture_attestations(self) -> dict:
-        """Per-lane latest capture facts for the read-only operator command; digests and expiry only, never binding contents or secrets; not part of /health."""
+        """Per-lane capture facts for the read-only operator command; digests and expiry only, never binding contents or secrets; not part of /health.
 
+        Each surface is read through the registry's own validated chain (every stage present once, in
+        revision and observation order, under this binding), the chain readiness uses: a surface whose chain
+        does not validate reports chain_valid false and attests nothing. chain_expires_at is the earliest
+        expiry of any stage, since readiness lapses when any stage expires, not only the latest.
+        """
+
+        from .provider_activation import ProviderActivationError
         from .provider_validation import binding_digest
 
         lanes = {}
         for provider_id, registry in self._registries.items():
             surfaces = {}
             for surface in ProviderActivationSurface:
-                records = self._store.load(registry.binding, surface)
+                try:
+                    records = registry._validated_records(surface)
+                except (ProviderActivationError, AttributeError, TypeError, ValueError):
+                    surfaces[surface.value] = {"chain_valid": False, "capture_verified": False}
+                    continue
                 if not records:
                     surfaces[surface.value] = None
                     continue
                 latest = records[-1]
                 surfaces[surface.value] = {
+                    "chain_valid": True,
+                    "stages": [record.stage.value for record in records],
                     "stage": latest.stage.value,
                     "evidence_digest": latest.evidence_digest,
                     "observed_at": latest.observed_at.isoformat(),
                     "expires_at": latest.expires_at.isoformat(),
+                    "chain_expires_at": min(record.expires_at for record in records).isoformat(),
                     "capture_verified": latest.stage is ProviderActivationStage.LIVE_OK
                     and self._capture_verifier is not None
                     and bool(self._capture_verifier.verify(
@@ -224,3 +239,4 @@ class PrimaryProviderActivationService:
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:46 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

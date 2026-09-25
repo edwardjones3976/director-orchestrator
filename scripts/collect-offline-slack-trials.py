@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
@@ -613,13 +614,16 @@ def _readback(task_id, task):
     return readback, latest, "collected", None
 
 
-def intake_claim_matches(task, readback):
+def intake_claim_matches(task, readback, input_ts):
     """The gateway attestation joined to its append-only claim, never the mutable projection label alone.
 
     True only when the task says slack_gateway_attested and the complete readback carries exactly one
     director_primary_intake_auth_claim row of that class for this task whose payload digest is main.py's
     digest of this very intake (approvals.verify_slack_intake_attestation) and whose idempotency digest is
-    primary_default._request's over its source event, channel and thread. Anything else is not attested.
+    primary_default._request's over its source event, channel and thread. The claim's own time is a durable
+    moment too: timezone-aware, no earlier than the correlated Slack input (input_ts; the gateway forwards a
+    post it has seen), and no later than the task's creation (create_intake claims before the graph exists)
+    or the readback's capture. Anything else is not attested.
     """
     from director_orchestrator.approvals import _canonical_digest
     intake = task.get("intake")
@@ -632,8 +636,15 @@ def intake_claim_matches(task, readback):
                 "sha256:" + _canonical_digest({key: intake.get(key) for key in ("source_event_id", "channel_id",
                                                                                 "thread_ts")}))
     observed = (claims[0].get("payload_digest"), claims[0].get("idempotency_key_digest"))
-    return all(isinstance(value, str) and hmac.compare_digest(value.encode(), wanted.encode())
-               for value, wanted in zip(observed, expected))
+    claimed, created, captured = (_when(claims[0].get("created_at")), _when(readback.get("task_created_at")),
+                                  _when(readback.get("captured_at")))
+    try:
+        posted = datetime.fromtimestamp(float(Decimal(str(input_ts))), timezone.utc) if input_ts else None
+    except (ArithmeticError, ValueError, OverflowError):
+        posted = None
+    return (None not in (claimed, created, captured, posted) and posted <= claimed <= created <= captured
+            and all(isinstance(value, str) and hmac.compare_digest(value.encode(), wanted.encode())
+                    for value, wanted in zip(observed, expected)))
 
 
 def _provider_effect_state(latest):
@@ -1094,7 +1105,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         if all(isinstance(task.get(key), list) for key in empty_fields) else None)
     approval_rows = [r for r in rows if str(r.get("notification_key", "")).startswith("approval:")]
     claim_readback, _, claim_state, _ = _readback(task_id, task)
-    claim_attested = claim_state == "collected" and intake_claim_matches(task, claim_readback)
+    claim_attested = (claim_state == "collected" and input_message is not None
+                      and intake_claim_matches(task, claim_readback, input_message.get("ts")))
     pause, machine = owner_pause(rows, wall, input_message["ts"], final["ts"]) if (
         correlated and input_message and rows_bound and len(rows) < 100) else (None, None)
     safe_receipts = [{key: row.get(key) for key in ("notification_key", "projection_digest", "client_msg_id",
@@ -1353,3 +1365,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

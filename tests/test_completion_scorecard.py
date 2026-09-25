@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
@@ -124,6 +125,8 @@ def containers():
                                 "ORCHESTRATOR_SHARED_SECRET=fixture-director-secret", f"SLACK_OWNER_USER_ID={OWNER}",
                                 "SLACK_GATEWAY_SECRET=fixture-gateway-signing-secret-0123456789",
                                 f"LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256={PIN}",
+                                # docker-compose.yml's DSN host (no credential in the fixture).
+                                "LANGGRAPH_PRIMARY_POSTGRES_DSN=postgresql://director_primary@langgraph-primary-db:5432/director_primary",
                                 f"LANGGRAPH_PRIMARY_PROVIDER_ACTIVATION_BINDINGS_JSON={BINDINGS_JSON}"]},
              "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18082"}]},
                                  "Networks": {"edge-engine-director_default": {
@@ -268,7 +271,10 @@ def consistency_fixture():
                                   "result_artifacts": [{"assignment_id": PAID_TASK + "-A1",
                                                         "document_digest": "sha256:" + "2" * 64,
                                                         "outcome": "The audit answer is 42", "provider": "claude",
-                                                        "verified": True}]},
+                                                        "verified": True,
+                                                        # Persisted mid-lifecycle: the paid assignment is reserved
+                                                        # 6s and settled 26s after its post (ts(20000)).
+                                                        "recorded_at": iso(1789210000 + 20000 + 20)}]},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -284,9 +290,11 @@ def approval_receipt(recorded_at=None):
 def captures_fixture():
     # primary_scorecard_evidence.activation_capture_report: lanes and surfaces from
     # PrimaryProviderActivationService.capture_attestations (primary_provider_activation.py).
-    surface = {"stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
-               "recorded_at": "2026-09-12T09:30:01+00:00",
-               "expires_at": "2026-09-13T12:00:00+00:00", "capture_verified": True}
+    from director_orchestrator.provider_activation import ACTIVATION_STAGES
+    surface = {"chain_valid": True, "stages": [stage.value for stage in ACTIVATION_STAGES],
+               "stage": "LIVE_OK", "evidence_digest": "a" * 64, "observed_at": "2026-09-12T09:30:00+00:00",
+               "recorded_at": "2026-09-12T09:30:01+00:00", "expires_at": "2026-09-13T12:00:00+00:00",
+               "chain_expires_at": "2026-09-13T12:00:00+00:00", "capture_verified": True}
     return {"version": "director-activation-captures/v1", "generation_manifest_sha256": PIN,
             "provider_bindings_sha256": hashlib.sha256(BINDINGS_JSON.encode()).hexdigest(),
             "observed_at": "2026-09-12T20:00:00+00:00",
@@ -387,11 +395,13 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
 def approval_entry(decided=None, kind="execution", grant=None):  # langgraph_primary.ApprovalKind
     entry = task_entry(APPROVAL_TASK, 30000, offline=False, text="DIRECTOR approve then run")
     readback = entry["task"]["qualification_evidence"]
-    readback["task_created_at"] = "2026-09-12T09:00:30+00:00"
+    # The owner posts at ts(30000); the gateway claims the intake and the task is created a second later (the
+    # rebased readback), the approval prompt is enqueued at 30003, the Director restarts at 30003.5 (World) and
+    # the graph resumes afterwards: the prompt's post, the decision, the attempts and the terminal reply.
     prompt = ts(30005)
     projection = "sha256:" + "9" * 64
     delivery = {"notification_key": "approval:sha256:" + "8" * 64 + ":" + projection, "projection_digest": projection,
-                "client_msg_id": "approval-client-1", "state": "DELIVERED", "created_at": "2026-09-12T09:20:00+00:00",
+                "client_msg_id": "approval-client-1", "state": "DELIVERED", "created_at": iso(1789210000 + 30003),
                 # Claimed before chat.postMessage, acknowledged with the returned ts, then read back.
                 "claimed_at": iso(1789210000 + 30004), "acknowledged_at": iso(1789210000 + 30005.5),
                 "delivered_at": iso(1789210000 + 30006), "slack_ts": prompt, "readback_attempts": 1,
@@ -406,7 +416,7 @@ def approval_entry(decided=None, kind="execution", grant=None):  # langgraph_pri
     entry["application"] = application
     payload = fixture_render(application, {"pending_approval": {"kind": kind, "request_digest": "sha256:" + "8" * 64},
                                            "terminal_classification": None},
-                             projection, datetime(2026, 9, 12, 9, 20, tzinfo=timezone.utc))
+                             projection, datetime.fromisoformat(delivery["created_at"]))
     assert payload is not None, "the fixture task must render as the Director would"
     entry["messages"].insert(2, {"ts": prompt, "thread_ts": ts(30000), "user": BOT,
                                  "client_msg_id": "approval-client-1", "text": payload["text"],
@@ -449,6 +459,8 @@ class World:
                           "NetworkSettings": {"Networks": {NETWORK: {"NetworkID": "a" * 64,
                                                                      "Aliases": ["langgraph-primary-db"]}}}})
         self.rows.append({**topology()[1], "Created": "2026-09-12T09:00:00Z"})  # the gateway (kept last), created with the Director
+        # The Director process restarted while the approval task waited (approval_entry), after its prompt was enqueued.
+        self.rows[0]["State"]["StartedAt"] = iso(1789210000 + 30003.5).replace("+00:00", "Z")
         self.rows[1]["Created"] = "2026-09-12T09:00:00Z"  # the deployment's n8n
         self.commit_tree = "d" * 40
         self.now = WORLD_NOW
@@ -735,7 +747,7 @@ def collect_topology(rows, host=None, upstream="local", workflow=None, gateway=G
     return sc.score(SHA, observations, now=NOW)
 
 
-def native_security_fixture(folder):
+def native_security_fixture(folder, completed=None):
     scan_id = "12345678-1234-1234-1234-123456789abc"
     root = Path(folder) / "native-scan"
     root.mkdir()
@@ -750,7 +762,7 @@ def native_security_fixture(folder):
         artifacts.append({"path": name, "sha256": hashlib.sha256(raw).hexdigest()})
     sealed = (NOW - timedelta(minutes=30)).isoformat()
     manifest = {"documentType": "codex-security.scan-manifest", "scan": {
-        "id": scan_id, "status": "completed", "sealedAt": sealed, "completedAt": sealed,
+        "id": scan_id, "status": "completed", "sealedAt": sealed, "completedAt": completed or sealed,
         "target": {"kind": "git_diff", "headRevision": SHA, "baseRevision": OTHER},
         "artifacts": artifacts, "preservedSources": {}, "scope": {"limitations": ["Source review only"]}}}
     checkpoint = {"scanId": scan_id, "findings": [], "coverage": {"completeness": "complete"}}
@@ -763,7 +775,7 @@ def native_security_fixture(folder):
     with closing(sqlite3.connect(index)) as db, db:
         db.execute("CREATE TABLE scans(id TEXT,status TEXT,scan_dir TEXT,target_path TEXT,target_revision TEXT,mode TEXT,diff_base_revision TEXT,diff_head_revision TEXT,seal_manifest_digest TEXT,completed_at TEXT)")
         db.execute("INSERT INTO scans VALUES(?,?,?,?,?,?,?,?,?,?)", (scan_id, "complete", str(root), str(root), SHA,
-                   "diff", OTHER, SHA, "sha256:" + hashlib.sha256(raw).hexdigest(), sealed))
+                   "diff", OTHER, SHA, "sha256:" + hashlib.sha256(raw).hexdigest(), completed or sealed))
     return scan_id, index, root
 
 
@@ -1016,6 +1028,16 @@ class CompletionScorecardTests(unittest.TestCase):
             with patch.object(sc, "_native_security_index", return_value=index), \
                     patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
                     patch.object(sc, "_merge_base", return_value=OTHER), self.assertRaises(ValueError):
+                sc._security_observation(scan_id, SHA, NOW)
+
+    def test_native_seal_follows_the_scan_completion_18(self):
+        """Sweep (durable-timestamp class): the seal closes a completed scan, so a seal before completion is refused."""
+        with tempfile.TemporaryDirectory() as folder:
+            scan_id, index, _ = native_security_fixture(folder, completed=(NOW - timedelta(minutes=20)).isoformat())
+            with patch.object(sc, "_native_security_index", return_value=index), \
+                    patch.object(sc, "_run_bytes", return_value=b"src/thing.py\0"), \
+                    patch.object(sc, "_merge_base", return_value=OTHER), \
+                    self.assertRaisesRegex(ValueError, "precedes the scan's completion"):
                 sc._security_observation(scan_id, SHA, NOW)
 
     def test_native_security_missing_changed_file_coverage_fails(self):
@@ -2142,7 +2164,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(impostor.state("08"), "FAIL")
         stale_impostor = self.world()
         stale_impostor.threads[ts(30000)][2]["user"] = OWNER
-        stale_impostor.rows[-1]["Created"] = "2026-09-12T09:10:00Z"
+        stale_impostor.rows[-1]["Created"] = "2026-09-12T19:06:42Z"  # the gateway, recreated after the task
         self.assertEqual([row(stale_impostor.report(), key)["status"] for key in ("06", "08")], ["UNKNOWN", "UNKNOWN"])
         reworded = self.world()
         section = reworded.threads[ts(30000)][2]["blocks"][0]["text"]
@@ -2223,7 +2245,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual([row(no_snapshot.report(), key)["status"] for key in ("06", "08")], ["PASS", "UNKNOWN"])
         queued_only = self.world()
         queued_only.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["created_at"] = (
-            "2026-09-12T10:00:02+00:00")
+            iso(1789210000 + 30010))  # enqueued only after the restart
         self.assertEqual(queued_only.state("06"), "UNKNOWN")
         # A terminal notification enqueued after the restart is not a resume without a post-start graph step.
         notification_only = self.world()
@@ -2237,7 +2259,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(late_start.state("06"), "UNKNOWN")
         # An approval task created before the running container cannot attest it.
         recreated = self.world()
-        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T09:00:40Z"
+        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T19:06:42Z"
         report = recreated.report()
         self.assertEqual(row(report, "08")["status"], "UNKNOWN")
         self.assertIn("before the running Director container", row(report, "08")["explanation"])
@@ -2933,6 +2955,81 @@ class ScorecardCollectorTests(unittest.TestCase):
                 with self.subTest(check=key, case=name):
                     self.assertNotEqual(case.state(key), "PASS")
 
+    def test_intake_claim_time_lies_between_the_post_and_the_task_03_08_09_10_20(self):
+        """4100588377: the append-only claim's own time is bounded: no earlier than the owner's correlated post and
+        no later than the task's creation (and so inside the collection window)."""
+        cases = (("DIR-LG-5E", "03"), (APPROVAL_TASK, "08"), ("DIR-LG-D0", "09"), ("DIR-LG-7A01", "10"),
+                 (PAID_TASK, "20"))
+        for task_id, key in cases:
+            for name, moment in (("before the post", lambda post, created: post - timedelta(seconds=1)),
+                                 ("after the task", lambda post, created: created + timedelta(seconds=1))):
+                case = self.world()
+                task = case.tasks[task_id]
+                readback = task["qualification_evidence"]
+                post = datetime.fromtimestamp(float(task["intake"]["thread_ts"]), timezone.utc)
+                readback["intake_auth_claims"][0]["created_at"] = moment(
+                    post, datetime.fromisoformat(readback["task_created_at"])).isoformat()
+                with self.subTest(check=key, case=name):
+                    self.assertNotEqual(case.state(key), "PASS")
+
+    def test_every_backing_store_bounds_the_evidence_it_holds(self):
+        """4100588384: n8n-db (the active intake workflow) and langgraph-primary-db (every readback) bound the
+        Slack-derived and Director-readback checks by their creation, as 04 bounds n8n's executions."""
+        after_all = "2026-09-12T19:30:00Z"  # after every drill, trial, paid and approval task in the world
+        n8n_store = self.world()
+        next(item for item in n8n_store.rows if item["Id"] == N8N_DB_ID)["Created"] = after_all
+        self.assertEqual([n8n_store.state(key) for key in ("03", "08", "09", "10", "20")], ["UNKNOWN"] * 5)
+        primary_store = self.world()
+        next(item for item in primary_store.rows if item["Id"] == PRIMARY_DB_ID)["Created"] = after_all
+        self.assertEqual([primary_store.state(key) for key in ("06", "08", "10", "20")], ["UNKNOWN"] * 4)
+        # The Director's DSN must name that store: another host leaves the Director's identity unverified.
+        elsewhere = self.world()
+        elsewhere.rows[0]["Config"]["Env"] = [
+            "LANGGRAPH_PRIMARY_POSTGRES_DSN=postgresql://director_primary@other-db:5432/director_primary"
+            if entry.startswith("LANGGRAPH_PRIMARY_POSTGRES_DSN=") else entry for entry in elsewhere.rows[0]["Config"]["Env"]]
+        self.assertEqual([elsewhere.state(key) for key in ("05", "19")], ["UNKNOWN", "UNKNOWN"])
+
+    def test_captures_are_the_registrys_validated_chain_11_12(self):
+        """4100588387: a surface counts only through the registry's validated chain (chain_valid), lapses with its
+        earliest-expiring stage, and was persisted after it was observed and before the collection's end."""
+        self.assertEqual([self.world().state(key) for key in ("11", "12")], ["PASS", "PASS"])
+        for name, change in (("invalid chain", {"chain_valid": False}),
+                             # before the paid attempts (~16:20) though the latest stage is valid until tomorrow
+                             ("an earlier stage expired", {"chain_expires_at": "2026-09-12T12:00:00+00:00"}),
+                             ("persisted before observed", {"recorded_at": "2026-09-12T09:29:59+00:00"}),
+                             ("persisted after the collection", {"recorded_at": "2026-09-12T20:30:00+00:00"})):
+            case = self.world()
+            case.captures["lanes"]["claude"]["surfaces"]["app"].update(change)
+            with self.subTest(name):
+                self.assertEqual(case.state("12"), "FAIL")
+                if name != "persisted after the collection":
+                    self.assertNotEqual(case.state("11"), "PASS")
+
+    def test_result_packet_is_recorded_inside_its_assignment_20(self):
+        """4100588392: each packet's own recorded_at lies between its assignment's reservation and completion (both
+        inside the freshness window), as primary_default persists it before settling the assignment."""
+        self.assertEqual(self.world().state("20"), "PASS")
+        for name, value in (("before the reservation", iso(1789210000 + 20000 + 2)),
+                            ("after the completion", iso(1789210000 + 20000 + 40)), ("missing", None)):
+            case = self.world()
+            case.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["recorded_at"] = value
+            with self.subTest(name):
+                self.assertEqual(case.state("20"), "FAIL")
+
+    def test_spend_budget_day_and_every_readback_time_are_bounded_20(self):
+        """Sweep (durable-timestamp class): a spend row's budget_day is the day it was reserved, between its
+        assignment's reservation and its attempt's first event; and every readback timestamp (status receipts,
+        reconciliation events, intake claims) lies inside the freshness window."""
+        self.assertEqual(self.world().state("20"), "PASS")
+        day = self.world()
+        day.consistency["tasks"][PAID_TASK]["spend"][0]["budget_day"] = "2026-09-11"
+        self.assertEqual(day.state("20"), "UNKNOWN")
+        future = self.world()
+        future.tasks[PAID_TASK]["qualification_evidence"]["reconciliation_events"] = [
+            {"event_id": 1, "claim_key": "sha256:" + "5" * 64, "state": "RESOLVED",
+             "evidence_digest": "sha256:" + "d" * 64, "recorded_at": "2026-09-12T21:00:00+00:00"}]
+        self.assertEqual(future.state("20"), "UNKNOWN")
+
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
         for rows in (("budgets",), ("spend",), ("budgets", "spend")):
@@ -3046,6 +3143,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         during.until = datetime(2026, 9, 12, 20, 5, tzinfo=timezone.utc)
         for lane in during.captures["lanes"].values():
             lane["surfaces"]["app"]["observed_at"] = "2026-09-12T20:03:00+00:00"
+            lane["surfaces"]["app"]["recorded_at"] = "2026-09-12T20:03:01+00:00"  # persisted after it was observed
         during.captures["observed_at"] = "2026-09-12T20:04:00+00:00"
         during.consistency["captured_at"] = "2026-09-12T20:04:00+00:00"
         self.assertEqual(during.state("12"), "PASS")
@@ -3519,3 +3617,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

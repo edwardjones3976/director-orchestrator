@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
@@ -41,8 +42,10 @@ SPEC = importlib.util.spec_from_file_location("offline_slack_trial_collector", C
 collector_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(collector_module)
 
-THREAD = "1789210000.100000"
-FINAL_TS = "1789210030.100000"
+# The owner's post just before the readback's 10:00:00 task creation, and the final reply 30s later, inside
+# its delivery's claim (10:00:20) and acknowledgement (10:00:30.5): the gateway claims the intake in between.
+THREAD = "1789207199.500000"
+FINAL_TS = "1789207229.500000"
 TASK_ID = "DIR-LG-AB12"
 OWNER = "UOWNER123"
 BOT = "UBOT123"
@@ -195,7 +198,7 @@ def readback_fixture():
         "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": canonical_slack_source_event_id(
                                  {"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"}),
                              "created_at": "2026-09-12T10:00:40+00:00"}],
-        "intake_auth_claims": [intake_claim(sample()[0]["intake"])],
+        "intake_auth_claims": [intake_claim(sample()[0]["intake"], "2026-09-12T09:59:59.750000+00:00")],
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
                             "observed_tokens": 900}],
@@ -250,7 +253,14 @@ class SummaryTests(unittest.TestCase):
                 ("projection text edited after the claim", lambda task: task["intake"].update(text="edited")),
                 ("label says bearer", lambda task: task.update(intake_authentication="bearer_dry_run")),
                 ("incomplete readback", lambda task: task["qualification_evidence"].update(
-                    complete=False, truncated=["provider_attempts"]))):
+                    complete=False, truncated=["provider_attempts"])),
+                # Review 4100588377: the claim's own time lies between the owner's post and the task's creation.
+                ("claimed before the owner posted", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(created_at="2026-09-12T09:59:59+00:00")),
+                ("claimed after the task was created", lambda task: task["qualification_evidence"]
+                 ["intake_auth_claims"][0].update(created_at="2026-09-12T10:00:01+00:00")),
+                ("naive claim time", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(created_at="2026-09-12T09:59:59.750000"))):
             with self.subTest(name):
                 self.task = deepcopy(sample()[0])
                 self.task["qualification_evidence"] = readback_fixture()
@@ -425,7 +435,7 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(report["machine_seconds"])
 
     def test_negative_timestamp_duration_remains_unknown(self):
-        self.messages[-1]["ts"] = "1789209999.100000"
+        self.messages[-1]["ts"] = "%.6f" % (float(THREAD) - 1)  # a final reply before the owner's post
         self.deliveries[0]["slack_ts"] = self.messages[-1]["ts"]
         report = self.summarize()
         self.assertIsNone(report["wall_seconds"])
@@ -995,6 +1005,8 @@ class SummaryTests(unittest.TestCase):
 
     def test_baseline_from_receipt_requires_a_schema_valid_collected_prior_observation(self):
         prior = receipt_fixture()
+        # A trial observed without the opt-in readback (absent state) is no baseline.
+        prior["trials"] = [{**structural_trial(), "qualification_evidence": self.summarize()["qualification_evidence"]}]
         self.assertIsNone(collector_module.baseline_from_receipt(prior, TASK_ID))  # absent readback state
         self.assertIsNone(collector_module.baseline_from_receipt({"schema": "x"}, TASK_ID))
         self.task["qualification_evidence"] = readback_fixture()
@@ -1250,6 +1262,11 @@ def structural_trial(**final):
     task["intake"]["text"] = messages[0]["text"] = text
     messages[-1]["text"] += "\nActual USD cost: not recorded"
     messages[-1].update(final)
+    # The served readback, with the gateway's append-only claim for this very (edited) intake: gateway
+    # attestation comes only from that claim (PR #264 review 4100381682), never from the projection label.
+    readback = readback_fixture()
+    readback["intake_auth_claims"] = [intake_claim(task["intake"], readback["intake_auth_claims"][0]["created_at"])]
+    task["qualification_evidence"] = readback
     row = collector_module.summarize(THREAD, TASK_ID, task, deliveries, messages, True,
         OWNER, BOT, headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"])
     row.update(input_rubric_sha256=sha, source_errors=[], runtime_collection_binding_stable=True)
@@ -1544,3 +1561,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

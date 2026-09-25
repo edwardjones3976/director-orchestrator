@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
@@ -136,6 +137,11 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
             self.assertEqual(len(surface["evidence_digest"]), 64)
         self.assertFalse(lanes["claude"]["surfaces"]["app"]["capture_verified"])
         self.assertIsNone(lanes["claude"]["surfaces"]["runtime_adapter"])
+        for name in ("app", "runtime_adapter"):
+            surface = lanes["openai"]["surfaces"][name]
+            self.assertTrue(surface["chain_valid"])
+            self.assertEqual(surface["stages"], [stage.value for stage in ProviderActivationStage])
+            self.assertEqual(surface["chain_expires_at"], (NOW + timedelta(hours=1)).isoformat())
         # /health stays booleans only; attestations are a separate operator read.
         self.assertEqual(set(service.health()), {"core_live_ready", "app_dry_run_ready", "app_live_ready",
                                                  "runtime_adapter_dry_run_ready", "runtime_adapter_live_ready",
@@ -144,6 +150,37 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         unverified = PrimaryProviderActivationService(store=store, bindings=bindings, required_providers=("openai", "claude"),
                                                       clock=lambda: NOW)
         self.assertFalse(unverified.capture_attestations()["openai"]["surfaces"]["app"]["capture_verified"])
+
+    def test_capture_attestations_read_the_registrys_validated_chain(self):
+        """PR #264 review 4100588387: a surface is read through ProviderActivationRegistry._validated_records (every
+        stage once, in revision and observation order), never its store's last row; and it lapses with its
+        earliest-expiring stage."""
+        from director_orchestrator.provider_activation import ACTIVATION_EVIDENCE_VERSION, ProviderActivationEvidence
+        store = MemoryStore()
+        openai = binding("openai")
+        verifier = Mock()
+        verifier.verify.return_value = True
+        service = PrimaryProviderActivationService(store=store, bindings={"openai": openai},
+                                                   required_providers=("openai",), clock=lambda: NOW,
+                                                   capture_verifier=verifier)
+        # A lone LIVE_OK row (no earlier stage): the store's last row looks live, the chain does not validate.
+        store.rows[(openai, ProviderActivationSurface.APP)] = [ProviderActivationEvidence(
+            schema_version=ACTIVATION_EVIDENCE_VERSION, binding=openai, surface=ProviderActivationSurface.APP,
+            stage=ProviderActivationStage.LIVE_OK, revision=1, evidence_id="lone", evidence_digest="f" * 64,
+            observed_at=NOW, expires_at=NOW + timedelta(hours=1))]
+        # A valid chain whose first stage expires first: the surface lapses with it.
+        registry = ProviderActivationRegistry(store, openai)
+        for index, stage in enumerate(ProviderActivationStage, 1):
+            registry.record(surface=ProviderActivationSurface.RUNTIME_ADAPTER, stage=stage, evidence_id=f"r-{index}",
+                            evidence_digest=hashlib.sha256(stage.value.encode()).hexdigest(),
+                            observed_at=NOW + timedelta(seconds=index),
+                            expires_at=NOW + (timedelta(minutes=10) if index == 1 else timedelta(hours=1)),
+                            now=NOW + timedelta(seconds=index))
+        surfaces = service.capture_attestations()["openai"]["surfaces"]
+        self.assertEqual(surfaces["app"], {"chain_valid": False, "capture_verified": False})
+        self.assertTrue(surfaces["runtime_adapter"]["chain_valid"])
+        self.assertEqual(surfaces["runtime_adapter"]["expires_at"], (NOW + timedelta(hours=1)).isoformat())
+        self.assertEqual(surfaces["runtime_adapter"]["chain_expires_at"], (NOW + timedelta(minutes=10)).isoformat())
 
     @contextmanager
     def capture_sources(self, store, output=b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}',
@@ -622,6 +659,9 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     " authority_snapshot_digest, document_digest, canonical_document, writer_fencing_generation)"
                     " VALUES (%s, %s, %s, %s, %s, 1)", values)
         report = self.report(tasks=[task_id])
+        # Each packet's own persisted insertion time comes back for check 20's lifecycle bound (review 4100588392).
+        recorded = [artifact.pop("recorded_at") for artifact in report["tasks"][task_id]["result_artifacts"]]
+        self.assertTrue(all(datetime.fromisoformat(value).tzinfo is not None for value in recorded))
         self.assertEqual(report["tasks"][task_id]["result_artifacts"], [
             {"assignment_id": "A1", "document_digest": rows[0][3], "outcome": packet["outcome"],
              "provider": packet["provider"], "verified": True},
@@ -782,3 +822,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
@@ -384,7 +385,10 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
     primary = health.get("langgraph_primary", {})
     if not isinstance(primary, dict):
         raise ValueError("primary health is malformed")
-    runtime = _Runtime(project, ids[0], image_id, runtime_sha, _when(service["Created"]),
+    # The Director's evidence lives in its control-plane store as much as in the process: the bound is the later
+    # creation of the Director and the langgraph-primary-db its DSN resolves to.
+    runtime = _Runtime(project, ids[0], image_id, runtime_sha,
+                       max(_when(service["Created"]), _primary_store_created(project, service)),
                        _when(service["State"]["StartedAt"]), environment, health_url,
                        f"http://127.0.0.1:{int(port)}", health, env, runtime_tree, at, end)
     binding = runtime.binding
@@ -408,6 +412,24 @@ def _runtime(at: datetime, project: str, end: Any = None) -> tuple[list[Observat
     result.append(_observation("19", active, "Observed paid switch and operational primary components together.",
                                health_url, {"paid": health.get("paid_runs_enabled"), "active": active}, at, **binding))
     return result, runtime
+
+
+def _primary_store_created(project: str, director: dict[str, Any]) -> datetime:
+    """Creation time of the Director's control-plane store: the deployment's one running langgraph-primary-db,
+    which the host of the Director's LANGGRAPH_PRIMARY_POSTGRES_DSN names and no other container answers (the same
+    hop rule as n8n's store). Evidence read from it is bounded by its creation, as 04 bounds n8n's executions."""
+    stores = _compose_ids(project, "langgraph-primary-db")
+    ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
+    if (len(stores) != 1 or not ids or len(ids) > 128
+            or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)):
+        raise ValueError("the selected deployment does not run exactly one primary database")
+    containers = _run_json(["docker", "inspect", *ids])
+    store = next((row for row in containers if row.get("Id") == stores[0]), None)
+    host = urlsplit(_environment(director).get("LANGGRAPH_PRIMARY_POSTGRES_DSN", "")).hostname
+    if (store is None or (store.get("State") or {}).get("Running") is not True or not host
+            or _hop(director, store, host, containers) is not True):
+        raise ValueError("the Director's primary DSN does not resolve to the deployment's primary database")
+    return _when(store["Created"])
 
 
 _HOST_GATEWAYS = r"""$ErrorActionPreference='Stop';
@@ -1033,15 +1055,20 @@ def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[b
             if surface is None:
                 ok, lane_facts[name] = False, None
                 continue
-            expires = _when(surface["expires_at"])
+            # The registry's validated chain lapses when any stage expires, not only the latest one.
+            expires = _chain_expiry(surface)
             lane_facts[name] = {"stage": surface.get("stage"), "expires_at": expires.isoformat(),
-                                "capture_verified": surface.get("capture_verified")}
-            # A capture not yet observed at collection time is future-dated, not current.
+                                "capture_verified": surface.get("capture_verified"),
+                                "chain_valid": surface.get("chain_valid")}
+            # A capture not yet observed, or not yet persisted, at collection time is future-dated, not current.
             observed = _when(surface["observed_at"]) if surface.get("observed_at") else None
-            # Observed no later than the collection's end, and still valid FRESH_FOR past it.
+            recorded = _when(surface["recorded_at"]) if surface.get("recorded_at") else None
+            # Observed then persisted no later than the collection's end, and still valid FRESH_FOR past it.
             end = runtime.until() or at
-            if (surface.get("stage") != "LIVE_OK" or surface.get("capture_verified") is not True
-                    or expires < end + FRESH_FOR or observed is None or observed > end):
+            if (surface.get("chain_valid") is not True or surface.get("stage") != "LIVE_OK"
+                    or surface.get("capture_verified") is not True
+                    or expires < end + FRESH_FOR or observed is None or recorded is None
+                    or not observed <= recorded <= end):
                 ok = False
         facts[lane] = lane_facts
         if not ok:
@@ -1050,6 +1077,11 @@ def _capture_verdict(at: datetime, runtime: _Runtime, captures: dict) -> tuple[b
         return False, "Missing, unverified, non-LIVE_OK or expiring captures for: " + ", ".join(stale) + ".", facts
     return True, ("Every lane's app and runtime-adapter captures are LIVE_OK, natively verified, unexpired and bound "
                   "to the manifest's provider_bindings_sha256."), facts
+
+
+def _chain_expiry(surface: dict[str, Any]) -> datetime:
+    """A surface's effective expiry: the earlier of its latest record's and its validated chain's."""
+    return min(_when(surface["expires_at"]), _when(surface["chain_expires_at"]))
 
 
 def _capture_observations(at: datetime, runtime: _Runtime, captures: dict | None,
@@ -1100,10 +1132,11 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
         surfaces = value.get("surfaces") or {}
 
         def gated(surface: Any) -> bool:
-            return (isinstance(surface, dict) and surface.get("capture_verified") is True
+            return (isinstance(surface, dict) and surface.get("chain_valid") is True
+                    and surface.get("capture_verified") is True
                     and bool(surface.get("observed_at")) and bool(surface.get("recorded_at"))
-                    and _when(surface["observed_at"]) <= min(times) <= max(times) < _when(surface["expires_at"])
-                    and _when(surface["recorded_at"]) <= min(times))
+                    and _when(surface["observed_at"]) <= min(times) <= max(times) < _chain_expiry(surface)
+                    and _when(surface["observed_at"]) <= _when(surface["recorded_at"]) <= min(times))
 
         if (not times or runtime.until() is None or max(times) > runtime.until()
                 or not all(gated(surfaces.get(name)) for name in ("app", "runtime_adapter"))):
@@ -1247,11 +1280,11 @@ def _n8n_bindings(runtime: _Runtime) -> tuple[bool | None, bool | None, str | No
 
 
 def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
-    """The runtime whose freshness bound is the latest creation of the Director, the selected gateway and
-    the deployment's n8n.
+    """The runtime whose freshness bound is the latest creation of the Director and its primary database (the
+    base bound), the selected gateway, the deployment's n8n and n8n's database.
 
-    Slack intake passes through the gateway and n8n, so a drill, trial, approval or paid run handled by a
-    predecessor of either cannot attest the one running now.
+    Slack intake passes through the gateway and n8n, whose active intake workflow lives in n8n-db, so a drill,
+    trial, approval or paid run handled by a predecessor of any of them cannot attest the one running now.
     """
     row = _run_json(["docker", "inspect", gateway])[0]
     if (row.get("Name", "").lstrip("/") != gateway or row.get("State", {}).get("Running") is not True
@@ -1269,7 +1302,14 @@ def _gateway_bound(runtime: _Runtime, gateway: str) -> _Runtime:
     relay = _run_json(["docker", "inspect", relays[0]])[0]
     if relay.get("Id") != relays[0] or relay.get("State", {}).get("Running") is not True:
         raise ValueError("the deployment's n8n is not running")
-    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"]), _when(relay["Created"])))
+    stores = _compose_ids(runtime.project, "n8n-db")
+    if len(stores) != 1:
+        raise ValueError("the selected deployment does not run exactly one n8n-db")
+    store = _run_json(["docker", "inspect", stores[0]])[0]
+    if store.get("Id") != stores[0] or store.get("State", {}).get("Running") is not True:
+        raise ValueError("the deployment's n8n-db is not running")
+    return replace(runtime, created_at=max(runtime.created_at, _when(row["Created"]), _when(relay["Created"]),
+                                           _when(store["Created"])))
 
 
 def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Observation:
@@ -1423,8 +1463,9 @@ def _blocks_text(blocks: Any) -> str:
 
 def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
     """Every Slack and readback moment a task verdict rests on: task creation and update, each delivery's
-    creation, claim, acknowledgement, delivery and owner decision, each provider attempt, the owner input
-    and the terminal replies. All of them must fall inside the freshness bound."""
+    creation, claim, acknowledgement, delivery and owner decision, each provider attempt, assignment and effect
+    moment, the gateway's intake claim, each status receipt and reconciliation event, the owner input and the
+    terminal replies: every timestamp the readback carries. All of them must fall inside the freshness bound."""
     readback = (snapshot or {}).get("readback") or {}
     row = (snapshot or {}).get("row") or {}
     moments = [_when(readback[key]) for key in ("task_created_at", "task_updated_at", "captured_at") if readback.get(key)]
@@ -1437,6 +1478,9 @@ def _moments(snapshot: dict[str, Any] | None) -> list[datetime]:
     for effect in readback.get("effects") or []:
         moments += [_when(effect[key]) for key in ("reserved_at", "execution_started_at", "bound_at",
                                                     "terminal_recorded_at") if effect.get(key)]
+    moments += [_when(item["created_at"]) for item in readback.get("intake_auth_claims") or []]
+    moments += [_when(item["created_at"]) for item in readback.get("status_receipts") or []]
+    moments += [_when(item["recorded_at"]) for item in readback.get("reconciliation_events") or []]
     stamps = [row.get("input_message_ts"), *(m.get("ts") for m in row.get("terminal_messages") or [])]
     moments += [datetime.fromtimestamp(float(Decimal(str(ts))), timezone.utc) for ts in stamps if ts]
     return moments
@@ -2064,7 +2108,8 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     revalidated against its stored digest) is the one its result digest names, its outcome text is the graded
     outcome's result and its provider the graded outcome's provider, and the packets' assignment IDs are exactly
     the durable assignments' in both directions: an orphan packet is a mismatch, a missing one is unknown (not
-    read). Any other difference is a mismatch."""
+    read). Each packet was recorded between its assignment's reservation and completion. Any other difference
+    is a mismatch."""
     entry = ((consistency or {}).get("tasks") or {}).get(facts.get("task_id"))
     artifacts = entry.get("result_artifacts") if isinstance(entry, dict) else None
     readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
@@ -2082,7 +2127,10 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         rows = [row for row in artifacts if isinstance(row, dict)
                 and row.get("assignment_id") == assignment.get("assignment_id")]
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
+        # primary_default persists the packet inside its assignment's lifecycle: after the reservation, before
+        # the settlement. Both of those are inside the freshness window (_moments), so the packet is too.
         if (len(rows) != 1 or rows[0].get("verified") is not True or len(matching) != 1
+                or not _chain(assignment.get("reserved_at"), rows[0].get("recorded_at"), assignment.get("completed_at"))
                 or not _same(rows[0].get("document_digest"), assignment.get("result_digest"))
                 or not _same(rows[0].get("provider"), matching[0].get("provider"))
                 or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
@@ -2162,6 +2210,20 @@ def _settled_cost(consistency: dict | None, paid: dict[str, Any]) -> tuple[float
     spend = entry.get("spend") or []
     if not attempts or {row.get("attempt_digest") for row in spend} != attempts:
         return None, None
+    # The spend row's only durable time is its UTC budget_day, the day PrimaryProviderBudgetAuthority.reserve ran:
+    # after the assignment was reserved and before the attempt's first event (the roster reserves, then records).
+    readback = paid.get("readback") or {}
+    reserved = {item.get("assignment_id"): item.get("reserved_at") for item in readback.get("assignments") or []}
+    for row in spend:
+        events = [event for event in readback.get("provider_attempts") or []
+                  if event.get("attempt_digest") == row.get("attempt_digest")]
+        if not events or not reserved.get(events[0].get("assignment_id")):
+            return None, None
+        first = min(_when(event["recorded_at"]) for event in events)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row.get("budget_day"))) or not (
+                _when(reserved[events[0]["assignment_id"]]).astimezone(timezone.utc).date().isoformat()
+                <= str(row.get("budget_day")) <= first.astimezone(timezone.utc).date().isoformat()):
+            return None, None
     if any(not _counter(row.get("actual_microusd")) or row.get("request_correlated") is not True
            or row.get("usage_verified") is not True for row in spend):
         return None, None
@@ -2498,6 +2560,9 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     sealed = datetime.fromisoformat(scan["sealedAt"].replace("Z", "+00:00"))
     if sealed.tzinfo is None or sealed > at:
         raise ValueError("native seal is future dated")
+    # The seal closes a completed scan: its completion time is a durable moment of the same lifecycle.
+    if _when(scan["completedAt"]) > sealed:
+        raise ValueError("native seal precedes the scan's completion")
     artifacts = scan.get("artifacts", [])
     preserved = scan.get("preservedSources", {})
     if len(artifacts) > 20 or len(preserved) > 100:
@@ -3210,3 +3275,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]

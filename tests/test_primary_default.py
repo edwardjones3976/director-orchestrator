@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
@@ -3607,14 +3608,21 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual({"payload_digest", "idempotency_key_digest", "authentication_class", "created_at"},
                          set(claims[0]))
         self.assertEqual("slack_gateway_attested", claims[0]["authentication_class"])
-        self.assertTrue(collector.intake_claim_matches(task, task["qualification_evidence"]))
+        # The owner's post is the thread root; the real claim's persisted time lies after it and no later than
+        # the task's creation (review 4100588377).
+        posted = task["intake"]["thread_ts"]
+        from datetime import datetime as moment
+        self.assertLessEqual(moment.fromisoformat(claims[0]["created_at"]),
+                             moment.fromisoformat(task["qualification_evidence"]["task_created_at"]))
+        self.assertTrue(collector.intake_claim_matches(task, task["qualification_evidence"], posted))
+        self.assertFalse(collector.intake_claim_matches(task, task["qualification_evidence"], "9999999999.000000"))
         # The mutable label without its claim attests nothing; a relabelled or edited projection neither.
         other = served[bearer.task_id]
         self.assertEqual([], other["qualification_evidence"]["intake_auth_claims"])
         self.assertFalse(collector.intake_claim_matches(
-            {**other, "intake_authentication": "slack_gateway_attested"}, other["qualification_evidence"]))
+            {**other, "intake_authentication": "slack_gateway_attested"}, other["qualification_evidence"], posted))
         self.assertFalse(collector.intake_claim_matches(
-            {**task, "intake": {**task["intake"], "text": "edited"}}, task["qualification_evidence"]))
+            {**task, "intake": {**task["intake"], "text": "edited"}}, task["qualification_evidence"], posted))
 
     def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
         import time as clock
@@ -4299,3 +4307,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
