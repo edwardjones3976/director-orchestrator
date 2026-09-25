@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation"
@@ -84,7 +85,18 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 - Any paid call that would breach USD 25; any fan-out over 3
 - Serious-safety stop
 
+## Status at the M0 gate (2026-09-25)
+
+| ID | State | Where |
+| --- | --- | --- |
+| HS-0, M0.1, M0.2, HS-1, M0.3, M0.4, M0.6, M0.7, M0.8, M0.10 | done | PRs #266-#273; numbers in `project-state-report.md` |
+| M0.3/M0.4 hardening (#275) | reviewed, ACCEPT at ed317a81 | owner merge |
+| M0.5 | containers up on 127.0.0.1:3000 and :8088; tailnet publish is an owner click | `compose/RUNBOOK.md` section 2 |
+| M0.9, M0.11 | in flight, uncommitted in worktree hl-m0-close (peer Director session) | its PR |
+| M0.12 | this report | PR with `project-state-report.md` |
+
 Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]] -->

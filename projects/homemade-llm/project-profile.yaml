@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
@@ -11,10 +12,10 @@ project:
   name: "Homemade LLM"
   rollout_packet: "rollout-packet.md"
   proposition: "Fine-tune and serve two local models on the owner's PC (RTX 5070 12 GB): DIRECTOR, which writes model-work-packet-v1 packets for this orchestrator, and COMPANION, a friend/conversational persona with long-term memory."
-  state: "framing" # exploring | framing | building | validating | operating | paused | closed
+  state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-24T07:55:00Z"
+  updated_at: "2026-09-25T23:29:00Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -244,8 +245,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Owner merges PR-0; then M0.1 scripts/preflight.ps1"
-  responsible_party: "owner"
-  expected_evidence: "main contains projects/homemade-llm/"
+  action: "Owner merges #275 and the M0 close-out PRs (this report; the peer PR with M0.9 and M0.11); then M1 held-out sets"
+  responsible_party: "owner, then Director"
+  expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]]
