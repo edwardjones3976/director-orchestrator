@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation"
@@ -18,7 +18,7 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 - **Project channel/thread:** pending (no Slack surface; analysis-only)
 - **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b84`, worktree `.worktrees\homemade-llm`
 - **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — analysis-only
-- **Deployment isolation:** no Slack app, channel, profile, or state namespace created
+- **Deployment isolation:** no Slack app or channel; Open WebUI + SearXNG run under compose namespace `homemade-llm` with the ignored profile `C:\llm\secrets\open-webui.env` and state under `C:\llm` plus volume `homemade-llm_open-webui-data` (see rollout-packet.md); no orchestrator instance
 
 ## Selected modules
 
@@ -99,4 +99,4 @@ Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:57 UTC | END]] -->

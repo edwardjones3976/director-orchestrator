@@ -1,4 +1,4 @@
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
@@ -209,9 +209,12 @@ review_chain:
   eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
   candidate:
     repository: "edwardjones3976/director-orchestrator"
-    base_sha: "9d61942c63050f886e1666887bfe6b7ba040dc61"
-    head_sha: "none"
+    # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
+    # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
+    base_sha: "f0a7752e7aa780389fb78d4e45da1125254d650e"
+    head_sha: "bound on PR #277 review-of-record comment"
     artifact_digest: "none"
+    last_merged_candidate: "PR #275 at ed317a813f85d2405738461f9f40924ff94ea28b, xAI ACCEPT, merged 2026-09-25T23:31:37Z"
   required_evidence:
     - "different-provider exact-candidate review"
     - "current security evidence when configured"
@@ -250,4 +253,4 @@ next:
   expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]]
