@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
@@ -611,6 +612,26 @@ paused and then finished has one final. The usage monitor names its
 snapshot without it is not monitored accounting. `conversations.history` ends
 only on an explicit `has_more: false` without a cursor; a missing flag or a
 missing, repeated or malformed cursor is incomplete.
+
+A collection is bounded in wall clock: `collect` sets a deadline
+`COLLECTION_SECONDS` (600) from its start, and every subprocess (`_run_bytes`:
+docker, gh, git, psql, PowerShell), the `/health` read and the Security index's
+SQLite connection take their own cap clamped to what remains (`_remaining`); a
+spent deadline reads as unavailable. Every Slack and Director HTTP read goes
+through the collector's one `drain`: HTTPX gets a timeout clamped to the
+earlier of its 10-second cap and the deadline, and the clock is checked after
+every chunk as it arrives, so a slow trickle cannot outlast it. Check 02
+exempts only the already-identified Director container, by ID, from the
+same-app gateway inventory. The Slack-intake freshness bound (03, 08, 09, 10,
+20) adds the active intake workflow's moment: the later of its active
+version's `workflow_history.createdAt` and the workflow row's `updatedAt`
+(import, edit, activation); unknown times leave those checks UNKNOWN. Check 04
+already requires the execution's recorded version to be the active one (or,
+where n8n records none, a start after both times). Check 07 counts every
+result packet attached to a durable assignment that fails revalidation, names
+another provider than the assignment's agent, or differs from a SUCCEEDED
+assignment's result digest (`result_artifacts_invalid`), validated globally
+up to 2000 rows; over the cap the count is unknown and 07 is UNKNOWN.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -968,3 +989,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]] -->

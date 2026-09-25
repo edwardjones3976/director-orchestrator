@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -437,7 +438,9 @@ def workflow_fixture():
     return {"active": True, "active_version": "active-version", "stored_version": "active-version", "http_node_count": 1,
             "supported_request": True, "static_request": True, "supported_webhook": True, "direct_connection": True,
             "nodes": nodes, "connections": json.loads(json.dumps(INTAKE_WORKFLOW["connections"])),
-            "settings": json.loads(json.dumps(INTAKE_WORKFLOW["settings"])), "pin_data": {}}
+            "settings": json.loads(json.dumps(INTAKE_WORKFLOW["settings"])), "pin_data": {},
+            # The active version was created, and the workflow last updated (import, activation), with the deployment.
+            "active_version_at": "2026-09-12T08:59:30+00:00", "workflow_updated_at": "2026-09-12T08:59:40+00:00"}
 
 
 def node(workflow_nodes, name):
@@ -632,7 +635,9 @@ class World:
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.geturl.return_value = HEALTH
-        response.read.return_value = json.dumps(self.payload).encode()
+        # An HTTP body read in chunks, as http.client serves it: the payload, then end of stream.
+        body = [json.dumps(self.payload).encode()]
+        response.read.side_effect = lambda size=-1: body.pop() if body else b""
         with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack):
             opener.return_value.open.return_value = response
@@ -964,6 +969,17 @@ class CompletionScorecardTests(unittest.TestCase):
         unknown.update(Id="4" * 64, Name="/unknown-launcher")
         unknown["Config"]["Cmd"] = ["unknown-wrapper"]
         rows.append(unknown)
+        self.assertEqual(collect_topology(rows)["checks"][1]["status"], "UNKNOWN")
+
+    def test_only_the_identified_director_is_exempt_from_the_gateway_inventory_02(self):
+        """Review summary (821-822): a same-app container is exempt only when it is the already-identified Director
+        container, by ID; a wrapper whose command also names the API is unclassified, never exempt."""
+        self.assertEqual(collect_topology(topology())["checks"][1]["status"], "PASS")
+        rows = topology()
+        wrapper = json.loads(json.dumps(rows[0]))  # the Director's command and app token, another container
+        wrapper.update(Id="4" * 64, Name="/api-and-gateway-wrapper")
+        wrapper["Config"]["Cmd"] = ["uvicorn", "director_orchestrator.main:app"]
+        rows.append(wrapper)
         self.assertEqual(collect_topology(rows)["checks"][1]["status"], "UNKNOWN")
 
     def test_wrong_channel_upstream_or_port_fails_project_route(self):
@@ -2930,6 +2946,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         facts["task"]["assignment_outcomes"][0]["provider"] = "antigravity"
         self.assertIs(sc._assignments_joined(facts, attempts=False), False)
 
+    def test_invalid_attached_packets_are_a_global_conflict_07(self):
+        """4101181027: check 07 counts attached packets that fail revalidation or disagree with their assignment
+        (result_artifacts_invalid), and an over-cap count (None) is malformed, never zero."""
+        self.assertEqual(self.world().state("07"), "PASS")
+        invalid = self.world()
+        invalid.consistency["counts"]["result_artifacts_invalid"] = 1
+        self.assertEqual(invalid.state("07"), "FAIL")
+        capped = self.world()
+        capped.consistency["counts"]["result_artifacts_invalid"] = None
+        self.assertEqual(capped.state("07"), "UNKNOWN")
+
     def test_result_packets_equal_the_durable_assignment_set_07_20(self):
         """4100381678: a result packet for no durable assignment is a conflict, for the task (20) and globally (07)."""
         self.assertEqual([self.world().state(key) for key in ("07", "20")], ["PASS", "PASS"])
@@ -3105,6 +3132,93 @@ class ScorecardCollectorTests(unittest.TestCase):
                  "task": {"assignment_outcomes": [{"assignment_sequence": 1, "run_id": "offline-double:sha256:x",
                                                    "result": "L"}, {"assignment_sequence": 9}]}}
         self.assertIs(sc._offline_outcomes_bound(facts, "L"), False)
+
+    def test_every_blocking_read_ends_by_the_collection_deadline(self):
+        """4101181033: a streamed read checks its clock after every chunk and gives HTTPX a timeout clamped to what
+        remains, so a slow trickle cannot outlast the deadline; subprocesses, the health read and SQLite are
+        clamped the same way through _remaining."""
+        collector = tf.collector_module
+        seen = []
+
+        class Trickle(httpx.SyncByteStream):
+            def __iter__(self):
+                while True:  # one byte every 50 ms, each well inside any per-read timeout
+                    time.sleep(0.05)
+                    yield b" "
+
+        def handle(request):
+            seen.append(request.extensions["timeout"])
+            return httpx.Response(200, stream=Trickle())
+
+        with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+            reads = collector.Collector(client, None, dict(tf.ENV))
+            reads.deadline = time.monotonic() + 0.4
+            started = time.monotonic()
+            with self.assertRaisesRegex(ValueError, "byte/time bound"):
+                reads.drain(collector.SLACK + "conversations.replies", {}, "fixture-slack-secret")
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertTrue(all(0 < value <= 0.4 for value in seen[0].values() if value is not None), seen)
+            reads.deadline = time.monotonic() - 1  # a spent deadline issues no request at all
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                reads.drain(collector.SLACK + "conversations.replies", {}, "fixture-slack-secret")
+            self.assertEqual(len(seen), 1)
+        import sys
+        sc._DEADLINE[0] = time.monotonic() + 1
+        try:
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                sc._run_bytes([sys.executable, "-c", "import time; time.sleep(30)"], timeout=60)
+            self.assertLess(time.monotonic() - started, 10)
+
+            class Slow:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def geturl(self):
+                    return HEALTH
+
+                def read(self, size=-1):
+                    time.sleep(0.05)
+                    return b" "
+
+            sc._DEADLINE[0] = time.monotonic() + 0.4
+            started = time.monotonic()
+            with patch.object(sc, "build_opener") as opener, self.assertRaisesRegex(ValueError, "time bound"):
+                opener.return_value.open.return_value = Slow()
+                sc._health(HEALTH, "local")
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertLessEqual(opener.return_value.open.call_args.kwargs["timeout"], 0.4)
+            sc._DEADLINE[0] = time.monotonic() - 1
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                sc._run_bytes([sys.executable, "-c", "print(1)"])
+        finally:
+            sc._DEADLINE[0] = None
+        # collect() owns the deadline for exactly its own run.
+        self.assertIsNone(sc._DEADLINE[0])
+        world = self.world()
+        observed = []
+        real = sc._remaining
+        with patch.object(sc, "_remaining", side_effect=lambda cap: observed.append(sc._DEADLINE[0]) or real(cap)):
+            world.observe()
+        self.assertTrue(observed and all(value is not None for value in observed))
+        self.assertIsNone(sc._DEADLINE[0])
+
+    def test_slack_evidence_postdates_the_active_intake_workflow_03_08_09_10_20(self):
+        """4101181025: a thread handled before the active intake workflow version existed (imported or activated
+        without recreating n8n) ran a previous version; the version's time joins the freshness bound."""
+        cases = ("03", "08", "09", "10", "20")
+        self.assertEqual([self.world().state(key) for key in cases], ["PASS"] * len(cases))
+        for field in ("active_version_at", "workflow_updated_at"):
+            case = self.world()
+            case.workflow[field] = "2026-09-12T19:30:00+00:00"  # after every thread in the world
+            with self.subTest(field=field):
+                self.assertEqual([case.state(key) for key in cases], ["UNKNOWN"] * len(cases))
+        unknown = self.world()
+        unknown.workflow["active_version_at"] = None
+        self.assertEqual([unknown.state(key) for key in cases], ["UNKNOWN"] * len(cases))
 
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
@@ -3695,3 +3809,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]

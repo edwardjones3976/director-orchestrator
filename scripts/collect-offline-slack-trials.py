@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -156,17 +157,9 @@ class Collector:
         else:
             raise ValueError("Unsupported source")
         started = utc()
-        end = min(self.deadline, time.monotonic() + 10)
-        with self.client.stream("GET", url, params=params,
-                headers={"Authorization": "Bearer " + token}) as response:
-            body = bytearray()
-            for chunk in response.iter_bytes(8192):
-                body.extend(chunk)
-                if len(body) > MAX_BYTES or time.monotonic() >= end:
-                    raise ValueError("Read exceeded byte/time bound")
-            headers = {key: value for key, value in response.headers.items()
-                       if key.lower().startswith("x-primary-") or key.lower() == "x-task-engine-owner"}
-            status = response.status_code
+        status, raw_headers, body = self.drain(url, params, token)
+        headers = {key: value for key, value in raw_headers.items()
+                   if key.lower().startswith("x-primary-") or key.lower() == "x-task-engine-owner"}
         finished = utc()
         reference = {"file": None, "source": url, "http_status": status,
             "body_sha256": digest(body), "original_sha256": None,
@@ -185,6 +178,26 @@ class Collector:
         if status != 200:
             raise ValueError("Source did not return HTTP 200")
         return json.loads(body), headers
+
+    def drain(self, url, params, token, cap=10):
+        """One streamed GET, bounded in bytes and in wall clock. The read ends by the earlier of its own cap and
+        the collection deadline: HTTPX gets a timeout clamped to what remains (so no connect or single read can
+        wait past it), and the clock is checked after every chunk (so a slow trickle, each chunk inside the
+        per-read timeout, cannot keep the read open past it either)."""
+        now = time.monotonic()
+        end = min(self.deadline, now + cap)
+        if now >= end:
+            raise ValueError("Collection deadline reached")
+        with self.client.stream("GET", url, params=params, headers={"Authorization": "Bearer " + token},
+                                timeout=end - now) as response:
+            body = bytearray()
+            # No chunk_size: iter_bytes(n) buffers until n bytes arrive, so a trickle would never reach the clock
+            # check; unsized, each chunk is handed over as it arrives.
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_BYTES or time.monotonic() >= end:
+                    raise ValueError("Read exceeded byte/time bound")
+            return response.status_code, dict(response.headers), bytes(body)
 
     def replies(self, thread):
         messages, cursors = {}, set()
@@ -1375,3 +1388,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]

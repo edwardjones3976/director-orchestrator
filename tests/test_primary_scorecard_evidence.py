@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
@@ -681,7 +682,19 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     " provider_id, deployment_id, dependencies, write_surfaces, retry_limit, status)"
                     " VALUES (%s, %s, %s, 'claude', 'fixture', '[]'::jsonb, '[]'::jsonb, 3, 'PENDING')",
                     (task_id, assignment, sequence))
-        self.assertEqual(self.report()["counts"]["result_artifacts_without_assignment"], 0)
+        attached = self.report()["counts"]
+        self.assertEqual(attached["result_artifacts_without_assignment"], 0)
+        # Review 4101181027: every attached packet is revalidated globally, whatever tasks were selected. A2's
+        # stored document no longer matches its digest; A1 is the claude packet a claude assignment settled.
+        self.assertEqual(attached["result_artifacts_invalid"], 1)
+        with self.handle.pool.connection() as connection:
+            # A1's assignment ran another provider's lane: its packet no longer agrees with it.
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET provider_id='openai'"
+                               " WHERE task_id=%s AND assignment_id='A1'", (task_id,))
+        self.assertEqual(self.report()["counts"]["result_artifacts_invalid"], 2)
+        # Past the row cap the count is unknown (None), never a partial number.
+        with patch.object(evidence, "ARTIFACT_VALIDATION_CAP", 1):
+            self.assertIsNone(self.report()["counts"]["result_artifacts_invalid"])
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -823,3 +836,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]

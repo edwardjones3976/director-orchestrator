@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
@@ -211,6 +212,41 @@ def _require_instance(connection, schema, identity):
                                    instance_id=identity.database_instance_id)
 
 
+# Every attached result packet is revalidated in the snapshot, globally; past this many rows the count is unknown.
+ARTIFACT_VALIDATION_CAP = 2000
+_ATTACHED_ARTIFACTS = """SELECT r.task_id, r.assignment_id, r.authority_snapshot_digest, r.document_digest,
+ r.canonical_document, r.writer_fencing_generation, x.provider_id AS assignment_provider_id,
+ x.status AS assignment_status, x.result_digest AS assignment_result_digest
+FROM {s}.director_primary_result_packet_artifact r JOIN {s}.director_primary_parallel_assignment x
+ ON x.task_id=r.task_id AND x.assignment_id=r.assignment_id
+ORDER BY r.task_id, r.assignment_id LIMIT %(limit)s"""
+
+
+def _invalid_attached_artifacts(connection, schema):
+    """How many result packets attached to a durable assignment are not what that assignment settled: the stored
+    canonical document fails revalidation against its digest (as the Director reloads it, which also binds the
+    packet's task and assignment IDs to the row), its provider is not the assignment's agent (the lane mapped as
+    primary_default records it), or a SUCCEEDED assignment names another result digest. None when more rows exist
+    than ARTIFACT_VALIDATION_CAP, so the count fails closed instead of validating a subset."""
+    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row
+    from .primary_default import _PRIMARY_LANE_AGENT
+    rows = connection.execute(_ATTACHED_ARTIFACTS.format(s=schema), {"limit": ARTIFACT_VALIDATION_CAP + 1}).fetchall()
+    if len(rows) > ARTIFACT_VALIDATION_CAP:
+        return None
+    invalid = 0
+    for row in rows:
+        try:
+            packet = _result_packet_artifact_from_row(row).packet
+        except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
+            invalid += 1
+            continue
+        agent = _PRIMARY_LANE_AGENT.get(str(row["assignment_provider_id"]))
+        if (agent is None or packet.get("provider") != agent.value
+                or (row["assignment_status"] == "SUCCEEDED" and row["assignment_result_digest"] != row["document_digest"])):
+            invalid += 1
+    return invalid
+
+
 def consistency_report(settings, identity, *, tasks=()) -> dict:
     """One REPEATABLE READ, READ ONLY snapshot of the primary control plane."""
     import psycopg
@@ -235,6 +271,7 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
         with connection.transaction():
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
+            invalid_artifacts = _invalid_attached_artifacts(connection, schema)
             if tasks:
                 present = connection.execute(
                     "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage,"
@@ -301,7 +338,9 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                            "image_id": os.environ.get("DIRECTOR_RUNTIME_IMAGE_ID")},
             "captured_at": _plain(counts["captured_at"]),
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
-            "counts": {key: int(counts[key]) for key in _COUNT_KEYS},
+            # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
+            "counts": {**{key: int(counts[key]) for key in _COUNT_KEYS},
+                       "result_artifacts_invalid": invalid_artifacts},
             "tasks": per_task}
 
 
@@ -445,3 +484,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]

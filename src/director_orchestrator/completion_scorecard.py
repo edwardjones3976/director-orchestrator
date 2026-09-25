@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -189,10 +190,28 @@ def _when(value: Any) -> datetime:
     return parsed
 
 
+# The running collection's monotonic deadline (set by collect); None outside a collection.
+COLLECTION_SECONDS = 600
+_DEADLINE: list[float | None] = [None]
+
+
+def _remaining(cap: float) -> float:
+    """One blocking call's wall-clock allowance: its own cap, clamped to what remains of the collection. A spent
+    collection raises, so the source reads as unavailable."""
+    if _DEADLINE[0] is None:
+        return cap
+    left = _DEADLINE[0] - time.monotonic()
+    if left <= 0:
+        raise ValueError("collection deadline reached")
+    return min(cap, left)
+
+
 def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
     """Run one read-only command (no shell, stdin closed, no retries). Both pipes are streamed and capped at
     MAX_BYTES while the child runs: an overflow on either kills it at once, and an overflow, timeout or failure
-    raises, so the source reads as unavailable and nothing partial is parsed. stderr is never returned."""
+    raises, so the source reads as unavailable and nothing partial is parsed. stderr is never returned. Its wall
+    clock is its timeout clamped to the collection deadline."""
+    timeout = _remaining(timeout)
     process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     overflow = threading.Event()
@@ -234,12 +253,17 @@ def _health(url: str, environment: str) -> dict[str, Any]:
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
 
-    with build_opener(NoRedirect).open(url, timeout=5) as response:
+    allowance = _remaining(5)
+    end = time.monotonic() + allowance
+    with build_opener(NoRedirect).open(url, timeout=allowance) as response:
         if response.geturl() != url:
             raise ValueError("health endpoint redirected")
-        raw = response.read(MAX_BYTES + 1)
-    if len(raw) > MAX_BYTES:
-        raise ValueError("health response exceeds its bound")
+        raw = bytearray()
+        # Chunked, with the clock checked after each chunk: a slow trickle cannot outlast the allowance.
+        while chunk := response.read(65536):
+            raw += chunk
+            if len(raw) > MAX_BYTES or time.monotonic() >= end:
+                raise ValueError("health response exceeds its byte or time bound")
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("environment") != environment:
         raise ValueError("endpoint is not the selected deployment's Director")
@@ -440,8 +464,9 @@ $matches=@($p | Where-Object { $_.CommandLine -match '(?i)(director_orchestrator
 @{inspected=$p.Count;unreadable=$missing;gateway_process_count=$matches.Count} | ConvertTo-Json -Compress
 """
 _UPSTREAM_HEALTH = """fetch('http://orchestrator:8080/health',{signal:AbortSignal.timeout(5000),redirect:'error'}).then(async r=>{if(!r.ok)throw Error('health'); const b=await r.text();if(b.length>1048576)throw Error('bound'); const h=JSON.parse(b);console.log(JSON.stringify({environment:h.environment}));}).catch(()=>{process.exitCode=1;});"""
-_ACTIVE_INTAKE = """BEGIN READ ONLY; SET LOCAL search_path TO public;
+_ACTIVE_INTAKE = """BEGIN READ ONLY; SET LOCAL search_path TO public; SET LOCAL TimeZone TO 'UTC';
 SELECT json_build_object('active',w.active,'active_version',w."activeVersionId",'stored_version',h."versionId",
+'active_version_at',h."createdAt"::timestamptz,'workflow_updated_at',w."updatedAt"::timestamptz,
 'http_node_count',(SELECT count(*) FROM json_array_elements(h.nodes::json) n WHERE n->>'type'='n8n-nodes-base.httpRequest'),
 'static_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'url' LIKE 'http%' AND n->'parameters'->>'url' NOT LIKE '%{{%'),
 'supported_request',EXISTS(SELECT 1 FROM json_array_elements(h.nodes::json) n WHERE n->>'name'='Create Director Task' AND n->>'type'='n8n-nodes-base.httpRequest' AND n->'parameters'->>'method'='POST' AND n->'parameters'->>'url'='http://orchestrator:8080/v1/intake'),
@@ -651,12 +676,17 @@ def _relay_route_ok(relay: Any, n8n: dict[str, Any] | None) -> bool:
             and not relay.username and not relay.password and not relay.query and not relay.fragment)
 
 
-def _intake_route_verified(runtime: _Runtime, gateway: str) -> bool | None:
+def _intake_route_verified(runtime: _Runtime, gateway: str) -> tuple[bool | None, datetime | None]:
     """Check 01's route predicates, re-evaluated now for the Slack-derived checks (03, 08, 09, 10, 20).
 
     The selected gateway's relay URL, its credentials, the gateway-to-n8n and n8n-to-Director hops, n8n's
     own execution store, and the active intake workflow version equal to the candidate's workflow file.
     Historical Slack evidence says nothing about an intake route that no longer holds.
+
+    Returns the verdict and, when verified, the moment the active intake workflow took its current form: the later
+    of its active version's creation (workflow_history.createdAt) and the workflow row's last update (n8n updates it
+    on import, edit and activation). A thread handled before that moment ran a previous workflow version, so it is
+    part of the freshness bound, like a container's creation.
     """
     ids = _run_bytes(["docker", "ps", "-q", "--no-trunc"]).decode().split()
     if not ids or len(ids) > 128 or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
@@ -671,23 +701,29 @@ def _intake_route_verified(runtime: _Runtime, gateway: str) -> bool | None:
     n8n, databases = service("n8n"), service("n8n-db")
     director = next((row for row in containers if row.get("Id") == runtime.container_id), None)
     if gate is None or director is None or len(n8n) != 1 or len(databases) != 1:
-        return None
+        return None, None
     env = _environment(gate)
     relay = urlsplit(env.get("N8N_DIRECTOR_WEBHOOK_URL", ""))
     if not _relay_route_ok(relay, n8n[0]) or not _gateway_credentials_match(env, runtime.env):
-        return False
+        return False, None
     hops = (_hop(gate, n8n[0], relay.hostname, containers), _hop(n8n[0], director, "orchestrator", containers),
             _n8n_store(n8n[0], databases[0], containers))
     if not all(hop is True for hop in hops):
-        return False if False in hops else None
+        return (False if False in hops else None), None
     workflow = _run_json(["docker", "exec", databases[0]["Id"], "psql", "-U", "n8n", "-d", "n8n",
                           "-X", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", _ACTIVE_INTAKE])
     if (not isinstance(workflow, dict) or workflow.get("active") is not True or not workflow.get("active_version")
             or workflow.get("active_version") != workflow.get("stored_version")):
-        return False
-    return _workflow_matches(runtime.runtime_sha, "director-intake.json", workflow.get("nodes"),
-                             workflow.get("connections"), settings=workflow.get("settings"),
-                             pin_data=workflow.get("pin_data"))
+        return False, None
+    matches = _workflow_matches(runtime.runtime_sha, "director-intake.json", workflow.get("nodes"),
+                                workflow.get("connections"), settings=workflow.get("settings"),
+                                pin_data=workflow.get("pin_data"))
+    marks = (workflow.get("active_version_at"), workflow.get("workflow_updated_at"))
+    if matches is not True:
+        return matches, None
+    if not all(isinstance(mark, str) for mark in marks):
+        return None, None  # the active version's time is unknown, so no thread can be shown to postdate it
+    return True, max(_when(mark) for mark in marks)
 
 
 def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: str,
@@ -815,10 +851,11 @@ def _topology_observations(at: datetime, runtime: _Runtime, expected_gateway: st
             continue
         if other != app:
             continue
-        command = (row.get("Config", {}).get("Entrypoint") or []) + (row.get("Config", {}).get("Cmd") or [])
         if _gateway_launch(row):
             matches.append(row.get("Id"))
-        elif "director_orchestrator.main:app" not in command:
+        elif not _same(row.get("Id"), runtime.container_id):
+            # Only the already-identified Director container is exempt, by its exact ID: any other same-app
+            # container (a wrapper that also launches the API, say) is unclassified, never exempted by its command.
             unknown += 1
     host = None
     try:
@@ -865,6 +902,9 @@ class _SlackThreads:
         self.client = client or httpx.Client(timeout=5, follow_redirects=False, trust_env=False)
         try:
             self.reads = self.m.Collector(self.client, None, self.env)
+            # Its reads end by the scorecard's collection deadline too, never only by the collector's own.
+            if _DEADLINE[0] is not None:
+                self.reads.deadline = min(self.reads.deadline, _DEADLINE[0])
             auth, _ = self.reads.get(self.m.SLACK + "auth.test")
             if (auth.get("ok") is not True or not re.fullmatch(r"[UW][A-Z0-9]+", str(auth.get("user_id", "")))
                     or not re.fullmatch(r"B[A-Z0-9]+", str(auth.get("bot_id", "")))):
@@ -885,15 +925,10 @@ class _SlackThreads:
         return self.reads.get(self.api + "/v1/primary/tasks/" + task_id + "/deliveries")[0]
 
     def _get(self, url: str, params: dict[str, str], token: str) -> tuple[int, bytes]:
-        if time.monotonic() >= self.reads.deadline:
-            raise ValueError("collection deadline reached")
-        with self.client.stream("GET", url, params=params, headers={"Authorization": "Bearer " + token}) as response:
-            body = bytearray()
-            for chunk in response.iter_bytes(8192):
-                body.extend(chunk)
-                if len(body) > MAX_BYTES:
-                    raise ValueError("response exceeds its bound")
-            return response.status_code, bytes(body)
+        # The collector's one bounded read: bytes, a per-chunk clock check and an HTTPX timeout clamped to the
+        # earlier of its own cap and the collection deadline.
+        status, _, body = self.reads.drain(url, params, token)
+        return status, body
 
     def history(self, oldest: str, latest: str) -> list[dict[str, Any]]:
         """Top-level --channel messages between two timestamps, inclusive; at most five pages."""
@@ -977,7 +1012,7 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
-                "result_artifacts_without_assignment",
+                "result_artifacts_without_assignment", "result_artifacts_invalid",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -2444,7 +2479,10 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     route_verified: bool | None = None
     if not gateway_unbound:
         try:
-            route_verified = _intake_route_verified(director_runtime, gateway)
+            route_verified, activated = _intake_route_verified(director_runtime, gateway)
+            if activated is not None:
+                # Slack intake evidence must postdate the active intake workflow version as well as the containers.
+                runtime = replace(runtime, created_at=max(runtime.created_at, activated))
         except _SOURCE_ERRORS:
             route_verified = None
     try:
@@ -2584,7 +2622,7 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     index = _native_security_index()
     if not index.is_file() or index.is_symlink():
         raise ValueError("native Security index unavailable")
-    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
+    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(5))) as db:
         db.row_factory = sqlite3.Row
         row = db.execute("SELECT id,status,scan_dir,target_path,target_revision,mode,diff_base_revision,"
                          "diff_head_revision,seal_manifest_digest,completed_at FROM scans WHERE id=?", (scan_id,)).fetchone()
@@ -2909,7 +2947,17 @@ def _workload_observation(path: Path, at: datetime) -> list[Observation]:
             _observation("14", passed14, explanation14, source, facts14, at)]
 
 
-def collect(candidate_sha: str, *, deployment: str | None = None, channel: str | None = None,
+def collect(candidate_sha: str, **options: Any) -> list[Observation]:
+    """One collection, bounded in wall clock: every subprocess, HTTP read and database connection it makes is
+    clamped to COLLECTION_SECONDS from its start (_remaining), and a spent deadline reads as unavailable."""
+    _DEADLINE[0] = time.monotonic() + COLLECTION_SECONDS
+    try:
+        return _collect(candidate_sha, **options)
+    finally:
+        _DEADLINE[0] = None
+
+
+def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str | None = None,
             now: datetime | None = None, github: bool = False, ledger_path: Path | None = None,
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
             drill_threads: dict[str, str] | None = None, approval_task: str | None = None,
@@ -3328,3 +3376,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
