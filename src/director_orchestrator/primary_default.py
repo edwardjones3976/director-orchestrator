@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -192,6 +193,7 @@ from .policy import (
     canonical_repository,
     preview_plan,
     SMALL_TASK_PRODUCER_ONLY_LANES,
+    plan_within_limits,
     small_read_only_eligible,
     small_task_packet_read_only,
     _canonical_prestage_record,
@@ -2751,10 +2753,7 @@ class DefaultPrimaryApplication:
             ),
             "eligibility": small_read_only_eligible(
                 record, settings, compact_view_lanes=self._compact_view_lanes),
-            "bounds": (
-                plan.max_hops <= settings.max_agent_hops
-                and plan.max_revisions <= settings.max_revisions
-            ),
+            "bounds": plan_within_limits(plan, settings),
             "verification": (
                 _SHA40.fullmatch(self.authority.starting_sha) is not None
                 and self.authority.authority_snapshot_digest.startswith("sha256:")
@@ -4870,3 +4869,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

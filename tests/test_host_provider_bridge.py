@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -930,6 +931,35 @@ class HostProviderBridgeTests(unittest.TestCase):
         # A bridge that reports nothing attests nothing.
         self.assertEqual({}, respond({}).read_only_attested)
 
+    def test_a_widening_argument_voids_an_otherwise_complete_restriction_set(self) -> None:
+        """Every restriction plus --yolo (or any forbidden argument) attests nothing."""
+
+        from director_orchestrator.bridge_attestation import FORBIDDEN_ARGS, read_only_attested
+        from director_orchestrator.native_acceptance_streams import GROK_DENY_TOOLS
+
+        full = {
+            "grok": ["grok.exe", "--permission-mode", "plan", "--max-turns", "1",
+                     "--disable-web-search", "--no-subagents",
+                     "--disallowed-tools", GROK_DENY_TOOLS, "--deny", "Bash", "--deny", "Edit",
+                     "--deny", "Write", "--deny", "MCPTool"],
+            "claude": ["claude.exe", "--print", "--permission-mode", "plan", "--tools", "",
+                       "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--safe-mode"],
+        }
+        self.assertIn("--yolo", FORBIDDEN_ARGS)
+        for lane, argv in full.items():
+            self.assertTrue(read_only_attested(lane, argv))
+            extras = [[flag] for flag in sorted(FORBIDDEN_ARGS)]
+            extras += [[f"{flag}=true"] for flag in sorted(FORBIDDEN_ARGS) if flag.startswith("--")]
+            extras += [["--YOLO"], ["--allowedTools", "Bash"], ["--allowedTools=Bash"],
+                       ["--permission-mode", "bypassPermissions"],
+                       ["--permission-mode=bypassPermissions"],
+                       ["--permission-mode", "acceptEdits"]]
+            for extra in extras:
+                for position in (1, len(argv)):
+                    with self.subTest(lane=lane, extra=extra, position=position):
+                        self.assertFalse(read_only_attested(
+                            lane, [*argv[:position], *extra, *argv[position:]]))
+
     def test_the_claude_restriction_set_cannot_be_configured_on_the_bridge(self) -> None:
         """Its empty --tools value is an empty argv item, which the executor refuses."""
 
@@ -1373,3 +1403,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

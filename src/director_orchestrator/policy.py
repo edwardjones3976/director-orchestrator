@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -758,6 +759,13 @@ def _read_only_request(text: str) -> bool:
     )
 
 
+def plan_within_limits(plan: DirectorPlan, settings: Settings) -> bool:
+    """Whether a frozen plan's hop and revision limits fit the current settings."""
+
+    return (plan.max_hops <= settings.max_agent_hops
+            and plan.max_revisions <= settings.max_revisions)
+
+
 def small_read_only_eligible(
     record: TaskRecord,
     settings: Settings,
@@ -783,8 +791,9 @@ def small_read_only_eligible(
     mutating verb); no external effect
     or draft pull request, exactly one
     non-implementation producer and one independent reviewer from another
-    provider family, both on lanes that send the compact view, and a frozen
-    plan total within the small-task ceiling.
+    provider family, both on lanes that send the compact view, a frozen
+    plan total within the small-task ceiling, and frozen hop and revision
+    limits within the current ``MAX_AGENT_HOPS`` and ``MAX_REVISIONS``.
 
     ``compact_view_lanes`` is required. ``None`` evaluates the plan alone and
     is only for advisory text; a membership decision always passes the lanes.
@@ -813,6 +822,7 @@ def small_read_only_eligible(
         or record.intake.primary_public_research_query is not None
         or record.intake.primary_required_capabilities
         or len(plan.assignments) != 2
+        or not plan_within_limits(plan, settings)
         or not _read_only_request(record.intake.text)
     ):
         return False
@@ -2065,3 +2075,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

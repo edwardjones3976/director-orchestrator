@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -819,6 +820,11 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual("small_task_pre_authorization_lapsed", refusal(self.ledger, stricter))
         self.assertEqual("small_task_pre_authorization_lapsed",
                          refusal(self.ledger, lanes={"claude"}))
+        # Restarted under a lower hop or revision ceiling than the plan froze.
+        plan = record.plan
+        for lowered in (replace(self.settings, max_agent_hops=plan.max_hops - 1),
+                        replace(self.settings, max_revisions=plan.max_revisions - 1)):
+            self.assertEqual("small_task_pre_authorization_lapsed", refusal(self.ledger, lowered))
         # Restarted with the ledger omitted or unreadable: refused even when
         # the task still qualifies, since its trips could not be recorded.
         self.assertEqual("small_task_pre_authorization_unaudited", refusal(None))
@@ -5817,3 +5823,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

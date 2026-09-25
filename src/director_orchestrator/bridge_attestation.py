@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 """Read-only CLI restriction sets for host-bridge lanes in the small class.
@@ -48,10 +49,17 @@ READ_ONLY_REQUIREMENTS: dict[str, dict[str, object]] = {
         "repeated": {"--deny": ("Bash", "Edit", "Write", "MCPTool")},
     },
 }
-# Flags that widen what the CLI may do, refused wherever they appear.
-_WIDENING = frozenset({
-    "--dangerously-skip-permissions", "--allowedTools", "--allowed-tools",
-    "--add-dir", "--enable-web-search",
+# Arguments that widen what the CLI may do, refused for every lane wherever
+# they appear, alone or as ``--flag=value``, in any letter case. The Grok
+# review argv test (test_native_acceptance_grok.py) asserts this same set is
+# absent: auto-approval (``--yolo``), permission skips, tool allow-lists, extra
+# directories, web search, resumed or imported sessions, redirected APIs,
+# schema overrides, and the ``acp``/``exec`` subcommands.
+FORBIDDEN_ARGS = frozenset({
+    "--yolo", "--dangerously-skip-permissions",
+    "--allow-dangerously-skip-permissions", "--allowedtools", "--allowed-tools",
+    "--add-dir", "--enable-web-search", "--resume", "--continue", "--api-key",
+    "--base-url", "--api", "--json-schema", "acp", "exec",
 })
 
 
@@ -68,7 +76,7 @@ def read_only_attested(provider: str, argv: Sequence[str]) -> bool:
     args = list(argv[1:])
     governed = {*required["values"], *required["switches"], *required["lists"],
                 *required["repeated"]}
-    if any(item.split("=", 1)[0] in _WIDENING for item in args):
+    if any(item.split("=", 1)[0].lower() in FORBIDDEN_ARGS for item in args):
         return False
     # Only the space-separated form the repository uses is recognised.
     if any("=" in item and item.split("=", 1)[0] in governed for item in args):
@@ -128,3 +136,4 @@ def lane_attestations(commands: Mapping[str, Sequence[str]]) -> dict[str, dict[s
     }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]

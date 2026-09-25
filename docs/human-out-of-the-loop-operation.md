@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
@@ -286,7 +287,8 @@ date, ID, or health, financial or genealogy data), or a tabular or database
 file or data-like directory, and wording that plainly names personal
 identifiers is also a deterministic `sensitive data` approval reason for every
 task; and the frozen plan total is at most $1 and within the task
-budget, with the reviewer inside its own cap.
+budget, with the reviewer inside its own cap, and the plan's frozen hop and
+revision limits are within the current `MAX_AGENT_HOPS` and `MAX_REVISIONS`.
 Model or plan output can only remove eligibility. Every plan, assignment, and
 intake model forbids extra fields, so nothing a model writes can assert it.
 "Read-only" means the packet grants only `READ_REPOSITORY`: no test
@@ -438,7 +440,15 @@ already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
 list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
 permission mode, an empty `--tools` value, `--strict-mcp-config` with an empty
 MCP configuration, and `--safe-mode`; the bridge refuses empty argv items, so
-the Claude bridge lane cannot currently be attested. This attests the CLI's
+the Claude bridge lane cannot currently be attested. An argv that carries the
+whole set is still refused if it also carries any argument in
+`FORBIDDEN_ARGS`, alone or as `--flag=value` and in any letter case:
+`--yolo`, `--dangerously-skip-permissions`,
+`--allow-dangerously-skip-permissions`, `--allowedTools`/`--allowed-tools`,
+`--add-dir`, `--enable-web-search`, `--resume`, `--continue`, `--api-key`,
+`--base-url`, `--api`, `--json-schema`, or the `acp` and `exec` subcommands.
+Any permission mode other than plan, such as `bypassPermissions` or
+`acceptEdits`, already fails the set. This attests the CLI's
 configured command line, not an operating-system sandbox: the CLI still runs as
 a host process in the bridge workspace, and the restrictions are the CLI's own
 flags. The argv is also bound into each lane's configuration digest, which the
@@ -474,7 +484,8 @@ the packet being dispatched works from the exact commit recorded as the
 pre-authorization's candidate (`small_task_pre_authorization_commit_changed`),
 and it still qualifies
 (`small_task_pre_authorization_lapsed`, for example after a restart under a
-lower reviewer cap or different lanes), rather than run without the class's
+lower reviewer cap, different lanes, or a `MAX_AGENT_HOPS` or `MAX_REVISIONS`
+below the plan's frozen hop or revision limit), rather than run without the class's
 bounds; a task whose graph keeps the button is never affected. That failure
 trips the grant. The same check runs again immediately before every provider
 send of a pre-authorized task, each retry included, and inside the transport
@@ -712,3 +723,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
