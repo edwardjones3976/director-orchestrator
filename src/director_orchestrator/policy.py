@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -593,8 +594,11 @@ def _identifier_words(text: str) -> str:
 
 # Secret-shaped values: private keys, provider and chat tokens, cloud access
 # keys, and upper-case credential variable names.
+# Token prefixes (sk-, ghp_, xox?-, AKIA) and upper-case variable names keep
+# their case: the formats themselves are case-sensitive. The key header
+# does not need to be.
 _SECRET_SHAPED = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"
+    r"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"
     r"|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b"
     r"|(?-i:\b[A-Z][A-Z0-9]*_(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)\b)"
 )
@@ -615,15 +619,16 @@ _IDENTIFIER_FORMATS = re.compile(
     r"|\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
     r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}(?![\w:])"
     r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){1,6}:(?:[0-9A-Fa-f]{1,4})?(?![\w:])"
-    r"|\b\d{1,6}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard"
-    r"|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Parkway|Pkwy|Highway|Hwy)\b"
+    r"|(?i:\b\d{1,6}\s+(?:[a-z]+\s+){1,3}(?:street|st|avenue|ave|road|rd|boulevard"
+    r"|blvd|lane|ln|drive|dr|court|ct|way|place|pl|terrace|parkway|pkwy|highway|hwy)\b)"
     r"|(?i:\b(?:born|dob|date\s+of\s+birth|birth\s*date)\b[^\n]{0,24}?"
     r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b)"
     r"|(?i:\bpassport\b[^\n]{0,24}?\b[A-Z0-9]{6,9}\b)"
-    r"|\b[A-Z]{1,2}\d{6,8}\b"
+    r"|(?i:\b[a-z]{1,2}\d{6,8}\b)"
 )
 _DIGIT_RUN = re.compile(r"(?<![\w.-])\d(?:[ -]?\d){8,18}(?![\w-]|\.\d)")
-_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b")
+# IBANs are checked case-insensitively (mod 97 reads letters in base 36).
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b", re.I)
 
 
 def _luhn(digits: str) -> bool:
@@ -2059,3 +2064,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]

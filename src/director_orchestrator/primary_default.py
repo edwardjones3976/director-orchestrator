@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -959,7 +960,7 @@ def _failed_pre_authorized_task(
     return None
 
 
-def _bounded_audit_history(ledger: Any) -> list | None:
+def _bounded_audit_history(ledger: Any, *, deadline: float | None = None) -> list | None:
     """The whole verified audit history, or None past its record or time bound.
 
     The deadline is passed into the ledger's own verifying traversal, so a
@@ -968,7 +969,9 @@ def _bounded_audit_history(ledger: Any) -> list | None:
     """
 
     history, after = [], None
-    deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+    # A caller's shared deadline is spent as given, never widened.
+    if deadline is None:
+        deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
     while True:
         # ponytail: each page re-verifies the whole chain, so the read is bounded by record count and time instead of made linear; a per-grant ledger read when history grows past it
         try:
@@ -1005,8 +1008,13 @@ def small_pre_authorization_refusal(
     record: TaskRecord, settings: Settings, ledger: Any, *,
     approval_free: bool, compact_view_lanes: Collection[str], coordinator: Any,
     packet: Mapping[str, Any] | None = None,
+    deadline: float | None = None,
 ) -> str | None:
     """Why a task a standing grant pre-authorized may not be dispatched, if at all.
+
+    ``deadline`` is the caller's shared dispatch deadline: the ledger scan and
+    the prior-task reads spend what is left of it, and with nothing left the
+    task is refused before any read.
 
     Its graph was persisted without the execution button, so nothing but this
     check stands between a restart and an unbounded run. Delegation must still
@@ -1030,8 +1038,10 @@ def small_pre_authorization_refusal(
             or Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK not in grant.classes):
         return "small_task_pre_authorization_revoked"
     agent = f"director-langgraph:{record.task_id}"
+    if deadline is not None and not deadline - monotonic() > 0:
+        return "small_task_pre_authorization_unaudited"
     try:
-        history = _bounded_audit_history(ledger)
+        history = _bounded_audit_history(ledger, deadline=deadline)
     except Exception:
         # None, unreadable, or failing verification alike.
         history = None
@@ -1085,7 +1095,8 @@ def small_pre_authorization_refusal(
             if item.outcome is RecordedOutcome.PRE_AUTHORIZED
             and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
             and item.grant_id == grant.grant_id],
-            deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+            deadline=deadline if deadline is not None
+            else monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
     except DelegationAuditDeadlineExceeded:
         return "small_task_pre_authorization_unaudited"
     if failed is not None:
@@ -4196,7 +4207,8 @@ class DefaultPrimaryActivation:
                             lapsed = small_pre_authorization_refusal(
                                 record, settings, delegation_ledger, approval_free=True,
                                 compact_view_lanes=compact_view_lanes,
-                                coordinator=coordinator, packet=packet)
+                                coordinator=coordinator, packet=packet,
+                                deadline=selected.deadline)
                             if lapsed is not None:
                                 raise WorkloadAdmissionHold(lapsed)
                         if small_class:
@@ -4257,7 +4269,8 @@ class DefaultPrimaryActivation:
                                 lapsed = small_pre_authorization_refusal(
                                     record, settings, delegation_ledger, approval_free=True,
                                     compact_view_lanes=compact_view_lanes,
-                                    coordinator=coordinator, packet=packet)
+                                    coordinator=coordinator, packet=packet,
+                                    deadline=selected.deadline)
                                 if lapsed is not None:
                                     raise WorkloadAdmissionHold(lapsed)
                         from .host_provider_bridge import HostBridgeAttestationStale
@@ -4856,3 +4869,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]

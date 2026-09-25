@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
@@ -478,7 +479,11 @@ bounds; a task whose graph keeps the button is never affected. That failure
 trips the grant. The same check runs again immediately before every provider
 send of a pre-authorized task, each retry included, and inside the transport
 before each provider request it makes (the OpenAI Responses token count and
-its generation alike); a lapse sends nothing.
+its generation alike); a lapse sends nothing. Those rechecks spend what is left
+of the dispatch's shared deadline, never a fresh window, and with nothing left
+refuse before any read. Every identifier, personal-data and credential screen
+ignores letter case except where the format itself is case-sensitive (token
+prefixes such as `AKIA`, JWTs, upper-case variable names).
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -706,3 +711,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->

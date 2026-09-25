@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -926,6 +927,38 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertIsNone(reader(large))
             self.assertEqual([4097], reads)
 
+    def test_screens_ignore_case_where_the_format_does(self) -> None:
+        """Lower, upper and mixed case of the same identifier or credential."""
+
+        from director_orchestrator.policy import (
+            _read_only_request, holds_credential, holds_identifier_format,
+            small_task_content_screened)
+
+        dash, colon = "-", ":"
+        identifiers = (
+            "meet at 123 main st today", "meet at 123 MAIN ST today",
+            "meet at 123 Main Street today", "meet at 12 elm ave today",
+            "BORN on 04/12/1987", "Dob" + colon + " 1987" + dash + "04" + dash + "12",
+            "PASSPORT ab1234567", "passport AB1234567", "id x12345678", "id X12345678",
+            "pay gb82 west 1234 5698 7654 32 now", "pay GB82WEST12345698765432 now",
+        )
+        for text in identifiers:
+            with self.subTest(identifier=text):
+                self.assertTrue(holds_identifier_format(text))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{text}.\n"))
+        pem = dash * 5 + "begin rsa " + "private key" + dash * 5
+        credentials = (
+            "BEARER " + "abcDEF123" * 3, "bearer " + "abcDEF123" * 3,
+            "AUTHORIZATION" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "authorization" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "PASSWORD=" + "s3cr3t", "Pwd=" + "s3cr3t", "PassWd = " + "s3cr3t", pem,
+        )
+        for text in credentials:
+            with self.subTest(credential=text):
+                self.assertTrue(holds_credential(text))
+                self.assertTrue(small_task_content_screened(f"# Config\n\n{text}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md with {text}."))
+
     def test_credential_bearing_formats_keep_the_button(self) -> None:
         """Built at runtime: no committed file holds a credential shape."""
 
@@ -1182,3 +1215,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]

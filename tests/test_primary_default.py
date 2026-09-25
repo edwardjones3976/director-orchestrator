@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -1196,6 +1197,43 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual("small_task_pre_authorization_tripped", small_pre_authorization_refusal(
             record, self.settings, self.ledger, approval_free=True,
             compact_view_lanes=SMALL_LANES, coordinator=failing))
+
+    def test_the_recheck_spends_the_shared_dispatch_deadline(self):
+        """Nothing left refuses before any read; what is left is passed on."""
+
+        import time as time_module
+        from director_orchestrator import primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        reads = []
+        with patch.object(self.ledger, "delegation_audit_records",
+                          side_effect=AssertionError("ledger read")):
+            self.assertEqual("small_task_pre_authorization_unaudited",
+                             small_pre_authorization_refusal(
+                                 record, self.settings, self.ledger, approval_free=True,
+                                 compact_view_lanes=SMALL_LANES,
+                                 coordinator=self.coordinator(None),
+                                 deadline=time_module.monotonic() - 1))
+        shared = time_module.monotonic() + 30
+        real_history, real_failed = module._bounded_audit_history, module._failed_pre_authorized_task
+
+        def history(ledger, *, deadline=None):
+            reads.append(("history", deadline))
+            return real_history(ledger, deadline=deadline)
+
+        def failed(coordinator, records, *, deadline=None):
+            reads.append(("tasks", deadline))
+            return real_failed(coordinator, records, deadline=deadline)
+
+        with patch.object(module, "_bounded_audit_history", history), \
+                patch.object(module, "_failed_pre_authorized_task", failed):
+            self.assertIsNone(small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None),
+                deadline=shared))
+        # Both reads spend exactly the shared deadline, never a fresh window.
+        self.assertEqual([("history", shared), ("tasks", shared)], reads)
 
     def test_the_append_verification_is_bounded_too(self):
         from director_orchestrator.store import DelegationAuditDeadlineExceeded
@@ -5778,3 +5816,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
