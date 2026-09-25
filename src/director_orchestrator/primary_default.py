@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -4042,10 +4043,13 @@ class DefaultPrimaryActivation:
                         )
                         try:
                             prepare_small_task_view(packet)
-                        except SmallTaskViewUnavailable:
-                            return ParallelDispatchOutcome(
-                                ParallelAssignmentStatus.FAILED, None,
-                                "small_task_named_contents_unavailable")
+                        except SmallTaskViewUnavailable as exc:
+                            # A read that may be transient, before any
+                            # reservation or provider request: an owner hold
+                            # that ran nothing, never a failed task.
+                            from .primary_workload import WorkloadAdmissionHold
+                            raise WorkloadAdmissionHold(
+                                "small_task_named_contents_unavailable") from exc
                         except PacketContractError:
                             return ParallelDispatchOutcome(
                                 ParallelAssignmentStatus.FAILED, None,
@@ -5036,3 +5040,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

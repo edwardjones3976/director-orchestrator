@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
@@ -335,26 +336,34 @@ class ProvenNoRunTests(unittest.TestCase):
 
         started = event("b", "d2", "STARTED", "provider_attempt_started")
         refused = event("b", "d2", "FAILED", "provider_refused_before_io")
-        held = {"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"}
+        held = {"a": "OWNER_DECISION_REQUIRED", "b": "BLOCKED"}
+        reviewer_held = {"a": "BLOCKED", "b": "OWNER_DECISION_REQUIRED"}
+        # Nothing reserved, or every attempt refused before any request.
         self.assertTrue(_proven_no_run(held, []))
-        self.assertTrue(_proven_no_run(held, [started, refused]))
-        # The producer's own attempts do not matter once it succeeded.
-        self.assertTrue(_proven_no_run(
-            held, [event("a", "d1", "FAILED", "provider_transient_transport_failure"),
-                   started, refused]))
+        self.assertTrue(_proven_no_run(reviewer_held, [started, refused]))
         for name, (statuses, events) in {
-            "left_started": (held, [started]),
-            "transient_failure": (held, [started, event(
+            # A provider ran anywhere in the task: an incomplete task, not a
+            # no-run, whatever happened to the rest.
+            "producer_succeeded": ({"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"},
+                                   [started, refused]),
+            "producer_succeeded_nothing_reserved": (
+                {"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"}, []),
+            "producer_transient_then_held": (held, [event(
+                "a", "d1", "FAILED", "provider_transient_transport_failure")]),
+            "left_started": (reviewer_held, [started]),
+            "transient_failure": (reviewer_held, [started, event(
                 "b", "d2", "FAILED", "provider_transient_transport_failure")]),
-            "ambiguous_attempt": (held, [started, event("b", "d2", "AMBIGUOUS", "x")]),
+            "ambiguous_attempt": (reviewer_held, [started, event("b", "d2", "AMBIGUOUS", "x")]),
             "failed_assignment": ({"a": "FAILED", "b": "BLOCKED"}, []),
             "ambiguous_assignment": ({"a": "AMBIGUOUS", "b": "BLOCKED"}, []),
             "all_succeeded": ({"a": "SUCCEEDED", "b": "SUCCEEDED"}, []),
-            "second_attempt_started": (held, [started, refused, event(
+            "only_blocked": ({"a": "BLOCKED", "b": "BLOCKED"}, []),
+            "second_attempt_started": (reviewer_held, [started, refused, event(
                 "b", "d3", "STARTED", "provider_attempt_started")]),
         }.items():
             with self.subTest(case=name):
                 self.assertFalse(_proven_no_run(statuses, events))
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -370,3 +379,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -495,7 +496,28 @@ class BridgeClaimStore:
                 if tuple(row[:6]) != bindings:
                     connection.rollback()
                     raise HostProviderBridgeError("idempotency key binding conflict")
+                stored = connection.execute(
+                    "SELECT attested_argv_digest, attempt_budget_usd, total_token_limit "
+                    "FROM bridge_attempt_limits WHERE idempotency_digest = ?",
+                    (request.idempotency_digest,),
+                ).fetchone()
                 connection.commit()
+                if (None if stored is None else tuple(stored)) != _attempt_limits(request):
+                    # Signed under a different attestation or different
+                    # limits than the attempt this key claimed: never
+                    # replayed. An AMBIGUOUS attempt stays ambiguous; one
+                    # that ran (SUCCEEDED) is refused as a binding conflict,
+                    # never as a no-run, because its command did run; only a
+                    # REFUSED attempt, which ran nothing, is the signed
+                    # attestation refusal.
+                    if row[6] == "REFUSED":
+                        raise HostProviderBridgeAttestationMismatch(
+                            "replay attestation or limits differ from the claimed attempt")
+                    if row[6] == "SUCCEEDED":
+                        raise HostProviderBridgeError(
+                            "replay attestation or limits differ from the claimed attempt")
+                    raise HostProviderBridgeAmbiguous(
+                        "host provider attempt is not safely replayable")
                 if row[6] == "SUCCEEDED" and isinstance(row[7], bytes):
                     return row[7]
                 if row[6] == "REFUSED":
@@ -507,12 +529,13 @@ class BridgeClaimStore:
                 "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
                 (request.idempotency_digest, *bindings, int(time.time())),
             )
-            if getattr(request, "total_token_limit", ""):
-                # The limits a small task's attempt was admitted under.
+            limits = _attempt_limits(request)
+            if limits is not None:
+                # The attestation and limits this attempt was claimed under;
+                # a replay must carry exactly these.
                 connection.execute(
                     "INSERT INTO bridge_attempt_limits VALUES (?, ?, ?, ?)",
-                    (request.idempotency_digest, request.attested_argv_digest,
-                     request.attempt_budget_usd, request.total_token_limit),
+                    (request.idempotency_digest, *limits),
                 )
             connection.commit()
         return None
@@ -532,6 +555,15 @@ class BridgeClaimStore:
             )
             if cursor.rowcount != 1:
                 raise HostProviderBridgeError("bridge attempt settlement lost its claim")
+
+
+def _attempt_limits(request: object) -> tuple[str, str, str] | None:
+    """The signed attestation digest and attempt limits a request carries, or
+    None for a request that carries none of them."""
+
+    values = tuple(str(getattr(request, name, "") or "") for name in (
+        "attested_argv_digest", "attempt_budget_usd", "total_token_limit"))
+    return values if any(values) else None
 
 
 class WindowsHostProviderExecutor:
@@ -1051,3 +1083,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

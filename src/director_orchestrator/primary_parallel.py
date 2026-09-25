@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
@@ -230,12 +231,13 @@ class ParallelAssignmentStatus(StrEnum):
 
 
 def _proven_no_run(projected: Mapping[str, str], attempt_rows: Sequence[Mapping[str, Any]]) -> bool:
-    """Whether a terminal task that did not succeed stopped having sent nothing.
+    """Whether a terminal task stopped having sent no provider request at all.
 
-    Nothing FAILED or AMBIGUOUS, at least one assignment held for the owner,
-    and every admitted attempt of an assignment that did not succeed ended
-    FAILED as refused before I/O: a STARTED attempt, a transient failure or
-    any other outcome is not proof that nothing ran.
+    Every assignment is held for the owner or blocked behind one (at least
+    one held), none SUCCEEDED, FAILED or AMBIGUOUS, and every admitted
+    attempt of every assignment ended FAILED as refused before I/O. A task in
+    which any provider ran - a succeeded producer, a transient failure, an
+    attempt left STARTED - is an incomplete task, not a no-run.
     """
 
     last: dict[str, Mapping[str, Any]] = {}
@@ -243,13 +245,11 @@ def _proven_no_run(projected: Mapping[str, str], attempt_rows: Sequence[Mapping[
         last[str(event["attempt_digest"])] = event
     return (
         any(value == "OWNER_DECISION_REQUIRED" for value in projected.values())
-        and all(value in {"SUCCEEDED", "BLOCKED", "OWNER_DECISION_REQUIRED"}
-                for value in projected.values())
+        and all(value in {"BLOCKED", "OWNER_DECISION_REQUIRED"} for value in projected.values())
         and all(
             str(event["status"]) == "FAILED"
             and str(event["reason_code"]) == PROVIDER_REFUSED_BEFORE_IO
             for event in last.values()
-            if projected.get(str(event["assignment_id"])) != "SUCCEEDED"
         )
     )
 
@@ -2104,3 +2104,4 @@ class PostgresParallelDispatch:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

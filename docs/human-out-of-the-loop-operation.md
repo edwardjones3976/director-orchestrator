@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
@@ -354,13 +355,18 @@ which suspends that grant. That covers a task settled through a provider
 callback and one whose process stopped after its terminal was persisted. A task
 whose intake failed after its `PRE_AUTHORIZED` record never started; it spends
 an exercise and trips nothing. Nor does a task that stopped for the owner
-having sent nothing (a proven no-run): nothing failed or is ambiguous, and
-every admitted attempt of each assignment that did not succeed was settled
-`FAILED` with reason `provider_refused_before_io`. A small task's attempt is
+having sent no provider request at all (a proven no-run): every assignment is
+held for the owner or blocked behind one, none succeeded, failed or is
+ambiguous, and every admitted attempt of every assignment was settled
+`FAILED` with reason `provider_refused_before_io`. A task in which any provider
+ran, such as a succeeded producer whose reviewer was then refused, is an
+incomplete task and trips. A small task's attempt is
 settled that way when a hold is raised after admission but before the
 transport is called (a lapsed grant, a stale bridge attestation, a cancelled
 wave, a changed selection or enrollment), when the host returns its signed
-attestation refusal, or when the transport cannot build the view; the reason
+attestation refusal, or when the transport cannot build the view (a named
+file that cannot be read before admission is an owner hold with no attempt at
+all); the reason
 is not transient, so it authorizes no retry and the ordinal cannot be replayed.
 A hold raised inside the transport, an attempt left `STARTED`, a transient
 failure, or any provider outcome is not proof, and trips as before. The trip is also recorded as soon as a
@@ -462,8 +468,12 @@ with the digest of the argv it is about to run, immediately before starting it;
 a mismatch runs nothing and returns a signed refusal the Director also treats as
 `small_task_bridge_attestation_stale`. The bridge settles that attempt's claim
 as `REFUSED`, never `AMBIGUOUS`, and a replay of the same request returns the
-same signed refusal without running anything, so recovery treats it as a no-run
-refusal and it never trips the grant. The same signed request carries the
+same signed refusal without running anything, so recovery treats it as a
+no-run refusal. A replay of any claimed attempt must carry the attested argv
+digest and attempt limits it was claimed under: otherwise a `SUCCEEDED`
+attempt's cached result is never returned (the replay is rejected as a binding
+conflict, which the Director treats as ambiguous, since that command did run),
+a `REFUSED` one is refused again, and an `AMBIGUOUS` one stays ambiguous. The same signed request carries the
 attempt's dollar budget and token limit; the bridge passes them to the host
 command as `DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD` and
 `DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT` and records them with the attempt, and
@@ -769,3 +779,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->

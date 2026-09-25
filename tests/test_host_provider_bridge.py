@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
@@ -270,6 +271,70 @@ class HostProviderBridgeTests(unittest.TestCase):
         with closing(self.store._connect()) as connection:
             states = connection.execute("SELECT state FROM bridge_attempts").fetchall()
         self.assertEqual([("REFUSED",)], states)
+
+    def test_a_replay_must_carry_the_attestation_and_limits_it_was_claimed_under(self) -> None:
+        """Cached bytes are returned only for the same attested argv digest and
+        limits; a changed binding is never replayed, and never as a no-run for
+        an attempt that ran."""
+
+        from director_orchestrator.host_provider_bridge import (
+            HostProviderBridgeAttestationMismatch,
+        )
+
+        pinned = "sha256:" + "1" * 64
+
+        def attested(nonce, digest_value=pinned, budget="0.5", tokens="40000", key="c"):
+            candidate = self.attested_request(digest_value, budget=budget, tokens=tokens)
+            object.__setattr__(candidate, "nonce", nonce)
+            object.__setattr__(candidate, "idempotency_digest", key * 64)
+            return candidate
+
+        class _Refusing(_Executor):
+            def execute(self, request):
+                self.calls += 1
+                raise HostProviderBridgeAttestationMismatch("host argv differs")
+
+        changed = {
+            "argv_digest": {"digest_value": "sha256:" + "2" * 64},
+            "budget": {"budget": "0.9"},
+            "tokens": {"tokens": "99999"},
+        }
+        for state, executor, key in (("SUCCEEDED", _Executor(), "c"),
+                                     ("REFUSED", _Refusing(), "d"),
+                                     ("AMBIGUOUS", _Executor(ambiguous=True), "a")):
+            try:
+                self.store.claim(attested(f"{state}-first", key=key))
+                try:
+                    response = executor.execute(None)
+                    self.store.settle(key * 64, response=response)
+                except HostProviderBridgeAttestationMismatch:
+                    self.store.settle(key * 64, response=None, refused=True)
+                except HostProviderBridgeAmbiguous:
+                    self.store.settle(key * 64, response=None)
+            except HostProviderBridgeError:
+                self.fail("first claim failed")
+            # The same binding replays as before.
+            if state == "SUCCEEDED":
+                self.assertEqual(b'{"status":"SUCCEEDED"}',
+                                 self.store.claim(attested(f"{state}-same", key=key)))
+            for name, overrides in changed.items():
+                with self.subTest(state=state, changed=name):
+                    expected = {"SUCCEEDED": HostProviderBridgeError,
+                                "REFUSED": HostProviderBridgeAttestationMismatch,
+                                "AMBIGUOUS": HostProviderBridgeAmbiguous}[state]
+                    with self.assertRaises(expected) as raised:
+                        self.store.claim(attested(f"{state}-{name}", key=key, **overrides))
+                    if state != "REFUSED":
+                        # Never the signed no-run refusal for an attempt that
+                        # ran or may have run.
+                        self.assertNotIsInstance(
+                            raised.exception, HostProviderBridgeAttestationMismatch)
+            # A replay that drops its attestation entirely is refused too.
+            plain = request(nonce=f"{state}-plain")
+            object.__setattr__(plain, "idempotency_digest", key * 64)
+            with self.subTest(state=state, changed="unattested"), \
+                    self.assertRaises(HostProviderBridgeError):
+                self.store.claim(plain)
 
     def test_a_store_created_before_the_refused_state_is_migrated_in_place(self) -> None:
         import sqlite3
@@ -1464,3 +1529,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

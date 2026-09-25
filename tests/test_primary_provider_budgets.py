@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -340,14 +341,24 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
 
     USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
 
-    def test_a_class_task_whose_named_files_cannot_be_shown_is_refused(self):
+    def test_a_class_task_whose_named_files_cannot_be_shown_is_held(self):
+        """A read failure before any reservation is an owner hold that ran
+        nothing, so the task is a proven no-run rather than a failure."""
+
+        from director_orchestrator.primary_workload import (
+            ProvenNoRunHold, WorkloadAdmissionHold)
+
         reservation, _ = self.selected(0)
         with patch("director_orchestrator.packet_routing._BLOB_READER", None), \
-                patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
-            outcome = self.dispatch(reservation)
-        self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
-        self.assertEqual("small_task_named_contents_unavailable", outcome.reason_code)
+                patch("director_orchestrator.primary_default.live_provider_admissions") as admission, \
+                self.assertRaisesRegex(WorkloadAdmissionHold,
+                                       "small_task_named_contents_unavailable") as held:
+            self.dispatch(reservation)
+        # No attempt was reserved, so none needs settling.
+        self.assertNotIsInstance(held.exception, ProvenNoRunHold)
         admission.assert_not_called()
+        self.activation.coordinator.reserve_provider_attempt.assert_not_called()
+        self.activation.coordinator.record_provider_attempt.assert_not_called()
         self.assertEqual([], self.dispatch_contexts)
 
     def test_the_initial_grant_check_spends_the_selection_deadline(self):
@@ -759,3 +770,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
