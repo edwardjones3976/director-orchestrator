@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -1082,10 +1083,17 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     ids = {r.get("client_msg_id") for r in terminal_rows if r.get("client_msg_id")}
     # Count additional bot final messages too, not just the first ledger match: any of the Director's own
     # terminal classifications (primary_slack_delivery.render_notification renders `<task> — <classification>`).
+    # The producer (PrimarySlackDelivery.scan) keys a notification by family: 'approval:' for a pending prompt,
+    # 'hold:' for an OWNER_DECISION_REQUIRED or RECONCILIATION_REQUIRED classification, and 'terminal' only for
+    # every other one. So only those settled classifications can head a final reply, and a message that is a
+    # known approval or hold delivery is never one, whatever its header says.
     from director_orchestrator.langgraph_primary import TerminalClassification
+    held = {TerminalClassification.OWNER_DECISION_REQUIRED, TerminalClassification.RECONCILIATION_REQUIRED}
     final_pattern = re.compile(re.escape(task_id) + r"\s+—\s+(?:"
-        + "|".join(re.escape(str(item)) for item in TerminalClassification) + r")\b")
-    finals = [m for m in messages if bot and m.get("user") == bot and
+        + "|".join(re.escape(str(item)) for item in TerminalClassification if item not in held) + r")\b")
+    not_final = {r.get("client_msg_id") for r in rows
+                 if notification_key_family(r.get("notification_key")) in ("approval", "hold")} if rows_bound else set()
+    finals = [m for m in messages if bot and m.get("user") == bot and m.get("client_msg_id") not in not_final and
               (m.get("client_msg_id") in ids or final_pattern.search(raw(m)))]
     final = finals[0] if complete and len(finals) == 1 else None
     correlated = bool(bound and final and len(terminal_rows) == 1 and terminal_rows[0].get("state") == "DELIVERED"
@@ -1366,3 +1374,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]

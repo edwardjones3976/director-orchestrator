@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]] -->
@@ -593,6 +594,23 @@ between its assignment's reservation and completion. A paid attempt's spend row
 counts only when its `budget_day` lies between the UTC days of its assignment's
 reservation and its attempt's first event. A native Security seal must follow
 the scan's completion.
+
+Every join between two evidence sets is bidirectional and identity-bound.
+The readback's terminal row names the native final's `client_msg_id` and
+Slack ts, and the `/deliveries` receipts equal the readback's delivery rows as
+a set of (key, client_msg_id, state, ts) (06, 09, 10, 20). Check 08 pairs each
+approved delivery with exactly one `approval_resume` receipt and each receipt
+with exactly one approved delivery (a leftover or doubled receipt FAILs), and
+every approval prompt the bot posted (`render_notification`'s pending header)
+must be an approval delivery. Outcomes and ledger assignments form a bijection
+by sequence (10, 20). Only a notification the producer keys `terminal` can be a
+final reply: `hold:` notifications (OWNER_DECISION_REQUIRED,
+RECONCILIATION_REQUIRED) and `approval:` prompts never count, so a task that
+paused and then finished has one final. The usage monitor names its
+`accounting_day`, and check 15 grades budgets and charges of that day only; a
+snapshot without it is not monitored accounting. `conversations.history` ends
+only on an explicit `has_more: false` without a cursor; a missing flag or a
+missing, repeated or malformed cursor is incomplete.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -949,3 +967,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]] -->

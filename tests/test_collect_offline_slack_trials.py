@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
@@ -234,6 +235,39 @@ class ParseTrialsTests(unittest.TestCase):
 class SummaryTests(unittest.TestCase):
     def setUp(self):
         self.task, self.deliveries, self.messages, self.headers = sample()
+
+    def test_a_hold_or_approval_notification_is_never_a_final_reply(self):
+        """4100880218: PrimarySlackDelivery keys OWNER_DECISION_REQUIRED and RECONCILIATION_REQUIRED as 'hold:' and a
+        pending prompt as 'approval:', and render_notification heads them `<task> — <classification>` (or OWNER
+        DECISION REQUIRED); only a 'terminal' notification is a final reply. The messages are rendered by the
+        producer itself, so a task that paused and then finished still has one final."""
+        from types import SimpleNamespace
+        from director_orchestrator.primary_slack_delivery import render_notification
+        settings = SimpleNamespace(slack_channel_id=ENV["SLACK_DIRECTOR_CHANNEL_ID"], slack_owner_user_id=OWNER)
+        record = {**self.task, "status": "DONE"}
+        record["assignment_outcomes"] = [{**record["assignment_outcomes"][0], "assignment_sequence": 1,
+                                          "provider": "claude", "review_summary": "fixture review"}]
+        self.task["qualification_evidence"] = readback_fixture()
+        self.assertEqual(1, self.summarize()["terminal_reply_count"])
+        for classification in ("OWNER_DECISION_REQUIRED", "RECONCILIATION_REQUIRED"):
+            for with_row in (True, False):
+                key = "hold:sha256:" + hashlib.sha256(classification.encode()).hexdigest()
+                client = str(uuid.uuid5(uuid.NAMESPACE_URL, "director_primary_v1:" + TASK_ID + ":" + key))
+                rendered = render_notification({"projection": {
+                    "terminal_classification": classification, "reason_code": "held",
+                    "application": {"task_record": record, "execution_mode": "offline_simulation"}},
+                    "projection_digest": PROJECTION, "created_at": datetime(2026, 9, 12, 10, 0, 5, tzinfo=timezone.utc)},
+                    settings)
+                held_ts = "%.6f" % (float(THREAD) + 5)
+                self.messages = sample()[2]
+                self.messages.insert(1, {"ts": held_ts, "thread_ts": THREAD, "user": BOT, "client_msg_id": client,
+                                         "text": rendered["text"], "blocks": rendered["blocks"]})
+                self.deliveries = sample()[1] + ([{**sample()[1][0], "notification_key": key, "client_msg_id": client,
+                                                   "slack_ts": held_ts}] if with_row else [])
+                with self.subTest(classification=classification, delivery_row=with_row):
+                    report = self.summarize()
+                    self.assertEqual(1, report["terminal_reply_count"])
+                    self.assertTrue(report["final_receipt_matches_native_message"])
 
     def test_gateway_attestation_needs_the_append_only_intake_claim(self):
         """The projection's intake_authentication label alone never attests the gateway (checks 03, 08, 09, 10,
@@ -1562,3 +1596,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
@@ -896,7 +897,7 @@ class _SlackThreads:
 
     def history(self, oldest: str, latest: str) -> list[dict[str, Any]]:
         """Top-level --channel messages between two timestamps, inclusive; at most five pages."""
-        messages, cursor = [], None
+        messages, cursor, cursors = [], None, set()
         for _ in range(5):
             params = {"channel": self.channel, "oldest": oldest, "latest": latest, "inclusive": "true", "limit": "200"}
             if cursor:
@@ -906,9 +907,14 @@ class _SlackThreads:
             if not isinstance(page, dict) or page.get("ok") is not True or not isinstance(page.get("messages"), list):
                 raise ValueError("channel history unavailable")
             messages.extend(page["messages"])
-            cursor = (page.get("response_metadata") or {}).get("next_cursor")
-            if not page.get("has_more") and not cursor:
+            cursor = (page.get("response_metadata") or {}).get("next_cursor", "")
+            # The replies collector's rule: only an explicit has_more=false with no cursor ends the listing; a
+            # missing flag, or a missing, repeated or malformed cursor on a continued page, is not complete.
+            if page.get("has_more") is False and not cursor:
                 return messages
+            if page.get("has_more") is not True or not isinstance(cursor, str) or not cursor or len(cursor) > 1024                     or cursor in cursors:
+                raise ValueError("channel history pagination is incomplete or repeated")
+            cursors.add(cursor)
         raise ValueError("channel history exceeds its bound")
 
     def binding(self, thread: str) -> str | None:
@@ -1418,8 +1424,28 @@ def _delivered_final(readback: dict[str, Any] | None, snapshot: dict[str, Any] |
     canonical terminal rendering (the check-20 rule): a correlated message with other text is not a final reply."""
     terminal = [r for r in (readback or {}).get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
     return (len(terminal) == 1 and _delivery_settled(terminal[0]) and bool(terminal[0].get("slack_ts"))
-            and ((snapshot or {}).get("row") or {}).get("final_receipt_matches_native_message") is True
-            and _final_is_rendering(snapshot or {}))
+            and _final_correlated(snapshot) and _final_is_rendering(snapshot or {}))
+
+
+def _final_correlated(snapshot: dict[str, Any] | None) -> bool:
+    """The one identity join between the three views of a task's Slack delivery (06, 09, 10, 20): the collector's
+    correlation of the /deliveries terminal receipt with the native final message, the readback's own terminal
+    row, and the native final, all naming one client_msg_id and Slack ts; and the /deliveries receipt list and
+    the readback's delivery rows are the same set of (key, client_msg_id, state, ts) in both directions."""
+    row = (snapshot or {}).get("row") or {}
+    readback = (snapshot or {}).get("readback") or {}
+    finals = row.get("terminal_messages") or []
+    terminal = [r for r in readback.get("slack_deliveries") or [] if r.get("notification_key") == "terminal"]
+
+    def identity(item: dict[str, Any]) -> tuple:
+        return tuple(str(item.get(key)) for key in ("notification_key", "client_msg_id", "state", "slack_ts"))
+
+    receipts = row.get("delivery_receipts")
+    return (row.get("final_receipt_matches_native_message") is True and row.get("delivery_receipt_list_complete") is True
+            and isinstance(receipts, list) and len(finals) == 1 and len(terminal) == 1
+            and _same(terminal[0].get("client_msg_id"), finals[0].get("client_msg_id"))
+            and _same(terminal[0].get("slack_ts"), finals[0].get("ts"))
+            and sorted(map(identity, receipts)) == sorted(map(identity, readback.get("slack_deliveries") or [])))
 
 
 def _delivery_settled(row: dict[str, Any]) -> bool:
@@ -1732,7 +1758,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
                    and counters["started_attempts"] == counters["attempt_ordinals"]
                    # The one settlement rule: every latest attempt and started effect is terminal.
                    and _ambiguous_effects(row, readback, snapshot.get("latest")) == 0
-                   and replies == 1 and row.get("final_receipt_matches_native_message") is True)
+                   and replies == 1 and _final_correlated(snapshot))
         obs06 = _observation("06", True if resumed else None,
                              "One task was processed before the current Director process start and finished after it "
                              "with one dispatch per assignment and one final reply." if resumed else
@@ -1745,7 +1771,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     entry = ((consistency or {}).get("tasks") or {}).get(task_id)
     receipts = entry.get("approval_receipts") if isinstance(entry, dict) else None
     receipts = receipts if isinstance(receipts, list) else []
-    failures, gaps = [], 0
+    failures, gaps, joined = [], 0, []
     for delivery in approvals:
         slack_ts = delivery.get("slack_ts")
         decided = _when(delivery["owner_decision_at"]) if delivery.get("owner_decision_at") else None
@@ -1766,7 +1792,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         # The control plane's own approval_resume receipt, re-read, not the delivery row's copy of it.
         # The receipt must join the command authorization the webhook-verification path admitted: same
         # command digest and writer fence, the gateway proof version, and the owner as actor.
-        receipted = decided is not None and any(
+        matches = [index for index, receipt in enumerate(receipts) if decided is not None and (
             isinstance(receipt, dict) and _same(receipt.get("command_id_sha256"), command)
             and isinstance(receipt.get("recorded_at"), str) and _when(receipt["recorded_at"]) == decided
             and receipt.get("authorized") is True and receipt.get("authorized_command_digest") is True
@@ -1780,14 +1806,29 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             # The owner can only authorize what was already posted: the claim follows the prompt.
             and bool(slack_ts) and Decimal(str(_when(receipt["authorization_claimed_at"]).timestamp())) >= Decimal(slack_ts)
             and _when(receipt["authorization_claimed_at"]) < _when(receipt["authorization_proof_expires_at"])
-            and runtime.until() is not None and decided <= runtime.until()
-            for receipt in receipts)
+            and runtime.until() is not None and decided <= runtime.until())]
+        # One receipt per approved delivery, and (below) no receipt left without its delivery.
+        receipted = len(matches) == 1
+        if len(matches) > 1:
+            failures.append("one approved delivery matches more than one approval_resume receipt")
+        if delivery.get("owner_decision") == "approve":
+            joined += matches
         if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
                 and Decimal(slack_ts) <= Decimal(str(decided.timestamp()))
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
                 and complete and len(native) == 1 and scoped and receipted):
             gaps += 1
+    # The reverse join: every approval_resume receipt of this task belongs to exactly one approved delivery. A
+    # receipt no delivery claims, or one two deliveries claim, is a resume the Slack record does not account for.
+    if sorted(joined) != list(range(len(receipts))):
+        failures.append("an approval_resume receipt is not the one receipt of exactly one approved delivery")
+    # And every approval prompt the bot posted in the thread (render_notification's pending header) is one of the
+    # approval deliveries: a prompt with no delivery row is an approval surface the ledger does not account for.
+    header = task_id + " — OWNER DECISION REQUIRED"
+    posted = {m.get("ts") for m in messages if m.get("user") == t.bot and t.m.reply_header(m.get("text", "")) == header}
+    if complete and not posted <= {delivery.get("slack_ts") for delivery in approvals}:
+        failures.append("a posted approval prompt has no approval delivery")
     facts08 = {"approval_rows": len(approvals), "task_record_bound": row.get("task_record_bound"),
                "task_api_gateway_attested": row.get("task_api_gateway_attested"),
                "failures": sorted(set(failures)), "unproven_rows": gaps, "thread_complete": complete}
@@ -1909,7 +1950,7 @@ def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, 
                and _assignments_joined(snapshot, attempts=False) is True)
     states = {str(receipt.get("state")) for receipt in row.get("delivery_receipts") or []}
     delivered = [item for item in (readback or {}).get("slack_deliveries") or [] if item.get("state") == "DELIVERED"]
-    if (row.get("final_receipt_matches_native_message") is True and row.get("delivery_receipt_list_complete") is True
+    if (_final_correlated(snapshot)
             and states <= {"DELIVERED", "SUPERSEDED", "SUPPRESSED"} and all(_delivery_settled(item) for item in delivered)):
         delivery_ambiguous: bool | None = False
     else:
@@ -2150,6 +2191,8 @@ def _offline_outcomes_bound(facts: dict[str, Any], label: str) -> bool | None:
     assignments = readback.get("assignments") or []
     if not assignments:
         return None
+    if len(outcomes) != len(assignments):
+        return False  # an outcome without its ledger row, or a row without its outcome
     for assignment in assignments:
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
         reservation = assignment.get("reservation_digest")
@@ -2174,7 +2217,11 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
     assignments = readback.get("assignments") or [] if isinstance(readback, dict) else []
     if not isinstance(readback, dict) or not outcomes or not assignments:
         return None
-    if len(outcomes) != len(assignments):
+    # A bijection by sequence: as many outcomes as assignments, the same sequence set, each exactly once.
+    if (len(outcomes) != len(assignments)
+            or sorted(item.get("assignment_sequence") for item in outcomes if isinstance(item.get("assignment_sequence"), int))
+            != sorted(assignment.get("sequence") for assignment in assignments if isinstance(assignment.get("sequence"), int))
+            or len({assignment.get("sequence") for assignment in assignments}) != len(assignments)):
         return False
     if attempts and not _attempt_ordinals(readback)[1]:
         return None
@@ -2260,7 +2307,11 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
     listed = (isinstance(providers, list) and bool(providers)
               and all(isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name) for name in providers)
               and len(set(providers)) == len(providers))
-    monitored = ready and listed and isinstance(accounting, dict) and set(accounting) == set(providers) and all(
+    # The monitor names the UTC day its accounting covers (usage.py health, from the same clock read); budgets and
+    # charges are graded for that day only. A snapshot without its day is not monitored accounting.
+    day = monitor.get("accounting_day")
+    dated = isinstance(day, str) and bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", day))
+    monitored = ready and listed and dated and isinstance(accounting, dict) and set(accounting) == set(providers) and all(
         isinstance(value, dict) and all(value.get(key) is None or _amount(value.get(key))
                                         for key in ("daily_budget_usd", "reported_cost_usd", "reserved_cost_usd"))
         for value in accounting.values())
@@ -2293,10 +2344,9 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
         # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
         spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
-        # /health reports today's accounting (usage.py _daily_accounting, the UTC day it was read) and names no day,
-        # so the enrolled caps and charges graded with it are the rows of the collection's UTC budget day.
-        day = (runtime.collected_at or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
-        spend = [row for row in spend if row.get("budget_day") == day]
+        # The enrolled caps and charges graded with the monitor are the rows of the monitor's own accounting day;
+        # without that day nothing is graded (unsigned, so 15 cannot pass).
+        spend = [row for row in spend if dated and row.get("budget_day") == day]
         budgets = [row for row in budgets if row.get("day") == day]
         unsigned = not spend or any(row.get("signature_verified") is not True for row in budgets) or not all(
             any(_same(budget.get("authority_digest"), charge.get("grant_digest"))
@@ -2313,6 +2363,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             if row["day_held_microusd"] > row["daily_limit_microusd"]:
                 over.append("enrolled daily budget")
     facts = {"usage_monitor_providers": sorted(accounting) if monitored else None, "over_cap": over,
+             "accounting_day": day if dated else None,
              "unknown_cost_providers": unpriced,
              "enrolled_budget_rows": len(budgets) if isinstance(budgets, list) else None, "settled_actual_cost_usd": cost}
     source = "Director /health usage_monitor and " + _CONSISTENCY_SOURCE
@@ -3276,3 +3327,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]

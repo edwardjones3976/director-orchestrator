@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
@@ -9,7 +10,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -508,6 +509,10 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(health["all_configured_completion_verified"])
             self.assertEqual(health["missing_or_stale_providers"], ["gemini"])
             self.assertEqual(health["daily_accounting"]["gemini"]["request_count"], 3)
+            # The UTC day every daily_accounting entry covers, named by the monitor itself.
+            self.assertRegex(health["accounting_day"], r"^\d{4}-\d{2}-\d{2}$")
+            self.assertLessEqual(
+                abs((date.fromisoformat(health["accounting_day"]) - datetime.now(timezone.utc).date()).days), 1)
             self.assertEqual(health["daily_accounting"]["gemini"]["retry_count"], 2)
             self.assertEqual(
                 health["daily_accounting"]["gemini"]["quota_failure_count"], 1
@@ -1106,3 +1111,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 08:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]

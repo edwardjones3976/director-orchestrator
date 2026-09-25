@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | BEGIN]]
@@ -687,6 +688,9 @@ class UsageMonitor:
                 if provider not in current_signals
                 or provider not in latest_by_provider
             ],
+            # The UTC day every daily_accounting entry covers, from the same `now`, so a
+            # reader never has to guess it from its own clock across midnight.
+            "accounting_day": self._utc_day_start(now).date().isoformat(),
             "daily_accounting": {
                 provider: self._daily_accounting(provider, now)
                 for provider in configured
@@ -699,3 +703,4 @@ class UsageMonitor:
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:38 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-30 | 03:47 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-07 | 08:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]

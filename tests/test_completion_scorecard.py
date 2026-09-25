@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
@@ -144,6 +145,7 @@ def health():
         "primary_runtime_active": True, "effect_executor_ready": True,
         "provider_activation": {"combined_live_ready": True}},
         "usage_monitor": {"enabled": True, "paid_run_gate_open": True, "gate_state": "open", "providers": ["grok", "claude"],
+                          "accounting_day": "2026-09-12",  # usage.py health: the UTC day of its accounting
                           "unsupported_providers": [], "missing_or_stale_providers": [],
                           "all_configured_have_recent_signal": True,
                           # usage.py _daily_accounting: an entry per configured provider; request_count counts
@@ -478,6 +480,7 @@ class World:
         self.threads[STATUS_TS] = [{"ts": STATUS_TS, "user": BOT, "bot_id": "BBOT123",
                                     "text": "*STATUS — readiness changed*\n• `reachable`: unset → true"}]
         self.history_extra, self.history_hidden = [], set()
+        self.history_page = {"has_more": False}  # conversations.history's pagination fields on its one page
         for offset in (100, 150, 200):
             self.threads[ts(offset)] = [
                 {"ts": ts(offset), "user": OWNER, "client_msg_id": f"drill-{offset}",
@@ -579,7 +582,7 @@ class World:
                 low, high = Decimal(url.params["oldest"]), Decimal(url.params["latest"])
                 top = [message for key, messages in self.threads.items() for message in messages
                        if message["ts"] == key and key not in self.history_hidden]
-                return httpx.Response(200, json={"ok": True, "has_more": False, "messages": [
+                return httpx.Response(200, json={"ok": True, **self.history_page, "messages": [
                     message for message in top + self.history_extra if low <= Decimal(message["ts"]) <= high]})
             thread = url.params["ts"]
             if thread in self.failing:
@@ -2219,14 +2222,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(edited_prompt.state("08"), "UNKNOWN")
         unscoped = self.world()
         unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
-        self.assertEqual(unscoped.state("08"), "UNKNOWN")
+        # Review 4100880210: the control plane's receipt then belongs to no approved delivery, which fails.
+        self.assertEqual(unscoped.state("08"), "FAIL")
         # The decision must match a control-plane approval_resume receipt, re-read, not only the delivery row.
         unreceipted = self.world()
         unreceipted.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = []
         self.assertEqual(unreceipted.state("08"), "UNKNOWN")
         retimed = self.world()
         retimed.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = [approval_receipt(iso(1789210000 + 30011))]
-        self.assertEqual(retimed.state("08"), "UNKNOWN")
+        self.assertEqual(retimed.state("08"), "FAIL")  # a receipt no delivery accounts for
         # The receipt must join the owner's durable, signature-verified command authorization.
         for change in ({"authorized": False}, {"authorized_command_digest": False}, {"authorized_fence": False},
                        {"proof_version": "v0"}, {"actor_id": "USOMEONEELSE"},
@@ -2236,10 +2240,10 @@ class ScorecardCollectorTests(unittest.TestCase):
             case = self.world()
             case.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0].update(change)
             with self.subTest(change=change):
-                self.assertEqual(case.state("08"), "UNKNOWN")
+                self.assertEqual(case.state("08"), "FAIL")  # the unverifiable receipt is unaccounted for
         other_command = self.world()
         other_command.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["command_id_sha256"] = "0" * 64
-        self.assertEqual(other_command.state("08"), "UNKNOWN")
+        self.assertEqual(other_command.state("08"), "FAIL")
         no_snapshot = self.world()
         no_snapshot.consistency = None
         self.assertEqual([row(no_snapshot.report(), key)["status"] for key in ("06", "08")], ["PASS", "UNKNOWN"])
@@ -2680,7 +2684,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         # Claimed before the prompt (ts 30005) was posted, receipt recorded and decision taken afterward.
         early.consistency["tasks"][APPROVAL_TASK]["approval_receipts"][0]["authorization_claimed_at"] = iso(
             1789210000 + 30004)
-        self.assertEqual(early.state("08"), "UNKNOWN")
+        self.assertEqual(early.state("08"), "FAIL")  # that receipt then belongs to no approved delivery
 
     def test_matched_credentials_must_meet_the_product_minimums(self):
         env = dict(entry.split("=", 1) for entry in containers()[0]["Config"]["Env"])
@@ -3029,6 +3033,78 @@ class ScorecardCollectorTests(unittest.TestCase):
             {"event_id": 1, "claim_key": "sha256:" + "5" * 64, "state": "RESOLVED",
              "evidence_digest": "sha256:" + "d" * 64, "recorded_at": "2026-09-12T21:00:00+00:00"}]
         self.assertEqual(future.state("20"), "UNKNOWN")
+
+    def test_readback_terminal_is_the_correlated_slack_final_06_09_10_20(self):
+        """4100880189: the readback's own terminal row names the native final's client_msg_id and Slack ts, and the
+        /deliveries receipts and the readback's delivery rows are one set, both ways."""
+        cases = (("DIR-LG-A0", "09"), (APPROVAL_TASK, "06"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20"))
+        self.assertEqual([self.world().state(key) for _, key in cases], ["PASS"] * len(cases))
+        for task_id, key in cases:
+            for name in ("another client_msg_id", "another slack_ts", "an extra readback delivery"):
+                case = self.world()
+                readback = case.tasks[task_id]["qualification_evidence"]
+                terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
+                if name == "another client_msg_id":
+                    terminal["client_msg_id"] = "00000000-0000-5000-8000-000000000000"
+                elif name == "another slack_ts":
+                    terminal["slack_ts"] = "%.6f" % (float(terminal["slack_ts"]) + 0.5)
+                else:
+                    readback["slack_deliveries"].append({**terminal, "notification_key": "hold:sha256:" + "7" * 64,
+                                                         "client_msg_id": "hold-client-1", "slack_ts": None,
+                                                         "state": "SUPPRESSED"})
+                with self.subTest(check=key, case=name):
+                    self.assertNotEqual(case.state(key), "PASS")
+
+    def test_accounting_day_comes_from_the_monitor_15(self):
+        """4100880194: the monitor names its accounting day (usage.py health); budgets and charges are graded on
+        that day, so a snapshot read after UTC midnight never pairs with the previous day's rows."""
+        self.assertEqual(self.world().state("15"), "PASS")
+        after_midnight = self.world()
+        after_midnight.payload["usage_monitor"]["accounting_day"] = "2026-09-13"
+        self.assertNotEqual(after_midnight.state("15"), "PASS")
+        undated = self.world()
+        del undated.payload["usage_monitor"]["accounting_day"]
+        self.assertNotEqual(undated.state("15"), "PASS")
+
+    def test_channel_history_needs_an_explicit_last_page_10(self):
+        """4100880199: a history page without has_more=false (missing, or true without a cursor) is incomplete."""
+        self.assertEqual(self.world().state("10"), "PASS")
+        for page in ({}, {"has_more": True}, {"has_more": None}, {"has_more": "false"}):
+            case = self.world()
+            case.history_page = page
+            with self.subTest(page=page):
+                self.assertEqual(case.state("10"), "UNKNOWN")
+
+    def test_approval_receipts_and_prompts_join_their_deliveries_one_to_one_08(self):
+        """4100880210: every approval_resume receipt is the one receipt of exactly one approved delivery, and every
+        posted approval prompt is an approval delivery; anything left over fails."""
+        self.assertEqual(self.world().state("08"), "PASS")
+        extra = self.world()
+        receipts = extra.consistency["tasks"][APPROVAL_TASK]["approval_receipts"]
+        receipts.append({**receipts[0], "command_id_sha256": hashlib.sha256(b"owner-command-2").hexdigest()})
+        self.assertEqual(extra.state("08"), "FAIL")
+        twice = self.world()
+        receipts = twice.consistency["tasks"][APPROVAL_TASK]["approval_receipts"]
+        receipts.append(dict(receipts[0]))  # one delivery, two receipts that both match it
+        self.assertEqual(twice.state("08"), "FAIL")
+        stray = self.world()
+        prompt = next(m for m in stray.threads[ts(30000)] if m.get("ts") == ts(30005))
+        stray.threads[ts(30000)].append({**prompt, "ts": ts(30007), "client_msg_id": "approval-client-2"})
+        self.assertEqual(stray.state("08"), "FAIL")
+
+    def test_outcomes_and_ledger_rows_are_a_bijection_10_20(self):
+        """Sweep (one-directional joins): outcomes and assignments pair one-to-one by sequence, both ways."""
+        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
+            case = self.world()
+            outcomes = case.tasks[task_id]["assignment_outcomes"]
+            outcomes.append({**outcomes[0], "assignment_sequence": 2})  # an outcome with no ledger row
+            with self.subTest(check=key):
+                self.assertNotEqual(case.state(key), "PASS")
+        facts = {"readback": {"assignments": [{"assignment_id": "a", "sequence": 1, "reservation_digest": "sha256:x"}]},
+                 "task": {"assignment_outcomes": [{"assignment_sequence": 1, "run_id": "offline-double:sha256:x",
+                                                   "result": "L"}, {"assignment_sequence": 9}]}}
+        self.assertIs(sc._offline_outcomes_bound(facts, "L"), False)
 
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
@@ -3618,3 +3694,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
