@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -902,6 +903,28 @@ def small_task_usage_refusal(
     return None
 
 
+# The gate of an append-only REFUSED record that retires a task's
+# PRE_AUTHORIZED record: its first intake stopped before creating the task,
+# and a replay created it attended instead, so the grant never started it.
+PRE_AUTHORIZATION_SUPERSEDED = "pre_authorization_superseded"
+
+
+# Refusals about the grant's own state (expired or revoked, its audit
+# unreadable or its deadline spent, the pre-authorized commit moved), as
+# opposed to the class conditions the task itself must meet.
+_GRANT_STATE_REFUSALS = frozenset({
+    "small_task_pre_authorization_revoked",
+    "small_task_pre_authorization_unaudited",
+    "small_task_pre_authorization_commit_changed",
+})
+
+
+def _superseded_agents(records) -> set[str]:
+    return {item.acting_agent for item in records
+            if item.outcome is RecordedOutcome.REFUSED
+            and any(gate.gate == PRE_AUTHORIZATION_SUPERSEDED for gate in item.gate_results)}
+
+
 # Every term a PRE_AUTHORIZED record must carry: the pre-execution terms but
 # `audit`, which the record itself is.
 _PRE_AUTHORIZED_TERMS = frozenset(PRE_EXECUTION_TERMS) - {"audit"}
@@ -966,8 +989,11 @@ def _failed_pre_authorized_task(
     def out_of_time() -> bool:
         return deadline is not None and monotonic() >= deadline
 
+    records = list(records)
+    superseded = _superseded_agents(records)
     for item in records:
-        if item.outcome is not RecordedOutcome.PRE_AUTHORIZED:
+        if (item.outcome is not RecordedOutcome.PRE_AUTHORIZED
+                or item.acting_agent in superseded):
             continue
         task_id = item.acting_agent.removeprefix("director-langgraph:")
         if out_of_time():
@@ -1098,11 +1124,13 @@ def small_pre_authorization_refusal(
         # None, unreadable, or failing verification alike.
         history = None
     # The whole bounded history is read: an unread tail could hold a trip.
+    superseded = set() if history is None else _superseded_agents(history)
     records = [] if history is None else [
         item for item in history
         if item.outcome is RecordedOutcome.PRE_AUTHORIZED
         and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
         and item.acting_agent == agent
+        and agent not in superseded
         and item.grant_id == grant.grant_id
         and _pre_authorization_complete(item)]
     if not records:
@@ -1145,8 +1173,7 @@ def small_pre_authorization_refusal(
     try:
         failed = _failed_pre_authorized_task(coordinator, [
             item for item in history
-            if item.outcome is RecordedOutcome.PRE_AUTHORIZED
-            and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+            if item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
             and item.grant_id == grant.grant_id],
             deadline=deadline if deadline is not None
             else monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
@@ -2857,22 +2884,27 @@ class DefaultPrimaryApplication:
         return _failed_pre_authorized_task(
             self.coordinator, records, deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
 
-    def _trip_on_failed_terminal(self, task_id: str, classification: str) -> None:
+    def _trip_on_failed_terminal(self, task_id: str, classification: str, *,
+                                 deadline: float | None = None) -> None:
         """Record the trip when a pre-authorized task reaches a failed terminal.
 
         Called by the coordinator after it persists a terminal other than
         SUCCEEDED. The trip names the grant that authorized the task, from its
-        own PRE_AUTHORIZED record. Best effort: the next exercise and every
-        recovery also derive failures from durable state.
+        own PRE_AUTHORIZED record. ``deadline`` is one absolute bound for the
+        aggregate read, the history read and the append together. Best
+        effort: a trip not written in time is still derived from durable
+        state, because the next exercise and every dispatch recheck count a
+        pre-authorized task's non-success terminal as a failure.
         """
 
         ledger = self._delegation_ledger
         if classification == "SUCCEEDED" or ledger is None:
             return
+        if deadline is None:
+            deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
         try:
             proven_no_run = getattr(
-                self.coordinator.parallel_aggregate(
-                    task_id, deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS),
+                self.coordinator.parallel_aggregate(task_id, deadline=deadline),
                 "proven_no_run", False) is True
         except Exception:
             proven_no_run = False
@@ -2881,8 +2913,11 @@ class DefaultPrimaryApplication:
             return
         agent = f"director-langgraph:{task_id}"
         try:
-            history = _bounded_audit_history(ledger)
+            history = _bounded_audit_history(ledger, deadline=deadline)
             if history is None:
+                return
+            if agent in _superseded_agents(history):
+                # The grant never started this task.
                 return
             authorized = [item for item in history
                           if item.outcome is RecordedOutcome.PRE_AUTHORIZED
@@ -2907,10 +2942,55 @@ class DefaultPrimaryApplication:
                 verdicts=(),
                 gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
                 recorded_at=now,
-            ), expected_sequence=len(history),
-                deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+            ), expected_sequence=len(history), deadline=deadline)
         except Exception:
             return
+
+    def _supersede_orphaned_authorization(self, task_id: str) -> None:
+        """Retire a PRE_AUTHORIZED record whose intake never created its task.
+
+        A replay that finds the intake claim but no task creates the task
+        attended. The first attempt's pre-authorization is then not the grant
+        starting this task, so an append-only REFUSED record with the
+        ``pre_authorization_superseded`` gate retires it: the prior-task scan
+        and the terminal observer ignore it, and no dispatch recheck accepts
+        it. Its exercise stays spent. Best effort, bounded: if it cannot be
+        written, the old record stays and a later failure of this task trips
+        the grant, which is the safe direction.
+        """
+
+        ledger = self._delegation_ledger
+        if ledger is None:
+            return
+        agent = f"director-langgraph:{task_id}"
+        deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+        with self._delegation_lock:
+            try:
+                history = _bounded_audit_history(ledger, deadline=deadline)
+                if history is None or agent in _superseded_agents(history):
+                    return
+                authorized = [item for item in history
+                              if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                              and item.acting_agent == agent and item.grant_id is not None]
+                if not authorized:
+                    return
+                source = authorized[-1]
+                now = datetime.now(timezone.utc)
+                ledger.append_delegation_audit_record(DelegationAuditRecord(
+                    schema_version=AUDIT_SCHEMA_VERSION,
+                    outcome=RecordedOutcome.REFUSED,
+                    grant_id=source.grant_id,
+                    grant_snapshot=source.grant_snapshot,
+                    decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                    candidate_sha=source.candidate_sha,
+                    acting_agent=agent,
+                    verdicts=(),
+                    gate_results=(GateResult(
+                        PRE_AUTHORIZATION_SUPERSEDED, GateStatus.FAIL, now),),
+                    recorded_at=now,
+                ), expected_sequence=len(history), deadline=deadline)
+            except Exception:
+                return
 
     def _executes(self) -> bool:
         """Mirrors resume_approval: a paid-off deployment cannot execute."""
@@ -3280,6 +3360,10 @@ class DefaultPrimaryApplication:
                         raise RuntimeError("replayed primary intake disappeared")
                     return self._record_from_projection(repaired)
             record.task_id = task_id
+            if not created:
+                # This task is about to be created attended: any
+                # pre-authorization its first attempt recorded is retired.
+                self._supersede_orphaned_authorization(task_id)
             # Only the request that created the claim evaluates a grant. A
             # retry that finds the claim but no projection yet (one in flight,
             # or a first attempt that stopped) keeps the button.
@@ -4015,6 +4099,15 @@ class DefaultPrimaryActivation:
                         approval_free=services.execution_approval_free(record.task_id),
                         compact_view_lanes=compact_view_lanes, coordinator=coordinator,
                         packet=packet, deadline=early_deadline)
+                    if (pre_authorization_refusal in _GRANT_STATE_REFUSALS
+                            and not assignment.depends_on
+                            and not record.assignment_outcomes):
+                        # The grant's own state changed before any provider
+                        # ran: an owner hold with no reservation, so the task
+                        # is a proven no-run. Once a predecessor ran, the
+                        # task is incomplete and fails below (and trips).
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold(pre_authorization_refusal)
                     if pre_authorization_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
@@ -5041,3 +5134,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

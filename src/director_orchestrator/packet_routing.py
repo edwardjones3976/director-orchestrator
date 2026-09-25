@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
@@ -123,6 +124,17 @@ def blob_read_deadline(deadline: float | None) -> Iterator[None]:
         _READ_DEADLINE.reset(token)
 
 
+def read_deadline_remaining(default_seconds: float) -> float | None:
+    """Seconds a subprocess in this context may run: ``default_seconds``,
+    clamped to what is left of the caller's deadline; None once it is spent."""
+
+    shared = _READ_DEADLINE.get()
+    if shared is None:
+        return default_seconds
+    remaining = min(default_seconds, shared - monotonic())
+    return remaining if remaining > 0 else None
+
+
 class SmallTaskViewUnavailable(PacketContractError):
     """A small read-only task's view could not carry its named files' text.
 
@@ -219,14 +231,52 @@ def named_paths(text: object, snapshot_paths: Collection[str] = ()) -> list[str]
 
     from .policy import KNOWN_EXTENSIONLESS_FILES
 
-    paths = set(snapshot_paths)
+    paths = {path_key(path) for path in snapshot_paths} - {None}
     return sorted({token for token in _objective_tokens(text)
                    if _NAMED_PATH_TOKEN.fullmatch(token)
-                   or token in KNOWN_EXTENSIONLESS_FILES or token in paths})
+                   or token in KNOWN_EXTENSIONLESS_FILES or path_key(token) in paths})
 
 
-def _under(path: str, roots: Sequence[str]) -> bool:
-    return any(path == root or path.startswith(root + "/") for root in roots)
+def path_key(path: object) -> tuple[str, ...] | None:
+    """The one form every small-class path comparison uses.
+
+    The workload policy's canonical repository-relative form (backslashes as
+    separators, ``./`` segments and trailing slashes dropped), compared
+    case-insensitively as its scope-overlap check compares prestage paths:
+    the bridge runs on Windows, where ``Vendor`` and ``vendor`` are one
+    directory. None for anything that is not unambiguously such a path
+    (absolute, a drive, ``..``, a glob, a trailing dot or space); every
+    caller treats None as the unsafe answer.
+    """
+
+    from .workload_policy import WorkloadPolicyError, _canonical_repository_relative_path
+
+    try:
+        canonical = _canonical_repository_relative_path(str(path), field_name="path")
+    except WorkloadPolicyError:
+        return None
+    return tuple(part.casefold() for part in canonical.split("/"))
+
+
+def _under(path: str, roots: Sequence[str], *, unknown: bool) -> bool:
+    """Whether ``path`` is one of ``roots`` or inside one, by path_key.
+
+    ``unknown`` is the answer for a path or root that has no key: True for a
+    prohibited-path check (excluded), False for an owned-path check.
+    """
+
+    key = path_key(path)
+    if key is None:
+        return unknown
+    for root in roots:
+        root_key = path_key(root)
+        if root_key is None:
+            if unknown:
+                return True
+            continue
+        if key[:len(root_key)] == root_key:
+            return True
+    return False
 
 
 def _read_only_packet(work: Mapping[str, Any]) -> bool:
@@ -247,18 +297,37 @@ def small_task_named_contents(work: Mapping[str, Any]) -> list[dict[str, str]] |
     from .policy import small_task_content_screened
 
     reader = _BLOB_READER
-    snapshot = {entry["path"]: entry for entry in work.get("authority_snapshot") or ()}
-    prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
-    # Every named token resolves against the snapshot inventory exactly; one
-    # that does not (a missing file) keeps the task out below.
-    names = named_paths(work.get("objective", ""), snapshot)
+    inventory = list(work.get("authority_snapshot") or ())
+    by_key: dict[tuple[str, ...], Mapping[str, Any]] = {}
+    ambiguous: set[tuple[str, ...]] = set()
+    for entry in inventory:
+        key = path_key(entry["path"])
+        if key is None:
+            continue
+        if key in by_key:
+            ambiguous.add(key)
+        by_key[key] = entry
+    prohibited = list(work.get("prohibited_paths") or ())
+    # Every named token resolves against the snapshot inventory by path_key;
+    # one that does not (a missing file), or that matches two entries
+    # differing only in case, keeps the task out below.
+    names = named_paths(work.get("objective", ""), [entry["path"] for entry in inventory])
     if reader is None or not names or len(names) > SMALL_TASK_CONTENT_MAX_FILES:
         return None
     contents: list[dict[str, str]] = []
+    shown: set[tuple[str, ...]] = set()
     total = 0
-    for path in names:
-        entry = snapshot.get(path)
-        if entry is None or _under(path, prohibited):
+    for name in names:
+        key = path_key(name)
+        if key is None or key in ambiguous or key not in by_key:
+            return None
+        if key in shown:
+            continue
+        shown.add(key)
+        entry = by_key[key]
+        path = entry["path"]
+        if (_under(path, prohibited, unknown=True)
+                or _under(name, prohibited, unknown=True)):
             return None
         data = reader(entry["blob_sha"])
         if (data is None or git_blob_sha(data) != entry["blob_sha"]
@@ -287,14 +356,14 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     snapshot = list(work.get("authority_snapshot") or ())
-    owned = [str(path).rstrip("/") for path in work.get("owned_paths") or ()]
-    prohibited = [str(path).rstrip("/") for path in work.get("prohibited_paths") or ()]
-    named = _objective_tokens(work.get("objective", ""))
+    owned = list(work.get("owned_paths") or ())
+    prohibited = list(work.get("prohibited_paths") or ())
+    named = {path_key(token) for token in _objective_tokens(work.get("objective", ""))} - {None}
     entries = [
         dict(entry)
         for entry in snapshot
-        if (_under(entry["path"], owned) or entry["path"] in named)
-        and not _under(entry["path"], prohibited)
+        if (_under(entry["path"], owned, unknown=False) or path_key(entry["path"]) in named)
+        and not _under(entry["path"], prohibited, unknown=True)
     ][:_MAX_COMPACT_AUTHORITY_ENTRIES]
     if not entries and not _read_only_packet(work):
         # An attended assignment that names no path (a repository-wide
@@ -302,7 +371,8 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
         # tool-less lane such as OpenAI Responses has no other way to see
         # filenames. Small read-only tasks always name their paths.
         entries = [dict(entry) for entry in snapshot
-                   if not _under(entry["path"], prohibited)][:_MAX_COMPACT_AUTHORITY_ENTRIES]
+                   if not _under(entry["path"], prohibited, unknown=True)
+                   ][:_MAX_COMPACT_AUTHORITY_ENTRIES]
     view: dict[str, Any] = {"schema_version": COMPACT_PROVIDER_VIEW_SCHEMA}
     view.update({key: work[key] for key in _COMPACT_VIEW_FIELDS if key in work})
     view["authority"] = {
@@ -884,3 +954,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

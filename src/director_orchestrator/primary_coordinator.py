@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -370,9 +371,20 @@ class PrimaryTaskCoordinator:
             deadline=deadline,
         )
         classification = payload.get("terminal_classification")
-        if self.terminal_observer is not None and classification not in (None, "SUCCEEDED"):
+        application = payload.get("application")
+        attended = (isinstance(application, Mapping)
+                    and application.get("execution_approval_required") is True)
+        if (self.terminal_observer is not None and classification not in (None, "SUCCEEDED")
+                and not attended):
+            # A task whose graph kept the execution button was never
+            # pre-authorized: no ledger read. Otherwise one absolute bound
+            # for everything the observer does, no later than the caller's.
+            from time import monotonic
+            bound = monotonic() + 5.0
+            observer_deadline = bound if deadline is None else min(deadline, bound)
             try:
-                self.terminal_observer(outcome.task_id, classification)
+                self.terminal_observer(
+                    outcome.task_id, classification, deadline=observer_deadline)
             except Exception:
                 # Never fails the persisted outcome; the durable derivation
                 # at the next exercise and at recovery remains.
@@ -1119,3 +1131,4 @@ class PrimaryTaskCoordinator:
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

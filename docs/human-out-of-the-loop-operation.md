@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
@@ -369,10 +370,20 @@ file that cannot be read before admission is an owner hold with no attempt at
 all); the reason
 is not transient, so it authorizes no retry and the ordinal cannot be replayed.
 A hold raised inside the transport, an attempt left `STARTED`, a transient
-failure, or any provider outcome is not proof, and trips as before. The trip is also recorded as soon as a
+failure, or any provider outcome is not proof, and trips as before. A task
+whose first intake recorded `PRE_AUTHORIZED` but stopped before creating it,
+and which a replay then created attended, never ran under the grant: before
+the attended task is created, an append-only `REFUSED` record with the gate
+`pre_authorization_superseded` retires that authorization, so neither the
+prior-task scan nor the terminal observer counts the task and no dispatch
+accepts it; its exercise stays spent. The trip is also recorded as soon as a
 pre-authorized task's failed terminal is persisted, without waiting for another
-intake; that write is best effort, so the derivation at each exercise and at
-each recovery stays the authority. An absent, unreadable, or unwritable audit ledger
+intake. The coordinator skips that observer for a task whose graph kept the
+button, and gives it one absolute deadline (at most five seconds, never past
+its own) for its aggregate read, history read and append together. That write
+is best effort: a trip it could not record in time is still derived from the
+durable failed terminal at the next exercise and at every dispatch recheck,
+which stays the authority. An absent, unreadable, or unwritable audit ledger
 holds the process attended, as described under operating states. Clearing a
 trip takes an explicit owner action, a new grant_id.
 
@@ -387,7 +398,14 @@ view is validated against it before any transport sends it. For a small
 read-only task the view also carries the text of every path the request names
 (a path-shaped token, a conventional extensionless file such as `Makefile` or
 `Dockerfile`, or any token that is exactly a path in the snapshot, each of which
-must resolve to a snapshot entry),
+must resolve to a snapshot entry). Every path match in this class, named,
+owned and prohibited alike, uses one normalizer: the workload policy's
+canonical repository-relative form (backslashes as separators, `./` segments
+and trailing slashes dropped) compared case-insensitively, since the bridge
+runs on Windows. A prohibited `Vendor` excludes `vendor/license.md`; a path or
+root that is not unambiguously repository-relative (absolute, a drive, `..`, a
+glob, a trailing dot) counts as prohibited and owns nothing; a name matching
+two snapshot entries that differ only in case keeps the task out. The text is
 read from the git blob its snapshot binds at the packet's commit (never a
 working tree; the blob's size is checked before it is read, and the read is
 streamed and stops at the cap) and bound by that blob hash, so a tool-less lane such as OpenAI
@@ -535,7 +553,16 @@ and it still qualifies
 lower reviewer cap, different lanes, or a `MAX_AGENT_HOPS` or `MAX_REVISIONS`
 below the plan's frozen hop or revision limit), rather than run without the class's
 bounds; a task whose graph keeps the button is never affected. That failure
-trips the grant. The same check runs again immediately before every provider
+trips the grant, with one exception: when the refusal is about the grant's own
+state (`small_task_pre_authorization_revoked`,
+`small_task_pre_authorization_unaudited` or
+`small_task_pre_authorization_commit_changed`) and the assignment is the first,
+with no predecessor and nothing yet run, it is an owner hold with no
+reservation, so the task stops as a proven no-run. Once a predecessor has run
+the task is incomplete and the refusal fails and trips; the class-condition
+refusals (`small_task_pre_authorization_lapsed` and the other `small_task_*`
+checks, `live_lane_budget_unauthorized`, `provider_activation_not_ready`)
+always fail and trip. The same check runs again immediately before every provider
 send of a pre-authorized task, each retry included, and inside the transport
 before each provider request it makes (the OpenAI Responses token count and
 its generation alike); a lapse sends nothing. Those rechecks spend what is left
@@ -780,3 +807,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->

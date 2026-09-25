@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -371,7 +372,7 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
 
         def refusal(*args, **kwargs):
             deadlines.append(kwargs.get("deadline"))
-            return "small_task_pre_authorization_revoked"
+            return "small_task_pre_authorization_lapsed"
 
         with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
                 patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
@@ -387,9 +388,52 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
             self.assertEqual([], deadlines)
             reservation, _ = self.selected(0)
             outcome = self.dispatch(reservation)
-            self.assertEqual("small_task_pre_authorization_revoked", outcome.reason_code)
+            self.assertEqual("small_task_pre_authorization_lapsed", outcome.reason_code)
             self.assertEqual(1, len(deadlines))
             self.assertIsNotNone(deadlines[0])
+
+    def test_grant_state_refusals_before_anything_ran_are_owner_holds(self):
+        """Only the grant's own state, and only while no predecessor ran;
+        class-condition refusals keep FAILED."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        for code in ("small_task_pre_authorization_revoked",
+                     "small_task_pre_authorization_unaudited",
+                     "small_task_pre_authorization_commit_changed"):
+            with self.subTest(code=code, stage="producer"):
+                self.record.assignment_outcomes = []
+                reservation, _ = self.selected(0)
+                with patch.object(self.activation.services, "execution_approval_free",
+                                  return_value=True), \
+                        patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                              return_value=code), \
+                        self.assertRaisesRegex(WorkloadAdmissionHold, code):
+                    self.dispatch(reservation)
+        self.activation.coordinator.reserve_provider_attempt.assert_not_called()
+        # A predecessor ran: the task is incomplete, so FAILED (and a trip).
+        self.record.assignment_outcomes = [AssignmentOutcome(
+            assignment_sequence=1, provider=ProviderName.GROK, run_id="ran",
+            result="The bounded producer result.", review_summary="ran")]
+        for code in ("small_task_pre_authorization_revoked",
+                     "small_task_pre_authorization_lapsed", "small_task_pre_authorization_tripped"):
+            with self.subTest(code=code, stage="reviewer"):
+                reservation, _ = self.selected(1)
+                with patch.object(self.activation.services, "execution_approval_free",
+                                  return_value=True), \
+                        patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                              return_value=code):
+                    outcome = self.dispatch(reservation)
+                self.assertEqual((ParallelAssignmentStatus.FAILED, code),
+                                 (outcome.status, outcome.reason_code))
+        # Class conditions stay FAILED even for the first assignment.
+        self.record.assignment_outcomes = []
+        reservation, _ = self.selected(0)
+        with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
+                patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                      return_value="small_task_pre_authorization_lapsed"):
+            outcome = self.dispatch(reservation)
+        self.assertEqual(ParallelAssignmentStatus.FAILED, outcome.status)
 
     def test_a_view_the_transport_cannot_rebuild_is_a_no_send_hold(self):
         """A read failure after the dispatch check refuses before provider I/O
@@ -771,3 +815,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

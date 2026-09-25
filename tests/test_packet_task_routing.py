@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
@@ -1134,6 +1135,52 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertEqual(prepared, validated_compact_view(work))
             _PREPARED_VIEWS.pop(document_digest(work))
 
+    def test_every_small_class_path_match_uses_one_case_insensitive_normalizer(self) -> None:
+        """Prohibited, owned and named paths compare by path_key: case,
+        separators, ./ and trailing slashes do not matter; ambiguity refuses."""
+
+        from director_orchestrator.packet_routing import (
+            compact_provider_view, git_blob_sha, path_key, small_task_named_contents)
+
+        self.assertEqual(("vendor", "license.md"), path_key("Vendor\\License.md"))
+        self.assertEqual(path_key("./docs/"), path_key("DOCS"))
+        for ambiguous in ("../x", "/etc", "C:/x", "a/*", "", "a/b.", "a /b"):
+            with self.subTest(ambiguous=ambiguous):
+                self.assertIsNone(path_key(ambiguous))
+
+        text = b"# Vendored\n"
+        blob = git_blob_sha(text)
+
+        def work(objective, prohibited, owned=(), inventory=("vendor/license.md",)):
+            return {"objective": objective, "allowed_tools": ["READ_REPOSITORY"],
+                    "allowed_external_effects": [], "starting_ref": "a" * 40,
+                    "authority_snapshot_digest": "sha256:" + "b" * 64,
+                    "owned_paths": list(owned), "prohibited_paths": list(prohibited),
+                    "authority_snapshot": [{"path": path, "commit_sha": "a" * 40,
+                                            "blob_sha": blob} for path in inventory]}
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: text):
+            # Shown when nothing prohibits it.
+            self.assertIsNotNone(small_task_named_contents(
+                work("Summarize vendor/license.md.", ["docs"])))
+            for spelling in ("Vendor", "VENDOR/", "./vendor", ".\\Vendor\\",
+                             "vendor/LICENSE.md", "../elsewhere", "C:/abs", "*"):
+                with self.subTest(prohibited=spelling):
+                    packet = work("Summarize vendor/license.md.", [spelling])
+                    self.assertIsNone(small_task_named_contents(packet))
+                    self.assertEqual([], compact_provider_view(packet)["authority"]["entries"])
+            # A name spelled in another case resolves to the one entry.
+            [shown] = small_task_named_contents(work("Summarize Vendor/License.md.", []))
+            self.assertEqual("vendor/license.md", shown["path"])
+            # Two entries differing only in case: ambiguous, refused.
+            self.assertIsNone(small_task_named_contents(work(
+                "Summarize vendor/license.md.", [],
+                inventory=("vendor/license.md", "Vendor/License.md"))))
+            # An owned root matches in any case; an ambiguous one owns nothing.
+            owned = work("Summarize the notes.", [], owned=["VENDOR"])
+            self.assertEqual(["vendor/license.md"],
+                             [e["path"] for e in compact_provider_view(owned)["authority"]["entries"]])
+
     def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
         """Extensionless files count: conventional names and any exact snapshot path."""
 
@@ -1333,3 +1380,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

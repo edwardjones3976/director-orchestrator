@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -499,6 +500,12 @@ def audit_ledger(directory: str) -> TaskStore:
 
 def gate_statuses(entry) -> dict:
     return {item.gate: item.status for item in entry.gate_results}
+
+
+def module_failed(coordinator, records):
+    from director_orchestrator.primary_default import _failed_pre_authorized_task
+
+    return _failed_pre_authorized_task(coordinator, records)
 
 
 class StandingGrantExerciseTests(unittest.TestCase):
@@ -1087,6 +1094,99 @@ class StandingGrantExerciseTests(unittest.TestCase):
         # The application wires itself as the coordinator's terminal observer.
         self.assertEqual(application._trip_on_failed_terminal,
                          application.coordinator.terminal_observer)
+
+    def test_a_replay_that_creates_the_task_attended_retires_its_pre_authorization(self):
+        """The first intake pre-authorized but never created its task; the
+        replay creates it attended, so that authorization never started it."""
+
+        record = self.record()
+        application = self.application()
+        self.assertTrue(self.exercise(application, record))
+
+        class Stop(Exception):
+            pass
+
+        requests = []
+        application.coordinator = SimpleNamespace(
+            claim_authenticated_intake=lambda **_: (record.task_id, False),
+            get_projection=lambda task_id, **_: None,
+            create_intake=lambda request: requests.append(request) or (_ for _ in ()).throw(Stop()),
+        )
+        application.services = SimpleNamespace(
+            _live_composition=False, register=lambda *_, **__: None,
+            discard=lambda *_: None, _packet_router=application.services._packet_router)
+        with self.assertRaises(Stop):
+            application.create_intake(
+                record.intake, intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+                authenticated_replay_identity=("a" * 64, "b" * 64))
+        [request] = requests
+        self.assertTrue(request.execution_approval_required)
+        pre, superseded = self.audit()
+        self.assertIs(RecordedOutcome.PRE_AUTHORIZED, pre.outcome)
+        self.assertIs(RecordedOutcome.REFUSED, superseded.outcome)
+        self.assertEqual({"pre_authorization_superseded": GateStatus.FAIL},
+                         gate_statuses(superseded))
+        self.assertEqual(pre.acting_agent, superseded.acting_agent)
+        # The attended task's later failure trips nothing, in the observer or
+        # the durable scan, and its old authorization dispatches nothing.
+        failed = self.coordinator({"terminal_classification": "FAILED"})
+        application.coordinator = failed
+        application._trip_on_failed_terminal(record.task_id, "FAILED")
+        self.assertEqual(2, len(self.audit()))
+        self.assertIsNone(module_failed(failed, self.audit()))
+        self.assertEqual("small_task_pre_authorization_unaudited", small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+        # Retiring twice appends nothing more.
+        application._supersede_orphaned_authorization(record.task_id)
+        self.assertEqual(2, len(self.audit()))
+
+    def test_a_trip_the_observer_runs_out_of_time_for_is_still_derived(self):
+        """One absolute deadline for the observer; spent, it writes nothing,
+        and the next exercise still trips on the durable failed terminal."""
+
+        import time as time_module
+
+        application = self.application()
+        failed_task = self.record()
+        self.assertTrue(self.exercise(application, failed_task))
+        application.coordinator = self.coordinator({"terminal_classification": "FAILED"})
+        application._trip_on_failed_terminal(
+            failed_task.task_id, "FAILED", deadline=time_module.monotonic() - 1)
+        self.assertEqual(1, len(self.audit()))
+        self.assertFalse(self.exercise(application, self.record()))
+        pre, trip, refused = self.audit()
+        self.assertEqual({"delegation_trip": GateStatus.FAIL}, gate_statuses(trip))
+        self.assertTrue(trip.acting_agent.endswith(failed_task.task_id))
+
+    def test_the_coordinator_observes_only_pre_authorized_terminals_within_one_bound(self):
+        from director_orchestrator import primary_coordinator as coordinator_module
+
+        observed = []
+        coordinator = object.__new__(coordinator_module.PrimaryTaskCoordinator)
+        coordinator._owner_token = "o" * 32
+        coordinator.terminal_observer = (
+            lambda task_id, classification, *, deadline: observed.append(deadline))
+        coordinator._store = SimpleNamespace(
+            read_primary_task_projection=lambda *_, **__: None,
+            update_primary_task_projection=lambda **kw: SimpleNamespace(projection=kw["projection"]))
+        writer = SimpleNamespace(fencing_generation=1)
+        outcome = SimpleNamespace(task_id="DIR-LG-OBSERVED", state_digest="s")
+        import time as time_module
+        for required, expected in ((True, 0), (False, 1), (None, 1)):
+            observed.clear()
+            coordinator._application_projection_provider = (
+                lambda _task, required=required: None if required is None
+                else {"execution_approval_required": required})
+            with patch.object(coordinator_module, "_outcome_projection",
+                              return_value={"terminal_classification": "FAILED",
+                                            "state_digest": "s"}):
+                start = time_module.monotonic()
+                coordinator._persist_outcome(outcome, writer, deadline=start + 60)
+            with self.subTest(execution_approval_required=required):
+                self.assertEqual(expected, len(observed))
+                if observed:
+                    self.assertLessEqual(observed[0] - start, 5.5)
 
     def test_a_proven_no_run_terminal_records_no_trip(self):
         application = self.application()
@@ -5942,3 +6042,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
