@@ -1,3 +1,5 @@
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | BEGIN]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 """Unit tests for smoke_train.py's non-GPU logic. The ML stack is stubbed, so this runs on any Python 3.10+:
     python projects/homemade-llm/train/test_smoke_train.py
@@ -63,6 +65,43 @@ class SmokeTrainTests(unittest.TestCase):
             self.assertFalse(dest.exists())
             self.assertFalse(dest.with_name("b.gguf.part").exists())
 
+    def test_publish_copy_error_leaves_no_part_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dest = Path(tmp, "a.gguf"), Path(tmp, "out", "b.gguf")
+            dest.parent.mkdir()
+            src.write_bytes(b"x" * 4096)
+            def partial_then_fail(s, d):
+                Path(d).write_bytes(b"x" * 100)
+                raise OSError("No space left on device")
+            with mock.patch.object(smoke_train.shutil, "copy2", partial_then_fail):
+                with self.assertRaises(OSError):
+                    smoke_train.publish(src, dest)
+            self.assertEqual(list(dest.parent.iterdir()), [])
+
+    def test_publish_rename_error_leaves_no_part_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dest = Path(tmp, "a.gguf"), Path(tmp, "out", "b.gguf")
+            dest.parent.mkdir()
+            src.write_bytes(b"x" * 4096)
+            with mock.patch.object(smoke_train.os, "replace", side_effect=OSError("rename failed")):
+                with self.assertRaises(OSError):
+                    smoke_train.publish(src, dest)
+            self.assertEqual(list(dest.parent.iterdir()), [])
+
+    def test_publish_all_removes_ggufs_when_the_final_report_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out, rep = Path(tmp, "export"), Path(tmp, "models"), Path(tmp, "reports", "r.json")
+            src.mkdir()
+            Path(src, "m.Q4_K_M.gguf").write_bytes(b"g" * 4096)
+            with mock.patch.object(smoke_train, "write_report", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    smoke_train.publish_all(src, out, {}, rep)
+            self.assertEqual(list(out.iterdir()), [])  # no orphan GGUF without its report
+            report = {}
+            smoke_train.publish_all(src, out, report, rep)
+            self.assertEqual(len(list(out.glob("*.gguf"))), 1)
+            self.assertEqual(json.loads(rep.read_text())["gguf"][0]["bytes"], 4096)
+
     def test_hf_cache_refs_reads_refs_main(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp, "hub", "models--org--name", "refs")
@@ -109,6 +148,9 @@ class SmokeTrainTests(unittest.TestCase):
                         self.assertEqual(ref.read_text(), pin)
                         raise RuntimeError("export failed")
                 self.assertEqual(ref.read_text(), "e" * 40)  # restored even though the export failed
+                with smoke_train.pinned_ref("org/src", pin):
+                    ref.write_text("f" * 40)  # another cache user updates the ref during the export
+                self.assertEqual(ref.read_text(), "f" * 40)  # their newer value is not overwritten
 
     def test_write_report_failure_keeps_previous_report(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -144,3 +186,5 @@ class SmokeTrainTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | END]]
