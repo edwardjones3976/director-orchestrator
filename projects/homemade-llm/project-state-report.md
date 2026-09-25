@@ -13,8 +13,8 @@ The canonical records are:
 Report facts:
 - **Project ID:** `homemade-llm`
 - **Assignments covered:** M0.1–M0.12 and HS-1.
-- **Report label:** delivered report. Every number below was measured on 2026-09-25 on `blackbox` against main `f0a7752e`, by Claude and independently by OpenAI Codex (see Evidence).
-- **Categorized status:** 10 of 12 items are closed. M0.5's phone check waits on the owner (`tailscale serve`), and M0.9/M0.11 wait on the merge of #276, which is already accepted.
+- **Report label:** delivered report. Every number below was measured by Claude on 2026-09-25 on `blackbox` against main `f0a7752e`. OpenAI Codex independently re-measured the subset its sandbox could reach; see Evidence for which facts are double-verified and which rest on Claude alone.
+- **Categorized status:** 9 of 13 items (M0.1–M0.12 plus HS-1) are closed. M0.12 is this report, in review. M0.5's phone check waits on the owner (`tailscale serve`), and M0.9/M0.11 wait on the merge of #276, which is already accepted.
 
 ## Checklist
 
@@ -63,7 +63,7 @@ Directly attributable to homemade-llm: USD 0.33 (Grok CLI). M0's own paid resear
 
 ## What changed since PR-0
 
-- Every M0 script is merged, with unit tests. The live train, serve, interrupt and lock checks passed on the final code.
+- Every M0 script except M0.9's dataset scan (in #276, accepted) is merged, with unit tests. The live train, serve, interrupt and lock checks passed on the final code.
 - The GGUF merge source is **bound**, not merely checked: the export runs offline against the pinned local snapshot (O-030).
 - M1's held-out sets are drafted, local only and never committed, and gitleaks finds nothing in them:
   - **Set A:** 22 real-history packets, awaiting owner confirmation (O-034).
