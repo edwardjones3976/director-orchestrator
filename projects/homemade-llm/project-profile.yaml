@@ -1,4 +1,4 @@
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
@@ -49,11 +49,11 @@ outcomes:
 surfaces:
   deployment:
     intent: "analysis_only" # analysis_only | planned | live
-    concurrently_active: "false"
-    profile: "not_created"
-    compose_namespace: "not_created"
-    state_namespace: "not_created" # planned: C:\llm (see rollout-packet.md)
-    status: "provisional"
+    concurrently_active: "true" # other Director stacks are live on this host (see rollout-packet.md)
+    profile: "C:/llm/secrets/open-webui.env (outside the repository; template compose/.env.homemade-llm.example)"
+    compose_namespace: "homemade-llm (Open WebUI + SearXNG only; no orchestrator instance)"
+    state_namespace: "C:/llm on the host plus the Docker volume homemade-llm_open-webui-data"
+    status: "confirmed"
   slack:
     workspace_id: "pending"
     owner_user_allowlist_reference: "pending"
@@ -206,10 +206,10 @@ controls:
 review_chain:
   producer: "claude"
   material_authors: ["claude"]
-  eligible_reviewer: "grok (fallback: openai codex)"
+  eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
   candidate:
     repository: "edwardjones3976/director-orchestrator"
-    base_sha: "1892b841a78580b2664236b16dcc61094bdce9c8"
+    base_sha: "9d61942c63050f886e1666887bfe6b7ba040dc61"
     head_sha: "none"
     artifact_digest: "none"
   required_evidence:
@@ -224,12 +224,12 @@ assumptions:
     - "RTX 5070 12 GB; Unsloth supports RTX 50 series (Unsloth docs)"
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
+    - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
+    - "Paid spend is metered from the provider-dispatch receipts; homemade-llm M0 to date USD 0.20"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
-  unknown:
-    - "LM Studio reachability from a container when bound to 127.0.0.1"
-    - "Current paid-API spend (no history recorded; metered from M0)"
+  unknown: []
   not_applicable: []
 
 fallbacks:
@@ -250,4 +250,4 @@ next:
   expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]]

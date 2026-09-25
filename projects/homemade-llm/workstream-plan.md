@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation"
@@ -11,7 +11,7 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 ## Phase frame
 
 - **Project:** `homemade-llm` — Homemade LLM
-- **Current state:** framing; PR-0 (this subsection, docs only) open
+- **Current state:** building; M0 gate report filed in PR #277; M0.9 and M0.11 in PR #276; #275 reviewed and awaiting the owner's merge
 - **Phase outcome:** storage laid out; the Unsloth container trains on the GPU; LM Studio serves a merged GGUF over `/v1`; Open WebUI reaches it over Tailscale; paid-spend metering on; gitleaks available for datasets
 - **Stopping point:** M0 gate — `project-state-report.md` with every number [verified]; target 2026-10-01
 - **Total phase budget/time:** USD 25; ~1 week; max 3 dispatches in flight
@@ -44,7 +44,7 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 | M0.7 | implementation | claude → owner | none | producer | `scripts/mirror.ps1` + Scheduled Task; restore one file | M0.2 | restore hash matches | Go (task) |
 | M0.8 | quality_and_security | owner | none | operator | move/delete stray `xo-fleet\ollama\id_ed25519` | none | logged | Go |
 | M0.9 | quality_and_security | claude | none | producer | `scripts/scan-dataset.ps1`: gitleaks over `C:\llm\datasets` + existing `redact()` helpers | M0.2 | clean run on a planted-secret fixture fails, clean fixture passes | Go (gitleaks download) |
-| M0.10 | research_and_evidence | claude | none | producer | spend meter: append `primary-provider-usage-v1` rows per paid call to `C:\llm\reports\spend.jsonl`; weekly total | HS-0 | first week's ledger in the M0 report | none |
+| M0.10 | research_and_evidence | claude | none | producer | spend meter: `scripts/spend_meter.py` totals the provider-dispatch receipts, which are the ledger; weekly total | HS-0 | first week's ledger in the M0 report | none |
 | M0.11 | research_and_evidence | perplexity | perplexity-research-workflow | researcher | M1 brief: Qwen3-8B/14B, Phi-4, Mistral Nemo on structured output under 12 GB QLoRA | HS-0 | `research/base-models-YYYYMMDD.md` with provenance; Director evaluates | ledger (~USD 0.01) |
 | M0.12 | design_and_decision | claude | none | producer | `project-state-report.md`; profile `framing` → `building` | all above | report merged | **milestone gate** |
 
@@ -92,11 +92,11 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 | HS-0, M0.1, M0.2, HS-1, M0.3, M0.4, M0.6, M0.7, M0.8, M0.10 | done | PRs #266-#273; numbers in `project-state-report.md` |
 | M0.3/M0.4 hardening (#275) | reviewed, ACCEPT at ed317a81 | owner merge |
 | M0.5 | containers up on 127.0.0.1:3000 and :8088; tailnet publish is an owner click | `compose/RUNBOOK.md` section 2 |
-| M0.9, M0.11 | in flight, uncommitted in worktree hl-m0-close (peer Director session) | its PR |
-| M0.12 | this report | PR with `project-state-report.md` |
+| M0.9, M0.11 | in PR #276 (peer Director session), awaiting a non-author review | #276 |
+| M0.12 | this report | PR #277 |
 
 Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->

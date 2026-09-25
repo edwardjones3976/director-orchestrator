@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Decision log — homemade-llm
@@ -49,9 +49,9 @@ something this project read or measured. Times are UTC.
 | 2026-09-25 ~22:56 | O-030 | Owner: "Close out M0, start with #275 review." | owner chat [relayed] |
 | 2026-09-25 23:12 | D-009 | #275 reviewer of record is the xAI direct API lane (grok-4.6): Grok Build CLI was exhausted (HTTP 402 at 19:07 UTC) and Codex is a material author of the candidate (commits ee06801, ed317a8), so the Codex ACCEPT in the PR body does not count. Verdict ACCEPT at ed317a81, no findings, USD 0.1639, receipt provider-dispatch receipts/xai/20260925T230929Z.json. The Director re-ran unittest (14/14) and both PowerShell suites (9 + 14 ok) at that head. | receipts + CI [verified] |
 | 2026-09-25 ~23:16 | D-010 | Publishing Open WebUI with `tailscale serve --bg 3000` is an owner click: the auto-mode classifier denied it to the Director session (Expose Local Services). Tailscale is online as blackbox.taile9e808.ts.net with no cert domains yet, so HTTPS certificates may need enabling in the admin console first. | tailscale status [verified] |
-| 2026-09-25 ~23:18 | D-011 | Two Director sessions worked M0 on 09-25: this one and the Claude Desktop session "Local LLM setup Opus 5.5 Med" (worktrees hl-m0-close with the uncommitted M0.9 script and M0.11 brief, and hl-pr275-review). Proposed split by cross-session message: the peer keeps M0.9 and M0.11; this session files M0.12 and the record updates. Exactly one verdict was posted on #275. Before any homemade-llm drive, check ListAgents, recent dispatch receipts and dirty hl-* worktrees for a peer. | ListAgents + git worktree list [verified] |
+| 2026-09-25 ~23:18 | D-011 | Two Director sessions worked M0 on 09-25: this one and the Claude Desktop session "Local LLM setup Opus 5.5 Med" (worktrees hl-m0-close with the M0.9 script and M0.11 brief, opened as PR #276 at 23:22 UTC, and hl-pr275-review). Proposed split by cross-session message: the peer keeps M0.9 and M0.11; this session files M0.12 and the record updates. Exactly one verdict was posted on #275. Before any homemade-llm drive, check ListAgents, recent dispatch receipts and dirty hl-* worktrees for a peer. | ListAgents + git worktree list [verified] |
 | 2026-09-25 ~23:23 | D-012 | `unsloth/unsloth:latest` pinned at digest sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739 (image built 2026-09-20). LM Studio answers HTTP 200 at host.docker.internal:1234 from inside the running Open WebUI container. | docker [verified] |
 | 2026-09-25 ~23:19 | D-013 | The paid-spend ledger is the provider-dispatch receipts folder, read by scripts/spend_meter.py; no separate spend.jsonl exists or is needed. homemade-llm M0 paid spend: USD 0.20 of 25 (xAI review 0.1639, Perplexity brief 0.0398). | spend_meter.py [verified] |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->

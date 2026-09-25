@@ -1,11 +1,11 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
 # Project state report — homemade-llm, M0 "Foundation" gate
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
 
 ## EVIDENCE
 
-**Homemade LLM** is at the M0 gate. Canonical record: this file, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273 (merged) and #275 (review complete, awaiting the owner's merge).
+**Homemade LLM** is at the M0 gate. Canonical record: this file, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273 (merged) #275 (review complete, awaiting the owner's merge), #276 (M0.9 and M0.11, awaiting a non-author review) and #277 (this report).
 
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
@@ -27,9 +27,9 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 | M0.6 | Ollama retirement | done | robocopy 59 files, 93.415 GB, 0 failed, to `E:\llm-archive\ollama-2026-09\models\` in 10:20 at 162 MB/s (log `m06-archive-20260924-154719.log`); `xo-fleet\ollama\models\blobs` now 16 KB `[verified]` |
 | M0.7 | mirror + Scheduled Task + restore drill | done | `scripts/mirror.ps1` in #269; task `homemade-llm-mirror` Ready; run 2026-09-25 03:30 local mirrored 413 files, 8.119 GB, 0 failed, `secrets` excluded; `restore-drill.sha256` = `474CA9FA…335A` `[verified]` |
 | M0.8 | stray `xo-fleet\ollama\id_ed25519` | done | file absent `[verified 09-25]` |
-| M0.9 | dataset secret scan | in flight | gitleaks 8.30.1 at `C:\llm\tools\gitleaks\gitleaks.exe` `[verified]`; `scan-dataset.ps1` + test authored via Cursor in worktree `hl-m0-close`, uncommitted at 23:19 UTC `[verified, peer session]` |
+| M0.9 | dataset secret scan | in PR #276 | gitleaks 8.30.1 at `C:\llm\tools\gitleaks\gitleaks.exe` `[verified]`; `scan-dataset.ps1` + `test-scan-dataset.ps1` authored via Cursor for the peer Director session; PR #276 opened 23:22 UTC at head `af3626a3`, awaiting a non-author review `[verified]` |
 | M0.10 | spend meter | done | #269 merged; receipts are the ledger; `spend_meter.py --days 7`: all projects USD 11.19 (grok-cli 7.76, xai 3.07, perplexity 0.36) `[verified]`. **homemade-llm M0 paid spend: USD 0.20** (xAI review 0.1639; Perplexity brief 0.0398; xAI fact-check receipt carries no cost field) of the USD 25 envelope |
-| M0.11 | base-model brief | in flight | Perplexity sonar-pro at 23:12 UTC returned mostly "not found" (USD 0.0398); Director fallback brief `research/base-models-20260925.md` drafted in `hl-m0-close`, uncommitted `[verified, peer session]` |
+| M0.11 | base-model brief | in PR #276 | Perplexity sonar-pro at 23:12 UTC returned mostly "not found" (USD 0.0398, receipt `receipts/perplexity/20260925T231241Z.json`); the Director-research fallback `research/base-models-20260925.md` is in PR #276 `[verified]` |
 | M0.12 | this report; profile `framing` → `building` | this PR | — |
 
 ### Numbers that govern M1
@@ -42,7 +42,7 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 ### Not done, and what remains unverified
 
 1. Phone access over the tailnet (`tailscale serve --bg 3000`, then `WEBUI_URL=https://blackbox.taile9e808.ts.net` and a container recreate) — owner's click; acceptance is a chat with web search from the phone.
-2. M0.9 and M0.11 are uncommitted in a peer worktree; this report's rows for them are `[verified]` as files on disk, not as merged artifacts.
+2. PRs #275, #276 and #277 are not merged. The M0 gate closes when all three are on `main`, each with one non-author ACCEPT at its head.
 3. The 4-week paid-spend baseline required by the L1 checklist starts from the first real metered call; as of this report the project ledger holds two calls.
 
 ### Owner gates
@@ -54,4 +54,4 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 ### Next bounded action
 
 M1 base shootout (PLAN.md §3, week 2 → 10-08): build the two held-out sets first (real-history answer key ~30 items; ~50 PR-reconstructed packets; raw material already at `C:\llm\datasets\heldout\raw`), then download the four bases and run schema-constrained decoding. Responsible: Director (sets), providers (grading). Expected evidence: `research/m1-shootout-<date>.md` with field-level acceptance per base and the license check.
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->
