@@ -20,7 +20,7 @@
 | **QLoRA 4-bit VRAM floor (Unsloth)** [6] | 6 GB (8B row) | 8.5 GB (14B row) | 8.5 GB (14B row) | no 12B row; between the two |
 | **Structured output and tools** | "excels in tool calling" (vendor claim), Qwen-Agent templates [2] | same family [3] | no function-calling or JSON evaluation on the card [4] | function calling supported [5] |
 | **GGUF** | Unsloth and community GGUF repos [7] | Unsloth GGUF repo [7] | not checked | many community GGUFs converted with llama.cpp [7] |
-| **Caveat** | thinking mode on by default: disable with `enable_thinking=False` or `/no_think` [2]; needs transformers ≥ 4.51 [2] | same [3] | shortest context of the four (16 K) [4] | recommended temperature 0.3; "does not have any moderation mechanisms" [5] |
+| **Caveat** | thinking mode on by default: disable it with `enable_thinking=False` in the chat template [2]. The `/no_think` soft switch still leaves an empty `<think></think>` block under the default template, so it is not enough for strict JSON; needs transformers ≥ 4.51 [2] | same [3] | shortest context of the four (16 K) [4] | recommended temperature 0.3; "does not have any moderation mechanisms" [5] |
 
 **Context budget on 12 GB.** Unsloth's measured QLoRA benchmark for Llama-3.1-8B reaches 21,848 tokens on a 12 GB GPU, against 932 for Hugging Face with FA2 [8]. That figure is for an 8B model: 14B models leave far less room, which the plan's §4.1 note of about 2–4 K context already reflects. This project's own measurement is the smoke run: Qwen3-0.6B peaked at 0.8 GB, but that says nothing about the 8–14B bases.
 
@@ -31,7 +31,7 @@
 1. **No owner action for bases.** All four are ungated, so no Hugging Face token and no license clicks are needed. This corrects the earlier plan, which assumed a gating step.
 2. **Qwen3 thinking mode.** The Qwen3 runs must disable it, as the smoke run already does. Otherwise `<think>` blocks break strict JSON.
 3. **Phi-4's 16 K context** is enough for work packets (the real packets are far shorter), but it is the tightest of the four.
-4. **VRAM at 14B.** 14B models fit QLoRA at 8.5 GB, with little headroom for context on 12 GB. The M1 shootout should record peak VRAM and the achievable context per base.
+4. **VRAM at 14B.** Unsloth lists 8.5 GB as the generic 4-bit QLoRA floor for the 14B class [6], and cautions that specific models may need more. It does not establish that any particular 14B checkpoint fits with useful context on 12 GB. The M1 shootout should record peak VRAM and the achievable context per base.
 
 ## Sources (all retrieved 2026-09-25)
 

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:58 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 23:18 UTC | BEGIN]]
 # Behavioural checks for scan-dataset.ps1 on scratch folders (never the live C:\llm\datasets).
 #   pwsh -File projects\homemade-llm\scripts\test-scan-dataset.ps1
@@ -53,6 +54,22 @@ try {
     Assert-True ($dirty.out -notmatch $planted) 'planted value absent from stdout (redact)'
     Assert-True ($reportRaw -notmatch $planted) 'planted value absent from report (redact)'
 
+    # The dataset cannot switch its own scan off: an allow-all config, an ignore file or an inline allow marker is refused.
+    Set-Content (Join-Path $scan '.gitleaks.toml') "[allowlist]`npaths = ['''.*''']" -Encoding utf8
+    Assert-Equal (Invoke-Scan $hot $scan).exit 2 'dataset .gitleaks.toml is refused (exit 2)'
+    Remove-Item (Join-Path $scan '.gitleaks.toml')
+    Set-Content (Join-Path $scan '.gitleaksignore') 'anything' -Encoding utf8
+    Assert-Equal (Invoke-Scan $hot $scan).exit 2 'dataset .gitleaksignore is refused (exit 2)'
+    Remove-Item (Join-Path $scan '.gitleaksignore')
+    Set-Content (Join-Path $scan 'marked.jsonl') ('{"text":"x"} # gitleaks' + ':allow') -Encoding utf8
+    Assert-Equal (Invoke-Scan $hot $scan).exit 2 'inline gitleaks:allow marker is refused (exit 2)'
+    Remove-Item (Join-Path $scan 'marked.jsonl')
+
+    # A gitleaks error (its own exit 1) must map to 2, never to 'findings' (1).
+    $fake = Join-Path $work 'fake-gitleaks.cmd'; Set-Content $fake '@exit /b 1' -Encoding ascii
+    $err = & pwsh -NoProfile -File $script -Path $scan -HotRoot $hot -Gitleaks $fake 2>&1 | Out-String
+    Assert-Equal $LASTEXITCODE 2 'gitleaks error exit maps to 2, not findings'
+
     $missing = Join-Path $work 'no-such-datasets'
     $miss = & pwsh -NoProfile -File $script -Path $missing -HotRoot $hot -Gitleaks $gitleaks 2>&1 | Out-Null
     Assert-Equal $LASTEXITCODE 2 'missing scan path exits 2'
@@ -64,3 +81,4 @@ if ($failures.Count) { $failures | ForEach-Object { Write-Output "FAIL $_" }; ex
 Write-Output 'test-scan-dataset: all cases passed'
 exit 0
 # [[Cursor | cursor-agent | 2026-09-25 | 23:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:58 UTC | END]]
