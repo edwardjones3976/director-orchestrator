@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -146,6 +147,118 @@ FROM {s}.director_primary_command_receipt r LEFT JOIN {s}.director_primary_comma
 WHERE r.task_id = ANY(%(tasks)s) AND r.operation='approval_resume' ORDER BY r.task_id, r.recorded_at LIMIT 100"""
 
 
+_DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
+_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
+ATTEMPT_STATUSES = ("STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS")
+
+
+def _is_id(value):
+    return isinstance(value, str) and bool(_IDENTITY.fullmatch(value))
+
+
+def _is_count(value):
+    return type(value) is int and value >= 0
+
+
+def _when(value):
+    """Timezone-aware datetime from an ISO string, or None when unusable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def validate_attempt_history(assignments, attempts):
+    """Bind every attempt event to its assignment/provider and its immutable attempt.
+
+    Returns (latest_valid_event_per_attempt, error). Events of one attempt
+    (assignment, ordinal) must share digest, idempotency/budget identity,
+    provider, format and transport; event sequences are unique and within the
+    producer's 1..3 contract; a digest never names two attempts. The latest
+    valid event settles the attempt, so an authenticated later SUCCEEDED
+    callback (event 3) supersedes an earlier AMBIGUOUS event 2. Each
+    assignment's attempt ordinals run 1..n without a gap (the roster numbers
+    them from 1), and event times never decrease within an attempt.
+
+    The one rule for both readers: the collector applies it to a selected
+    task's typed readback, and the in-image consistency command to every task's
+    rows (``provider_attempts_invalid``). Times are ISO strings.
+    """
+    by_assignment = {}
+    for row in assignments:
+        if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
+                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment
+                or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
+                                             "OWNER_DECISION_REQUIRED")):
+            return None, "malformed or duplicate assignment row"
+        for field in ("reservation_digest", "result_digest"):
+            if row.get(field) is not None and not _DIGEST.fullmatch(str(row[field])):
+                return None, "malformed assignment digest"
+        by_assignment[row["assignment_id"]] = row
+    grouped = {}
+    for row in attempts:
+        key = (row.get("assignment_id"), row.get("attempt_ordinal"))
+        assignment = by_assignment.get(row.get("assignment_id"))
+        if assignment is None:
+            return None, "attempt does not join a listed assignment"
+        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
+                or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
+                or not _is_count(row.get("assignment_sequence"))
+                or row.get("status") not in ATTEMPT_STATUSES
+                or not _DIGEST.fullmatch(str(row.get("attempt_digest", "")))
+                or not _DIGEST.fullmatch(str(row.get("idempotency_key_digest", "")))
+                or not _DIGEST.fullmatch(str(row.get("budget_evidence_digest", "")))
+                or not _is_id(row.get("provider_id")) or not _is_id(row.get("format_id"))
+                or not _is_id(row.get("transport_id")) or not _is_id(row.get("reason_code"))
+                or _when(row.get("recorded_at")) is None):
+            return None, "malformed attempt event"
+        if row["provider_id"] != assignment["provider_id"] or row["assignment_sequence"] != assignment["sequence"]:
+            return None, "attempt provider/sequence disagrees with its assignment"
+        for field in ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"):
+            if row.get(field) is not None and not _DIGEST.fullmatch(str(row[field])):
+                return None, "malformed attempt digest"
+        # Event positions carry meaning: event 1 is the STARTED record; later
+        # events are settlements or ambiguity, and a settlement carries its
+        # outcome evidence (and, when SUCCEEDED, a result digest).
+        if row["event_sequence"] == 1 and row["status"] != "STARTED":
+            return None, "event 1 is not the STARTED record"
+        if row["event_sequence"] > 1 and row["status"] == "STARTED":
+            return None, "a later event repeats STARTED"
+        if row["status"] in ("SUCCEEDED", "FAILED") and row.get("outcome_evidence_digest") is None:
+            return None, "terminal event lacks outcome evidence"
+        if row["status"] == "SUCCEEDED" and row.get("result_digest") is None:
+            return None, "SUCCEEDED event lacks a result digest"
+        grouped.setdefault(key, []).append(row)
+    digests = {}
+    latest = {}
+    for key, events in grouped.items():
+        identity = {(e["attempt_digest"], e["idempotency_key_digest"], e["budget_evidence_digest"],
+                     e["provider_id"], e["format_id"], e["transport_id"]) for e in events}
+        sequences = [e["event_sequence"] for e in events]
+        if len(identity) != 1 or len(set(sequences)) != len(sequences):
+            return None, "attempt identity changed across its events or duplicate events"
+        digest_value = events[0]["attempt_digest"]
+        if digests.setdefault(digest_value, key) != key:
+            return None, "attempt digest reused by another attempt"
+        ordered = sorted(events, key=lambda e: e["event_sequence"])
+        if ordered[0]["event_sequence"] != 1:
+            return None, "attempt history lacks its STARTED event 1"
+        # Event 3 (authenticated callback settlement) may legitimately follow
+        # event 1 directly; event 2 is not fabricated to satisfy this check.
+        if any(_when(a["recorded_at"]) > _when(b["recorded_at"]) for a, b in zip(ordered, ordered[1:])):
+            return None, "attempt events are not recorded in sequence order"
+        latest[key] = ordered[-1]
+    ordinals = {}
+    for assignment_id, ordinal in grouped:
+        ordinals.setdefault(assignment_id, set()).add(ordinal)
+    if any(values != set(range(1, len(values) + 1)) for values in ordinals.values()):
+        return None, "an assignment's attempt ordinals do not run 1..n"
+    return latest, None
+
+
 def _secret(settings, name):
     """An entitlement secret file's contents, or None: without it nothing it signs verifies."""
     try:
@@ -215,36 +328,97 @@ def _require_instance(connection, schema, identity):
 # Every attached result packet is revalidated in the snapshot, globally; past this many rows the count is unknown.
 ARTIFACT_VALIDATION_CAP = 2000
 _ATTACHED_ARTIFACTS = """SELECT r.task_id, r.assignment_id, r.authority_snapshot_digest, r.document_digest,
- r.canonical_document, r.writer_fencing_generation, x.provider_id AS assignment_provider_id,
- x.status AS assignment_status, x.result_digest AS assignment_result_digest
+ r.canonical_document, r.writer_fencing_generation, r.recorded_at, x.provider_id, x.status, x.result_digest,
+ x.reserved_at, x.completed_at
 FROM {s}.director_primary_result_packet_artifact r JOIN {s}.director_primary_parallel_assignment x
  ON x.task_id=r.task_id AND x.assignment_id=r.assignment_id
 ORDER BY r.task_id, r.assignment_id LIMIT %(limit)s"""
 
 
-def _invalid_attached_artifacts(connection, schema):
-    """How many result packets attached to a durable assignment are not what that assignment settled: the stored
-    canonical document fails revalidation against its digest (as the Director reloads it, which also binds the
-    packet's task and assignment IDs to the row), its provider is not the assignment's agent (the lane mapped as
-    primary_default records it), or a SUCCEEDED assignment names another result digest. None when more rows exist
-    than ARTIFACT_VALIDATION_CAP, so the count fails closed instead of validating a subset."""
-    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row
+def artifact_assignment_conflict(artifact, assignment):
+    """The one packet-to-assignment rule, for the global count here and check 20's per-task join.
+
+    ``artifact``: verified (revalidated as the Director reloads it), provider, document_digest, recorded_at;
+    ``assignment``: provider_id, status, result_digest, reserved_at, completed_at (times as ISO strings).
+    primary_default persists a packet only after the attempt succeeded, while the assignment is reserved
+    (ACTIVE), and primary_parallel then settles it SUCCEEDED with that result digest; a crash or an ambiguous
+    settlement in between leaves ACTIVE or AMBIGUOUS. Returns None for a packet its SUCCEEDED assignment
+    recorded, "in_flight" for that bounded window (ACTIVE or AMBIGUOUS: in flight, not a conflict), or the conflict:
+    failed revalidation, another provider than the assignment's agent, recorded outside the reservation and
+    completion, or any other status or result digest (a FAILED, PENDING or owner-held assignment never has one).
+    """
     from .primary_default import _PRIMARY_LANE_AGENT
+    if artifact.get("verified") is not True:
+        return "the stored packet fails revalidation"
+    agent = _PRIMARY_LANE_AGENT.get(str(assignment.get("provider_id")))
+    if agent is None or artifact.get("provider") != agent.value:
+        return "the packet's provider is not its assignment's agent"
+    reserved, recorded = _when(assignment.get("reserved_at")), _when(artifact.get("recorded_at"))
+    if reserved is None or recorded is None or recorded < reserved:
+        return "the packet was not recorded after its assignment's reservation"
+    if assignment.get("status") in ("ACTIVE", "AMBIGUOUS"):
+        return "in_flight"
+    completed = _when(assignment.get("completed_at"))
+    if (assignment.get("status") != "SUCCEEDED" or completed is None or recorded > completed
+            or not isinstance(artifact.get("document_digest"), str)
+            or assignment.get("result_digest") != artifact["document_digest"]):
+        return "the packet is not its SUCCEEDED assignment's result"
+    return None
+
+
+def _attached_artifacts(connection, schema):
+    """(invalid, in_flight) over every result packet attached to a durable assignment, through
+    artifact_assignment_conflict; (None, None) past ARTIFACT_VALIDATION_CAP rows, so neither count ever validates
+    a subset."""
+    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row
     rows = connection.execute(_ATTACHED_ARTIFACTS.format(s=schema), {"limit": ARTIFACT_VALIDATION_CAP + 1}).fetchall()
     if len(rows) > ARTIFACT_VALIDATION_CAP:
-        return None
-    invalid = 0
+        return None, None
+    invalid = in_flight = 0
     for row in rows:
         try:
-            packet = _result_packet_artifact_from_row(row).packet
+            provider, verified = _result_packet_artifact_from_row(row).packet.get("provider"), True
         except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
-            invalid += 1
-            continue
-        agent = _PRIMARY_LANE_AGENT.get(str(row["assignment_provider_id"]))
-        if (agent is None or packet.get("provider") != agent.value
-                or (row["assignment_status"] == "SUCCEEDED" and row["assignment_result_digest"] != row["document_digest"])):
-            invalid += 1
-    return invalid
+            provider, verified = None, False
+        conflict = artifact_assignment_conflict(
+            {"verified": verified, "provider": provider, "document_digest": row["document_digest"],
+             "recorded_at": _plain(row["recorded_at"])},
+            {key: _plain(row[key]) for key in ("provider_id", "status", "result_digest", "reserved_at", "completed_at")})
+        in_flight += conflict == "in_flight"
+        invalid += conflict not in (None, "in_flight")
+    return invalid, in_flight
+
+
+# Every task's provider attempts, through the collector's own rule (validate_attempt_history).
+ATTEMPT_VALIDATION_CAP = 5000
+_ALL_ASSIGNMENTS = """SELECT task_id, assignment_id, sequence, provider_id, deployment_id, status, reservation_digest,
+ result_digest, reason_code, reserved_at, completed_at FROM {s}.director_primary_parallel_assignment
+ORDER BY task_id, sequence, assignment_id LIMIT %(limit)s"""
+_ALL_ATTEMPTS = """SELECT a.task_id, a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
+ a.event_sequence, a.provider_id, a.format_id, a.transport_id, a.idempotency_key_digest, a.attempt_digest,
+ a.provider_run_id_digest, a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
+ a.budget_evidence_digest, a.recorded_at
+FROM {s}.director_primary_provider_attempt a JOIN {s}.director_primary_parallel_assignment p
+ ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
+ORDER BY a.task_id, p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence LIMIT %(limit)s"""
+
+
+def _invalid_attempt_histories(connection, schema):
+    """How many tasks' provider-attempt histories fail validate_attempt_history, the rule the collector applies to
+    a selected task's readback (same rows, same columns, times as ISO strings); None past ATTEMPT_VALIDATION_CAP
+    assignments or attempt events, so the count never validates a subset."""
+    limit = {"limit": ATTEMPT_VALIDATION_CAP + 1}
+    assignments = connection.execute(_ALL_ASSIGNMENTS.format(s=schema), limit).fetchall()
+    attempts = connection.execute(_ALL_ATTEMPTS.format(s=schema), limit).fetchall()
+    if len(assignments) > ATTEMPT_VALIDATION_CAP or len(attempts) > ATTEMPT_VALIDATION_CAP:
+        return None
+    by_task = {}
+    for row in assignments:
+        by_task.setdefault(row["task_id"], ([], []))[0].append({k: _plain(v) for k, v in row.items() if k != "task_id"})
+    for row in attempts:
+        by_task.setdefault(row["task_id"], ([], []))[1].append({k: _plain(v) for k, v in row.items() if k != "task_id"})
+    return sum(1 for task_assignments, task_attempts in by_task.values()
+               if validate_attempt_history(task_assignments, task_attempts)[1] is not None)
 
 
 def consistency_report(settings, identity, *, tasks=()) -> dict:
@@ -271,7 +445,8 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
         with connection.transaction():
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
-            invalid_artifacts = _invalid_attached_artifacts(connection, schema)
+            invalid_artifacts, in_flight_artifacts = _attached_artifacts(connection, schema)
+            invalid_attempts = _invalid_attempt_histories(connection, schema)
             if tasks:
                 present = connection.execute(
                     "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage,"
@@ -340,7 +515,9 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
             # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
             "counts": {**{key: int(counts[key]) for key in _COUNT_KEYS},
-                       "result_artifacts_invalid": invalid_artifacts},
+                       "result_artifacts_invalid": invalid_artifacts,
+                       "result_artifacts_in_flight": in_flight_artifacts,
+                       "provider_attempts_invalid": invalid_attempts},
             "tasks": per_task}
 
 
@@ -485,3 +662,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

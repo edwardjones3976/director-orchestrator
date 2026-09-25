@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -684,17 +685,72 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     (task_id, assignment, sequence))
         attached = self.report()["counts"]
         self.assertEqual(attached["result_artifacts_without_assignment"], 0)
-        # Review 4101181027: every attached packet is revalidated globally, whatever tasks were selected. A2's
-        # stored document no longer matches its digest; A1 is the claude packet a claude assignment settled.
-        self.assertEqual(attached["result_artifacts_invalid"], 1)
+        # Review 4102375061: a packet on a PENDING assignment is never one it settled (both conflict: A2's stored
+        # document also no longer matches its digest).
+        self.assertEqual((attached["result_artifacts_invalid"], attached["result_artifacts_in_flight"]), (2, 0))
+
+        def assignment(sql, *values):
+            with self.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET {sql}"
+                                   " WHERE task_id=%s AND assignment_id='A1'", (*values, task_id))
+
+        recorded_at = (f"(SELECT recorded_at FROM {self.schema}.director_primary_result_packet_artifact"
+                       " WHERE task_id=x.task_id AND assignment_id=x.assignment_id)")
+        # primary_default persists the packet while the assignment is reserved (ACTIVE), before primary_parallel
+        # settles it: that window is in flight, not a conflict.
         with self.handle.pool.connection() as connection:
-            # A1's assignment ran another provider's lane: its packet no longer agrees with it.
-            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET provider_id='openai'"
-                               " WHERE task_id=%s AND assignment_id='A1'", (task_id,))
-        self.assertEqual(self.report()["counts"]["result_artifacts_invalid"], 2)
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment x SET status='ACTIVE',"
+                               f" reserved_at={recorded_at} - interval '1 second', reservation_digest=%s"
+                               " WHERE task_id=%s AND assignment_id='A1'", ("sha256:" + "5" * 64, task_id))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["result_artifacts_invalid"], counts["result_artifacts_in_flight"]), (1, 1))
+        # Settled SUCCEEDED with the packet's digest, after it was recorded: the packet is its result.
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment x SET status='SUCCEEDED',"
+                               f" result_digest=%s, reason_code='completed', completed_at={recorded_at} + interval '1 second'"
+                               " WHERE task_id=%s AND assignment_id='A1'", (rows[0][3], task_id))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["result_artifacts_invalid"], counts["result_artifacts_in_flight"]), (1, 0))
+        for change, values in (("result_digest=%s", ("sha256:" + "6" * 64,)),  # another result
+                               ("status='FAILED'", ()),  # a FAILED assignment never has a packet
+                               ("provider_id='openai'", ())):  # another provider's lane
+            with self.subTest(change=change):
+                assignment(change, *values)
+                self.assertEqual(self.report()["counts"]["result_artifacts_invalid"], 2)
+                assignment("status='SUCCEEDED', result_digest=%s, provider_id='claude'", rows[0][3])
         # Past the row cap the count is unknown (None), never a partial number.
         with patch.object(evidence, "ARTIFACT_VALIDATION_CAP", 1):
             self.assertIsNone(self.report()["counts"]["result_artifacts_invalid"])
+
+    def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
+        """Review 4102375074: provider_attempts_invalid applies validate_attempt_history (the collector's own rule)
+        to every task's attempts: first event STARTED, one identity per attempt, contiguous ordinals, times in
+        order; past the row cap the count is None."""
+        task_id = self.intake()
+        self.plan(task_id, "SUCCEEDED", [("a1", "ACTIVE", [])])
+        self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 0)
+
+        def event(ordinal, sequence, status, seconds):
+            with self.handle.pool.connection() as connection:
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_provider_attempt(task_id, assignment_id,"
+                    " attempt_ordinal, event_sequence, provider_id, format_id, transport_id, idempotency_key_digest,"
+                    " attempt_digest, status, result_digest, outcome_evidence_digest, reason_code,"
+                    " budget_evidence_digest, recorded_at)"
+                    " VALUES (%s, 'a1', %s, %s, 'claude', 'v1', 'native-command', %s, %s, %s, %s, %s, %s, %s,"
+                    " now() + make_interval(secs => %s))",
+                    (task_id, ordinal, sequence, "sha256:" + "0" * 64, "sha256:" + str(ordinal) * 64, status,
+                     "sha256:" + "2" * 64 if status == "SUCCEEDED" else None,
+                     None if status == "STARTED" else "sha256:" + "7" * 64, "attempt_" + status.lower(),
+                     "sha256:" + "9" * 64, seconds))
+
+        event(1, 1, "STARTED", 0)
+        event(1, 2, "SUCCEEDED", 1)
+        self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 0)
+        event(3, 1, "STARTED", 2)  # attempt 3 with no attempt 2: the ordinals have a gap
+        self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 1)
+        with patch.object(evidence, "ATTEMPT_VALIDATION_CAP", 1):
+            self.assertIsNone(self.report()["counts"]["provider_attempts_invalid"])
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -837,3 +893,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

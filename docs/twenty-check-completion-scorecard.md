@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]] -->
@@ -632,6 +633,23 @@ result packet attached to a durable assignment that fails revalidation, names
 another provider than the assignment's agent, or differs from a SUCCEEDED
 assignment's result digest (`result_artifacts_invalid`), validated globally
 up to 2000 rows; over the cap the count is unknown and 07 is UNKNOWN.
+
+Each global count shares its rule with the per-task check for the same rows.
+`artifact_assignment_conflict` (07's `result_artifacts_invalid`, 20's packet
+join) accepts a packet only as its SUCCEEDED assignment's result: revalidated,
+the assignment's agent, recorded between reservation and completion, the same
+result digest. primary_default persists a packet while its assignment is still
+ACTIVE, before primary_parallel settles it, so a packet on an ACTIVE or
+AMBIGUOUS assignment counts as in flight (`result_artifacts_in_flight`, 07
+UNKNOWN), and one on any other status (FAILED, PENDING, owner-held) or with
+another digest is a conflict. `validate_attempt_history` (the collector's
+attempt rule, now in the package) also counts every task's attempts in the
+consistency command (`provider_attempts_invalid`): first event STARTED, one
+identity per attempt, contiguous ordinals, times in order; over 5000 rows the
+count is unknown. Review actors (check 17, the adoption loader and the
+acceptance evidence) go through one `canonical_actor` rule: a padded, empty or
+control-character actor is rejected, never normalized; canonical actors are
+compared casefolded and must all be distinct.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -990,3 +1008,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]] -->

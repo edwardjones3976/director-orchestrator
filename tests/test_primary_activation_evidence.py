@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | BEGIN]]
@@ -308,6 +309,10 @@ class PrimaryActivationEvidenceTests(unittest.TestCase):
             self.acceptance_artifact(ci_conclusion="FAILURE")
         with self.assertRaisesRegex(ActivationEvidenceError, "distinct attributable"):
             self.acceptance_artifact(independent_reviewer="security-bot")
+        # PR #264 review 4102375082: a non-canonical actor is rejected, never normalized into a distinct identity.
+        for actor in (" security-bot ", "security-bot​", "   "):
+            with self.subTest(actor=actor), self.assertRaisesRegex(ActivationEvidenceError, "distinct attributable"):
+                self.acceptance_artifact(independent_reviewer=actor)
         self.accept()
         self.assertEqual(
             ActivationStage.ACCEPTED.value,
@@ -478,3 +483,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 | 2026-09-04 | 23:51 UTC | END]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

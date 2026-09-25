@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -3220,6 +3221,51 @@ class ScorecardCollectorTests(unittest.TestCase):
         unknown.workflow["active_version_at"] = None
         self.assertEqual([unknown.state(key) for key in cases], ["UNKNOWN"] * len(cases))
 
+    def test_adoption_actors_are_canonical_and_distinct_17(self):
+        """4102375082: check 17 and the adoption loader share one identity rule (canonical_actor): a padded, empty
+        or control-character actor is never normalized into a distinct identity; canonical ones compare casefolded."""
+        self.assertEqual(self.world().state("17"), "PASS")
+        for name, changes, expected in (
+                ("padded author as reviewer", {"independent_reviewer": " author-login "}, "UNKNOWN"),
+                ("empty after strip", {"security_reviewer": "   "}, "UNKNOWN"),
+                ("control character", {"security_reviewer": "security-login​"}, "UNKNOWN"),
+                ("case-folded author", {"security_reviewer": "Author-Login"}, "FAIL"),
+                ("reviewers are one identity", {"security_reviewer": "REVIEWER-login"}, "FAIL")):
+            case = self.world()
+            case.consistency["generation"]["adoption"].update(changes)
+            with self.subTest(name):
+                self.assertEqual(case.state("17"), expected)
+        from director_orchestrator.primary_activation_evidence import actors_distinct, canonical_actor
+        self.assertEqual(canonical_actor("Alice"), "alice")
+        for value in (" alice", "alice ", "", "ali\tce", "ali­ce", None, 7):
+            self.assertIsNone(canonical_actor(value), repr(value))
+        self.assertFalse(actors_distinct("alice", " alice "))
+        self.assertTrue(actors_distinct("alice", "bob", "carol"))
+
+    def test_shared_packet_and_attempt_rules_bound_their_in_flight_window(self):
+        """4102375061 and 4102375074: the rules the global counts and the per-task checks share."""
+        from director_orchestrator.primary_scorecard_evidence import (
+            artifact_assignment_conflict, validate_attempt_history)
+        packet = {"verified": True, "provider": "claude", "document_digest": "sha256:" + "a" * 64,
+                  "recorded_at": "2026-09-12T10:00:05+00:00"}
+        settled = {"provider_id": "claude", "status": "SUCCEEDED", "result_digest": "sha256:" + "a" * 64,
+                   "reserved_at": "2026-09-12T10:00:00+00:00", "completed_at": "2026-09-12T10:00:10+00:00"}
+        self.assertIsNone(artifact_assignment_conflict(packet, settled))
+        for status in ("ACTIVE", "AMBIGUOUS"):
+            self.assertEqual(artifact_assignment_conflict(packet, {**settled, "status": status}), "in_flight")
+        for change in ({"status": "FAILED"}, {"status": "PENDING"}, {"status": "OWNER_DECISION_REQUIRED"},
+                       {"result_digest": "sha256:" + "b" * 64}, {"provider_id": "openai"},
+                       {"completed_at": "2026-09-12T10:00:04+00:00"}, {"reserved_at": "2026-09-12T10:00:06+00:00"}):
+            with self.subTest(change=change):
+                self.assertNotIn(artifact_assignment_conflict(packet, {**settled, **change}), (None, "in_flight"))
+        self.assertNotIn(artifact_assignment_conflict({**packet, "verified": False}, settled), (None, "in_flight"))
+        readback = tf.readback_fixture()
+        self.assertIsNone(validate_attempt_history(readback["assignments"], readback["provider_attempts"])[1])
+        for ordinal in (2, 3):
+            events = [{**event, "attempt_ordinal": ordinal} for event in readback["provider_attempts"]]
+            with self.subTest(ordinal=ordinal):
+                self.assertIn("ordinals", validate_attempt_history(readback["assignments"], events)[1])
+
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
         for rows in (("budgets",), ("spend",), ("budgets", "spend")):
@@ -3810,3 +3856,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

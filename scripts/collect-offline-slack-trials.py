@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -355,81 +356,8 @@ def _when(value):
     return parsed if parsed.tzinfo is not None else None
 
 
-def _validate_attempts(assignments, attempts):
-    """Bind every attempt event to its assignment/provider and its immutable attempt.
-
-    Returns (latest_valid_event_per_attempt, error). Events of one attempt
-    (assignment, ordinal) must share digest, idempotency/budget identity,
-    provider, format and transport; event sequences are unique and within the
-    producer's 1..3 contract; a digest never names two attempts. The latest
-    valid event settles the attempt, so an authenticated later SUCCEEDED
-    callback (event 3) supersedes an earlier AMBIGUOUS event 2.
-    """
-    by_assignment = {}
-    for row in assignments:
-        if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
-                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment
-                or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
-                                             "OWNER_DECISION_REQUIRED")):
-            return None, "malformed or duplicate assignment row"
-        for field in ("reservation_digest", "result_digest"):
-            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
-                return None, "malformed assignment digest"
-        by_assignment[row["assignment_id"]] = row
-    grouped = {}
-    for row in attempts:
-        key = (row.get("assignment_id"), row.get("attempt_ordinal"))
-        assignment = by_assignment.get(row.get("assignment_id"))
-        if assignment is None:
-            return None, "attempt does not join a listed assignment"
-        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
-                or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
-                or not _is_count(row.get("assignment_sequence"))
-                or row.get("status") not in ATTEMPT_STATUSES
-                or not DIGEST.fullmatch(str(row.get("attempt_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("idempotency_key_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("budget_evidence_digest", "")))
-                or not _is_id(row.get("provider_id")) or not _is_id(row.get("format_id"))
-                or not _is_id(row.get("transport_id")) or not _is_id(row.get("reason_code"))
-                or _when(row.get("recorded_at")) is None):
-            return None, "malformed attempt event"
-        if row["provider_id"] != assignment["provider_id"] or row["assignment_sequence"] != assignment["sequence"]:
-            return None, "attempt provider/sequence disagrees with its assignment"
-        for field in ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"):
-            if row.get(field) is not None and not DIGEST.fullmatch(str(row[field])):
-                return None, "malformed attempt digest"
-        # Event positions carry meaning: event 1 is the STARTED record; later
-        # events are settlements or ambiguity, and a settlement carries its
-        # outcome evidence (and, when SUCCEEDED, a result digest).
-        if row["event_sequence"] == 1 and row["status"] != "STARTED":
-            return None, "event 1 is not the STARTED record"
-        if row["event_sequence"] > 1 and row["status"] == "STARTED":
-            return None, "a later event repeats STARTED"
-        if row["status"] in ("SUCCEEDED", "FAILED") and row.get("outcome_evidence_digest") is None:
-            return None, "terminal event lacks outcome evidence"
-        if row["status"] == "SUCCEEDED" and row.get("result_digest") is None:
-            return None, "SUCCEEDED event lacks a result digest"
-        grouped.setdefault(key, []).append(row)
-    digests = {}
-    latest = {}
-    for key, events in grouped.items():
-        identity = {(e["attempt_digest"], e["idempotency_key_digest"], e["budget_evidence_digest"],
-                     e["provider_id"], e["format_id"], e["transport_id"]) for e in events}
-        sequences = [e["event_sequence"] for e in events]
-        if len(identity) != 1 or len(set(sequences)) != len(sequences):
-            return None, "attempt identity changed across its events or duplicate events"
-        digest_value = events[0]["attempt_digest"]
-        if digests.setdefault(digest_value, key) != key:
-            return None, "attempt digest reused by another attempt"
-        ordered = sorted(events, key=lambda e: e["event_sequence"])
-        if ordered[0]["event_sequence"] != 1:
-            return None, "attempt history lacks its STARTED event 1"
-        # Event 3 (authenticated callback settlement) may legitimately follow
-        # event 1 directly; event 2 is not fabricated to satisfy this check.
-        if any(_when(a["recorded_at"]) > _when(b["recorded_at"]) for a, b in zip(ordered, ordered[1:])):
-            return None, "attempt events are not recorded in sequence order"
-        latest[key] = ordered[-1]
-    return latest, None
+# One attempt-history rule for the collector (selected tasks) and the in-image consistency command (every task).
+from director_orchestrator.primary_scorecard_evidence import validate_attempt_history as _validate_attempts  # noqa: E402
 
 
 def _validate_effects(effects):
@@ -1389,3 +1317,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

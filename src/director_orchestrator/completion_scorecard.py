@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -83,6 +84,8 @@ from urllib.request import HTTPRedirectHandler, build_opener
 
 import httpx
 
+from .primary_activation_evidence import actors_distinct, canonical_actor
+from .primary_scorecard_evidence import artifact_assignment_conflict
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
 
 REPOSITORY = "edwardjones3976/director-orchestrator"
@@ -1012,13 +1015,14 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
-                "result_artifacts_without_assignment", "result_artifacts_invalid",
+                "result_artifacts_without_assignment", "result_artifacts_invalid", "provider_attempts_invalid",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
-                    "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections")
+                    "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
+                    "result_artifacts_in_flight")
 _CONSISTENCY_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation consistency (READ ONLY)"
 _CAPTURES_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation activation-captures"
 
@@ -1234,11 +1238,13 @@ def _acceptance_observation(at: datetime, candidate_sha: str, consistency: dict 
     reviewed = adoption.get("reviewed_source_commit")
     bound = reviewed if isinstance(reviewed, str) and re.fullmatch(r"[a-f0-9]{40}", reviewed) else None
     actors = [adoption.get(key) for key in ("pull_request_author", "independent_reviewer", "security_reviewer")]
-    if all(isinstance(actor, str) and actor.strip() for actor in actors) and actors[0].casefold() in (
-            actors[1].casefold(), actors[2].casefold()):
-        return _observation("17", False, "The adopted acceptance names the pull request author as a reviewer.",
-                            source, facts, at, candidate_sha=bound)
-    if bound is None or not all(isinstance(actor, str) and actor.strip() for actor in actors):
+    # The adoption loader's own identity rule (canonical_actor): non-canonical actors (surrounding whitespace, empty,
+    # control characters) are never normalized into a match or a mismatch; canonical ones compare by casefold.
+    canonical = all(canonical_actor(actor) is not None for actor in actors)
+    if canonical and not actors_distinct(*actors):
+        return _observation("17", False, "The adopted acceptance names one identity in two of the author, independent "
+                            "reviewer and security reviewer roles.", source, facts, at, candidate_sha=bound)
+    if bound is None or not canonical:
         return _observation("17", None, "The adopted acceptance does not name a full reviewed source commit.",
                             source, facts, at, candidate_sha=candidate_sha)
     return _observation("17", True, "The running generation's pinned owner-local adoption accepts this reviewed source "
@@ -2203,11 +2209,10 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
         rows = [row for row in artifacts if isinstance(row, dict)
                 and row.get("assignment_id") == assignment.get("assignment_id")]
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
-        # primary_default persists the packet inside its assignment's lifecycle: after the reservation, before
-        # the settlement. Both of those are inside the freshness window (_moments), so the packet is too.
-        if (len(rows) != 1 or rows[0].get("verified") is not True or len(matching) != 1
-                or not _chain(assignment.get("reserved_at"), rows[0].get("recorded_at"), assignment.get("completed_at"))
-                or not _same(rows[0].get("document_digest"), assignment.get("result_digest"))
+        # The one packet-to-assignment rule the in-image global count uses too (revalidated, the assignment's
+        # agent, recorded between reservation and completion, the SUCCEEDED assignment's result digest). Both
+        # lifecycle moments are inside the freshness window (_moments), so the packet is too.
+        if (len(rows) != 1 or len(matching) != 1 or artifact_assignment_conflict(rows[0], assignment) is not None
                 or not _same(rows[0].get("provider"), matching[0].get("provider"))
                 or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
             return False
@@ -3377,3 +3382,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]

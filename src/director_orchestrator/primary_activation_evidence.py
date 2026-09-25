@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
 # [[Cursor Agent | Composer 2.5 | 2026-09-22 | 08:15 UTC | BEGIN]]
@@ -19,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import unicodedata
 import json
 import os
 import re
@@ -85,6 +87,28 @@ _ACCEPTANCE_FACT_NAMES = {
 }
 
 _OWNER_LOCAL_FACT_NAMES = _ACCEPTANCE_FACT_NAMES | _OWNER_LOCAL_EXTRA_FACT_NAMES
+
+
+def canonical_actor(value):
+    """An attributable actor's comparison key, or None when the string is not canonical.
+
+    The one identity rule for review actors (adoption, acceptance evidence and check 17): a non-empty string with
+    no surrounding whitespace and no control or format characters; compared case-insensitively (casefold). A
+    non-canonical actor is rejected, never normalized, so ``" alice "`` can never pose as a second identity.
+    """
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or any(unicodedata.category(character).startswith("C") for character in value)):
+        return None
+    return value.casefold()
+
+
+def actors_distinct(*actors):
+    """True only when every actor is canonical and no two share a comparison key (constant-time compares)."""
+    keys = [canonical_actor(actor) for actor in actors]
+    if any(key is None for key in keys):
+        return False
+    return not any(hmac.compare_digest(left.encode(), right.encode())
+                   for index, left in enumerate(keys) for right in keys[index + 1:])
 
 
 class ActivationEvidenceError(RuntimeError):
@@ -356,17 +380,10 @@ def load_pinned_owner_local_adoption(
         if value not in {item["sha256"] for item in pinned_evidence}:
             raise ActivationEvidenceError("required review or QA evidence is not pinned")
     for name in ("security_reviewer", "independent_reviewer", "pull_request_author"):
-        value = document.get(name)
-        if not isinstance(value, str) or not value.strip():
+        if canonical_actor(document.get(name)) is None:
             raise ActivationEvidenceError("owner-local evidence adoption actors are invalid")
-    security_actor = str(document["security_reviewer"])
-    independent_actor = str(document["independent_reviewer"])
-    pull_request_author = str(document["pull_request_author"])
-    if (
-        hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
-        or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
-        or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
-    ):
+    if not actors_distinct(document["security_reviewer"], document["independent_reviewer"],
+                           document["pull_request_author"]):
         raise ActivationEvidenceError(
             "owner-local evidence adoption requires distinct attributable identities"
         )
@@ -877,17 +894,7 @@ class ActivationEvidenceStore:
         security_actor = facts.get("security_reviewer")
         independent_actor = facts.get("independent_reviewer")
         pull_request_author = facts.get("pull_request_author")
-        if (
-            not isinstance(security_actor, str)
-            or not security_actor.strip()
-            or not isinstance(independent_actor, str)
-            or not independent_actor.strip()
-            or hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
-            or not isinstance(pull_request_author, str)
-            or not pull_request_author.strip()
-            or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
-            or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
-        ):
+        if not actors_distinct(security_actor, independent_actor, pull_request_author):
             raise ActivationEvidenceError(
                 "producer and acceptance actors require distinct attributable identities"
             )
@@ -993,17 +1000,7 @@ class ActivationEvidenceStore:
         security_actor = facts.get("security_reviewer")
         independent_actor = facts.get("independent_reviewer")
         pull_request_author = facts.get("pull_request_author")
-        if (
-            not isinstance(security_actor, str)
-            or not security_actor.strip()
-            or not isinstance(independent_actor, str)
-            or not independent_actor.strip()
-            or hmac.compare_digest(security_actor.casefold(), independent_actor.casefold())
-            or not isinstance(pull_request_author, str)
-            or not pull_request_author.strip()
-            or hmac.compare_digest(security_actor.casefold(), pull_request_author.casefold())
-            or hmac.compare_digest(independent_actor.casefold(), pull_request_author.casefold())
-        ):
+        if not actors_distinct(security_actor, independent_actor, pull_request_author):
             raise ActivationEvidenceError(
                 "producer and acceptance actors require distinct attributable identities"
             )
@@ -1331,3 +1328,4 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
