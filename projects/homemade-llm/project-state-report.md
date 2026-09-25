@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:38 UTC | BEGIN]] -->
 # Project state report — homemade-llm, M0 "Foundation" gate
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
@@ -10,7 +10,7 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
 - **Report label:** delivered state (authenticated receipts and merged PRs; no prediction)
-- **Categorized status:** review-ready for the M0 gate; blocked only on owner clicks listed under "Owner gates"
+- **Categorized status:** review-ready for this report (PR #277); the M0 gate also waits on a non-author review of PR #276 and on the owner clicks listed under "Owner gates"
 
 ### What M0 set out to prove, and what the evidence says
 
@@ -36,8 +36,8 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 
 - **C: free:** 356 GB (floor 150 GB) `[verified 09-25 22:58 UTC]`; `C:\llm` = 8.2 GB of the 120 GB cap (models 4.9 GB, hf 1.7 GB, runs 0.7 GB).
 - **GPU headroom for the shootout:** the 0.6B smoke peaked at 0.79 GB reserved; 8B and 14B QLoRA numbers are not yet measured on this card. Unsloth's published floors are 6 GB (8B) and 8.5 GB (14B) `[relayed, research brief]`.
-- **Turnaround:** one 20-step smoke run including GGUF export is under 5 minutes wall clock; GGUF export dominates (150–190 s).
-- **Concurrency:** two Director sessions worked M0 on 09-25; deconfliction is recorded in the decision log.
+- **Turnaround:** one 20-step smoke run including GGUF export is under 5 minutes wall clock; GGUF export dominates (150–190 s) `[verified from the ten run reports]`.
+- **Concurrency:** two Director sessions worked M0 on 09-25; deconfliction is recorded in the decision log (D-011) `[verified]`.
 
 ### Not done, and what remains unverified
 
@@ -54,4 +54,4 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 ### Next bounded action
 
 M1 base shootout (PLAN.md §3, week 2 → 10-08): build the two held-out sets first (real-history answer key ~30 items; ~50 PR-reconstructed packets; raw material already at `C:\llm\datasets\heldout\raw`), then download the four bases and run schema-constrained decoding. Responsible: Director (sets), providers (grading). Expected evidence: `research/m1-shootout-<date>.md` with field-level acceptance per base and the license check.
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:38 UTC | END]] -->
