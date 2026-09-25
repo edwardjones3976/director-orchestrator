@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -321,6 +322,40 @@ class ProviderRetryAuthorizationTests(unittest.TestCase):
         )
 
 
+
+class ProvenNoRunTests(unittest.TestCase):
+    """What proves a terminal task stopped having sent nothing."""
+
+    def test_only_refused_before_io_attempts_prove_a_no_run(self):
+        from director_orchestrator.primary_parallel import _proven_no_run
+
+        def event(assignment, digest, status, reason):
+            return {"assignment_id": assignment, "attempt_digest": digest,
+                    "status": status, "reason_code": reason}
+
+        started = event("b", "d2", "STARTED", "provider_attempt_started")
+        refused = event("b", "d2", "FAILED", "provider_refused_before_io")
+        held = {"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"}
+        self.assertTrue(_proven_no_run(held, []))
+        self.assertTrue(_proven_no_run(held, [started, refused]))
+        # The producer's own attempts do not matter once it succeeded.
+        self.assertTrue(_proven_no_run(
+            held, [event("a", "d1", "FAILED", "provider_transient_transport_failure"),
+                   started, refused]))
+        for name, (statuses, events) in {
+            "left_started": (held, [started]),
+            "transient_failure": (held, [started, event(
+                "b", "d2", "FAILED", "provider_transient_transport_failure")]),
+            "ambiguous_attempt": (held, [started, event("b", "d2", "AMBIGUOUS", "x")]),
+            "failed_assignment": ({"a": "FAILED", "b": "BLOCKED"}, []),
+            "ambiguous_assignment": ({"a": "AMBIGUOUS", "b": "BLOCKED"}, []),
+            "all_succeeded": ({"a": "SUCCEEDED", "b": "SUCCEEDED"}, []),
+            "second_attempt_started": (held, [started, refused, event(
+                "b", "d3", "STARTED", "provider_attempt_started")]),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(_proven_no_run(statuses, events))
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -334,3 +369,4 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]

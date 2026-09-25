@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
@@ -1087,6 +1088,59 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual(application._trip_on_failed_terminal,
                          application.coordinator.terminal_observer)
 
+    def test_a_proven_no_run_terminal_records_no_trip(self):
+        application = self.application()
+        held = self.record()
+        self.assertTrue(self.exercise(application, held))
+        application.coordinator = self.coordinator(
+            {"terminal_classification": "OWNER_DECISION_REQUIRED"}, no_run=True)
+        application._trip_on_failed_terminal(held.task_id, "OWNER_DECISION_REQUIRED")
+        self.assertEqual(1, len(self.audit()))
+        # Not proven (an unreadable aggregate, or any other hold): it trips.
+        application.coordinator = self.coordinator(aggregate_unreadable=True)
+        application._trip_on_failed_terminal(held.task_id, "OWNER_DECISION_REQUIRED")
+        self.assertEqual(2, len(self.audit()))
+
+    def test_a_grant_that_expires_during_the_scans_authorizes_no_send(self):
+        """The clock is re-read after the history and prior-task scans."""
+
+        import director_orchestrator.primary_default as module
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        start = datetime(2099, 1, 1, tzinfo=timezone.utc) - timedelta(seconds=30)
+        later = start + timedelta(seconds=60)
+        calls = []
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                calls.append(tz)
+                return start if len(calls) == 1 else later
+
+        with patch.object(module, "datetime", Clock):
+            self.assertEqual("small_task_pre_authorization_revoked", small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+        self.assertEqual(2, len(calls))
+        # And a deadline spent by the scans refuses too.
+        import time as time_module
+        real = module._failed_pre_authorized_task
+
+        def slow(*args, **kwargs):
+            result = real(*args, **kwargs)
+            time_module.sleep(0.3)
+            return result
+
+        with patch.object(module, "_failed_pre_authorized_task", side_effect=slow):
+            self.assertEqual("small_task_pre_authorization_unaudited", small_pre_authorization_refusal(
+                record, self.settings, self.ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None),
+                deadline=time_module.monotonic() + 0.2))
+        self.assertIsNone(small_pre_authorization_refusal(
+            record, self.settings, self.ledger, approval_free=True,
+            compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+
     def test_lock_busy_wait_and_anchor_advance_spend_the_same_deadline(self):
         """A contended or slow ledger refuses at the deadline and writes nothing."""
 
@@ -1360,7 +1414,7 @@ class StandingGrantExerciseTests(unittest.TestCase):
 
     @staticmethod
     def coordinator(projection=None, *, ambiguous=0, unreadable=False, aggregate_unreadable=False,
-                    failed_aggregate=False):
+                    failed_aggregate=False, no_run=False):
         def get_projection(task_id, **_):
             if unreadable:
                 raise OSError("projection unavailable")
@@ -1370,7 +1424,8 @@ class StandingGrantExerciseTests(unittest.TestCase):
             if aggregate_unreadable:
                 raise OSError("aggregate unavailable")
             return SimpleNamespace(ambiguous_slot_count=ambiguous,
-                                   terminal=failed_aggregate, succeeded=False)
+                                   terminal=failed_aggregate or no_run, succeeded=False,
+                                   proven_no_run=no_run)
 
         return SimpleNamespace(get_projection=get_projection,
                                parallel_aggregate=parallel_aggregate)
@@ -1417,6 +1472,11 @@ class StandingGrantExerciseTests(unittest.TestCase):
     def test_succeeded_running_or_never_started_tasks_do_not_trip(self):
         for name, state in {
             "succeeded": self.coordinator({"terminal_classification": "SUCCEEDED"}),
+            # Stopped for the owner having sent nothing: every admitted
+            # attempt settled refused before I/O.
+            "proven_no_run": self.coordinator(
+                {"terminal_classification": "OWNER_DECISION_REQUIRED",
+                 "parallel_plan_digest": digest("parallel-plan")}, no_run=True),
             "running": self.coordinator(RUNNING),
             # Created, its parallel plan not registered yet: nothing dispatched.
             "registering": self.coordinator(
@@ -5881,3 +5941,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]

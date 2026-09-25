@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
@@ -352,7 +353,17 @@ an ambiguous slot, or one that cannot be read writes a `delegation_trip` record,
 which suspends that grant. That covers a task settled through a provider
 callback and one whose process stopped after its terminal was persisted. A task
 whose intake failed after its `PRE_AUTHORIZED` record never started; it spends
-an exercise and trips nothing. The trip is also recorded as soon as a
+an exercise and trips nothing. Nor does a task that stopped for the owner
+having sent nothing (a proven no-run): nothing failed or is ambiguous, and
+every admitted attempt of each assignment that did not succeed was settled
+`FAILED` with reason `provider_refused_before_io`. A small task's attempt is
+settled that way when a hold is raised after admission but before the
+transport is called (a lapsed grant, a stale bridge attestation, a cancelled
+wave, a changed selection or enrollment), when the host returns its signed
+attestation refusal, or when the transport cannot build the view; the reason
+is not transient, so it authorizes no retry and the ordinal cannot be replayed.
+A hold raised inside the transport, an attempt left `STARTED`, a transient
+failure, or any provider outcome is not proof, and trips as before. The trip is also recorded as soon as a
 pre-authorized task's failed terminal is persisted, without waiting for another
 intake; that write is best effort, so the derivation at each exercise and at
 each recovery stays the authority. An absent, unreadable, or unwritable audit ledger
@@ -520,7 +531,10 @@ before each provider request it makes (the OpenAI Responses token count and
 its generation alike); a lapse sends nothing. Those rechecks spend what is left
 of the dispatch's shared deadline, never a fresh window, and with nothing left
 refuse before any read; the first check at dispatch, and the bridge
-re-attestation before admission, spend it too. Every identifier, personal-data and credential screen
+re-attestation before admission, spend it too. Each check re-reads the clock
+after its history and prior-task scans, so a grant that expires, or a deadline
+that runs out, during them authorizes nothing; and before a send the bridge
+re-attestation runs first, so the grant is the last thing read before I/O. Every identifier, personal-data and credential screen
 ignores letter case except where the format itself is case-sensitive (token
 prefixes such as `AKIA`, JWTs, upper-case variable names).
 
@@ -754,3 +768,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->

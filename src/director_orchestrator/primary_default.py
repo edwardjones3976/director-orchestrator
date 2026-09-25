@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
@@ -283,7 +284,8 @@ def _execute_three_attempt_roster(
     roster with ``small_task_review_tokens_exhausted`` and reserves nothing.
     """
 
-    from .primary_workload import WorkloadAdmissionHold
+    from .primary_parallel import PROVIDER_REFUSED_BEFORE_IO
+    from .primary_workload import ProvenNoRunHold, WorkloadAdmissionHold
 
     if not 1 <= len(format_roster) <= 3:
         raise RuntimeError("provider format roster must contain one to three entries")
@@ -302,6 +304,19 @@ def _execute_three_attempt_roster(
             raise RuntimeError("reserved provider format order changed")
         try:
             result = dispatch_attempt(attempt)
+        except ProvenNoRunHold:
+            # Nothing left this process for this admitted attempt (or the
+            # host proved it ran nothing): settle it FAILED as refused before
+            # I/O instead of leaving it STARTED. The reason is not transient,
+            # so it authorizes no retry, and a replay of this ordinal is
+            # refused as already recorded. If even that write fails, the
+            # attempt stays STARTED and counts as unreconciled.
+            try:
+                record_attempt(attempt, ParallelAssignmentStatus.FAILED, None,
+                               PROVIDER_REFUSED_BEFORE_IO)
+            except Exception:
+                pass
+            raise
         except WorkloadAdmissionHold:
             # A proven policy hold - cancellation, a changed selection, a
             # replaced enrollment, a lost writer lease. A provider transport
@@ -966,11 +981,10 @@ def _failed_pre_authorized_task(
         if projection is None:
             continue
         classification = projection.projection.get("terminal_classification")
-        if classification is not None:
-            if classification != "SUCCEEDED":
-                return task_id
+        if classification == "SUCCEEDED":
             continue
-        if not isinstance(projection.projection.get("parallel_plan_digest"), str):
+        if classification is None and not isinstance(
+                projection.projection.get("parallel_plan_digest"), str):
             # Its plan is not registered yet, so nothing has dispatched.
             continue
         try:
@@ -980,10 +994,15 @@ def _failed_pre_authorized_task(
                 raise DelegationAuditDeadlineExceeded(
                     "prior-task scan reached its deadline") from None
             return task_id
-        # A terminal, failed aggregate the graph never classified (resume
-        # raised, or the process stopped before it) counts as well.
-        if aggregate.ambiguous_slot_count or (
-                aggregate.terminal and not aggregate.succeeded):
+        # A task that stopped for the owner having sent nothing is not a
+        # failure of the class: every one of its admitted attempts was
+        # settled refused-before-I/O. Anything else that did not succeed
+        # counts: a failed terminal, and a terminal, failed aggregate the
+        # graph never classified (resume raised, or the process stopped).
+        if getattr(aggregate, "proven_no_run", False) is True:
+            continue
+        if (classification is not None or aggregate.ambiguous_slot_count
+                or (aggregate.terminal and not aggregate.succeeded)):
             return task_id
     return None
 
@@ -1137,6 +1156,13 @@ def small_pre_authorization_refusal(
     if not small_read_only_eligible(
             record, settings, compact_view_lanes=compact_view_lanes):
         return "small_task_pre_authorization_lapsed"
+    # The history and prior-task scans above can take seconds: the grant must
+    # still be live, and the caller's deadline unspent, at the moment this
+    # authorizes the send.
+    if not grant.live_at(datetime.now(timezone.utc)):
+        return "small_task_pre_authorization_revoked"
+    if deadline is not None and deadline - monotonic() <= 0:
+        return "small_task_pre_authorization_unaudited"
     return None
 
 
@@ -2842,6 +2868,16 @@ class DefaultPrimaryApplication:
         ledger = self._delegation_ledger
         if classification == "SUCCEEDED" or ledger is None:
             return
+        try:
+            proven_no_run = getattr(
+                self.coordinator.parallel_aggregate(
+                    task_id, deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS),
+                "proven_no_run", False) is True
+        except Exception:
+            proven_no_run = False
+        if proven_no_run:
+            # It stopped for the owner having sent nothing: no trip.
+            return
         agent = f"director-langgraph:{task_id}"
         try:
             history = _bounded_audit_history(ledger)
@@ -4255,7 +4291,33 @@ class DefaultPrimaryActivation:
                     def dispatch_attempt(
                         attempt: ProviderAttemptReservation,
                     ) -> Mapping[str, Any]:
-                        selected = current_selection()
+                        from .primary_workload import ProvenNoRunHold, WorkloadAdmissionHold
+                        try:
+                            return _dispatch_attempt(attempt)
+                        except ProvenNoRunHold:
+                            raise
+                        except WorkloadAdmissionHold as hold:
+                            # Raised here, before adapter.dispatch was entered:
+                            # nothing was sent. For a small task that is a
+                            # proven no-run.
+                            if small_class and getattr(hold, "before_send", False):
+                                raise ProvenNoRunHold(hold.reason_code) from hold
+                            raise
+
+                    def _dispatch_attempt(
+                        attempt: ProviderAttemptReservation,
+                    ) -> Mapping[str, Any]:
+                        from .primary_workload import WorkloadAdmissionHold as _Hold
+
+                        def before_send(reason: str) -> Exception:
+                            hold = _Hold(reason)
+                            hold.before_send = True
+                            return hold
+
+                        try:
+                            selected = current_selection()
+                        except _Hold as hold:
+                            raise before_send(hold.reason_code) from hold
                         adapter = (team_routing.adapter(packet,attempt,deadline=selected.deadline)
                             if team_routing is not None and provider=="antigravity"
                             else live_dependencies.adapter_for_format(provider,(attempt.format_id,attempt.transport_id)))
@@ -4269,14 +4331,25 @@ class DefaultPrimaryActivation:
                         # provider call is prevented.
                         from .primary_workload import WorkloadAdmissionHold
                         if _wave_cancelled(record.task_id, deadline=selected.deadline):
-                            raise WorkloadAdmissionHold("wave_cancelled_before_dispatch")
+                            raise before_send("wave_cancelled_before_dispatch")
                         if selected.enrollment_digest is not None:
                             live_enrollment = _enrollment_digest_for(
                                 getattr(adapter, "_transport", None), attempt.attempt_digest)
                             if live_enrollment != selected.enrollment_digest:
-                                raise WorkloadAdmissionHold(
+                                raise before_send(
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
+                        if small_class:
+                            # Immediately before this send, every attempt
+                            # and every retry: the bridge must still run the
+                            # pinned read-only argv. Checked before the grant,
+                            # so the grant is the last thing read before I/O.
+                            from .host_provider_bridge import HostBridgePacketTransport
+                            bridge = getattr(adapter, "_transport", None)
+                            if (isinstance(bridge, HostBridgePacketTransport)
+                                    and not bridge.read_only_attestation_current(
+                                        deadline=min(selected.deadline, monotonic() + 5))):
+                                raise before_send("small_task_bridge_attestation_stale")
                         if services.execution_approval_free(record.task_id):
                             # Immediately before this send, every attempt and
                             # retry of a pre-authorized task: the grant is
@@ -4291,18 +4364,7 @@ class DefaultPrimaryActivation:
                                 coordinator=coordinator, packet=packet,
                                 deadline=selected.deadline)
                             if lapsed is not None:
-                                raise WorkloadAdmissionHold(lapsed)
-                        if small_class:
-                            # Immediately before this send, every attempt
-                            # and every retry: the bridge must still run the
-                            # pinned read-only argv.
-                            from .host_provider_bridge import HostBridgePacketTransport
-                            bridge = getattr(adapter, "_transport", None)
-                            if (isinstance(bridge, HostBridgePacketTransport)
-                                    and not bridge.read_only_attestation_current(
-                                        deadline=min(selected.deadline, monotonic() + 5))):
-                                raise WorkloadAdmissionHold(
-                                    "small_task_bridge_attestation_stale")
+                                raise before_send(lapsed)
 
                         def authority_recheck(*, connection: Any = None,
                                               stage: str = "generation") -> None:
@@ -4356,6 +4418,7 @@ class DefaultPrimaryActivation:
                                     raise WorkloadAdmissionHold(lapsed)
                         from .host_provider_bridge import HostBridgeAttestationStale
                         from .packet_routing import SmallTaskViewUnavailable
+                        from .primary_workload import ProvenNoRunHold
                         try:
                             return adapter.dispatch(
                                 packet,
@@ -4394,14 +4457,14 @@ class DefaultPrimaryActivation:
                             )
                         except HostBridgeAttestationStale as exc:
                             # The host authenticated that it ran nothing: the same
-                            # proven hold as a stale attestation before the send.
-                            raise WorkloadAdmissionHold(
+                            # proven no-run as a stale attestation before the send.
+                            raise ProvenNoRunHold(
                                 "small_task_bridge_attestation_stale") from exc
                         except SmallTaskViewUnavailable as exc:
                             # Raised by the transport while building its
                             # payload, before any provider request: nothing
                             # was sent.
-                            raise WorkloadAdmissionHold(
+                            raise ProvenNoRunHold(
                                 "small_task_named_contents_unavailable") from exc
 
                     try:
@@ -4972,3 +5035,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]

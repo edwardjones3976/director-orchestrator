@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -459,6 +460,46 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         with self.assertRaisesRegex(WorkloadAdmissionHold, "small_task_bridge_attestation_stale"):
             self.run_assignment(0)
         self.assertEqual(1, len(self.dispatch_contexts))
+        # A proven no-run: the admitted attempt is settled FAILED as refused
+        # before I/O, not left STARTED, so it authorizes no retry.
+        [call] = self.activation.coordinator.record_provider_attempt.call_args_list
+        self.assertEqual((ParallelAssignmentStatus.FAILED, None, "provider_refused_before_io"),
+                         (call.kwargs["status"], call.kwargs["result_digest"],
+                          call.kwargs["reason_code"]))
+
+    def test_holds_before_the_send_settle_the_attempt_and_holds_inside_it_do_not(self):
+        """Raised before adapter.dispatch: nothing was sent. Raised by the
+        transport's own recheck: it may already have talked to the provider,
+        so the attempt stays STARTED and the task is not a proven no-run."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        self.record.assignment_outcomes = []
+        checks = []
+
+        def refusal(*args, **kwargs):
+            # Admission passes; the grant lapses at the pre-send check.
+            checks.append(True)
+            return None if len(checks) == 1 else "small_task_pre_authorization_revoked"
+
+        with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
+                patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                      side_effect=refusal), \
+                self.assertRaisesRegex(WorkloadAdmissionHold,
+                                       "small_task_pre_authorization_revoked"):
+            self.run_assignment(0)
+        [call] = self.activation.coordinator.record_provider_attempt.call_args_list
+        self.assertEqual("provider_refused_before_io", call.kwargs["reason_code"])
+
+        self.activation.coordinator.record_provider_attempt.reset_mock()
+
+        def recheck_then_hold(_packet, *, context):
+            raise WorkloadAdmissionHold("parallel_wave_cancelled_before_dispatch")
+
+        self.adapter.dispatch = recheck_then_hold
+        with self.assertRaisesRegex(WorkloadAdmissionHold, "parallel_wave_cancelled"):
+            self.run_assignment(0)
+        self.activation.coordinator.record_provider_attempt.assert_not_called()
 
     def test_a_pre_authorized_task_is_re_checked_before_every_send(self):
         """A grant that lapses between admission and the send sends nothing."""
@@ -717,3 +758,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
