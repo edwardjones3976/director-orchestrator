@@ -14,7 +14,7 @@ Report facts:
 - **Project ID:** `homemade-llm`
 - **Assignments covered:** M0.1–M0.12 and HS-1.
 - **Report label:** delivered report. Every number below was measured by Claude on 2026-09-25 on the owner's PC against main `f0a7752e`. OpenAI Codex independently re-measured the subset its sandbox could reach; see Evidence for which facts are double-verified and which rest on Claude alone.
-- **Categorized status:** 9 of 13 items (M0.1–M0.12 plus HS-1) are closed. M0.12 is this report, in review. M0.5's phone check waits on the owner (`tailscale serve`), and M0.9/M0.11 wait on the merge of #276, which is already accepted.
+- **Categorized status:** 9 of 13 items (M0.1–M0.12 plus HS-1) are closed. M0.12 is this report, in review. M0.5's phone check waits on the owner (`tailscale serve`), and M0.9/M0.11 wait on #276, which has no eligible acceptance yet: its Antigravity ACCEPT does not count, and OpenAI Codex's review returned CHANGES_REQUIRED at `af3626a`.
 
 ## Checklist
 
@@ -63,7 +63,7 @@ Directly attributable to homemade-llm: USD 0.33 (Grok CLI). M0's own paid resear
 
 ## What changed since PR-0
 
-- Every M0 script except M0.9's dataset scan (in #276, accepted) is merged, with unit tests. The live train, serve, interrupt and lock checks passed on the final code.
+- Every M0 script except M0.9's dataset scan (in #276, under revision) is merged, with unit tests. The live train, serve, interrupt and lock checks passed on the final code.
 - The GGUF merge source is **bound**, not merely checked: the export runs offline against the pinned local snapshot (O-030).
 - M1's held-out sets are drafted, local only and never committed, and gitleaks finds nothing in them:
   - **Set A:** 22 real-history packets, awaiting owner confirmation (O-034).
@@ -114,7 +114,7 @@ Directly attributable to homemade-llm: USD 0.33 (Grok CLI). M0's own paid resear
 - **State:** owner decision required.
 - **Next responsible party:** the owner.
 - **Next actions:**
-  1. Merge #276 when CI is green.
+  1. Merge #276 only after an eligible reviewer (OpenAI Codex) ACCEPTs its exact head and CI there is green.
   2. Enable HTTPS certificates in the Tailscale admin console, then run `tailscale serve --bg 3000` and open the printed URL from the phone.
   3. Confirm set A: its 22 items, whether to top it up to ~30, and whether to keep the two oversized packets.
   4. Merge this report. It records the gate evidence and leaves the profile in `framing`; the move to `building` is a later one-line change once items 1–3 close.
