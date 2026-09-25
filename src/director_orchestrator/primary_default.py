@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -4248,6 +4249,17 @@ class DefaultPrimaryActivation:
                                 connection=connection,
                                 stage=stage,
                             )
+                            if (stage == "generation"
+                                    and services.execution_approval_free(record.task_id)):
+                                # Every provider request a transport makes,
+                                # not only the first: the standing grant is
+                                # re-checked right before it.
+                                lapsed = small_pre_authorization_refusal(
+                                    record, settings, delegation_ledger, approval_free=True,
+                                    compact_view_lanes=compact_view_lanes,
+                                    coordinator=coordinator, packet=packet)
+                                if lapsed is not None:
+                                    raise WorkloadAdmissionHold(lapsed)
                         from .host_provider_bridge import HostBridgeAttestationStale
                         try:
                             return adapter.dispatch(
@@ -4843,3 +4855,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

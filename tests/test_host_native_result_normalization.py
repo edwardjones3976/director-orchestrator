@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -383,6 +384,42 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
         self.assertFalse(result_acceptance_passes(
             _bound_research_result("openai", work, run_reference="resp-1", outcome="done")))
 
+    def test_the_grok_reviewer_cap_is_enforced_on_the_result(self):
+        """Owner ruling 2026-09-24, "Accept post-hoc cap": over-cap reported
+        usage fails the attempt; within the cap it is accepted; missing
+        usage is unmeasured."""
+
+        from director_orchestrator.primary_default import (
+            result_acceptance_passes, small_task_usage_refusal)
+
+        work = work_packet()
+        review = grok_response()
+        review["output"][1]["content"][0]["text"] = json.dumps({
+            "status": "SUCCEEDED", "outcome": "The summary is accurate.",
+            "acceptance": [{"check": check, "status": "PASS", "evidence": "Checked."}
+                           for check in work["acceptance_checks"]]})
+        # 140 tokens reported (input 100 + output 40) and $0.0005.
+        within, _ = self.dispatch("grok", review, tokens=140, budget=Decimal("0.0005"))
+        self.assertEqual("SUCCEEDED", within["status"])
+        self.assertTrue(result_acceptance_passes(within))
+        self.assertIsNone(small_task_usage_refusal(within, "grok", small_class=True))
+        for limits in ({"tokens": 139}, {"budget": Decimal("0.00049")}):
+            with self.subTest(limits=limits):
+                over, _ = self.dispatch("grok", review, **limits)
+                # A failed result: the roster reports the attempt FAILED, the
+                # task's terminal is not SUCCEEDED, and its grant trips.
+                self.assertEqual("FAILED", over["status"])
+                self.assertIn("admitted attempt limit", over["blockers"][-1])
+                self.assertFalse(result_acceptance_passes(over))
+        # A Responses-shaped Grok reply without usage is refused outright; a
+        # result that reaches dispatch without usage is unmeasured.
+        unmeasured = dict(review)
+        unmeasured.pop("usage")
+        with self.assertRaisesRegex(RuntimeError, "usage is missing"):
+            self.dispatch("grok", unmeasured)
+        self.assertEqual("small_task_usage_unmeasured", small_task_usage_refusal(
+            {**within, "usage": None}, "grok", small_class=True))
+
     def test_no_native_lane_joins_the_small_class(self):
         """Owner ruling 2026-09-24: native lanes send the compact view but are
         never small-class capable; readiness and eligibility never count them."""
@@ -629,3 +666,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

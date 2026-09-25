@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
@@ -636,6 +637,10 @@ class OpenAIResponsesPacketTransport:
                     return json.loads(raw), {key: response.headers[key] for key in (
                         "openai-organization", "openai-project", "x-request-id") if key in response.headers}
 
+                # The token count is a provider request too: the same
+                # authority and grant recheck runs immediately before it.
+                if authority_recheck is not None:
+                    authority_recheck()
                 count, _ = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
                 if (not isinstance(count, dict)
                         or count.get("object") != "response.input_tokens"
@@ -1911,3 +1916,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

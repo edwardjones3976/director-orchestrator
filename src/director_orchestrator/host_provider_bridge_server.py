@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
@@ -354,6 +355,8 @@ class _Handler(BaseHTTPRequestHandler):
                 ),
                 host_deadline=self.headers.get("X-Director-Host-Deadline", ""),
                 attested_argv_digest=self.headers.get("X-Director-Attested-Argv-Digest", ""),
+                attempt_budget_usd=self.headers.get("X-Director-Attempt-Budget-Usd", ""),
+                total_token_limit=self.headers.get("X-Director-Total-Token-Limit", ""),
             )
             if request.host_deadline and request.host_deadline.split(":", 1)[0] != self._clock_id:
                 raise HostProviderBridgeError("host deadline clock changed")
@@ -494,3 +497,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

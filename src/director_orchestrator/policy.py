@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -659,6 +660,36 @@ def holds_identifier_format(text: str) -> bool:
     return any(_iban(match.group(0)) for match in _IBAN.finditer(text))
 
 
+# Credential-bearing formats: URI userinfo, Authorization and Bearer values,
+# JWTs, AWS access keys, and connection-string passwords. High-entropy
+# values assigned in env or config lines are checked separately.
+_CREDENTIAL_FORMATS = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@"
+    r"|(?i:\bauthorization\s*[:=]\s*\S+)"
+    r"|(?i:\bbearer\s+[A-Za-z0-9._~+/=-]{8,})"
+    r"|\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"
+    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"
+    r"|(?i:\b(?:password|passwd|pwd)\s*=\s*[^;\s]+)"
+)
+_ASSIGNED_VALUE = re.compile(r"[:=]\s*[\"']?([A-Za-z0-9+/_\-]{20,}={0,2})[\"']?")
+
+
+def _high_entropy(value: str) -> bool:
+    counts = {character: value.count(character) for character in set(value)}
+    entropy = -sum(count / len(value) * math.log2(count / len(value))
+                   for count in counts.values())
+    return (entropy >= 3.5 and any(character.isdigit() for character in value)
+            and any(character.isalpha() for character in value))
+
+
+def holds_credential(text: str) -> bool:
+    """Whether text carries a credential-bearing value in any common format."""
+
+    return (_CREDENTIAL_FORMATS.search(text) is not None
+            or _SECRET_SHAPED.search(text) is not None
+            or any(_high_entropy(match.group(1)) for match in _ASSIGNED_VALUE.finditer(text)))
+
+
 def small_task_content_screened(text: str) -> bool:
     """Whether a file's text may not be shown to a small task's models.
 
@@ -673,7 +704,7 @@ def small_task_content_screened(text: str) -> bool:
     reasons = {reason for form in forms for reason in deterministic_approval_reasons(form)}
     return (bool(reasons & {"sensitive data", "credential or permission change"})
             or any(_PERSONAL_DATA.search(form) for form in forms)
-            or _SECRET_SHAPED.search(text) is not None
+            or holds_credential(text)
             or holds_identifier_format(text))
 
 
@@ -718,6 +749,7 @@ def _read_only_request(text: str) -> bool:
             for form in (body, _identifier_words(body)))
         and any(_NAMED_PATH.search(chunk) for chunk in request)
         and not holds_identifier_format(body)
+        and not holds_credential(body)
     )
 
 
@@ -2026,3 +2058,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

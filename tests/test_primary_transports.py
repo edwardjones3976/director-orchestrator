@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
@@ -345,6 +346,41 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "writer fencing"):
                     transport.send(b"{}", context=context)
         self.assertEqual([], launch.calls)
+
+    def test_responses_rechecks_before_the_token_count_and_the_generation(self):
+        """Both provider requests are preceded by the authority (and grant) recheck."""
+
+        work = self._work()
+        calls = []
+
+        def recheck(**_):
+            calls.append("recheck")
+            if len(calls) == 1:
+                raise RuntimeError("grant lapsed before the token count")
+
+        transport = OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test")
+        context = replace(self._context(), total_token_limit=40000, authority_recheck=recheck)
+        requests = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                requests.append(args)
+                raise AssertionError("a provider request was sent")
+
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient", Client), \
+                self.assertRaisesRegex(RuntimeError, "grant lapsed before the token count"):
+            transport.send(json.dumps(work).encode(), context=context)
+        self.assertEqual(["recheck"], calls)
+        self.assertEqual([], requests)
 
     def test_native_envelope_is_rebound_to_packet_and_exact_lane(self):
         work = {
@@ -1466,3 +1502,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

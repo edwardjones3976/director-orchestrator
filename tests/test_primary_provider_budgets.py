@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -417,6 +418,38 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual([True, True], checks)
         self.assertEqual([], self.dispatch_contexts)
 
+    def test_every_provider_request_inside_a_transport_rechecks_the_grant(self):
+        """The recheck a transport calls before each of its provider requests
+        carries the standing-grant check for a pre-authorized task."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        self.record.assignment_outcomes = []
+        checks = []
+
+        def refusal(*args, **kwargs):
+            checks.append(True)
+            # Admission and the pre-send check pass; the transport's own
+            # recheck before its (second) provider request sees the lapse.
+            return None if len(checks) < 4 else "small_task_pre_authorization_revoked"
+
+        def two_requests(_packet, *, context):
+            context.authority_recheck()      # e.g. a token-count request
+            self.dispatch_contexts.append(context)
+            context.authority_recheck()      # the generation request
+            raise AssertionError("second provider request was sent")
+
+        self.adapter.dispatch = two_requests
+        with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
+                patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                      side_effect=refusal), \
+                patch("director_orchestrator.primary_default._require_current_dispatch_authority"), \
+                self.assertRaisesRegex(WorkloadAdmissionHold,
+                                       "small_task_pre_authorization_revoked"):
+            self.run_assignment(0)
+        self.assertEqual(4, len(checks))
+        self.assertEqual(1, len(self.dispatch_contexts))
+
     def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
         self.activation.services._packet_router = packet_router(self.settings)
         reservation, _ = self.request(1)
@@ -486,3 +519,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

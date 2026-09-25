@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -124,6 +125,8 @@ def _signature_payload(
     work_packet_digest: str = "",
     host_deadline: str = "",
     attested_argv_digest: str = "",
+    attempt_budget_usd: str = "",
+    total_token_limit: str = "",
 ) -> bytes:
     material = [
         BRIDGE_PROTOCOL,
@@ -149,6 +152,9 @@ def _signature_payload(
     # attested under; appended only when present, like the other bindings.
     if attested_argv_digest:
         material.extend(("attested-argv", attested_argv_digest))
+    # A small task's attempt limits, enforced by the host before launch.
+    if attempt_budget_usd or total_token_limit:
+        material.extend(("attempt-limits", attempt_budget_usd, total_token_limit))
     return "\n".join(material).encode("utf-8")
 
 
@@ -294,7 +300,11 @@ def challenge_host_provider_bridge(
             if (not isinstance(argv, list) or not all(isinstance(value, str) for value in argv)
                     or item.get("argv_digest") != argv_digest(argv)):
                 raise HostProviderBridgeError("host bridge lane attestation is malformed")
-            # Re-checked here: the host's own verdict is required, never trusted.
+            # Re-checked here: the host's own verdict is required, never
+            # trusted, and the lane must also enforce the attempt limits.
+            # Whether the command also enforces the attempt limits before
+            # launch is reported but not required (owner ruling 2026-09-24,
+            # "Accept post-hoc cap"): the cap is checked on the result.
             if item.get("read_only_attested") is True and read_only_attested(lane, argv):
                 attested[lane] = item["argv_digest"]
     expected = bridge_challenge_signature(
@@ -326,6 +336,8 @@ class BridgeRequest:
     work_packet_digest: str = ""
     host_deadline: str = ""
     attested_argv_digest: str = ""
+    attempt_budget_usd: str = ""
+    total_token_limit: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider not in SUPPORTED_HOST_LANES:
@@ -360,7 +372,13 @@ class BridgeRequest:
             work_packet_digest=self.work_packet_digest,
             host_deadline=self.host_deadline,
             attested_argv_digest=self.attested_argv_digest,
+            attempt_budget_usd=self.attempt_budget_usd,
+            total_token_limit=self.total_token_limit,
         )
+        if (self.attempt_budget_usd or self.total_token_limit) and not (
+                re.fullmatch(r"\d+(?:\.\d+)?", self.attempt_budget_usd)
+                and re.fullmatch(r"[1-9]\d{0,8}", self.total_token_limit)):
+            raise HostProviderBridgeError("attempt limits are malformed")
         if self.attested_argv_digest and (
                 not self.attested_argv_digest.startswith("sha256:")
                 or _HEX_64.fullmatch(self.attested_argv_digest[7:]) is None):
@@ -405,6 +423,12 @@ class BridgeClaimStore:
                 CREATE TABLE IF NOT EXISTS bridge_nonces (
                     nonce_digest TEXT PRIMARY KEY,
                     observed_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS bridge_attempt_limits (
+                    idempotency_digest TEXT PRIMARY KEY,
+                    attested_argv_digest TEXT NOT NULL,
+                    attempt_budget_usd TEXT NOT NULL,
+                    total_token_limit TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS bridge_attempts (
                     idempotency_digest TEXT PRIMARY KEY,
@@ -464,6 +488,13 @@ class BridgeClaimStore:
                 "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
                 (request.idempotency_digest, *bindings, int(time.time())),
             )
+            if getattr(request, "total_token_limit", ""):
+                # The limits a small task's attempt was admitted under.
+                connection.execute(
+                    "INSERT INTO bridge_attempt_limits VALUES (?, ?, ?, ?)",
+                    (request.idempotency_digest, request.attested_argv_digest,
+                     request.attempt_budget_usd, request.total_token_limit),
+                )
             connection.commit()
         return None
 
@@ -532,6 +563,8 @@ class WindowsHostProviderExecutor:
         if time.monotonic() >= cutoff:
             raise HostProviderBridgeError("host bridge deadline expired before execution")
         attested = getattr(request, "attested_argv_digest", "")
+        budget = getattr(request, "attempt_budget_usd", "")
+        tokens = getattr(request, "total_token_limit", "")
         if attested:
             # Immediately before execution: the argv about to run must be the
             # one this request's lane was attested and pinned under.
@@ -539,6 +572,15 @@ class WindowsHostProviderExecutor:
             if not hmac.compare_digest(argv_digest(command), attested):
                 raise HostProviderBridgeAttestationMismatch(
                     "host argv differs from the attested argv")
+        if attested and not (budget and tokens):
+            # A small task's request always carries its attempt limits. They
+            # reach the command as its limit variables; a command that cannot
+            # honor them before launch (the Grok CLI has no such flag) is
+            # still run, by the owner's ruling of 2026-09-24 ("Accept post-hoc
+            # cap"): the Director checks reported usage against them after
+            # the call, and an overage fails the task and trips the grant.
+            raise HostProviderBridgeAttestationMismatch(
+                "a small task's request lacks its attempt limits")
         if request.provider == "openai":
             from types import SimpleNamespace
             from .packet_contracts import validate_packet
@@ -561,6 +603,10 @@ class WindowsHostProviderExecutor:
             for name, value in os.environ.items()
             if name.upper() in _SAFE_OS_ENV or name in _LANE_AUTH_ENV[request.provider]
         }
+        if getattr(request, "total_token_limit", ""):
+            # The same names NativeCommandPacketTransport sets for a command.
+            environment["DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD"] = request.attempt_budget_usd
+            environment["DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT"] = request.total_token_limit
         try:
             if request.host_deadline:
                 # Reuse the existing process-tree owner; killing only the shim
@@ -816,6 +862,15 @@ class HostBridgePacketTransport:
             and packet.get("allowed_tools") == ["READ_REPOSITORY"]
             and packet.get("allowed_external_effects") == []
             else "")
+        # With it, the attempt's own limits, enforced by the host before launch.
+        attempt_budget_usd = total_token_limit = ""
+        if attested_argv_digest:
+            budget = getattr(context, "budget_usd", None)
+            tokens = getattr(context, "total_token_limit", None)
+            if budget is None or type(tokens) is not int or tokens < 1:
+                raise HostBridgeAttestationStale("a small task's attempt limits are missing")
+            attempt_budget_usd = format(Decimal(str(budget)).normalize(), "f")
+            total_token_limit = str(tokens)
         idempotency_digest = _digest(idempotency_key.encode("utf-8"))
         timestamp = int(time.time())
         nonce = hashlib.sha256(f"{time.time_ns()}:{packet_digest}".encode()).hexdigest()
@@ -832,6 +887,8 @@ class HostBridgePacketTransport:
             work_packet_digest=work_packet_digest,
             host_deadline=host_deadline,
             attested_argv_digest=attested_argv_digest,
+            attempt_budget_usd=attempt_budget_usd,
+            total_token_limit=total_token_limit,
         )
         headers = {
             "Content-Type": "application/json",
@@ -853,6 +910,8 @@ class HostBridgePacketTransport:
             headers["X-Director-Host-Deadline"] = host_deadline
         if attested_argv_digest:
             headers["X-Director-Attested-Argv-Digest"] = attested_argv_digest
+            headers["X-Director-Attempt-Budget-Usd"] = attempt_budget_usd
+            headers["X-Director-Total-Token-Limit"] = total_token_limit
         request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
         remaining = context.timeout_seconds if cutoff is None else cutoff - time.monotonic()
         if remaining <= 0:
@@ -961,3 +1020,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
@@ -372,15 +373,28 @@ Responses can read them; the reviewer's objective names the same paths, so
 both models see the same text. The OpenAI Responses lane may produce a small
 task but never review one: it reports every acceptance check NOT_RUN, which a
 review can never pass. With native lanes excluded and the Claude bridge lane
-not attestable, the one pair that can complete a small task is an OpenAI
+not attestable, the one pair that could complete a small task is an OpenAI
 Responses producer with an attested Grok bridge reviewer, whose result must
 carry structured acceptance evidence with every check PASS; readiness reports
-armed only when such a pair exists. Each file is at most 4 KB, the total at most
+armed only when such a pair exists.
+
+**Post-hoc reviewer cap.** Owner ruling, 2026-09-24: "Accept post-hoc cap".
+The attested Grok host-bridge reviewer is admitted even though the Grok CLI
+cannot enforce a token or dollar cap before launch. The reviewer's dollar and
+token cap is checked after the call: the bridge result's reported usage is
+compared with the attempt's limits as soon as it returns, an overage fails the
+attempt and so the task, and that failure suspends the grant through the
+ordinary trip; a result that reports no usage fails as
+`small_task_usage_unmeasured`. In practice the spend is bounded by the attested
+configuration: one turn, no tools, read-only, and a bounded compact input. Each file is at most 4 KB, the total at most
 8 KB, and at most eight files. A named path missing from the snapshot,
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
 credential approval gate or the request text's personal-data exclusion (as
 written or with identifiers split into words), holding a secret-shaped value,
-or holding a raw identifier with no label (an e-mail address, social security
+or holding a credential-bearing value (URI user information, an Authorization
+or Bearer value, a JWT, an AWS access key, a connection-string password, or a
+high-entropy value assigned in an env or config line), or holding a raw
+identifier with no label (an e-mail address, social security
 number, phone number, card, IBAN or routing number that passes its checksum,
 IP address, street address, a date next to a birth label, or a passport-like
 identifier) keeps the task out
@@ -410,7 +424,14 @@ attestation is gone, changed, or cannot be authenticated, nothing is sent
 carries the pinned argv digest, and the bridge compares it, in constant time,
 with the digest of the argv it is about to run, immediately before starting it;
 a mismatch runs nothing and returns a signed refusal the Director also treats as
-`small_task_bridge_attestation_stale`. The restriction sets use only flags this repository
+`small_task_bridge_attestation_stale`. The same signed request carries the
+attempt's dollar budget and token limit; the bridge passes them to the host
+command as `DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD` and
+`DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT` and records them with the attempt, and
+refuses a small task's request that lacks them. The lane's attestation reports
+whether its command enforces them before inference (today only
+`scripts/xai-responses-command.py` does; the Grok CLI does not), and by the
+ruling above the Director admits an attested lane either way. The restriction sets use only flags this repository
 already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
 `--disable-web-search`, `--no-subagents`, the canonical `--disallowed-tools`
 list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
@@ -455,7 +476,9 @@ and it still qualifies
 lower reviewer cap or different lanes), rather than run without the class's
 bounds; a task whose graph keeps the button is never affected. That failure
 trips the grant. The same check runs again immediately before every provider
-send of a pre-authorized task, each retry included, and a lapse sends nothing.
+send of a pre-authorized task, each retry included, and inside the transport
+before each provider request it makes (the OpenAI Responses token count and
+its generation alike); a lapse sends nothing.
 
 **Prerequisites.** The frozen plan total must be at most $1, for example by
 setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
@@ -682,3 +705,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->

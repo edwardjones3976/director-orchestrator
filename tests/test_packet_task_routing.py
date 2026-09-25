@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -925,6 +926,34 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertIsNone(reader(large))
             self.assertEqual([4097], reads)
 
+    def test_credential_bearing_formats_keep_the_button(self) -> None:
+        """Built at runtime: no committed file holds a credential shape."""
+
+        from director_orchestrator.policy import (
+            _read_only_request, holds_credential, small_task_content_screened)
+
+        dot, colon, at = ".", ":", "@"
+        values = {
+            "uri_userinfo": "postgres" + colon + "//admin" + colon + "hunter2" + at + "db.internal/app",
+            "authorization": "Authorization" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "bearer": "curl with Bearer " + "abcDEF123" * 3,
+            "jwt": dot.join(("eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjMifQ", "c2lnbmF0dXJlLXZhbHVl")),
+            "aws_key": "key " + "AKIA" + "IOSFODNN7EXAMPLE",
+            "aws_session": "key " + "ASIA" + "IOSFODNN7EXAMPLE",
+            "connection_string": "Server=db;User Id=app;Pwd=" + "s3cr3t" + ";",
+            "env_line": "API_THING=" + "q8Zr2mXv7Lp4Tn9Wk3Hs6Fd1",
+            "yaml_line": "token_value: " + "Zk3pQ9vL2mN8xR4tW7yB5cJ1",
+        }
+        for name, text in values.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_credential(text))
+                self.assertTrue(small_task_content_screened(f"# Config\n\n{text}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md with {text}."))
+        for text in ("Version 1.2.3 of the package.", "timeout_seconds = 120",
+                     "Commit 0b3cdbba19bc650c01687da9d402f01dfb06ce1e was merged."):
+            with self.subTest(ordinary=text):
+                self.assertFalse(holds_credential(text))
+
     def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
         import subprocess as subprocess_module
         import time as time_module
@@ -1152,3 +1181,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

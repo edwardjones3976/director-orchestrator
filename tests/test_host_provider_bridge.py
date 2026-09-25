@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import io
 import json
+from contextlib import closing
 import os
 import subprocess
 import sys
@@ -257,7 +259,8 @@ class HostProviderBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(HostProviderBridgeError, "unallowlisted"):
             unsupported.validate(SECRET, now=1_000)
 
-    def attested_request(self, digest_value: str, *, argv_digest_in_signature: bool = True):
+    def attested_request(self, digest_value: str, *, argv_digest_in_signature: bool = True,
+                         budget: str = "0.5", tokens: str = "40000"):
         base = request(nonce="nonce-attested")
         bindings = {key: getattr(base, key) for key in (
             "timestamp", "nonce", "provider", "task_id", "assignment_id",
@@ -265,9 +268,11 @@ class HostProviderBridgeTests(unittest.TestCase):
             "writer_owner_token_digest")}
         signature = bridge_signature(
             SECRET, **bindings,
-            attested_argv_digest=digest_value if argv_digest_in_signature else "")
+            attested_argv_digest=digest_value if argv_digest_in_signature else "",
+            attempt_budget_usd=budget, total_token_limit=tokens)
         return BridgeRequest(**bindings, signature=signature, packet=base.packet,
-                             attested_argv_digest=digest_value)
+                             attested_argv_digest=digest_value,
+                             attempt_budget_usd=budget, total_token_limit=tokens)
 
     def test_the_attested_argv_digest_is_signed_and_checked_before_execution(self) -> None:
         """The host refuses, before spawning, an argv other than the attested one."""
@@ -277,7 +282,8 @@ class HostProviderBridgeTests(unittest.TestCase):
             HostProviderBridgeAttestationMismatch,
         )
 
-        argv = ("claude.exe", "--print")
+        # A command that enforces the attempt limits before launch.
+        argv = ("python.exe", "C:/bridge/xai-responses-command.py")
         pinned = argv_digest(argv)
         self.attested_request(pinned).validate(SECRET, now=1_000)
         # Stripped from, or forged outside, the signature: authentication fails.
@@ -302,6 +308,47 @@ class HostProviderBridgeTests(unittest.TestCase):
             self.assertEqual(b'{"status":"SUCCEEDED"}',
                              executor.execute(self.attested_request(pinned)))
             self.assertEqual(1, run.call_count)
+            # The signed limits reach the host command as its limit variables.
+            environment = run.call_args.kwargs["env"]
+            self.assertEqual("0.5", environment["DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD"])
+            self.assertEqual("40000", environment["DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT"])
+
+    def test_limits_are_signed_passed_and_recorded_for_a_cli_that_cannot_enforce_them(self) -> None:
+        """Owner ruling 2026-09-24, "Accept post-hoc cap": the Grok CLI runs
+        with its limits passed and recorded; the cap is checked on the result."""
+
+        from director_orchestrator.bridge_attestation import argv_digest
+        from director_orchestrator.host_provider_bridge import (
+            HostProviderBridgeAttestationMismatch,
+        )
+
+        stripped = self.attested_request("sha256:" + "1" * 64)
+        object.__setattr__(stripped, "total_token_limit", "999999")
+        with self.assertRaisesRegex(HostProviderBridgeError, "authentication"):
+            stripped.validate(SECRET, now=1_000)
+        grok_cli = ("grok.exe", "--permission-mode", "plan", "--max-turns", "1")
+        executor = WindowsHostProviderExecutor(
+            {"claude": grok_cli}, cwd=self.temporary.name, writer_fence_verifier=_Verifier())
+        completed = subprocess.CompletedProcess(
+            args=grok_cli, returncode=0, stdout=b'{"status":"SUCCEEDED"}', stderr=b"")
+        with patch("subprocess.run", return_value=completed) as run:
+            executor.execute(self.attested_request(argv_digest(grok_cli)))
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual("0.5", environment["DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD"])
+        self.assertEqual("40000", environment["DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT"])
+        # An attested request without its limits never runs.
+        with patch("subprocess.run", side_effect=AssertionError("launched")), \
+                self.assertRaisesRegex(HostProviderBridgeAttestationMismatch, "attempt limits"):
+            executor.execute(self.attested_request(argv_digest(grok_cli), budget="", tokens=""))
+        # The claim store records the limits the attempt was admitted under.
+        request_with_limits = self.attested_request(argv_digest(grok_cli))
+        object.__setattr__(request_with_limits, "idempotency_digest", "e" * 64)
+        self.store.claim(request_with_limits)
+        with closing(self.store._connect()) as connection:
+            row = connection.execute(
+                "SELECT attested_argv_digest, attempt_budget_usd, total_token_limit "
+                "FROM bridge_attempt_limits WHERE idempotency_digest = ?", ("e" * 64,)).fetchone()
+        self.assertEqual((argv_digest(grok_cli), "0.5", "40000"), row)
 
     def test_a_signed_mismatch_reaches_the_director_as_a_stale_attestation(self) -> None:
         """End to end over HTTP: nothing is spawned, and the refusal is authenticated."""
@@ -332,7 +379,8 @@ class HostProviderBridgeTests(unittest.TestCase):
             outbound_payload_builder=validated_compact_view,
             result_normalizer=lambda packet, result: result,
             read_only_argv_digest="sha256:" + "9" * 64)
-        context = SimpleNamespace(timeout_seconds=30, fencing_generation=7, deadline=None)
+        context = SimpleNamespace(timeout_seconds=30, fencing_generation=7, deadline=None,
+                                  budget_usd=0.5, total_token_limit=40000)
         with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}), \
                 self.assertRaises(HostBridgeAttestationStale):
             transport.send(canonical_json_bytes(work), context=context)
@@ -849,6 +897,11 @@ class HostProviderBridgeTests(unittest.TestCase):
                     "https://host.docker.internal:18765/v1/provider/dispatch", SECRET, now=1_000)
 
         attestations = lane_attestations({"claude": claude, "grok": grok})
+        # Read-only and admitted, although the Grok CLI cannot enforce a
+        # token or dollar cap before launch: owner ruling 2026-09-24,
+        # "Accept post-hoc cap". The attestation still reports it.
+        self.assertTrue(attestations["grok"]["read_only_attested"])
+        self.assertFalse(attestations["grok"]["enforces_attempt_limits"])
         self.assertEqual({"grok": argv_digest(grok)}, respond(attestations).read_only_attested)
         # The host's verdict is required but re-checked: a claimed attestation
         # for an argv that lacks the set is not accepted.
@@ -1319,3 +1372,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 """Read-only CLI restriction sets for host-bridge lanes in the small class.
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
+from pathlib import PurePath
 
 from .native_acceptance_streams import GROK_DENY_TOOLS
 from .packet_contracts import canonical_json_bytes
@@ -98,13 +100,31 @@ def read_only_attested(provider: str, argv: Sequence[str]) -> bool:
     return True
 
 
+# Host commands known to enforce DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD and
+# DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT before any inference (tokenize, bound,
+# then send with a hard output cap). The Grok CLI has no token or dollar cap
+# flag in this repository, so an argv that runs it cannot honor them before
+# launch. Reported only: by the owner's ruling of 2026-09-24 ("Accept
+# post-hoc cap") an attested Grok reviewer is admitted and its cap is checked
+# on the result.
+ATTEMPT_LIMIT_COMMANDS = frozenset({"xai-responses-command.py"})
+
+
+def enforces_attempt_limits(argv: Sequence[str]) -> bool:
+    """Whether this argv runs a command that enforces the attempt limits pre-launch."""
+
+    return any(PurePath(str(item)).name in ATTEMPT_LIMIT_COMMANDS for item in argv)
+
+
 def lane_attestations(commands: Mapping[str, Sequence[str]]) -> dict[str, dict[str, object]]:
     """What the bridge reports for each lane that has a restriction set."""
 
     return {
         lane: {"argv": list(argv), "argv_digest": argv_digest(argv),
-               "read_only_attested": read_only_attested(lane, argv)}
+               "read_only_attested": read_only_attested(lane, argv),
+               "enforces_attempt_limits": enforces_attempt_limits(argv)}
         for lane, argv in sorted(commands.items())
         if lane in READ_ONLY_REQUIREMENTS
     }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
