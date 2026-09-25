@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -89,7 +90,7 @@ def sample():
         "owner_decision": None, "owner_decision_at": None, "owner_command_id": None,
         "client_msg_id": FINAL_ID, "state": "DELIVERED", "slack_ts": FINAL_TS,
         "claimed_at": "2026-09-12T10:00:20+00:00",
-        "acknowledged_at": "2026-09-12T10:00:30+00:00",
+        "acknowledged_at": "2026-09-12T10:00:30.500000+00:00",  # after chat.postMessage returned ts ...30.1
         "delivered_at": "2026-09-12T10:00:31+00:00", "readback_attempts": 1,
     }]
     messages = [{
@@ -159,7 +160,8 @@ def readback_fixture():
         "reconciliation_events": [],
         "slack_deliveries": [{"notification_key": "terminal", "projection_digest": PROJECTION,
                               "client_msg_id": FINAL_ID, "state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
-                              "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": "2026-09-12T10:00:30+00:00",
+                              "claimed_at": "2026-09-12T10:00:20+00:00",
+                              "acknowledged_at": "2026-09-12T10:00:30.500000+00:00",
                               "delivered_at": "2026-09-12T10:00:31+00:00", "slack_ts": FINAL_TS, "readback_attempts": 1,
                               "last_error": None, "owner_decision": None, "owner_decision_at": None,
                               "owner_command_id": None}],
@@ -1487,3 +1489,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]

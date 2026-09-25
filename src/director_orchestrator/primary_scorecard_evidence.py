@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
@@ -38,7 +39,8 @@ _PIN = "LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256"
 _ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", "independent_reviewer",
                     "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
 _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
-               "succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
+               "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
+               "projections_missing_batch",
                "batches_without_projection",
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
@@ -98,6 +100,12 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM p WHERE NOT p.settled) AS nonterminal_projections,
  (SELECT count(*) FROM p WHERE p.tc='SUCCEEDED' AND EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
     WHERE x.task_id=p.task_id AND x.status<>'SUCCEEDED')) AS succeeded_projections_with_unsucceeded_assignments,
+ -- Every valid DirectorPlan has at least one assignment: a SUCCEEDED projection without a batch bound to its
+ -- plan digest, or without a SUCCEEDED assignment, is an impossible success.
+ (SELECT count(*) FROM p WHERE p.tc='SUCCEEDED' AND (p.pd IS NULL
+    OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id AND b.plan_digest=p.pd)
+    OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
+                   WHERE x.task_id=p.task_id AND x.status='SUCCEEDED'))) AS succeeded_projections_without_plan,
  (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
     (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id)) AS projections_missing_batch,
  (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
@@ -425,3 +433,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]] -->
@@ -529,7 +530,11 @@ qualification readback carry their own read time, which must lie inside this
 collection. Check 10 also requires each offline final reply's text and blocks to
 be the candidate renderer's canonical rendering, and check 15 requires
 `daily_accounting` to cover exactly the monitor's configured `providers` (unique,
-valid names).
+valid names). A DELIVERED row's Slack timestamp lies inside its lifecycle
+(claimed, then posted, then acknowledged or read back); every attempt event lies
+between its assignment's reservation and completion (the product's write order);
+and check 07 counts a SUCCEEDED projection without a bound batch or a SUCCEEDED
+assignment as a conflict (`succeeded_projections_without_plan`).
 
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
@@ -860,3 +865,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]] -->

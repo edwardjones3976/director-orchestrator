@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
@@ -52,6 +53,7 @@ import importlib.util
 import sqlite3
 import subprocess
 import sys
+import re
 import tempfile
 import time
 import unittest
@@ -341,6 +343,29 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
     for index, (_, new) in enumerate(pairs):
         blob = blob.replace(f"@@{index}@@", new)
     entry = json.loads(blob)
+    # The collector fixture's clock starts at 10:00:00; this thread's owner post is ts(offset). Every readback and
+    # delivery time is re-based onto that post, as the Director records them after the post it handles.
+    shift = timedelta(seconds=1789210000 + offset + 1 - 1789207200)  # the task follows its post by a second
+
+    def rebase(value):
+        if isinstance(value, dict):
+            return {key: rebase(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rebase(item) for item in value]
+        if isinstance(value, str) and re.fullmatch(r"2026-09-12T\d\d:\d\d:\d\d(\.\d+)?\+00:00", value):
+            return (datetime.fromisoformat(value) + shift).isoformat()
+        return value
+
+    entry["task"], entry["deliveries"] = rebase(entry["task"]), rebase(entry["deliveries"])
+    # A later final reply was claimed, posted, acknowledged and read back later too.
+    late = timedelta(seconds=final_offset - 30)
+    for row in entry["deliveries"] + entry["task"]["qualification_evidence"]["slack_deliveries"]:
+        if row.get("notification_key") == "terminal":
+            for key in ("claimed_at", "acknowledged_at", "delivered_at"):
+                if row.get(key):
+                    row[key] = (datetime.fromisoformat(row[key]) + late).isoformat()
+    readback_row = entry["task"]["qualification_evidence"]
+    readback_row["task_updated_at"] = (datetime.fromisoformat(readback_row["task_updated_at"]) + late).isoformat()
     if True:  # every final reply is the Director's own terminal rendering of the persisted record
         readback = entry["task"]["qualification_evidence"]
         terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
@@ -361,8 +386,9 @@ def approval_entry(decided=None, kind="execution", grant=None):  # langgraph_pri
     projection = "sha256:" + "9" * 64
     delivery = {"notification_key": "approval:sha256:" + "8" * 64 + ":" + projection, "projection_digest": projection,
                 "client_msg_id": "approval-client-1", "state": "DELIVERED", "created_at": "2026-09-12T09:20:00+00:00",
-                "claimed_at": "2026-09-12T10:00:03+00:00", "acknowledged_at": "2026-09-12T10:00:04+00:00",
-                "delivered_at": "2026-09-12T10:00:05+00:00", "slack_ts": prompt, "readback_attempts": 1,
+                # Claimed before chat.postMessage, acknowledged with the returned ts, then read back.
+                "claimed_at": iso(1789210000 + 30004), "acknowledged_at": iso(1789210000 + 30005.5),
+                "delivered_at": iso(1789210000 + 30006), "slack_ts": prompt, "readback_attempts": 1,
                 "last_error": None, "owner_decision": "approve",
                 "owner_decision_at": decided or iso(1789210000 + 30010), "owner_command_id": "owner-command-1"}
     readback["slack_deliveries"].append(delivery)
@@ -1941,13 +1967,14 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertIn("--channel", row(report, "03")["explanation"])
         # A drill posted before the running container was created cannot attest it (the 404 drill has no task).
         recreated = self.world()
-        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T10:48:30Z"
+        # After every drill thread and its task ran (10:48:20-10:54:05).
+        recreated.rows[0]["Created"] = recreated.rows[0]["State"]["StartedAt"] = "2026-09-12T10:55:00Z"
         report = recreated.report()
         self.assertEqual([row(report, key)["status"] for key in ("03", "09")], ["UNKNOWN", "UNKNOWN"])
         self.assertIn("refusal-4xx", row(report, "03")["explanation"])
         # Nor can a drill whose bound task was created before it.
         early_task = self.world()
-        early_task.rows[0]["Created"] = early_task.rows[0]["State"]["StartedAt"] = "2026-09-12T10:00:10Z"
+        early_task.tasks["DIR-LG-5E"]["qualification_evidence"]["task_created_at"] = "2026-09-12T08:59:00+00:00"
         explanation = row(early_task.report(), "03")["explanation"]
         self.assertIn("reserved-5xx", explanation)
         self.assertNotIn("refusal-4xx", explanation)
@@ -2097,8 +2124,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         redispatched = self.world()
         readback = redispatched.tasks[APPROVAL_TASK]["qualification_evidence"]
         for event in json.loads(json.dumps(readback["provider_attempts"])):
-            event.update(attempt_ordinal=2, attempt_digest="sha256:" + "3" * 64,
-                         recorded_at=event["recorded_at"].replace("10:00", "10:01"))
+            event.update(attempt_ordinal=2, attempt_digest="sha256:" + "3" * 64)  # a second dispatch, same window
             readback["provider_attempts"].append(event)
         tf.recount(readback)
         self.assertEqual(redispatched.state("06"), "FAIL")
@@ -2201,7 +2227,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         readback["task_updated_at"] = "2026-09-12T09:26:00+00:00"
         self.assertEqual(notification_only.state("06"), "UNKNOWN")
         late_start = self.world()
-        late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T10:30:00Z"
+        late_start.rows[0]["State"]["StartedAt"] = "2026-09-12T19:30:00Z"  # after the approval task ran (~19:07)
         self.assertEqual(late_start.state("06"), "UNKNOWN")
         # An approval task created before the running container cannot attest it.
         recreated = self.world()
@@ -2282,7 +2308,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         terminal.update(state="AMBIGUOUS", readback_attempts=2)
         self.assertEqual(unresolved.state("09"), "FAIL")
         acknowledged = self.world()
-        acknowledged.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]["acknowledged_at"] = "2026-09-12T10:00:30+00:00"
+        acked = acknowledged.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"][0]
+        acked["acknowledged_at"] = acked["delivered_at"]  # Slack answered the post: no ambiguity to recover
         self.assertEqual(acknowledged.state("09"), "UNKNOWN")
         unexercised = self.world()
         unexercised.threads[ts(300)].pop()
@@ -2744,6 +2771,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                     self.assertNotEqual(case.state(key), "PASS")
         self.assertTrue(sc._delivery_settled({"state": "DELIVERED", "created_at": "2026-09-12T10:00:19+00:00",
                                               "claimed_at": "2026-09-12T10:00:20+00:00", "acknowledged_at": None,
+                                              "slack_ts": "1789207230.100000",
                                               "delivered_at": "2026-09-12T10:01:31+00:00", "readback_attempts": 2}))
 
     def test_readback_capture_time_is_inside_the_collection(self):
@@ -2763,6 +2791,33 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(providers=providers):
                 self.assertEqual(case.state("15"), "UNKNOWN")
 
+    def test_slack_post_lies_inside_the_delivery_lifecycle_09_20(self):
+        self.assertEqual([self.world().state(key) for key in ("09", "20")], ["PASS", "PASS"])
+        for task_id, key in (("DIR-LG-A0", "09"), (PAID_TASK, "20")):
+            for moment in ("claimed_at", "delivered_at"):
+                case = self.world()
+                terminal = next(r for r in case.tasks[task_id]["qualification_evidence"]["slack_deliveries"]
+                                if r["notification_key"] == "terminal")
+                posted = float(terminal["slack_ts"])
+                # The claim after the post, or the readback before it.
+                terminal[moment] = iso(posted + 1 if moment == "claimed_at" else posted - 0.05)
+                with self.subTest(check=key, moment=moment):
+                    self.assertNotEqual(case.state(key), "PASS")
+
+    def test_attempt_events_lie_inside_their_assignment_06_20(self):
+        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
+            for field, delta in (("completed_at", -30), ("reserved_at", +5)):
+                case = self.world()
+                readback = case.tasks[task_id]["qualification_evidence"]
+                assignment = readback["assignments"][0]
+                # Settled before its terminal attempt, or reserved after its first attempt started.
+                anchor = readback["provider_attempts"][-1 if field == "completed_at" else 0]["recorded_at"]
+                assignment[field] = (datetime.fromisoformat(anchor) + timedelta(seconds=delta if field == "reserved_at"
+                                                                               else -1)).isoformat()
+                with self.subTest(check=key, field=field):
+                    self.assertNotEqual(case.state(key), "PASS")
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -2775,7 +2830,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = world.report(trials=world.trials[:9])
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         late = self.world()
-        late.rows[0]["Created"] = "2026-09-12T10:30:00Z"
+        late.rows[0]["Created"] = "2026-09-12T13:40:00Z"  # after the last trial ran (~13:34)
         report = late.report()
         self.assertEqual(row(report, "10")["status"], "UNKNOWN")
         self.assertIn("runtime_sha", row(report, "10")["explanation"])
@@ -2867,17 +2922,22 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertNotEqual(future_capture.state("12"), "PASS")
         # Both surfaces gate the attempt: an app capture persisted after it does not attest the lane.
         late_app = self.world()
-        late_app.captures["lanes"]["claude"]["surfaces"]["app"]["recorded_at"] = "2026-09-12T10:00:10+00:00"
+        first_attempt = late_app.tasks[PAID_TASK]["qualification_evidence"]["provider_attempts"][0]["recorded_at"]
+        late_app.captures["lanes"]["claude"]["surfaces"]["app"]["recorded_at"] = (
+            datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(late_app.state("11"), "UNKNOWN")
         minted_later = self.world()
-        minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = "2026-09-12T10:00:10+00:00"
+        minted_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"] = (
+            datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(minted_later.state("11"), "UNKNOWN")
         expired_during = self.world()
-        expired_during.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["expires_at"] = "2026-09-12T10:00:20+00:00"
+        expired_during.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["expires_at"] = (
+            datetime.fromisoformat(first_attempt) + timedelta(seconds=14)).isoformat()
         self.assertEqual(expired_during.state("11"), "UNKNOWN")
         # A backdated observed_at does not help: the row's persisted insertion time must precede the attempts too.
         published_later = self.world()
-        published_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = "2026-09-12T10:00:10+00:00"
+        published_later.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = (
+            datetime.fromisoformat(first_attempt) + timedelta(seconds=4)).isoformat()
         self.assertEqual(published_later.state("11"), "UNKNOWN")
         unrecorded = self.world()
         unrecorded.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["recorded_at"] = None
@@ -2886,7 +2946,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         del undated.captures["lanes"]["claude"]["surfaces"]["runtime_adapter"]["observed_at"]
         self.assertEqual(undated.state("11"), "UNKNOWN")
         recreated = self.world()
-        recreated.rows[0]["Created"] = "2026-09-12T10:30:00Z"
+        recreated.rows[0]["Created"] = "2026-09-12T16:30:00Z"  # after the paid attempt (~16:20)
         self.assertEqual(recreated.state("11"), "UNKNOWN")
         rebound = self.world()
         rebound.captures["provider_bindings_sha256"] = "0" * 64
@@ -3303,3 +3363,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]

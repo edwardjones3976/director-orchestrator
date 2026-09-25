@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | BEGIN]]
@@ -915,7 +916,8 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
-                "succeeded_projections_with_unsucceeded_assignments", "projections_missing_batch",
+                "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
+                "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
@@ -1351,9 +1353,15 @@ def _delivery_settled(row: dict[str, Any]) -> bool:
     Slack answered the post (null on the AMBIGUOUS recovery path), then DELIVERED only by readback, which counts one
     or two attempts first; every present moment in that order."""
     attempts = row.get("readback_attempts")
+    posted = row.get("slack_ts")
+    if not (isinstance(posted, str) and _TS.fullmatch(posted)):
+        return False
+    # Slack stamps the message between the claim (claimed_at=now() before chat.postMessage) and the
+    # acknowledgement (settled with the returned ts), or, on the ambiguous path, before the readback finds it.
+    posted_at = datetime.fromtimestamp(float(Decimal(posted)), timezone.utc).isoformat()
     return (row.get("state") == "DELIVERED" and all(row.get(key) for key in ("created_at", "claimed_at", "delivered_at"))
             and type(attempts) is int and 1 <= attempts <= 2
-            and _ordered(row["created_at"], row["claimed_at"], row.get("acknowledged_at"), row["delivered_at"]))
+            and _ordered(row["created_at"], row["claimed_at"], posted_at, row.get("acknowledged_at"), row["delivered_at"]))
 
 
 def _final_is_rendering(facts: dict[str, Any]) -> bool:
@@ -1739,6 +1747,17 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     chains: dict[Any, list[Any]] = {}
     for event in sorted(readback.get("provider_attempts") or [], key=lambda event: event.get("event_sequence") or 0):
         chains.setdefault((event.get("assignment_id"), event.get("attempt_ordinal")), []).append(event.get("recorded_at"))
+    # The product's write order: primary_parallel reserves the assignment (reserved_at=now(), ACTIVE) before any
+    # attempt; primary_default's roster records each attempt STARTED then its terminal event; only afterwards does
+    # primary_parallel settle the assignment (completed_at=now()). Every attempt event lies inside the assignment.
+    for assignment in readback.get("assignments") or []:
+        events = sorted((event for event in readback.get("provider_attempts") or []
+                         if event.get("assignment_id") == assignment.get("assignment_id")),
+                        key=lambda event: (event.get("attempt_ordinal") or 0, event.get("event_sequence") or 0))
+        if events:
+            chains[("assignment", assignment.get("assignment_id"))] = [
+                assignment.get("reserved_at"), *(event.get("recorded_at") for event in events)] + (
+                [assignment["completed_at"]] if assignment.get("completed_at") else [])
     ordered = (all(all(chain) and _ordered(*chain) for chain in chains.values())
                and all(_ordered(effect.get("reserved_at"), effect.get("execution_started_at"), effect.get("bound_at"),
                                 effect.get("terminal_recorded_at"))
@@ -3083,3 +3102,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | BEGIN]]
@@ -340,6 +341,26 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         connection.execute(
             f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
             f" projection = {projection} WHERE task_id = %s", (*values, task_id))
+
+    def test_succeeded_projection_needs_its_plan(self):
+        task_id = self.intake()
+        # SUCCEEDED with no plan digest, batch or assignment: an impossible success.
+        with self.handle.pool.connection() as connection:
+            self.classify(connection, task_id, "SUCCEEDED")
+        self.assertEqual(self.report()["counts"]["succeeded_projections_without_plan"], 1)
+        # A bound batch with only a FAILED assignment is still not a plan that succeeded.
+        other = self.intake_another()
+        self.plan(other, "SUCCEEDED", [("a1", "FAILED", [])])
+        self.assertEqual(self.report()["counts"]["succeeded_projections_without_plan"], 2)
+        # A bound batch with a SUCCEEDED assignment is consistent.
+        third = self.intake_another()
+        self.plan(third, "SUCCEEDED", [("a1", "SUCCEEDED", [])])
+        self.assertEqual(self.report()["counts"]["succeeded_projections_without_plan"], 2)
+
+    def intake_another(self):
+        task_id = "DIR-LG-" + uuid.uuid4().hex[:10].upper()
+        self.coordinator.create_intake(self.coordinator_fixtures.request(task_id))
+        return task_id
 
     def test_every_nonterminal_projection_is_in_flight(self):
         task_id = self.intake()
@@ -740,3 +761,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:17 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
