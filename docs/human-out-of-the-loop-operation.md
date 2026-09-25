@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
@@ -492,7 +493,10 @@ Director re-checks that argv against the lane's read-only restriction set in
 the challenge, the dispatch response, its signed refusal and the host's
 request body, is read in small chunks against one absolute deadline, each
 chunk's socket wait clamped to what is left, so a peer that trickles bytes
-cannot keep a read open past it. A small task's dispatch
+cannot keep a read open past it. The client's connect, TLS handshake, status
+line and headers are bounded by the same deadline: a watchdog shuts the
+request's socket down when it arrives, and the resulting failure is the
+deadline, never a success. A small task's dispatch
 re-challenges the bridge before admission, and again immediately before every
 bridge send, each producer retry and reviewer attempt included; if the
 attestation is gone, changed, or cannot be authenticated, nothing is sent
@@ -825,3 +829,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->

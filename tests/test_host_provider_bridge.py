@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -369,6 +370,60 @@ class HostProviderBridgeTests(unittest.TestCase):
                 self.assertRaises(HostProviderBridgeError):
             challenge_host_provider_bridge(
                 f"http://127.0.0.1:{port}/v1/provider/dispatch", SECRET, timeout_seconds=1.0)
+        self.assertLess(time_module.monotonic() - started, 2.5)
+
+    def _trickling_server(self, head: bytes, trickle: bytes) -> int:
+        """A real socket server that sends ``head`` then one byte of
+        ``trickle`` every 0.2 s: never idle long enough for a per-read
+        timeout to fire."""
+
+        import socket
+        import time as time_module
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+
+        def serve():
+            connection, _ = listener.accept()
+            with connection:
+                connection.recv(65536)
+                connection.sendall(head)
+                for byte in trickle:
+                    try:
+                        connection.sendall(bytes([byte]))
+                    except OSError:
+                        return
+                    time_module.sleep(0.2)
+
+        threading.Thread(target=serve, daemon=True).start()
+        return listener.getsockname()[1]
+
+    def test_trickled_headers_are_cut_off_at_the_deadline(self) -> None:
+        """The header phase of open() is bounded too: challenge and dispatch."""
+
+        import time as time_module
+        from director_orchestrator.host_provider_bridge import (
+            HostBridgePacketTransport, challenge_host_provider_bridge)
+
+        headers = b"X-Director-Padding: " + b"a" * 60 + b"\r\n\r\n"
+        port = self._trickling_server(b"HTTP/1.1 200 OK\r\n", headers)
+        started = time_module.monotonic()
+        with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}),                 self.assertRaises(HostProviderBridgeError):
+            challenge_host_provider_bridge(
+                f"http://127.0.0.1:{port}/v1/provider/dispatch", SECRET, timeout_seconds=1.0)
+        self.assertLess(time_module.monotonic() - started, 2.5)
+
+        port = self._trickling_server(b"HTTP/1.1 200 OK\r\n", headers)
+        transport = HostBridgePacketTransport(
+            "claude", f"http://127.0.0.1:{port}/v1/provider/dispatch", SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64)
+        work = json.loads((ROOT / "docs/schemas/model-work-packet-v1.example.json").read_text())
+        started = time_module.monotonic()
+        with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}),                 self.assertRaisesRegex(RuntimeError, "ambiguous"):
+            transport.send(canonical_json_bytes(work),
+                           context=SimpleNamespace(timeout_seconds=1, fencing_generation=7))
         self.assertLess(time_module.monotonic() - started, 2.5)
 
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
@@ -1591,3 +1646,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -34,16 +35,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import json
 import math
 import os
 import re
+import socket
 import sqlite3
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import closing
+from contextlib import closing, contextmanager
+from functools import partial
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -327,11 +332,14 @@ def challenge_host_provider_bridge(
     if deadline is not None:
         read_deadline = min(read_deadline, deadline)
     try:
-        with urllib.request.build_opener(_NoRedirectHandler()).open(
-            request, timeout=max(0.001, read_deadline - time.monotonic())
-        ) as response:
-            payload = read_until_deadline(response, limit=65_536, deadline=read_deadline)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        with _bridge_opener(read_deadline) as (opener, watch):
+            with opener.open(
+                request, timeout=max(0.001, read_deadline - time.monotonic())
+            ) as response:
+                payload = read_until_deadline(response, limit=65_536, deadline=read_deadline)
+            if watch.fired.is_set():
+                raise TimeoutError("host bridge challenge reached its deadline")
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
         raise HostProviderBridgeError("host bridge challenge is unavailable") from exc
     if not payload or len(payload) > 65_536:
         raise HostProviderBridgeError("host bridge challenge response is not bounded")
@@ -815,6 +823,89 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 
+class _SocketWatch:
+    """The sockets one bridge request opened, and whether its deadline fired."""
+
+    def __init__(self) -> None:
+        self.fired = threading.Event()
+        self._sockets: list[socket.socket] = []
+        self._lock = threading.Lock()
+
+    def register(self, sock: socket.socket) -> socket.socket:
+        with self._lock:
+            self._sockets.append(sock)
+            fired = self.fired.is_set()
+        if fired:
+            self._shut(sock)
+        return sock
+
+    def fire(self) -> None:
+        with self._lock:
+            self.fired.set()
+            sockets = list(self._sockets)
+        for sock in sockets:
+            self._shut(sock)
+
+    @staticmethod
+    def _shut(sock: socket.socket) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _watched(connection_class: type, watch: _SocketWatch) -> Callable[..., Any]:
+    def build(*args: Any, **kwargs: Any) -> Any:
+        connection = connection_class(*args, **kwargs)
+        create = connection._create_connection
+        # The raw TCP socket, registered before any TLS handshake or header.
+        connection._create_connection = lambda *a, **k: watch.register(create(*a, **k))
+        return connection
+    return build
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, watch: _SocketWatch) -> None:
+        super().__init__()
+        self._watch = watch
+
+    def http_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_watched(http.client.HTTPConnection, self._watch), req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, watch: _SocketWatch) -> None:
+        super().__init__()
+        self._watch = watch
+
+    def https_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_watched(http.client.HTTPSConnection, self._watch), req,
+                            context=self._context)
+
+
+@contextmanager
+def _bridge_opener(deadline: float):
+    """An opener whose whole request - connect, TLS, status line, headers and
+    body - ends at the absolute ``deadline``.
+
+    A per-read socket timeout only bounds inactivity, so a peer that trickles
+    header bytes could hold ``open()`` past the deadline. A watchdog timer
+    shuts down every socket the request opened when the deadline arrives;
+    the blocked read then fails, and ``watch.fired`` tells the caller the
+    failure (or any short result) is the deadline, never a success.
+    """
+
+    watch = _SocketWatch()
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), watch.fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield urllib.request.build_opener(
+            _NoRedirectHandler(), _WatchedHTTPHandler(watch), _WatchedHTTPSHandler(watch)), watch
+    finally:
+        timer.cancel()
+
+
 def _enforce_native_result_attempt_limits(
     result: Mapping[str, Any], *, context: ProviderAdapterContext
 ) -> dict[str, Any]:
@@ -1062,13 +1153,14 @@ class HostBridgePacketTransport:
         read_deadline = (cutoff if cutoff is not None
                          else time.monotonic() + remaining)
         try:
-            with urllib.request.build_opener(_NoRedirectHandler()).open(
-                request, timeout=remaining
-            ) as response:
-                payload = read_until_deadline(
-                    response, limit=_MAX_RESULT_BYTES, deadline=read_deadline)
-                response_digest = response.headers.get("X-Director-Response-Digest", "")
-                response_proof = response.headers.get("X-Director-Response-Proof", "")
+            with _bridge_opener(read_deadline) as (opener, watch):
+                with opener.open(request, timeout=remaining) as response:
+                    payload = read_until_deadline(
+                        response, limit=_MAX_RESULT_BYTES, deadline=read_deadline)
+                    response_digest = response.headers.get("X-Director-Response-Digest", "")
+                    response_proof = response.headers.get("X-Director-Response-Proof", "")
+                if watch.fired.is_set():
+                    raise TimeoutError("host bridge response reached its deadline")
         except urllib.error.HTTPError as exc:
             # Only an authenticated refusal of the argv proves nothing ran.
             if exc.code == 403 and attested_argv_digest:
@@ -1087,7 +1179,9 @@ class HostBridgePacketTransport:
                     raise HostBridgeAttestationStale(
                         "the bridge refused an argv other than the attested one") from exc
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+            # The deadline watchdog, or any transport failure after the
+            # request may have been sent: never a success.
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
         if cutoff is not None and time.monotonic() >= cutoff:
             raise RuntimeError("host provider bridge outcome is ambiguous: deadline expired")
@@ -1172,3 +1266,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
