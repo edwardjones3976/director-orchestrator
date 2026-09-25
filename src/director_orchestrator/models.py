@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -1247,8 +1248,9 @@ class QualificationUsageRow(BaseModel):
     provider_id: str
     reserved_microusd: int = Field(ge=0)
     token_limit: int = Field(ge=0)
-    actual_microusd: int = Field(ge=0)
-    observed_tokens: int = Field(ge=0)
+    # Null while the reservation's usage is not recorded (the section outer-joins spend to usage).
+    actual_microusd: int | None = Field(default=None, ge=0)
+    observed_tokens: int | None = Field(default=None, ge=0)
 
 
 class QualificationReadbackBounds(BaseModel):
@@ -1518,3 +1520,4 @@ class ManualRunCompletion(BaseModel):
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

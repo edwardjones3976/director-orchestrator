@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
@@ -169,7 +170,24 @@ def _when(value):
     return parsed if parsed.tzinfo is not None else None
 
 
-def validate_attempt_history(assignments, attempts):
+# The fields each producer digests into a settling event's outcome_evidence_digest (primary_parallel): event 2 by
+# PrimaryParallel.record_provider_attempt, event 3 (an authenticated callback settlement) by its callback settle.
+_OUTCOME_FIELDS = {
+    2: ("attempt_digest", "assignment_id", "attempt_ordinal", "provider_id", "format_id", "transport_id",
+        "idempotency_key_digest", "budget_evidence_digest", "status", "result_digest", "reason_code"),
+    3: ("assignment_id", "attempt_ordinal", "provider_id", "attempt_digest", "provider_run_id_digest", "status",
+        "result_digest", "reason_code")}
+
+
+def outcome_evidence_digest(task_id, event):
+    """The digest the producer stores for a settling event, recomputed from the event's own columns (the same
+    fields, the same canonical JSON, primary_parallel._digest); None for an event no producer digests."""
+    from .primary_parallel import _digest
+    fields = _OUTCOME_FIELDS.get(event.get("event_sequence"))
+    return None if fields is None else _digest({key: event.get(key) for key in fields} | {"task_id": task_id})
+
+
+def validate_attempt_history(assignments, attempts, *, task_id=None):
     """Bind every attempt event to its assignment/provider and its immutable attempt.
 
     Returns (latest_valid_event_per_attempt, error). Events of one attempt
@@ -249,6 +267,13 @@ def validate_attempt_history(assignments, attempts):
         if any(_when(a["recorded_at"]) > _when(b["recorded_at"]) for a, b in zip(ordered, ordered[1:])):
             return None, "attempt events are not recorded in sequence order"
         latest[key] = ordered[-1]
+    # A settling event's outcome evidence digest covers the event itself: recomputed, never trusted (after the
+    # structural checks, so a malformed history reports its own defect first).
+    if task_id is not None and any(
+            event["status"] != "STARTED" and event.get("outcome_evidence_digest") is not None
+            and event["outcome_evidence_digest"] != outcome_evidence_digest(task_id, event)
+            for events in grouped.values() for event in events):
+        return None, "an attempt event's outcome evidence digest does not match the event"
     ordinals = {}
     for assignment_id, ordinal in grouped:
         ordinals.setdefault(assignment_id, set()).add(ordinal)
@@ -339,18 +364,56 @@ def validate_deliveries_and_receipts(deliveries, receipts):
     return None
 
 
-def validate_usage(usage_rows, latest):
-    """Usage joins exactly one valid attempt of the same provider, never twice."""
-    seen = set()
+def validate_usage(usage_rows, latest, *, absent=False):
+    """Spend and usage against the attempts, the way PrimaryProviderBudgetAuthority.reserve holds the ledger.
+
+    ``usage_rows`` are the task's spend reservations, each outer-joined to its usage row (actual_microusd and
+    observed_tokens are None until usage is recorded). Returns (error, state): error is malformed or inconsistent
+    evidence (a duplicated, malformed or provider-mismatched row, or an attempt with no spend reservation at all,
+    reserve's own refusal "prior provider attempt lacks authoritative monetary accounting"); state is (kind, reason)
+    for well-formed rows that are not settled: a conflict when observed tokens exceed the reservation's token limit
+    (reserve's other refusal), in flight when a reservation's attempt was never recorded or a settled attempt's usage
+    is not recorded yet. ``absent``: the spend and usage tables do not exist here, so there is no ledger to hold."""
+    if absent:
+        return None, None
+    seen, state = set(), None
     for row in usage_rows:
         digest_value = row.get("attempt_digest")
         owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
-        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
-                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
-                                                            "reserved_microusd", "token_limit"))):
-            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
+        measured = (row.get("actual_microusd"), row.get("observed_tokens"))
+        if (digest_value in seen or not all(_is_count(row.get(k)) for k in ("reserved_microusd", "token_limit"))
+                or measured != (None, None) and not all(_is_count(value) for value in measured)
+                or owner is not None and row.get("provider_id") != owner["provider_id"]):
+            return "a spend or usage row is duplicated, malformed or provider-mismatched", None
         seen.add(digest_value)
-    return None
+        if measured[1] is not None and measured[1] > row["token_limit"]:
+            state = ("conflict", "observed provider tokens exceed the reserved token limit")
+        elif state is None and owner is None:
+            state = ("in_flight", "a spend reservation has no recorded attempt")
+        elif state is None and owner.get("status") in ("SUCCEEDED", "FAILED") and measured == (None, None):
+            state = ("in_flight", "a settled attempt's usage is not recorded")
+    if any(event["attempt_digest"] not in seen for event in latest.values()):
+        return "a provider attempt has no spend reservation", None
+    return None, state
+
+
+def delivery_state(deliveries):
+    """Each Slack delivery's state, as PrimarySlackDelivery moves it. Returns None or (kind, reason), a conflict
+    outranking in flight.
+    DELIVERED (its lifecycle checked by lifecycle_error), REFUSED (Slack definitely did not post; never reposted),
+    SUPPRESSED and SUPERSEDED are settled. PENDING and POSTING are in flight (a POSTING claim older than 60 s becomes
+    AMBIGUOUS). ACKNOWLEDGED and AMBIGUOUS are in flight while readback may still settle them (fewer than two readback
+    attempts); after two, nothing ever reads them again, so they are conflicts."""
+    found = None
+    for row in deliveries:
+        state, reads = row.get("state"), row.get("readback_attempts")
+        if state in ("DELIVERED", "REFUSED", "SUPPRESSED", "SUPERSEDED"):
+            continue
+        if state in ("PENDING", "POSTING") or (state in ("ACKNOWLEDGED", "AMBIGUOUS") and _is_count(reads) and reads < 2):
+            found = found or ("in_flight", f"a Slack delivery is still {state}")
+        else:
+            return ("conflict", f"a Slack delivery is {state} and will never be read back again")
+    return found
 
 
 def ordered(row, fields, required):
@@ -436,27 +499,52 @@ def lifecycle_error(sections):
     return None
 
 
+# The settlement matrix, from the producers: primary_parallel reserves (PENDING -> ACTIVE) before any attempt and
+# settles from the roster's outcome (primary_default._execute_three_attempt_roster), and records a hold or a
+# dispatcher exception without one. Per assignment status: the final event its last attempt may have ("none": no
+# attempt at all), and its result digest rule.
+#   PENDING                  none                               no digest (nothing dispatched)
+#   ACTIVE                   none, STARTED, SUCCEEDED, FAILED,  no digest (still settling; a later attempt may
+#                            AMBIGUOUS                          follow a transient FAILED one)
+#   AMBIGUOUS                none or any                        no digest (an unknown outcome carries none)
+#   OWNER_DECISION_REQUIRED  none, STARTED, FAILED              no digest (a workload hold raised before or
+#                                                               inside an attempt leaves its STARTED row)
+#   FAILED                   none, FAILED                       none, or a digest one of its FAILED attempts ended
+#                                                               with (the roster returns the last result document's
+#                                                               digest, which a later transient failure need not carry)
+#   SUCCEEDED                SUCCEEDED (none only offline)      the last attempt's result digest (offline: present)
+_SETTLEMENT_FINALS = {
+    "PENDING": {None}, "ACTIVE": {None, "STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS"},
+    "AMBIGUOUS": {None, "STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS"},
+    "OWNER_DECISION_REQUIRED": {None, "STARTED", "FAILED"}, "FAILED": {None, "FAILED"}, "SUCCEEDED": {"SUCCEEDED"}}
+
+
 def settlement_error(sections, latest):
-    """Each assignment's status and result digest agree with its last attempt's final event (``latest``, from
-    validate_attempt_history): a SUCCEEDED assignment's last attempt ended SUCCEEDED with its result digest, and a
-    last attempt that ended SUCCEEDED belongs to a SUCCEEDED assignment or one still settling (ACTIVE, AMBIGUOUS).
-    A SUCCEEDED assignment with no attempt at all is an offline double's (execution mode offline_simulation or
-    paid_off), which records no provider attempt. None, or the first disagreement."""
+    """Each assignment's status, its last attempt's final event (``latest``, from validate_attempt_history) and its
+    result digest fit the settlement matrix above. A SUCCEEDED assignment with no attempt at all is an offline
+    double's (execution mode offline_simulation or paid_off), which records no provider attempt but a result digest.
+    None, or the first disagreement."""
     offline = sections.get("execution_mode") in ("offline_simulation", "paid_off")
     for assignment in sections.get("assignments") or []:
-        finals = [event for (assignment_id, _), event in sorted(latest.items(), key=lambda item: str(item[0][1]))
-                  if assignment_id == assignment.get("assignment_id")]
-        final = max(finals, key=lambda event: event.get("attempt_ordinal") or 0) if finals else None
-        status = assignment.get("status")
-        if final is None:
-            if status == "SUCCEEDED" and not offline:
-                return "a SUCCEEDED assignment has no provider attempt"
+        own = [event for (assignment_id, _), event in latest.items() if assignment_id == assignment.get("assignment_id")]
+        final = max(own, key=lambda event: event.get("attempt_ordinal") or 0) if own else None
+        status, digest = assignment.get("status"), assignment.get("result_digest")
+        allowed = _SETTLEMENT_FINALS.get(status)
+        if status == "SUCCEEDED" and final is None and offline:
+            if not digest:
+                return "an offline SUCCEEDED assignment has no result digest"
             continue
-        if status == "SUCCEEDED" and (final.get("status") != "SUCCEEDED"
-                                      or final.get("result_digest") != assignment.get("result_digest")):
-            return "a SUCCEEDED assignment's last attempt did not succeed with its result digest"
-        if final.get("status") == "SUCCEEDED" and status not in ("SUCCEEDED", "ACTIVE", "AMBIGUOUS"):
-            return "a succeeded last attempt belongs to an assignment that did not succeed"
+        if allowed is None or (final.get("status") if final else None) not in allowed:
+            return f"a {status} assignment's last attempt ended {final.get('status') if final else 'without one'}"
+        if status == "SUCCEEDED":
+            if not digest or final.get("result_digest") != digest:
+                return "a SUCCEEDED assignment's result digest is not its last attempt's"
+        elif status == "FAILED":
+            if digest is not None and digest not in {event.get("result_digest") for event in own
+                                                     if event.get("status") == "FAILED"}:
+                return "a FAILED assignment names a result digest none of its failed attempts ended with"
+        elif digest is not None:
+            return f"a {status} assignment carries a result digest"
     return None
 
 
@@ -467,18 +555,29 @@ def task_evidence_errors(sections):
     """The one per-task evidence validation, for the offline collector (a selected task's typed readback) and the
     in-image consistency command (every task's rows, the same columns and joins through qualification_section_sql).
 
-    ``sections``: assignments, provider_attempts, effects, slack_deliveries, status_receipts, provider_usage (times
-    as ISO strings) and execution_mode. Returns (latest valid event per attempt, {category: first error or None}).
-    Usage and settlement need a valid attempt history, so they read as that history's error when it has one."""
-    latest, attempts = validate_attempt_history(sections.get("assignments") or [], sections.get("provider_attempts") or [])
+    ``sections``: assignments, provider_attempts, effects, slack_deliveries, status_receipts, provider_usage (spend
+    outer-joined to usage), times as ISO strings, execution_mode and ``absent`` (the readback's absent sections).
+    Returns (latest valid event per attempt, errors, states). errors: {category: the first malformed or inconsistent
+    evidence, or None}; the collector refuses a readback with any. states: {category: None or (kind, reason)} for
+    well-formed rows that have not settled, kind "conflict" (a delivery no readback will ever settle, tokens over
+    their limit) or "in_flight" (a delivery still posting or being read back, usage not yet recorded); the checks
+    grade those themselves, and the global count reports them. Every row settles, is in flight, conflicts, or is an
+    error: none is ignored. Usage and settlement need a valid attempt history, so they read as its error."""
+    latest, attempts = validate_attempt_history(sections.get("assignments") or [], sections.get("provider_attempts") or [],
+                                                task_id=sections.get("task_id"))
+    latest = latest or {}
+    usage, usage_state = validate_usage(sections.get("provider_usage") or [], latest,
+                                        absent="provider_usage" in (sections.get("absent") or []))
     errors = {"attempts": attempts,
-              "usage": attempts or validate_usage(sections.get("provider_usage") or [], latest),
+              "usage": attempts or usage,
               "effects": validate_effects(sections.get("effects") or []),
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
                                                              sections.get("status_receipts") or []),
               "lifecycle": lifecycle_error(sections),
               "settlement": attempts or settlement_error(sections, latest)}
-    return (latest or {}), errors
+    states = {"usage": None if attempts else usage_state,
+              "deliveries": delivery_state(sections.get("slack_deliveries") or [])}
+    return latest, errors, states
 
 
 def _secret(settings, name):
@@ -583,11 +682,12 @@ EVIDENCE_ROW_CAP = 20000
 EVIDENCE_COUNT_KEYS = {"attempts": "provider_attempts_invalid", "usage": "provider_usage_invalid",
                        "effects": "effects_invalid", "deliveries": "slack_deliveries_invalid",
                        "lifecycle": "lifecycle_invalid", "settlement": "settlement_invalid"}
+EVIDENCE_IN_FLIGHT_KEYS = {"usage": "provider_usage_in_flight", "deliveries": "slack_deliveries_in_flight"}
 _ARTIFACT_ROWS = """SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,
  writer_fencing_generation, recorded_at FROM {s}.director_primary_result_packet_artifact
 ORDER BY task_id, assignment_id LIMIT %(limit)s"""
-_TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode
-FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
+_TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode, projection,
+ projection_digest FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
 
 
 def _global_task_evidence(connection, schema, usage_tables):
@@ -595,10 +695,16 @@ def _global_task_evidence(connection, schema, usage_tables):
     deliveries and receipts, lifecycle order, settlement) and artifact_assignment_conflict for each result packet,
     on the same sections the readback serves (qualification_section_sql, all tasks), in this snapshot.
 
+    Each projection's canonical digest (langgraph_postgres._projection_payload, the digest the writer stores) is
+    recomputed from its content: a mismatch is a conflict (projection_digest_mismatches), and the per-task readback
+    refuses such a projection the same way.
+
     Returns {count key: number of tasks (packets, for the two artifact counts) failing it}; every count is None when
     any read exceeds EVIDENCE_ROW_CAP rows, so a count never covers a subset."""
-    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row, qualification_section_sql
-    keys = [*EVIDENCE_COUNT_KEYS.values(), "result_artifacts_invalid", "result_artifacts_in_flight"]
+    from .langgraph_postgres import (PostgresControlPlaneError, _projection_payload, _result_packet_artifact_from_row,
+                                     qualification_section_sql)
+    keys = [*EVIDENCE_COUNT_KEYS.values(), *EVIDENCE_IN_FLIGHT_KEYS.values(), "result_artifacts_invalid",
+            "result_artifacts_in_flight", "projection_digest_mismatches"]
     limit = {"limit": EVIDENCE_ROW_CAP + 1}
     names = ["assignments", "provider_attempts", "effects", "slack_deliveries", "status_receipts"]
     names += ["provider_usage"] if usage_tables else []
@@ -607,10 +713,12 @@ def _global_task_evidence(connection, schema, usage_tables):
     def task(task_id):
         return tasks.setdefault(task_id, {"assignments": [], "provider_attempts": [], "effects": [],
                                           "slack_deliveries": [], "status_receipts": [], "provider_usage": [],
-                                          "execution_mode": None, "artifacts": []})
+                                          "execution_mode": None, "artifacts": [],
+                                          "absent": [] if usage_tables else ["provider_usage"]})
 
     reads = [(name, qualification_section_sql(schema, name, all_tasks=True)) for name in names]
     reads += [("execution_mode", _TASK_MODES.format(s=schema)), ("artifacts", _ARTIFACT_ROWS.format(s=schema))]
+    projections = []
     for name, query in reads:
         rows = connection.execute(query, limit).fetchall()
         if len(rows) > EVIDENCE_ROW_CAP:
@@ -618,15 +726,27 @@ def _global_task_evidence(connection, schema, usage_tables):
         for row in rows:
             if name == "execution_mode":
                 task(row["task_id"])["execution_mode"] = row["execution_mode"]
+                projections.append(row)
             elif name == "artifacts":
                 task(row["task_id"])["artifacts"].append(row)
             else:
                 task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
     counts = dict.fromkeys(keys, 0)
-    for sections in tasks.values():
-        _, errors = task_evidence_errors(sections)
+    for row in projections:
+        try:
+            canonical = _projection_payload(row["projection"] if isinstance(row["projection"], dict)
+                                            else json.loads(row["projection"]))[1]
+        except (PostgresControlPlaneError, TypeError, ValueError):
+            canonical = None
+        counts["projection_digest_mismatches"] += canonical != row["projection_digest"]
+    for task_id, sections in tasks.items():
+        _, errors, states = task_evidence_errors({**sections, "task_id": task_id})
         for category, key in EVIDENCE_COUNT_KEYS.items():
-            counts[key] += errors[category] is not None
+            state = states.get(category)
+            counts[key] += errors[category] is not None or (state is not None and state[0] == "conflict")
+        for category, key in EVIDENCE_IN_FLIGHT_KEYS.items():
+            state = states.get(category)
+            counts[key] += errors[category] is None and state is not None and state[0] == "in_flight"
         by_id = {row["assignment_id"]: row for row in sections["assignments"]}
         for row in sections["artifacts"]:
             assignment = by_id.get(row["assignment_id"])
@@ -894,3 +1014,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

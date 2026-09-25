@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
@@ -733,6 +734,14 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 0)
 
         def event(ordinal, sequence, status, seconds):
+            row = {"assignment_id": "a1", "attempt_ordinal": ordinal, "event_sequence": sequence,
+                   "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+                   "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + str(ordinal) * 64,
+                   "budget_evidence_digest": "sha256:" + "9" * 64, "status": status,
+                   "result_digest": "sha256:" + "2" * 64 if status == "SUCCEEDED" else None,
+                   "reason_code": "attempt_" + status.lower()}
+            # record_provider_attempt's own outcome digest over the event (STARTED rows carry none).
+            outcome = None if status == "STARTED" else evidence.outcome_evidence_digest(task_id, row)
             with self.handle.pool.connection() as connection:
                 connection.execute(
                     f"INSERT INTO {self.schema}.director_primary_provider_attempt(task_id, assignment_id,"
@@ -743,7 +752,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     " now() + make_interval(secs => %s))",
                     (task_id, ordinal, sequence, "sha256:" + "0" * 64, "sha256:" + str(ordinal) * 64, status,
                      "sha256:" + "2" * 64 if status == "SUCCEEDED" else None,
-                     None if status == "STARTED" else "sha256:" + "7" * 64, "attempt_" + status.lower(),
+                     outcome, "attempt_" + status.lower(),
                      "sha256:" + "9" * 64, seconds))
 
         event(1, 1, "STARTED", 0)
@@ -770,10 +779,61 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         assignment("completed_at=now() - interval '30 minutes'")
         self.assertEqual(self.report()["counts"]["lifecycle_invalid"], 1)
         assignment("completed_at=now() + interval '1 hour'")
+        # Review 4106903235: spend is outer-joined to usage. Attempt 1 settled with no spend reservation at all is
+        # the ledger inconsistency PrimaryProviderBudgetAuthority.reserve refuses; with a reservation but no usage
+        # yet it is unresolved (in flight); with its usage recorded it settles.
+        self.assertEqual(self.report()["counts"]["provider_usage_invalid"], 1)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"INSERT INTO {self.schema}.director_primary_provider_budget(authority_digest, document)"
+                               " VALUES ('grant-usage', '{}'::jsonb)")
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_provider_spend(attempt_digest, grant_digest, provider_id,"
+                " project_id, task_id, budget_day, reserved_microusd, token_limit)"
+                " VALUES (%s, 'grant-usage', 'claude', 'fixture-project', %s, CURRENT_DATE, 500, 1000)",
+                ("sha256:" + "1" * 64, task_id))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["provider_usage_invalid"], counts["provider_usage_in_flight"]), (0, 1))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_provider_usage(attempt_digest, document, actual_microusd,"
+                " observed_tokens) VALUES (%s, '{}'::jsonb, 300, 100)", ("sha256:" + "1" * 64,))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["provider_usage_invalid"], counts["provider_usage_in_flight"]), (0, 0))
+        # The attempt table is append-only, so the gap comes last: attempt 3 with no attempt 2.
         event(3, 1, "STARTED", 2)  # attempt 3 with no attempt 2: the ordinals have a gap
         self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 1)
         with patch.object(evidence, "EVIDENCE_ROW_CAP", 1):
             self.assertIsNone(self.report()["counts"]["provider_attempts_invalid"])
+
+    def test_every_delivery_state_and_projection_digest_is_counted(self):
+        """Reviews 4106903220 and the readback-digest summary: a delivery still posting or being read back is in
+        flight, one no readback will ever settle is a conflict, and a projection whose content no longer matches
+        its stored digest is a conflict."""
+        task_id = self.intake()
+        counts = self.report()["counts"]
+        self.assertEqual((counts["slack_deliveries_in_flight"], counts["slack_deliveries_invalid"],
+                          counts["projection_digest_mismatches"]), (0, 0, 0))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
+                " projection_digest, payload, client_msg_id, state) VALUES (%s, 'terminal', %s, '{}'::jsonb,"
+                " 'fixture-terminal-client', 'PENDING')", (task_id, "sha256:" + "4" * 64))
+        self.assertEqual(self.report()["counts"]["slack_deliveries_in_flight"], 1)
+        with self.handle.pool.connection() as connection:
+            # A second delivery no readback will ever settle again (two readbacks spent); the ledger refuses rewinding
+            # a row, so it is its own row.
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
+                " projection_digest, payload, client_msg_id, state, readback_attempts, claimed_at)"
+                " VALUES (%s, %s, %s, '{}'::jsonb, 'fixture-hold-client', 'AMBIGUOUS', 2, now())",
+                (task_id, "hold:sha256:" + "6" * 64, "sha256:" + "4" * 64))
+        counts = self.report()["counts"]
+        self.assertEqual((counts["slack_deliveries_in_flight"], counts["slack_deliveries_invalid"]), (0, 1))
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{run_status}', '\"TAMPERED\"') WHERE task_id = %s", (task_id,))
+        self.assertEqual(self.report()["counts"]["projection_digest_mismatches"], 1)
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -918,3 +978,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

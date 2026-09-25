@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -878,7 +879,7 @@ def get_task(
             # the evidence and the projection the task record is derived from,
             # so the record and the evidence describe the same version. Only
             # the writer-generation header below is read outside that snapshot.
-            from .langgraph_postgres import DeadlineExpired
+            from .langgraph_postgres import DeadlineExpired, PostgresControlPlaneError
 
             try:
                 evidence = primary_default_activation.coordinator.read_qualification_evidence(
@@ -888,6 +889,13 @@ def get_task(
                 raise HTTPException(
                     status_code=503,
                     detail="LangGraph primary qualification readback exceeded its deadline",
+                ) from exc
+            except PostgresControlPlaneError as exc:
+                # A projection whose content does not match its stored digest, or metadata over the byte bound:
+                # the readback is refused rather than served.
+                raise HTTPException(
+                    status_code=503,
+                    detail="LangGraph primary qualification readback was refused",
                 ) from exc
             if evidence is None:
                 primary_record = None
@@ -1900,3 +1908,4 @@ def complete_run(
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

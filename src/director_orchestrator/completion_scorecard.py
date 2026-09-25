@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
@@ -1040,14 +1041,14 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
                 # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
-                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid",
+                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "projection_digest_mismatches",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
                 "projection_batch_digest_conflicts", "projections_ahead_of_fence")
 _INFLIGHT_COUNTS = ("open_effect_reservations", "active_assignments", "live_writer_claims",
                     "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
-                    "result_artifacts_in_flight")
+                    "result_artifacts_in_flight", "provider_usage_in_flight", "slack_deliveries_in_flight")
 _CONSISTENCY_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation consistency (READ ONLY)"
 _CAPTURES_SOURCE = "docker exec <Director> python -m director_orchestrator.primary_generation activation-captures"
 
@@ -2027,8 +2028,9 @@ def _trial_observation(at: datetime, runtime: _Runtime, t: _SlackThreads, trials
         # The final reply must be the candidate renderer's canonical terminal rendering (text and blocks), as for
         # 09 and 20; an unavailable renderer is unknown, another reply is a mismatch.
         rendered = None if snapshot.get("terminal_render") is None else _final_is_rendering(snapshot)
-        correctness = (False if False in (structural, bound, rendered)
-                       else None if None in (bound, rendered) else structural)
+        succeeded = _succeeded_task(snapshot)  # the same classification-to-status agreement as check 20
+        correctness = (False if False in (structural, bound, rendered, succeeded)
+                       else None if None in (bound, rendered, succeeded) else structural)
         records.append(_run_record(runtime, snapshot, correctness, t.m.LABEL))
     observed = _run_records_observation("10", "offline", at, runtime, records, _SLACK_SOURCE)
     if observed.passed is not True:
@@ -2100,6 +2102,25 @@ def _load_paid_rubric(path: Path) -> tuple[dict[str, Any], str]:
     return value, hashlib.sha256(raw).hexdigest()
 
 
+def _succeeded_task(facts: dict[str, Any]) -> bool | None:
+    """The run ended SUCCEEDED, and the served task status is the one the product derives from that classification
+    (DefaultPrimaryApplication._record_from_projection's own mapping, applied to the served task record): DONE with a
+    non-success classification, or a disagreeing status, is not a success. None when unreadable."""
+    from types import SimpleNamespace
+    from .primary_default import DefaultPrimaryApplication
+    readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else None
+    task = {key: value for key, value in (facts.get("task") or {}).items() if key != "qualification_evidence"}
+    if readback is None or not task:
+        return None
+    classification = readback.get("terminal_classification")
+    try:
+        mapped = DefaultPrimaryApplication._record_from_projection(SimpleNamespace(projection={
+            "application": {"task_record": task}, "terminal_classification": classification})).status.value
+    except (ValueError, TypeError, RuntimeError):
+        return None
+    return classification == "SUCCEEDED" and task.get("status") == mapped
+
+
 def _paid_correct(paid: dict[str, Any], rubric_path: Path, consistency: dict | None = None) -> bool | None:
     rubric, digest = _load_paid_rubric(rubric_path)
     row = paid["row"]
@@ -2108,8 +2129,10 @@ def _paid_correct(paid: dict[str, Any], rubric_path: Path, consistency: dict | N
     if not (row.get("task_record_bound") is True and len(markers) == 1 and _same(markers[0], digest)
             and row.get("input_message_ts")
             and _when(rubric["declared_at"]).timestamp() <= float(row["input_message_ts"])
-            and row.get("task_status") == "DONE" and len(finals) == 1):
+            and row.get("task_status") == "DONE" and len(finals) == 1 and _succeeded_task(paid) is not False):
         return False
+    if _succeeded_task(paid) is None:
+        return None
     answer = _answer_verified(paid, rubric["expected_answer_substrings"])
     persisted = _artifacts_match(paid, consistency)
     # The graded text must be the persisted provider result: a mismatch fails, an unread artifact is unknown.
@@ -3339,3 +3362,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

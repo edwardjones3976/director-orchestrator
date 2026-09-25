@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
@@ -438,7 +439,9 @@ def _readback(task_id, task):
         return None, None, "rejected", error
     # The shared per-task validation (the in-image consistency command runs the same over every task): attempt
     # histories, usage, effects, deliveries and receipts, lifecycle order and settlement.
-    latest, errors = task_evidence_errors(readback)
+    # In-flight rows (a delivery still posting, usage not yet recorded) are not errors; the checks that read them
+    # grade what has settled.
+    latest, errors, _ = task_evidence_errors(readback)
     error = next((value for value in errors.values() if value is not None), None)
     if error is None:
         error = _counter_consistency_error(readback)
@@ -574,7 +577,11 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
         effect_state = "PROVIDER_EFFECT_RECORDED"
     else:
         effect_state = None
-    if usage_rows:
+    if usage_rows and any(r["actual_microusd"] is None for r in usage_rows):
+        # A reservation whose usage is not recorded yet (spend outer-joined to usage): the cost is unknown, never
+        # the sum of what happens to be recorded.
+        measured_cost, cost_basis, usage = None, UNKNOWN, None
+    elif usage_rows:
         # Validated in _readback: unique, joined to a valid attempt of the same
         # provider, exact non-negative integers. Amount families stay separate.
         measured_cost, cost_basis = sum(r["actual_microusd"] for r in usage_rows) / 1_000_000, "authenticated_usage_table"
@@ -1212,3 +1219,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

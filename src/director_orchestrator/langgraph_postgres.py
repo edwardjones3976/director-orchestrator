@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -1958,13 +1959,16 @@ _QUALIFICATION_SECTIONS = {
     "status_receipts": (
         "receipt_id, source_event_id, created_at",
         "{schema}.director_primary_slack_status_receipt", "task_id", "created_at, receipt_id"),
+    # Every spend reservation of the task, outer-joined to its usage: a reservation whose usage is not recorded yet
+    # stays visible (actual_microusd and observed_tokens null) instead of vanishing from an inner join, and an
+    # attempt with no reservation at all is found against the attempts section (validate_usage).
     "provider_usage": (
-        """u.attempt_digest, s.provider_id, s.reserved_microusd,
+        """s.attempt_digest, s.provider_id, s.reserved_microusd,
                s.token_limit, u.actual_microusd, u.observed_tokens""",
-        """{schema}.director_primary_provider_usage u
-        JOIN {schema}.director_primary_provider_spend s
-          ON s.attempt_digest = u.attempt_digest""",
-        "s.task_id", "u.attempt_digest"),
+        """{schema}.director_primary_provider_spend s
+        LEFT JOIN {schema}.director_primary_provider_usage u
+          ON u.attempt_digest = s.attempt_digest""",
+        "s.task_id", "s.attempt_digest"),
 }
 
 
@@ -2956,6 +2960,12 @@ class PostgresConditionalClaimStore:
                     raw_projection = head["projection"]
                     projection_value = (json.loads(raw_projection) if isinstance(raw_projection, str)
                                         else dict(raw_projection))
+                    # The projection the task record is derived from must be the content its stored digest names:
+                    # the version guard alone allows a content change that keeps the digest, so recompute it.
+                    if not hmac.compare_digest(_projection_payload(projection_value)[1].encode(),
+                                               str(head["projection_digest"]).encode()):
+                        raise PostgresControlPlaneError(
+                            "qualification readback refused: projection content does not match its stored digest")
                     intake_binding = (projection_value.get("application", {}) or {}).get("task_record", {}) or {}
                     intake_binding = intake_binding.get("intake", {}) or {}
                     cursor.execute(
@@ -3032,6 +3042,12 @@ class PostgresConditionalClaimStore:
                 truncated=sorted({*truncated, "response_bytes"}),
                 complete=False,
             )
+            # Even the metadata-only document must fit the bound; otherwise the read is refused, never served
+            # over its declared limit.
+            encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
+            if len(encoded.encode("utf-8")) > byte_limit:
+                raise PostgresControlPlaneError(
+                    "qualification readback refused: its metadata alone exceeds the byte limit")
         require_deadline_remaining(deadline, "qualification readback completion")
         document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
         document["projection"] = projection
@@ -6064,3 +6080,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

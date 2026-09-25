@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]] -->
@@ -672,6 +673,33 @@ joins match on task as well as claim. `/health` is read through the same
 `bounded_get` as every other HTTP source. A Codex CLI capture names no product
 or model, so it is labelled `openai-codex-unattested` and check 11 is UNKNOWN
 for that lane; it is never credited as Codex.
+
+Every row the shared validation reads settles, is in flight, conflicts, or is
+an error; none is ignored. Slack deliveries follow PrimarySlackDelivery:
+DELIVERED, REFUSED, SUPPRESSED and SUPERSEDED are settled; PENDING and POSTING,
+and ACKNOWLEDGED or AMBIGUOUS with fewer than two readback attempts, are in
+flight (`slack_deliveries_in_flight`, 07 UNKNOWN); ACKNOWLEDGED or AMBIGUOUS
+after two readbacks can never settle and are conflicts. Settlement follows a
+matrix from the producers: PENDING has no attempt and no digest; ACTIVE and
+AMBIGUOUS may have any last attempt and no digest; OWNER_DECISION_REQUIRED may
+end on no attempt, a STARTED one (a hold raised inside an attempt) or a FAILED
+one, with no digest; FAILED ends on no attempt (a pre-dispatch failure) or a
+FAILED one, with no digest or one of its failed attempts' digests; SUCCEEDED
+ends on a SUCCEEDED attempt with that attempt's digest (offline: no attempt,
+a digest). Spend is outer-joined to usage and held the way
+`PrimaryProviderBudgetAuthority.reserve` holds it: an attempt with no spend
+reservation, or observed tokens over the reservation's limit, conflict; a
+reservation with no recorded attempt, or a settled attempt whose usage is not
+recorded yet, is in flight (`provider_usage_in_flight`). Each settling attempt
+event's `outcome_evidence_digest` is recomputed from the event as
+`primary_parallel` computes it for event 2 and for a callback's event 3. The
+readback recomputes the projection's canonical digest and refuses a projection
+whose content does not match its stored digest (the version guard alone
+allows it); check 07 counts such projections (`projection_digest_mismatches`).
+A readback whose metadata alone exceeds its byte limit is refused, never
+served over it. Checks 10 and 20 require the terminal classification
+SUCCEEDED and the served task status the product derives from it
+(`DefaultPrimaryApplication._record_from_projection`).
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -1034,3 +1062,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -142,8 +143,19 @@ def unsettled(readback):
     return readback
 
 
+def seal(readback):
+    """Each settling event's outcome_evidence_digest, recomputed from the event as the producer digests it
+    (primary_scorecard_evidence.outcome_evidence_digest mirrors primary_parallel's two settle paths)."""
+    from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
+    for event in readback["provider_attempts"]:
+        if event.get("outcome_evidence_digest") is not None:
+            event["outcome_evidence_digest"] = outcome_evidence_digest(readback["task_id"], event)
+    return readback
+
+
 def recount(readback):
-    """Keep a mutated fixture's task-scope counters consistent with its rows."""
+    """Keep a mutated fixture's task-scope counters (and its events' outcome digests) consistent with its rows."""
+    seal(readback)
     events = readback["provider_attempts"]
     readback["task_scope_counters"].update(
         assignments=len(readback["assignments"]), provider_attempts=len(events),
@@ -156,7 +168,7 @@ def recount(readback):
 def readback_fixture():
     """A serialized opt-in qualification_evidence in the typed API shape."""
     assignment = TASK_ID + "-A1"
-    return {
+    return seal({
         "schema_version": "director-qualification-readback/v1", "task_id": TASK_ID, "engine_owner": "langgraph",
         "projection_version": 3, "projection_digest": PROJECTION, "source_event_id": SOURCE_EVENT,
         "execution_mode": "offline_simulation", "terminal_classification": "SUCCEEDED",
@@ -210,7 +222,7 @@ def readback_fixture():
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
                             "observed_tokens": 900}],
-    }
+    })
 
 
 class ParseTrialsTests(unittest.TestCase):
@@ -603,7 +615,9 @@ class SummaryTests(unittest.TestCase):
         # A top-level task cost is an unbound provider-reported figure: it is
         # recorded only alongside a complete validated readback without usage rows.
         collected = readback_fixture()
+        # No spend or usage tables in this schema (the readback reports them absent): no authenticated usage.
         collected["provider_usage"] = []
+        collected["absent"] = ["provider_usage"]
         self.task["qualification_evidence"] = collected
         for value, expected in ((0.25, 0.25), (0, 0), ("0.25", None), (-1, None), (None, None),
                                 (float("inf"), None), (float("nan"), None), (True, None)):
@@ -683,11 +697,11 @@ class SummaryTests(unittest.TestCase):
         rejected(lambda r: r["provider_attempts"][1].update(provider_id="openai"), "disagrees with its assignment")
         # 2. digest changes between STARTED and terminal events of one attempt
         rejected(lambda r: r["provider_attempts"][1].update(attempt_digest="sha256:" + "f" * 64), "identity changed")
-        # 3a. usage naming an unjoined digest / another provider
-        rejected(lambda r: r["provider_usage"][0].update(attempt_digest="sha256:" + "e" * 64), "usage is orphaned")
-        rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "usage is orphaned")
+        # 3a. the attempt's spend reservation missing (renamed away), or naming another provider
+        rejected(lambda r: r["provider_usage"][0].update(attempt_digest="sha256:" + "e" * 64), "no spend reservation")
+        rejected(lambda r: r["provider_usage"][0].update(provider_id="openai"), "provider-mismatched")
         # 3b. duplicate usage rows must not double the cost
-        rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "usage is orphaned")
+        rejected(lambda r: r["provider_usage"].append(dict(r["provider_usage"][0])), "duplicated")
         # bool-as-number and negative amounts: the strict typed model refuses them
         # first (locations only); the collector's own integer check stays behind it.
         rejected(lambda r: r["provider_usage"][0].update(actual_microusd=True),
@@ -695,7 +709,7 @@ class SummaryTests(unittest.TestCase):
         rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1),
                  "typed model at provider_usage.0.observed_tokens")
         from director_orchestrator.primary_scorecard_evidence import validate_usage
-        self.assertEqual("usage is orphaned, duplicated, provider-mismatched or non-integer",
+        self.assertEqual(("a spend or usage row is duplicated, malformed or provider-mismatched", None),
                          validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
                                                           {("a", 1): readback_fixture()["provider_attempts"][1]}))
         # malformed identities, sequences and statuses
@@ -763,7 +777,8 @@ class SummaryTests(unittest.TestCase):
                   for index, e in enumerate(readback_fixture()["provider_attempts"])]
         readback["provider_attempts"].extend(second)
         readback["assignments"][0]["completed_at"] = "2026-09-12T10:00:28+00:00"
-        readback["provider_usage"] = []
+        # Each attempt holds its own spend reservation (PrimaryProviderBudgetAuthority.reserve), usage recorded.
+        readback["provider_usage"].append({**readback["provider_usage"][0], "attempt_digest": "sha256:" + "a" * 64})
         self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -821,7 +836,7 @@ class SummaryTests(unittest.TestCase):
         # an authenticated callback event 3 directly after event 1 is legitimate
         readback = readback_fixture()
         readback["provider_attempts"][1]["event_sequence"] = 3
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = seal(readback)  # the callback settle's own outcome digest
         self.task.pop("actual_cost_usd", None)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -1615,3 +1630,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
@@ -394,6 +395,7 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
         entry["messages"][-1]["blocks"] = payload["blocks"]
     # The gateway's append-only intake claim for this task's own (re-keyed) intake, digested by its producers.
     readback_row["intake_auth_claims"] = [tf.intake_claim(entry["task"]["intake"], readback_row["task_created_at"])]
+    tf.seal(readback_row)  # outcome digests over the re-keyed task and events, as the producer computes them
     return entry
 
 
@@ -2187,6 +2189,8 @@ class ScorecardCollectorTests(unittest.TestCase):
                              reason_code="attempt_succeeded")
             readback["provider_attempts"].append(event)
         readback["assignments"][0]["completed_at"] = (last + timedelta(seconds=len(first) + 1)).isoformat()
+        # The second attempt holds its own spend reservation, with its usage recorded.
+        readback["provider_usage"].append({**readback["provider_usage"][0], "attempt_digest": "sha256:" + "3" * 64})
         tf.recount(readback)
         self.assertEqual(redispatched.state("06"), "FAIL")
         early = self.world()
@@ -2943,6 +2947,7 @@ class ScorecardCollectorTests(unittest.TestCase):
             readback["assignments"][0]["provider_id"] = "openai"  # the ledger ran another provider
             for event in readback["provider_attempts"] + readback["provider_usage"]:
                 event["provider_id"] = "openai"  # consistently, so the typed readback itself still validates
+            tf.seal(readback)  # the producer's outcome digests over the changed events
             with self.subTest(check=key, side="assignment"):
                 # An unjoined offline run has no mode (UNKNOWN, as for every join gap); a paid one is wrong.
                 self.assertEqual(case.state(key), "UNKNOWN" if key == "10" else "FAIL")
@@ -3279,7 +3284,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         assignment's status and digest agreeing with its last attempt's final event."""
         from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
         clean = tf.readback_fixture()
-        latest, errors = task_evidence_errors(clean)
+        latest, errors, in_flight = task_evidence_errors(clean)
         self.assertEqual(set(errors.values()), {None})
         self.assertEqual(len(latest), 1)
         for category, change in (
@@ -3297,6 +3302,87 @@ class ScorecardCollectorTests(unittest.TestCase):
         refused = tf.readback_fixture()
         refused["assignments"][0]["result_digest"] = "sha256:" + "8" * 64
         self.assertEqual(tf.collector_module._readback(tf.TASK_ID, {"qualification_evidence": refused})[2], "rejected")
+
+    def test_every_row_state_settles_is_in_flight_or_conflicts(self):
+        """Reviews 4106903220, 4106903225, 4106903235 and the class sweep: the one per-task validation classifies
+        every delivery state, every assignment status against its last attempt (the settlement matrix), every spend
+        and usage row, and recomputes each settling event's outcome evidence digest."""
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+
+        def check(change):
+            readback = tf.readback_fixture()
+            change(readback)
+            return task_evidence_errors(tf.seal(readback))
+
+        _, errors, states = check(lambda r: None)
+        self.assertEqual((set(errors.values()), set(states.values())), ({None}, {None}))
+        # Deliveries, as PrimarySlackDelivery moves them.
+        for state, reads, expected in (("PENDING", 0, "in_flight"), ("POSTING", 0, "in_flight"),
+                                       ("ACKNOWLEDGED", 1, "in_flight"), ("AMBIGUOUS", 1, "in_flight"),
+                                       ("ACKNOWLEDGED", 2, "conflict"), ("AMBIGUOUS", 2, "conflict"),
+                                       ("REFUSED", 0, None), ("SUPPRESSED", 0, None), ("SUPERSEDED", 0, None)):
+            _, _, states = check(lambda r: r["slack_deliveries"][0].update(state=state, readback_attempts=reads))
+            with self.subTest(delivery=state, reads=reads):
+                self.assertEqual(states["deliveries"] and states["deliveries"][0], expected)
+        # The settlement matrix: status against the last attempt's final event and the result digest.
+        failed_final = lambda r: r["provider_attempts"][1].update(status="FAILED", result_digest=None,
+                                                                  reason_code="attempt_failed")
+        for name, change, bad in (
+                ("FAILED, last attempt still STARTED",
+                 lambda r: (r["assignments"][0].update(status="FAILED", result_digest=None),
+                            r.update(provider_attempts=r["provider_attempts"][:1])), True),
+                ("FAILED, last attempt AMBIGUOUS",
+                 lambda r: (r["assignments"][0].update(status="FAILED", result_digest=None),
+                            r["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None)), True),
+                ("FAILED, last attempt FAILED", lambda r: (r["assignments"][0].update(status="FAILED", result_digest=None),
+                                                           failed_final(r)), False),
+                ("FAILED with another digest", lambda r: (r["assignments"][0].update(status="FAILED"), failed_final(r)),
+                 True),
+                ("PENDING with an attempt", lambda r: r["assignments"][0].update(status="PENDING", result_digest=None),
+                 True),
+                ("OWNER_DECISION_REQUIRED mid-attempt",
+                 lambda r: (r["assignments"][0].update(status="OWNER_DECISION_REQUIRED", result_digest=None),
+                            r.update(provider_attempts=r["provider_attempts"][:1])), False),
+                ("ACTIVE carrying a digest", lambda r: r["assignments"][0].update(status="ACTIVE"), True),
+                ("SUCCEEDED live with no attempt",
+                 lambda r: r.update(execution_mode="live", provider_attempts=[], provider_usage=[]), True),
+                ("FAILED before any dispatch",
+                 lambda r: (r["assignments"][0].update(status="FAILED", result_digest=None),
+                            r.update(provider_attempts=[], provider_usage=[])), False)):
+            _, errors, _ = check(change)
+            with self.subTest(settlement=name):
+                self.assertEqual(errors["settlement"] is not None, bad)
+        # Spend outer-joined to usage, held the way PrimaryProviderBudgetAuthority.reserve holds it.
+        _, errors, _ = check(lambda r: r.update(provider_usage=[]))
+        self.assertIn("no spend reservation", errors["usage"])
+        _, errors, states = check(lambda r: r["provider_usage"][0].update(actual_microusd=None, observed_tokens=None))
+        self.assertEqual((errors["usage"], states["usage"][0]), (None, "in_flight"))
+        _, errors, states = check(lambda r: r["provider_usage"][0].update(observed_tokens=5000))
+        self.assertEqual((errors["usage"], states["usage"][0]), (None, "conflict"))
+        # A settling event's outcome evidence digest is recomputed from the event itself.
+        readback = tf.readback_fixture()
+        readback["provider_attempts"][1]["outcome_evidence_digest"] = "sha256:" + "7" * 64
+        self.assertIn("outcome evidence digest", task_evidence_errors(readback)[1]["attempts"])
+
+    def test_success_needs_the_products_own_classification_to_status_mapping_10_20(self):
+        """4106903245: DONE with a non-success terminal classification is not a success, by the product's own
+        mapping (DefaultPrimaryApplication._record_from_projection)."""
+        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
+            case = self.world()
+            task = case.tasks[task_id]
+            readback = task["qualification_evidence"]
+            readback["terminal_classification"] = "POLICY_BLOCKED"
+            # The final reply is the Director's own rendering of that classification, so only the mapping differs.
+            terminal = next(r for r in readback["slack_deliveries"] if r["notification_key"] == "terminal")
+            payload = fixture_render({"task_record": task, "execution_mode": readback["execution_mode"]},
+                                     {"terminal_classification": "POLICY_BLOCKED",
+                                      "reason_code": readback["terminal_reason_code"]},
+                                     None, datetime.fromisoformat(terminal["created_at"]))
+            final = next(m for m in case.threads[task["intake"]["thread_ts"]] if m.get("ts") == terminal["slack_ts"])
+            final.update(text=payload["text"], blocks=payload["blocks"])
+            with self.subTest(check=key):
+                self.assertNotEqual(case.state(key), "PASS")
 
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
@@ -3378,7 +3464,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         for lane, product in (("cursor", None), ("grok", None), ("openai", "xai-grok-cli")):
             case = self.world()
             readback = case.tasks[PAID_TASK]["qualification_evidence"]
-            case.tasks[PAID_TASK]["qualification_evidence"] = json.loads(json.dumps(readback).replace('"claude"', f'"{lane}"'))
+            case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(
+                json.loads(json.dumps(readback).replace('"claude"', f'"{lane}"')))
             if lane in case.captures["lanes"]:
                 case.captures["lanes"][lane]["product"] = product
             with self.subTest(lane=lane):
@@ -3386,8 +3473,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         def openai_lane(product, transport):
             case = self.world()
             readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
-            case.tasks[PAID_TASK]["qualification_evidence"] = json.loads(
-                readback.replace('"claude"', '"openai"').replace('"native-command"', f'"{transport}"'))
+            case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
+                readback.replace('"claude"', '"openai"').replace('"native-command"', f'"{transport}"')))
             case.captures["lanes"]["openai"]["product"] = product
             return case.state("11")
         # The OpenAI capture must be the product the attempts' transport actually used. Review 4102705154: a Codex
@@ -3890,3 +3977,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]

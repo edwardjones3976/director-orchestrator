@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -3548,10 +3549,31 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(set(bounded["truncated"]) <= {"assignments", "slack_deliveries"}, bounded["truncated"])
         self.assertEqual(1, len(bounded["slack_deliveries"]))
         self.assertLessEqual(len(bounded["assignments"]), 1)
-        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=1024)
+        # PR #264 review summary: the metadata-only document is re-checked against the bound. It is measured here
+        # the way the reader measures it (every section emptied, response_bytes truncated).
+        from director_orchestrator.langgraph_postgres import PostgresControlPlaneError
+        full = {key: value for key, value in store.read_primary_qualification_evidence(record.task_id).items()
+                if key != "projection"}
+        sections = ("assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
+                    "status_receipts", "intake_auth_claims", "provider_usage")
+        metadata = {**full, **{name: [] for name in sections if name in full},
+                    "truncated": sorted({*full["truncated"], "response_bytes"}), "complete": False}
+        size = len(json.dumps(metadata, default=str, sort_keys=True, separators=(",", ":")).encode())
+        tiny = store.read_primary_qualification_evidence(record.task_id, byte_limit=max(1024, size + 64))
         self.assertFalse(tiny["complete"])
         self.assertIn("response_bytes", tiny["truncated"])
         self.assertEqual([], tiny["slack_deliveries"])
+        if size - 64 >= 1024:  # a bound the metadata alone exceeds: refused, never served oversized
+            with self.assertRaisesRegex(PostgresControlPlaneError, "metadata alone exceeds"):
+                store.read_primary_qualification_evidence(record.task_id, byte_limit=size - 64)
+        # A projection whose content no longer matches its stored digest (the version guard allows it) is refused.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
+                " projection = jsonb_set(projection, '{run_status}', '\"TAMPERED\"') WHERE task_id = %s",
+                (record.task_id,))
+        with self.assertRaisesRegex(PostgresControlPlaneError, "does not match its stored digest"):
+            store.read_primary_qualification_evidence(record.task_id)
         other = self.application.create_intake(
             self.intake().model_copy(update={"source_event_id": "qa-other-task"}),
             intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
@@ -3756,6 +3778,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         base = store.read_primary_qualification_evidence(record.task_id)
         self.assertGreaterEqual(len(base["assignments"]), 1)
         assignment = base["assignments"][0]
+        from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
         digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
         with self.handle.pool.connection() as connection:
             # Attempts run only on a reserved assignment (primary_parallel reserves it ACTIVE with reserved_at before
@@ -3777,7 +3800,15 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                      digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
                      digest("run:" + record.task_id) if event == 2 else None, status,
                      digest("result:" + record.task_id) if event == 2 else None,
-                     digest("outcome:" + record.task_id) if event == 2 else None,
+                     # The outcome digest record_provider_attempt computes over this very event.
+                     outcome_evidence_digest(record.task_id, {
+                         "assignment_id": assignment["assignment_id"], "attempt_ordinal": 1, "event_sequence": 2,
+                         "provider_id": assignment["provider_id"], "format_id": "v1",
+                         "transport_id": "synthetic-transport", "idempotency_key_digest": digest("idem:" + record.task_id),
+                         "attempt_digest": digest("attempt:" + record.task_id),
+                         "budget_evidence_digest": digest("budget:" + record.task_id), "status": status,
+                         "result_digest": digest("result:" + record.task_id), "reason_code": "attempt_succeeded"})
+                     if event == 2 else None,
                      "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
             connection.execute(sql.SQL("""
                 INSERT INTO {}.director_primary_slack_delivery
@@ -4317,3 +4348,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
