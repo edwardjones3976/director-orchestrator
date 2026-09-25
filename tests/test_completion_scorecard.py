@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -279,9 +280,16 @@ def consistency_fixture():
                                                         "document_digest": "sha256:" + "2" * 64,
                                                         "outcome": "The audit answer is 42", "provider": "claude",
                                                         "verified": True,
+                                                        "authority_snapshot_digest": "sha256:" + "b" * 64,
                                                         # Persisted mid-lifecycle: the paid assignment is reserved
                                                         # 6s and settled 26s after its post (ts(20000)).
-                                                        "recorded_at": iso(1789210000 + 20000 + 20)}]},
+                                                        "recorded_at": iso(1789210000 + 20000 + 20)}],
+                                  # record_work_packet_artifact: persisted, under the same authority snapshot, before
+                                  # the paid assignment's first attempt (post + 7 s).
+                                  "work_packets": [{"assignment_id": PAID_TASK + "-A1",
+                                                    "authority_snapshot_digest": "sha256:" + "b" * 64,
+                                                    "document_digest": "sha256:" + "c" * 64, "verified": True,
+                                                    "recorded_at": iso(1789210000 + 20000 + 6.5)}]},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -403,6 +411,11 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
 def approval_entry(decided=None, kind="execution", grant=None):  # langgraph_primary.ApprovalKind
     entry = task_entry(APPROVAL_TASK, 30000, offline=False, text="DIRECTOR approve then run")
     readback = entry["task"]["qualification_evidence"]
+    # Dispatch follows the execution approval (claimed at 30009, decided at 30010): the assignment is reserved and
+    # its attempt runs after it, as the graph resumes only once the owner approved.
+    readback["assignments"][0]["reserved_at"] = iso(1789210000 + 30011)
+    for event, offset in zip(readback["provider_attempts"], (30012, 30016)):
+        event["recorded_at"] = iso(1789210000 + offset)
     # The owner posts at ts(30000); the gateway claims the intake and the task is created a second later (the
     # rebased readback), the approval prompt is enqueued at 30003, the Director restarts at 30003.5 (World) and
     # the graph resumes afterwards: the prompt's post, the decision, the attempts and the terminal reply.
@@ -2215,7 +2228,30 @@ class ScorecardCollectorTests(unittest.TestCase):
         effect = self.world()
         effect_entry = effect.add(approval_entry(kind="external_effect", grant=grant))
         effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
+        # The graph's effect approval binding names the effect this request authorized (director_primary_effect_
+        # approval_binding); its execution starts after the authorization (review 4107814573).
+        effect_key = effect_entry["task"]["qualification_evidence"]["effects"][0]["effect_key_digest"]
+        effect.consistency["tasks"][APPROVAL_TASK]["effect_approval_bindings"] = [
+            {"effect_key_digest": effect_key, "approval_request_digest": "sha256:" + "8" * 64}]
         self.assertEqual(effect.state("08"), "PASS")
+        unbound_effect = self.world()
+        unbound_effect.add(approval_entry(kind="external_effect", grant=grant))
+        unbound_effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
+        self.assertEqual(unbound_effect.state("08"), "UNKNOWN")  # no binding names the approved effect
+        early_effect = self.world()
+        early_entry = early_effect.add(approval_entry(kind="external_effect", grant=grant))
+        early_effect.consistency["tasks"][APPROVAL_TASK]["application"] = effect_entry["application"]
+        early_effect.consistency["tasks"][APPROVAL_TASK]["effect_approval_bindings"] = [
+            {"effect_key_digest": effect_key, "approval_request_digest": "sha256:" + "8" * 64}]
+        started = early_entry["task"]["qualification_evidence"]["effects"][0]
+        started.update(reserved_at=iso(1789210000 + 30006), execution_started_at=iso(1789210000 + 30007))
+        self.assertEqual(early_effect.state("08"), "FAIL")  # executed before its approval was authorized
+        early_run = self.world()
+        early_run.tasks[APPROVAL_TASK]["qualification_evidence"]["provider_attempts"][0]["recorded_at"] = iso(
+            1789210000 + 30008.5)  # the first attempt began before the execution approval (claimed at 30009)
+        early_run.tasks[APPROVAL_TASK]["qualification_evidence"]["assignments"][0]["reserved_at"] = iso(
+            1789210000 + 30008)
+        self.assertEqual(early_run.state("08"), "FAIL")
         stripped = {key: value for key, value in effect_entry["application"].items() if key != "effect_grant"}
         effect.consistency["tasks"][APPROVAL_TASK]["application"] = stripped
         self.assertEqual(effect.state("08"), "UNKNOWN")
@@ -2325,7 +2361,13 @@ class ScorecardCollectorTests(unittest.TestCase):
         report = world.report()
         for key in ("07", "11", "12", "17"):
             self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
-        self.assertIn("runtime image label", row(report, "07")["explanation"])
+        self.assertIn("running container", row(report, "07")["explanation"])
+        # The generation manifest the snapshot was verified against must be the one the container pins (#4107814604).
+        other_manifest = self.world()
+        other_manifest.consistency["generation"]["manifest_sha256"] = "0" * 64
+        report = other_manifest.report()
+        for key in ("07", "08", "15", "17", "20"):
+            self.assertEqual(row(report, key)["status"], "UNKNOWN", key)
 
     def test_consistency_07(self):
         self.assertEqual(self.world().state("07"), "PASS")
@@ -3376,6 +3418,55 @@ class ScorecardCollectorTests(unittest.TestCase):
         readback["provider_attempts"][1]["outcome_evidence_digest"] = "sha256:" + "7" * 64
         self.assertIn("outcome evidence digest", task_evidence_errors(readback)[1]["attempts"])
 
+    def test_attempt_events_keep_their_producers_field_contract(self):
+        """4107814591: event 1 (reserve_provider_attempt) carries no result, outcome or run id; event 2
+        (record_provider_attempt) always outcome evidence and never a run id, AMBIGUOUS without a result; event 3
+        (record_callback_result) always outcome evidence and the provider run id."""
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+        for name, change in (
+                ("event 1 with a result", lambda r: r["provider_attempts"][0].update(result_digest="sha256:" + "2" * 64)),
+                ("event 2 with a run id", lambda r: r["provider_attempts"][1].update(
+                    provider_run_id_digest="sha256:" + "8" * 64)),
+                ("event 2 AMBIGUOUS with a result", lambda r: r["provider_attempts"][1].update(status="AMBIGUOUS")),
+                ("event 3 without a run id", lambda r: r["provider_attempts"][1].update(event_sequence=3))):
+            readback = tf.readback_fixture()
+            change(readback)
+            with self.subTest(name):
+                self.assertIn("field contract", task_evidence_errors(tf.seal(readback))[1]["attempts"])
+        callback = tf.readback_fixture()
+        callback["provider_attempts"][1].update(event_sequence=3, provider_run_id_digest="sha256:" + "8" * 64)
+        self.assertIsNone(task_evidence_errors(tf.seal(callback))[1]["attempts"])
+
+    def test_work_packets_join_dispatch_and_results(self):
+        """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
+        attempt, under the result packet's authority snapshot; the same rule check 20 and the global count apply."""
+        from director_orchestrator.primary_scorecard_evidence import work_packet_error
+        readback = tf.readback_fixture()
+        assignment = readback["assignments"][0]["assignment_id"]
+        packet = {"assignment_id": assignment, "authority_snapshot_digest": "sha256:" + "b" * 64,
+                  "document_digest": "sha256:" + "c" * 64, "verified": True, "recorded_at": "2026-09-12T10:00:05+00:00"}
+        result = {"assignment_id": assignment, "authority_snapshot_digest": "sha256:" + "b" * 64}
+        sections = {**readback, "work_packets": [packet], "result_artifacts": [result]}
+        self.assertIsNone(work_packet_error(sections))
+        self.assertIsNone(work_packet_error(readback))  # no work packets served (the collector's readback)
+        for name, change in (("none for a dispatched assignment", {"work_packets": []}),
+                             ("fails revalidation", {"work_packets": [{**packet, "verified": False}]}),
+                             ("recorded after the first attempt",
+                              {"work_packets": [{**packet, "recorded_at": "2026-09-12T10:00:07+00:00"}]}),
+                             ("two for one assignment", {"work_packets": [packet, dict(packet)]}),
+                             ("another authority than the result's",
+                              {"result_artifacts": [{**result, "authority_snapshot_digest": "sha256:" + "d" * 64}]}),
+                             ("for no assignment", {"work_packets": [packet, {**packet, "assignment_id": "other"}]})):
+            with self.subTest(name):
+                self.assertIsNotNone(work_packet_error({**sections, **change}))
+        self.assertEqual(self.world().state("20"), "PASS")
+        missing = self.world()
+        missing.consistency["tasks"][PAID_TASK]["work_packets"] = []
+        self.assertEqual(missing.state("20"), "FAIL")
+        unread = self.world()
+        del unread.consistency["tasks"][PAID_TASK]["work_packets"]
+        self.assertEqual(unread.state("20"), "UNKNOWN")
+
     def test_success_needs_the_products_own_classification_to_status_mapping_10_20(self):
         """4106903245: DONE with a non-success terminal classification is not a success, by the product's own
         mapping (DefaultPrimaryApplication._record_from_projection)."""
@@ -3991,3 +4082,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

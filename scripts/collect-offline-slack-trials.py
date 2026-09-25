@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
@@ -389,6 +390,10 @@ def _typed_readback_error(readback, task_id):
         return "readback rejected by the typed model at " + (",".join(places) or "document")
     if typed.task_id != task_id or typed.schema_version != READBACK_SCHEMA:
         return "readback shape/task binding mismatch"
+    # Every binding the snapshot declares must hold: one REPEATABLE READ, read-only transaction that also covered the
+    # task record served beside it (the model fixes the first three), owned by the LangGraph engine.
+    if typed.snapshot.covers_task_record is not True or typed.engine_owner != "langgraph":
+        return "readback snapshot does not cover the served task record or is not the LangGraph engine's"
     if set(readback["task_scope_counters"]) != set(COUNTER_KEYS) \
             or not all(_is_count(readback["task_scope_counters"][k]) for k in COUNTER_KEYS):
         return "readback counter contract mismatch"
@@ -1220,3 +1225,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

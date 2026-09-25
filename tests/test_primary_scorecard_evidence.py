@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
@@ -128,7 +129,9 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         verified = {row.evidence_digest for surface in ProviderActivationSurface
                     for row in store.load(bindings["openai"], surface)}
         verifier = Mock()
-        verifier.verify.side_effect = lambda _binding, digest, expires_at: digest in verified
+        # CaptureVerifier.verified_output: the verified output bytes, or None when the capture does not verify.
+        verifier.verified_output.side_effect = (
+            lambda _binding, digest, expires_at: b'{"object":"response","model":"gpt-5.6"}' if digest in verified else None)
         service = PrimaryProviderActivationService(store=store, bindings=bindings, required_providers=("openai", "claude"),
                                                    clock=lambda: NOW, capture_verifier=verifier)
         lanes = service.capture_attestations()
@@ -202,10 +205,19 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                 self.dsn = dsn
 
             def load_capture(self, digest):
-                return ({}, b"{}", output, False, 0, "succeeded")
+                raise AssertionError("the capture was re-read after verification")
+
+        # Review 4107814598: the product is named from the bytes verified_output returns,
+        # the verifier's own single read; the reader below fails if anything reads the store a second time.
+        reads = []
+
+        def verified_output(*_args, **_kwargs):
+            reads.append(1)
+            return output
 
         verifier = SimpleNamespace(store=SimpleNamespace(dsn="postgresql://fixture"),
-                                   verify=lambda *_args, **_kwargs: True) if verifier_present else None
+                                   verify=lambda *_args, **_kwargs: True,
+                                   verified_output=verified_output) if verifier_present else None
         with patch("director_orchestrator.provider_validation.capture_verifier_from_environment", return_value=verifier), \
                 patch("director_orchestrator.primary_provider_evidence._BoundedCaptureReader", Reader), \
                 patch("director_orchestrator.langgraph_postgres.open_provider_activation_store", open_store), \
@@ -621,6 +633,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         entry = self.report(tasks=[task_id, "DIR-LG-0"])["tasks"]
         self.assertEqual(entry["DIR-LG-0"], {"usage_tables_present": True, "spend": [], "budgets": [],
                                              "approval_receipts": [], "application": None, "result_artifacts": [],
+                                             "work_packets": [], "effect_approval_bindings": [],
                                              "verifier_secrets": {"route_verifier": False, "owner_authority": False}})
         # The persisted application record comes back for the scorecard's re-rendering.
         with self.handle.pool.connection() as connection:
@@ -669,10 +682,10 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         recorded = [artifact.pop("recorded_at") for artifact in report["tasks"][task_id]["result_artifacts"]]
         self.assertTrue(all(datetime.fromisoformat(value).tzinfo is not None for value in recorded))
         self.assertEqual(report["tasks"][task_id]["result_artifacts"], [
-            {"assignment_id": "A1", "document_digest": rows[0][3], "outcome": packet["outcome"],
-             "provider": packet["provider"], "verified": True},
-            {"assignment_id": "A2", "document_digest": rows[1][3], "outcome": None, "provider": None,
-             "verified": False}])
+            {"assignment_id": "A1", "authority_snapshot_digest": rows[0][2], "document_digest": rows[0][3],
+             "outcome": packet["outcome"], "provider": packet["provider"], "verified": True},
+            {"assignment_id": "A2", "authority_snapshot_digest": rows[1][2], "document_digest": rows[1][3],
+             "outcome": None, "provider": None, "verified": False}])
         # Neither packet names a durable assignment of its task (the table has no such foreign key): the shared
         # per-task packet rule counts both as conflicts until the assignments exist (PR #264 review 4100381678).
         self.assertEqual(report["counts"]["result_artifacts_invalid"], 2)
@@ -724,6 +737,29 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         # Past the row cap the count is unknown (None), never a partial number.
         with patch.object(evidence, "EVIDENCE_ROW_CAP", 1):
             self.assertIsNone(self.report()["counts"]["result_artifacts_invalid"])
+        # Review 4107814584: every result packet needs its assignment's work packet under the same authority
+        # snapshot (work_packet_error). None stored yet: a conflict for this task.
+        self.assertEqual(self.report()["counts"]["work_packets_invalid"], 1)
+        work = json.loads((Path(__file__).resolve().parents[1] / "docs/schemas/model-work-packet-v1.example.json")
+                          .read_text(encoding="utf-8"))
+        with self.handle.pool.connection() as connection:
+            for _, assignment, authority, _, _ in rows:
+                document = {**work, "task_id": task_id, "assignment_id": assignment, "authority_snapshot_digest": authority}
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_work_packet_artifact(task_id, assignment_id,"
+                    " authority_snapshot_digest, document_digest, canonical_document, writer_fencing_generation)"
+                    " VALUES (%s, %s, %s, %s, %s, 1)",
+                    (task_id, assignment, authority, document_digest(document),
+                     canonical_json_bytes(document).decode("utf-8")))
+        report = self.report(tasks=[task_id])
+        self.assertEqual([item["verified"] for item in report["tasks"][task_id]["work_packets"]], [True, True])
+        # A2 is still PENDING: a work packet for an assignment that was never dispatched is a conflict too.
+        self.assertEqual(report["counts"]["work_packets_invalid"], 1)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET status='ACTIVE',"
+                               " reservation_digest=%s, reserved_at=now() WHERE task_id=%s AND assignment_id='A2'",
+                               ("sha256:" + "6" * 64, task_id))
+        self.assertEqual(self.report()["counts"]["work_packets_invalid"], 0)
 
     def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
         """Review 4102375074: provider_attempts_invalid applies validate_attempt_history (the collector's own rule)
@@ -979,3 +1015,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

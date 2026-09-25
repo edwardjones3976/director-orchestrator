@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -662,7 +663,10 @@ class PostgresValidationTests(unittest.TestCase):
         # capture was minted under: a rotated worker configuration refuses.
         with patch.object(route,"configuration_digest",lambda:"d"*64):
             self.assertFalse(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+            self.assertIsNone(verifier.verified_output(binding("antigravity"),result["evidence_digest"]))
         self.assertTrue(verifier.verify(binding("antigravity"),result["evidence_digest"]))
+        # PR #264 review 4107814598: the verified bytes are returned by the same read that verified them.
+        self.assertEqual(verifier.verified_output(binding("antigravity"),result["evidence_digest"]),bytes(stored[2]))
 
     def test_capture_valid_and_reusable_for_two_surfaces_without_second_execution(self):
         admission,capture,evidence,verifier=self.completed()
@@ -1586,3 +1590,4 @@ if __name__=="__main__":unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

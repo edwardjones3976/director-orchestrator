@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -195,7 +196,7 @@ def readback_fixture():
             {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 2,
              "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
              "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
-             "provider_run_id_digest": "sha256:" + "8" * 64, "status": "SUCCEEDED",
+             "provider_run_id_digest": None, "status": "SUCCEEDED",  # event 2 never carries a run id
              "result_digest": "sha256:" + "2" * 64, "outcome_evidence_digest": "sha256:" + "7" * 64,
              "reason_code": "attempt_succeeded", "budget_evidence_digest": "sha256:" + "9" * 64,
              "recorded_at": "2026-09-12T10:00:25+00:00"}],
@@ -287,6 +288,18 @@ class SummaryTests(unittest.TestCase):
                     report = self.summarize()
                     self.assertEqual(1, report["terminal_reply_count"])
                     self.assertTrue(report["final_receipt_matches_native_message"])
+
+    def test_readback_snapshot_must_cover_the_served_task_record(self):
+        """Review summary (collector :390): the snapshot's covers_task_record must be exactly true, and the readback the
+        LangGraph engine's; anything else is refused, never collected."""
+        for change in ({"snapshot": {**readback_fixture()["snapshot"], "covers_task_record": False}},
+                       {"engine_owner": "legacy"}):
+            readback = {**readback_fixture(), **change}
+            self.task["qualification_evidence"] = readback
+            with self.subTest(change=sorted(change)):
+                evidence = self.summarize()["qualification_evidence"]
+                self.assertEqual("rejected", evidence["readback"]["state"])
+                self.assertIn("does not cover the served task record", evidence["readback"]["reason"])
 
     def test_gateway_attestation_needs_the_append_only_intake_claim(self):
         """The projection's intake_authentication label alone never attests the gateway (checks 03, 08, 09, 10,
@@ -737,16 +750,19 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
         # 5. an AMBIGUOUS event 2 is superseded by an authenticated SUCCEEDED event 3
         readback = readback_fixture()
-        readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None, outcome_evidence_digest=None,
+        # record_provider_attempt digests every event 2 it writes, AMBIGUOUS included (sealed below).
+        readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None,
                                                 provider_run_id_digest=None, reason_code="callback_timeout",
                                                 recorded_at="2026-09-12T10:00:20+00:00")
         settled = dict(readback["assignments"][0])
         unsettled(readback)  # the assignment settles only once event 3 lands
-        self.task["qualification_evidence"] = readback
+        self.task["qualification_evidence"] = seal(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("PROVIDER_ATTEMPT_AMBIGUOUS", evidence["provider_effect_state"])
         self.assertEqual("AMBIGUOUS_DELIVERY_EFFECT", evidence["effect_state"])
         readback["provider_attempts"].append({**readback_fixture()["provider_attempts"][1], "event_sequence": 3,
+                                              # record_callback_result always carries the provider run id
+                                              "provider_run_id_digest": "sha256:" + "8" * 64,
                                               "reason_code": "authenticated_callback_settled",
                                               "recorded_at": "2026-09-12T10:00:26+00:00"})
         readback["assignments"][0] = {**settled, "completed_at": "2026-09-12T10:00:27+00:00"}
@@ -835,7 +851,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual({"actual_usage": None, "actual_cost_usd": None, "cost_basis": "UNKNOWN"}, evidence["usage"])
         # an authenticated callback event 3 directly after event 1 is legitimate
         readback = readback_fixture()
-        readback["provider_attempts"][1]["event_sequence"] = 3
+        readback["provider_attempts"][1].update(event_sequence=3, provider_run_id_digest="sha256:" + "8" * 64)
         self.task["qualification_evidence"] = seal(readback)  # the callback settle's own outcome digest
         self.task.pop("actual_cost_usd", None)
         evidence = self.summarize()["qualification_evidence"]
@@ -1631,3 +1647,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

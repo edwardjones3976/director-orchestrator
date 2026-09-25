@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]] -->
@@ -703,6 +704,27 @@ A readback whose metadata alone exceeds its byte limit is refused, never
 served over it. Checks 10 and 20 require the terminal classification
 SUCCEEDED and the served task status the product derives from it
 (`DefaultPrimaryApplication._record_from_projection`).
+
+Bindings and producer contracts. The collector refuses a readback whose
+snapshot does not cover the served task record (`covers_task_record` exactly
+true) or is not the LangGraph engine's. The consistency document must match the
+running container's commit, tree, image and generation manifest and have been
+read during this collection before checks 07, 08, 15, 17 or 20 see it; the
+captures report must carry the same manifest. Each attempt event keeps its
+producer's field contract: event 1 (`reserve_provider_attempt`) no result,
+outcome evidence or run id; event 2 (`record_provider_attempt`) outcome evidence
+and never a run id, AMBIGUOUS without a result; event 3
+(`record_callback_result`) outcome evidence and the provider run id. Work
+packets (`director_primary_work_packet_artifact`) are read and revalidated on
+both paths through one rule, `work_packet_error`: every dispatched assignment
+has exactly one, recorded before its first attempt, under its result packet's
+authority snapshot (`work_packets_invalid` for 07; 20 FAILs, and is UNKNOWN when
+they were not read). Check 08 requires an execution approval's authorization
+before the task's first provider attempt, and an external-effect approval's
+before the execution start of the effect the graph bound to it
+(`director_primary_effect_approval_binding`); an unbound effect approval is
+unproven. Activation captures are classified from the exact bytes
+`CaptureVerifier.verified_output` read and verified, never a second read.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -1067,3 +1089,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]] -->

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -3788,7 +3789,9 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                 " reserved_at=now() - interval '1 minute' WHERE task_id=%s AND assignment_id=%s"
             ).format(sql.Identifier(self.schema)),
                 (digest("reservation:" + record.task_id), record.task_id, assignment["assignment_id"]))
-            for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
+            # STARTED (event 1), then an authenticated callback settlement (event 3, record_callback_result), the
+            # only event that carries the provider run id.
+            for event, status in ((1, "STARTED"), (3, "SUCCEEDED")):
                 connection.execute(sql.SQL("""
                     INSERT INTO {}.director_primary_provider_attempt
                         (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id,
@@ -3798,17 +3801,15 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                     """).format(sql.Identifier(self.schema)),
                     (record.task_id, assignment["assignment_id"], event, assignment["provider_id"],
                      digest("idem:" + record.task_id), digest("attempt:" + record.task_id),
-                     digest("run:" + record.task_id) if event == 2 else None, status,
-                     digest("result:" + record.task_id) if event == 2 else None,
-                     # The outcome digest record_provider_attempt computes over this very event.
+                     digest("run:" + record.task_id) if event == 3 else None, status,
+                     digest("result:" + record.task_id) if event == 3 else None,
+                     # The outcome digest record_callback_result computes over this very event.
                      outcome_evidence_digest(record.task_id, {
-                         "assignment_id": assignment["assignment_id"], "attempt_ordinal": 1, "event_sequence": 2,
-                         "provider_id": assignment["provider_id"], "format_id": "v1",
-                         "transport_id": "synthetic-transport", "idempotency_key_digest": digest("idem:" + record.task_id),
-                         "attempt_digest": digest("attempt:" + record.task_id),
-                         "budget_evidence_digest": digest("budget:" + record.task_id), "status": status,
+                         "assignment_id": assignment["assignment_id"], "attempt_ordinal": 1, "event_sequence": 3,
+                         "provider_id": assignment["provider_id"], "attempt_digest": digest("attempt:" + record.task_id),
+                         "provider_run_id_digest": digest("run:" + record.task_id), "status": status,
                          "result_digest": digest("result:" + record.task_id), "reason_code": "attempt_succeeded"})
-                     if event == 2 else None,
+                     if event == 3 else None,
                      "attempt_started" if event == 1 else "attempt_succeeded", digest("budget:" + record.task_id)))
             connection.execute(sql.SQL("""
                 INSERT INTO {}.director_primary_slack_delivery
@@ -3912,7 +3913,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                          [(row.attempt_digest, row.actual_microusd, row.observed_tokens, row.reserved_microusd)
                           for row in typed.provider_usage])
         attempts = typed.provider_attempts
-        self.assertEqual([1, 2], [row.event_sequence for row in attempts])
+        self.assertEqual([1, 3], [row.event_sequence for row in attempts])
         self.assertTrue(all(row.assignment_id == assignment["assignment_id"]
                             and row.assignment_sequence == assignment["sequence"]
                             and row.attempt_digest == digest("attempt:" + record.task_id)
@@ -4349,3 +4350,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

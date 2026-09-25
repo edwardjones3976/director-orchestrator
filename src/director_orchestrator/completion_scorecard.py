@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
@@ -90,7 +91,7 @@ from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
     delivery_settled as _delivery_settled, lifecycle_error, ordered as _ordered,
-    required_moments as _required_moments, settlement_error, validate_attempt_history)
+    required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
 
 REPOSITORY = "edwardjones3976/director-orchestrator"
@@ -1041,7 +1042,8 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
                 # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
-                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "projection_digest_mismatches",
+                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
+                "projection_digest_mismatches",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -1761,6 +1763,19 @@ def _prompt_scoped(message: dict[str, Any], task_id: str, delivery: dict[str, An
         return False
 
 
+def _approval_kind(message: dict[str, Any]) -> str | None:
+    """The approval kind the delivered prompt's approve button carries (render_notification's button value)."""
+    for block in message.get("blocks") or []:
+        for item in (block.get("elements") or []) if isinstance(block, dict) else []:
+            if isinstance(item, dict) and item.get("action_id") == "director_primary_approve":
+                try:
+                    value = json.loads(item.get("value") or "")
+                except ValueError:
+                    return None
+                return value.get("kind") if isinstance(value, dict) else None
+    return None
+
+
 def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, task_id: str,
                            consistency: dict | None) -> list[Observation]:
     binding = runtime.binding
@@ -1868,6 +1883,29 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             and runtime.until() is not None and decided <= runtime.until())]
         # One receipt per approved delivery, and (below) no receipt left without its delivery.
         receipted = len(matches) == 1
+        # The approved work never began before its authorization (review 4107814573): an execution approval precedes
+        # every provider attempt of the task (the graph dispatches only after it resumes); an external-effect approval
+        # precedes the execution start of the effect the graph bound to it (director_primary_effect_approval_binding:
+        # this request digest's effect key). An approval of the other kind, or an effect with no binding, is unproven.
+        if receipted and len(native) == 1:
+            claimed = _when(receipts[matches[0]]["authorization_claimed_at"])
+            kind, request = _approval_kind(native[0]), str(delivery.get("notification_key", "")).split(":")
+            request = ":".join(request[1:3]) if len(request) == 5 else None
+            if kind == "execution":
+                if any(_when(event["recorded_at"]) <= claimed for event in readback["provider_attempts"]):
+                    failures.append("a provider attempt began before its execution approval was authorized")
+            elif kind == "external_effect":
+                bindings = [item for item in (entry.get("effect_approval_bindings") or [] if isinstance(entry, dict)
+                                              else []) if isinstance(item, dict)
+                            and _same(item.get("approval_request_digest"), request)]
+                if len(bindings) != 1:
+                    receipted = False
+                elif any(effect.get("execution_started_at") and _when(effect["execution_started_at"]) <= claimed
+                         for effect in readback["effects"]
+                         if _same(effect.get("effect_key_digest"), bindings[0].get("effect_key_digest"))):
+                    failures.append("an external effect began executing before its approval was authorized")
+            else:
+                receipted = False
         if len(matches) > 1:
             failures.append("one approved delivery matches more than one approval_resume receipt")
         if delivery.get("owner_decision") == "approve":
@@ -2181,6 +2219,14 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     assignments = readback.get("assignments") or []
     if not isinstance(artifacts, list) or not assignments:
         return None
+    # Every dispatched assignment's work packet, revalidated, joined to its result packet under one authority
+    # snapshot (work_packet_error, the rule the in-image global count applies to every task).
+    work_packets = entry.get("work_packets")
+    if not isinstance(work_packets, list):
+        return None
+    if work_packet_error({"assignments": assignments, "provider_attempts": readback.get("provider_attempts") or [],
+                          "result_artifacts": artifacts, "work_packets": work_packets}) is not None:
+        return False
     persisted = {row.get("assignment_id") for row in artifacts if isinstance(row, dict)}
     durable = {assignment.get("assignment_id") for assignment in assignments}
     if persisted - durable:
@@ -2511,12 +2557,19 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         verified_tree = generation.get("candidate_tree") if isinstance(generation, dict) else None
         # The manifest-verified image must be the one Docker says is running, not only the same commit and tree.
         verified_image = generation.get("image_id") if isinstance(generation, dict) else None
+        # Every binding the document carries, before any dependent check (08, 15, 17, 20) reads it: the verified
+        # commit, tree and image, the generation manifest the running container pins, and a read time inside this
+        # collection.
+        pin = runtime.env.get("LANGGRAPH_PRIMARY_GENERATION_MANIFEST_SHA256")
         unbound = consistency is not None and not (
             _same(verified_commit, runtime.runtime_sha) and _same(verified_tree, runtime.runtime_tree)
             and _same(verified_image, runtime.image_id)
-            and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree))
-        if captures is not None and not runtime.read_in_window(captures.get("observed_at")):
-            captures = None  # a captures report not read during this collection attests nothing here
+            and _same(_commit_tree(runtime.runtime_sha), runtime.runtime_tree)
+            and _same((generation if isinstance(generation, dict) else {}).get("manifest_sha256"), pin)
+            and runtime.read_in_window(consistency.get("captured_at")))
+        if captures is not None and not (runtime.read_in_window(captures.get("observed_at"))
+                                         and _same(captures.get("generation_manifest_sha256"), pin)):
+            captures = None  # a captures report not read during this collection, or for another generation
         if unbound or consistency is None:
             consistency = captures = None  # captures carry no commit: without the snapshot they are unbound
         if t is not None:
@@ -2550,8 +2603,9 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
         except _SOURCE_ERRORS:
             unknown(("15",), "The monetary sources could not be evaluated; no retry was made.", _CONSISTENCY_SOURCE)
         if unbound:
-            reason = ("The in-image generation commit or tree is unverified or differs from the runtime image labels "
-                      "(or the labelled commit's tree), so its "
+            reason = ("The in-image generation commit, tree, image or manifest is unverified or differs from the "
+                      "running container (or the labelled commit's tree), or the snapshot was not read during this "
+                      "collection, so its "
                       "consistency, acceptance, capture and settlement evidence cannot attest this runtime.")
             unknown(("07", "08", "11", "12", "15", "20"), reason, _CONSISTENCY_SOURCE)
             put([_observation("17", None, reason, _CONSISTENCY_SOURCE, {}, at, candidate_sha=candidate_sha)])
@@ -3363,3 +3417,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]

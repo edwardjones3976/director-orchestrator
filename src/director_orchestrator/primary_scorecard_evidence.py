@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -180,6 +181,23 @@ _OUTCOME_FIELDS = {
         "result_digest", "reason_code")}
 
 
+# Each attempt event's field contract, from its producer (primary_parallel):
+#   event 1  PrimaryParallel.reserve_provider_attempt  STARTED; no result, outcome evidence or provider run id
+#   event 2  PrimaryParallel.record_provider_attempt   SUCCEEDED, FAILED or AMBIGUOUS; outcome evidence always; never
+#            a provider run id (the insert carries none); SUCCEEDED with a result digest (the roster passes the
+#            authenticated result's), FAILED with or without one (a reported non-success has one, a transport
+#            failure none), AMBIGUOUS with none (the outcome is unknown)
+#   event 3  PrimaryParallel.record_callback_result    SUCCEEDED, FAILED or AMBIGUOUS; outcome evidence and the
+#            provider run id always (the callback requires it); SUCCEEDED with a result digest
+_EVENT_CONTRACT = {
+    1: {"statuses": {"STARTED"}, "null": ("result_digest", "outcome_evidence_digest", "provider_run_id_digest"),
+        "required": ()},
+    2: {"statuses": {"SUCCEEDED", "FAILED", "AMBIGUOUS"}, "null": ("provider_run_id_digest",),
+        "required": ("outcome_evidence_digest",)},
+    3: {"statuses": {"SUCCEEDED", "FAILED", "AMBIGUOUS"}, "null": (),
+        "required": ("outcome_evidence_digest", "provider_run_id_digest")}}
+
+
 def outcome_evidence_digest(task_id, event):
     """The digest the producer stores for a settling event, recomputed from the event's own columns (the same
     fields, the same canonical JSON, primary_parallel._digest); None for an event no producer digests."""
@@ -248,6 +266,12 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
             return None, "terminal event lacks outcome evidence"
         if row["status"] == "SUCCEEDED" and row.get("result_digest") is None:
             return None, "SUCCEEDED event lacks a result digest"
+        contract = _EVENT_CONTRACT[row["event_sequence"]]
+        if (row["status"] not in contract["statuses"]
+                or any(row.get(field) is not None for field in contract["null"])
+                or any(row.get(field) is None for field in contract["required"])
+                or (row["event_sequence"] == 2 and row["status"] == "AMBIGUOUS" and row.get("result_digest") is not None)):
+            return None, f"event {row['event_sequence']} breaks its producer's field contract"
         grouped.setdefault(key, []).append(row)
     digests = {}
     latest = {}
@@ -553,7 +577,42 @@ def settlement_error(sections, latest):
     return None
 
 
-EVIDENCE_CATEGORIES = ("attempts", "usage", "effects", "deliveries", "lifecycle", "settlement")
+def work_packet_error(sections):
+    """Work packets against dispatch and results (primary_default persists the revalidated work packet, through
+    record_work_packet_artifact, before any provider attempt of the assignment, and a result packet under the same
+    authority snapshot). Every work packet revalidates and names an assignment of the task that left PENDING, once;
+    every dispatched assignment (one with a provider attempt) has exactly one, recorded before its first attempt; and
+    every result packet has its assignment's work packet under the same authority snapshot digest. None when the
+    sections carry no work packets at all (the collector's readback does not serve them), else the first violation."""
+    packets = sections.get("work_packets")
+    if packets is None:
+        return None
+    assignments = {row.get("assignment_id"): row for row in sections.get("assignments") or []}
+    by_id = {}
+    for packet in packets:
+        assignment = assignments.get(packet.get("assignment_id"))
+        if packet.get("assignment_id") in by_id:
+            return "an assignment has more than one work packet"
+        if packet.get("verified") is not True:
+            return "a stored work packet fails revalidation"
+        if assignment is None or assignment.get("status") == "PENDING":
+            return "a work packet names no dispatched assignment of its task"
+        by_id[packet["assignment_id"]] = packet
+    for event in sections.get("provider_attempts") or []:
+        packet = by_id.get(event.get("assignment_id"))
+        if packet is None:
+            return "a dispatched assignment has no work packet"
+        recorded, attempted = _when(packet.get("recorded_at")), _when(event.get("recorded_at"))
+        if recorded is None or attempted is None or recorded > attempted:
+            return "a work packet was not recorded before its assignment's attempts"
+    for result in sections.get("result_artifacts") or []:
+        packet = by_id.get(result.get("assignment_id"))
+        if packet is None or packet.get("authority_snapshot_digest") != result.get("authority_snapshot_digest"):
+            return "a result packet has no work packet under the same authority snapshot"
+    return None
+
+
+EVIDENCE_CATEGORIES = ("attempts", "usage", "effects", "deliveries", "lifecycle", "settlement", "work_packets")
 
 
 def task_evidence_errors(sections):
@@ -579,7 +638,8 @@ def task_evidence_errors(sections):
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
                                                              sections.get("status_receipts") or []),
               "lifecycle": lifecycle_error(sections),
-              "settlement": attempts or settlement_error(sections, latest)}
+              "settlement": attempts or settlement_error(sections, latest),
+              "work_packets": work_packet_error(sections)}
     states = {"usage": None if attempts else usage_state,
               "deliveries": delivery_state(sections.get("slack_deliveries") or [])}
     return latest, errors, states
@@ -682,15 +742,46 @@ def artifact_assignment_conflict(artifact, assignment):
     return None
 
 
+_PACKET_SQL = """SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,
+ writer_fencing_generation, recorded_at FROM {s}.{table} {where} ORDER BY task_id, assignment_id LIMIT %(limit)s"""
+
+
+def packet_rows(connection, schema, kind, *, tasks=None, limit=None):
+    """Stored result or work packets (``kind``), each revalidated against its digest and authority binding exactly
+    as the Director reloads it (_result_packet_artifact_from_row, _work_packet_artifact_from_row): task and assignment
+    IDs, authority_snapshot_digest, document_digest, verified, recorded_at, and for a result packet its provider and
+    outcome. ``tasks`` limits the read to those tasks (per-task path); None reads every task (global path)."""
+    from .langgraph_postgres import (PostgresControlPlaneError, _result_packet_artifact_from_row,
+                                     _work_packet_artifact_from_row)
+    table, load = {"result": ("director_primary_result_packet_artifact", _result_packet_artifact_from_row),
+                   "work": ("director_primary_work_packet_artifact", _work_packet_artifact_from_row)}[kind]
+    where = "WHERE task_id = ANY(%(tasks)s)" if tasks is not None else ""
+    rows = connection.execute(_PACKET_SQL.format(s=schema, table=table, where=where),
+                              {"tasks": list(tasks or []), "limit": limit or EVIDENCE_ROW_CAP + 1}).fetchall()
+    out = []
+    for row in rows:
+        try:
+            packet, verified = load(row).packet, True
+        except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
+            packet, verified = {}, False
+        item = {"task_id": row["task_id"], "assignment_id": row["assignment_id"],
+                "authority_snapshot_digest": row["authority_snapshot_digest"],
+                "document_digest": row["document_digest"], "verified": verified,
+                "recorded_at": _plain(row["recorded_at"])}
+        if kind == "result":
+            item.update(provider=packet.get("provider") if verified else None,
+                        outcome=packet.get("outcome") if verified else None)
+        out.append(item)
+    return out
+
+
 # Every task's evidence, validated by the same per-task rules the collector applies to one task's readback.
 EVIDENCE_ROW_CAP = 20000
 EVIDENCE_COUNT_KEYS = {"attempts": "provider_attempts_invalid", "usage": "provider_usage_invalid",
                        "effects": "effects_invalid", "deliveries": "slack_deliveries_invalid",
                        "lifecycle": "lifecycle_invalid", "settlement": "settlement_invalid"}
+EVIDENCE_COUNT_KEYS["work_packets"] = "work_packets_invalid"
 EVIDENCE_IN_FLIGHT_KEYS = {"usage": "provider_usage_in_flight", "deliveries": "slack_deliveries_in_flight"}
-_ARTIFACT_ROWS = """SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,
- writer_fencing_generation, recorded_at FROM {s}.director_primary_result_packet_artifact
-ORDER BY task_id, assignment_id LIMIT %(limit)s"""
 _TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode, projection,
  projection_digest FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
 
@@ -706,8 +797,7 @@ def _global_task_evidence(connection, schema, usage_tables):
 
     Returns {count key: number of tasks (packets, for the two artifact counts) failing it}; every count is None when
     any read exceeds EVIDENCE_ROW_CAP rows, so a count never covers a subset."""
-    from .langgraph_postgres import (PostgresControlPlaneError, _projection_payload, _result_packet_artifact_from_row,
-                                     qualification_section_sql)
+    from .langgraph_postgres import PostgresControlPlaneError, _projection_payload, qualification_section_sql
     keys = [*EVIDENCE_COUNT_KEYS.values(), *EVIDENCE_IN_FLIGHT_KEYS.values(), "result_artifacts_invalid",
             "result_artifacts_in_flight", "projection_digest_mismatches"]
     limit = {"limit": EVIDENCE_ROW_CAP + 1}
@@ -718,11 +808,11 @@ def _global_task_evidence(connection, schema, usage_tables):
     def task(task_id):
         return tasks.setdefault(task_id, {"assignments": [], "provider_attempts": [], "effects": [],
                                           "slack_deliveries": [], "status_receipts": [], "provider_usage": [],
-                                          "execution_mode": None, "artifacts": [],
+                                          "execution_mode": None, "result_artifacts": [], "work_packets": [],
                                           "absent": [] if usage_tables else ["provider_usage"]})
 
     reads = [(name, qualification_section_sql(schema, name, all_tasks=True)) for name in names]
-    reads += [("execution_mode", _TASK_MODES.format(s=schema)), ("artifacts", _ARTIFACT_ROWS.format(s=schema))]
+    reads += [("execution_mode", _TASK_MODES.format(s=schema))]
     projections = []
     for name, query in reads:
         rows = connection.execute(query, limit).fetchall()
@@ -732,10 +822,14 @@ def _global_task_evidence(connection, schema, usage_tables):
             if name == "execution_mode":
                 task(row["task_id"])["execution_mode"] = row["execution_mode"]
                 projections.append(row)
-            elif name == "artifacts":
-                task(row["task_id"])["artifacts"].append(row)
             else:
                 task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
+    for kind, name in (("result", "result_artifacts"), ("work", "work_packets")):
+        rows = packet_rows(connection, schema, kind)
+        if len(rows) > EVIDENCE_ROW_CAP:
+            return {key: None for key in keys}
+        for row in rows:
+            task(row["task_id"])[name].append(row)
     counts = dict.fromkeys(keys, 0)
     for row in projections:
         try:
@@ -753,18 +847,12 @@ def _global_task_evidence(connection, schema, usage_tables):
             state = states.get(category)
             counts[key] += errors[category] is None and state is not None and state[0] == "in_flight"
         by_id = {row["assignment_id"]: row for row in sections["assignments"]}
-        for row in sections["artifacts"]:
+        for row in sections["result_artifacts"]:
             assignment = by_id.get(row["assignment_id"])
             if assignment is None:  # a packet for no durable assignment of its task (no such foreign key exists)
                 counts["result_artifacts_invalid"] += 1
                 continue
-            try:
-                provider, verified = _result_packet_artifact_from_row(row).packet.get("provider"), True
-            except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
-                provider, verified = None, False
-            conflict = artifact_assignment_conflict(
-                {"verified": verified, "provider": provider, "document_digest": row["document_digest"],
-                 "recorded_at": _plain(row["recorded_at"])}, assignment)
+            conflict = artifact_assignment_conflict(row, assignment)
             counts["result_artifacts_in_flight"] += conflict == "in_flight"
             counts["result_artifacts_invalid"] += conflict not in (None, "in_flight")
     return counts
@@ -830,24 +918,22 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                     " WHERE task_id = ANY(%(tasks)s)", {"tasks": tasks}).fetchall()}
                 # Each persisted provider result packet, revalidated against its stored digest exactly as the
                 # Director reloads it; content that fails revalidation attests nothing and carries no outcome.
-                artifacts = []
-                for r in connection.execute(
-                        "SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,"
-                        f" writer_fencing_generation, recorded_at FROM {schema}.director_primary_result_packet_artifact"
-                        " WHERE task_id = ANY(%(tasks)s) ORDER BY task_id, assignment_id", {"tasks": tasks}).fetchall():
-                    try:
-                        packet = _result_packet_artifact_from_row(r).packet
-                        outcome, provider, verified = packet.get("outcome"), packet.get("provider"), True
-                    except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
-                        outcome, provider, verified = None, None, False
-                    artifacts.append({"task_id": r["task_id"], "assignment_id": r["assignment_id"],
-                                      "document_digest": r["document_digest"], "outcome": outcome,
-                                      "provider": provider, "verified": verified,
-                                      "recorded_at": _plain(r["recorded_at"])})
+                artifacts = packet_rows(connection, schema, "result", tasks=tasks)
+                work_packets = packet_rows(connection, schema, "work", tasks=tasks)
+                # Which effect each external-effect approval authorized (the graph's effect approval binding).
+                approval_bindings = [_row(r) for r in connection.execute(
+                    f"SELECT task_id, effect_key_digest, approval_request_digest FROM "
+                    f"{schema}.director_primary_effect_approval_binding WHERE task_id = ANY(%(tasks)s)",
+                    {"tasks": tasks}).fetchall()]
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
                                          "result_artifacts": [{k: v for k, v in a.items() if k != "task_id"}
                                                               for a in artifacts if a["task_id"] == task_id],
+                                         "work_packets": [{k: v for k, v in a.items() if k != "task_id"}
+                                                          for a in work_packets if a["task_id"] == task_id],
+                                         "effect_approval_bindings": [
+                                             {k: v for k, v in b.items() if k != "task_id"}
+                                             for b in approval_bindings if b["task_id"] == task_id],
                                          "application": applications.get(task_id),
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
@@ -974,15 +1060,13 @@ def activation_capture_report(settings, identity, manifest) -> dict:
         service = PrimaryProviderActivationService(store=SimpleNamespace(load=store.load),
             bindings=settings.primary_provider_activation_bindings(),
             required_providers=settings.langgraph_primary_required_providers, capture_verifier=verifier)
-        lanes = service.capture_attestations()
+        # The product is named from the exact bytes the verifier read and verified, in the same call.
+        lanes = service.capture_attestations(classify=_capture_product)
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         surface = lane["surfaces"].get("runtime_adapter")
-        product = None
-        if surface is not None and surface["capture_verified"] is True:
-            row = verifier.store.load_capture(surface["evidence_digest"])
-            product = _capture_product(provider, bytes(row[2])) if row is not None else None
-        lane["product"] = product
+        lane["product"] = surface.get("product") if isinstance(surface, dict) and surface.get("capture_verified") is True \
+            else None
         # The persisted insertion time, not the caller-supplied observed_at, says when each surface gated anything;
         # provider_ready needs both surfaces, so both are reported.
         for name, each in lane["surfaces"].items():
@@ -1021,3 +1105,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
