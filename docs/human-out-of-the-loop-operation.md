@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
@@ -416,7 +417,10 @@ review can never pass. With native lanes excluded and the Claude bridge lane
 not attestable, the one pair that could complete a small task is an OpenAI
 Responses producer with an attested Grok bridge reviewer, whose result must
 carry structured acceptance evidence with every check PASS; readiness reports
-armed only when such a pair exists and, by the same budget and token predicate
+armed only when the deployment has one starting ref (its project pin, or the
+sole `ALLOWED_STARTING_REFS` entry, from the same helper `preview_plan` uses
+for every task's ref and branch; several refs and no pin arm nothing and
+pre-authorize nothing), when such a pair exists and, by the same budget and token predicate
 eligibility applies, could be eligible: the costs the deployment's plan
 builder would freeze for that pair (each lane's configured attempt budget
 times three when live, so the default equal split of a $2 task budget never
@@ -443,8 +447,16 @@ or holding a credential-bearing value (a provider, chat or cloud token such as
 `sk-`, `pk-`, `rk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, a fine-grained
 `github_pat_`, `xox?-` or `AKIA`, one list the public-research query block
 shares; URI user information, an Authorization
-or Bearer value, a JWT, an AWS access key, a connection-string password, or a
-high-entropy value assigned in an env or config line), or holding a raw
+or Bearer value, a JWT, an AWS access key, a connection-string password, a
+Slack, Discord or Office webhook URL, a URL whose query carries a `token`,
+`key`, `sig`, `signature`, `access_token`, `api_key` or `secret` parameter in
+any case, or a high-entropy value assigned in an env or config line), or
+holding an opaque high-entropy token of any format (the backstop: a run of 24
+or more token characters, split at `/`, `=` and `_`, with a segment of 12 or
+more that mixes lower case, upper case and digits, has no six-digit run, is
+not mostly lower-case words and carries at least 3.0 bits a character;
+lower-case hex digests and UUIDs never match, and it passes every tracked
+doc, prompt and source file of this repository), or holding a raw
 identifier with no label (an e-mail address, social security
 number, phone number, card, IBAN or routing number that passes its checksum,
 IP address, street address, a date next to a birth label, or a passport-like
@@ -476,7 +488,11 @@ sandbox". A host-bridge lane joins the class only when the bridge's
 HMAC-authenticated challenge reports the exact argv it runs for that lane, the
 Director re-checks that argv against the lane's read-only restriction set in
 `bridge_attestation.py`, and its digest equals the owner's pin in
-`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. A small task's dispatch
+`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. Every bridge HTTP body,
+the challenge, the dispatch response, its signed refusal and the host's
+request body, is read in small chunks against one absolute deadline, each
+chunk's socket wait clamped to what is left, so a peer that trickles bytes
+cannot keep a read open past it. A small task's dispatch
 re-challenges the bridge before admission, and again immediately before every
 bridge send, each producer retry and reviewer attempt included; if the
 attestation is gone, changed, or cannot be authenticated, nothing is sent
@@ -808,3 +824,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->

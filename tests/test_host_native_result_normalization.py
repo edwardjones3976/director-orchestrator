@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -16,6 +17,7 @@
 from copy import deepcopy
 from decimal import Decimal
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -112,6 +114,8 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
             digest = hashlib.sha256(body).hexdigest()
             response = MagicMock()
             response.read.return_value = body
+            # Read in bounded chunks, as a real HTTPResponse is.
+            response.read1 = io.BytesIO(body).read1
             response.headers = {
                 "X-Director-Response-Digest": digest,
                 "X-Director-Response-Proof": bridge_response_signature(
@@ -701,3 +705,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | END]]

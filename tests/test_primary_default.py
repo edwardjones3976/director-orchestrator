@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -1187,6 +1188,32 @@ class StandingGrantExerciseTests(unittest.TestCase):
                 self.assertEqual(expected, len(observed))
                 if observed:
                     self.assertLessEqual(observed[0] - start, 5.5)
+
+    def test_the_plan_and_readiness_bind_the_sole_configured_starting_ref(self):
+        """No pin and one ref: the plan, the prestage branch and readiness all
+        use it. Several refs and no pin: nothing arms and nothing is exercised."""
+
+        from director_orchestrator.policy import plan_starting_ref
+
+        release = replace(self.settings, allowed_starting_refs=("release/x",),
+                          delegation_grant_json=small_grant(branch_pattern="release/x"))
+        self.assertEqual("release/x", plan_starting_ref(release))
+        plan = preview_plan(SMALL_TEXT, release)
+        self.assertEqual({"release/x"}, {item.starting_ref for item in plan.assignments})
+        self.assertEqual("release/x", plan.prestage.branch)
+        self.assertTrue(self.application(
+            allowed_starting_refs=("release/x",),
+            delegation_grant_json=small_grant(branch_pattern="release/x")).pre_execution_capable())
+        # A grant for main does not cover a deployment bound to release/x.
+        self.assertFalse(self.application(
+            allowed_starting_refs=("release/x",)).pre_execution_capable())
+        several = replace(self.settings, allowed_starting_refs=("main", "release/x"))
+        self.assertIsNone(plan_starting_ref(several))
+        self.assertFalse(self.application(
+            allowed_starting_refs=("main", "release/x")).pre_execution_capable())
+        record = self.record()
+        self.assertFalse(self.exercise(self.application(
+            allowed_starting_refs=("main", "release/x")), record))
 
     def test_a_proven_no_run_terminal_records_no_trip(self):
         application = self.application()
@@ -6043,3 +6070,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

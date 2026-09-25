@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
@@ -198,6 +199,7 @@ from .policy import (
     canonical_repository,
     preview_plan,
     SMALL_TASK_PRODUCER_ONLY_LANES,
+    plan_starting_ref,
     plan_within_limits,
     small_read_only_eligible,
     small_task_costs_admissible,
@@ -2813,7 +2815,8 @@ class DefaultPrimaryApplication:
         lanes = [_assignment_provider_lane(item) for item in ordered]
         prestage = plan.prestage
         try:
-            covered = prestage is not None and grant.covers(
+            # Several starting refs and no pin: no single ref to authorize.
+            covered = plan_starting_ref(settings) is not None and prestage is not None and grant.covers(
                 Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
                 repository=canonical_repository(prestage.repository),
                 branch=DirectorPacketTaskRouter._authority_base_ref(producer),
@@ -3020,9 +3023,12 @@ class DefaultPrimaryApplication:
             return False
         if grant is None or not grant.live_at(datetime.now(timezone.utc)):
             return False
-        # The repository and starting ref preview_plan gives every task.
-        commit, tree = settings.project_execution_authority_pins()
-        branch = commit if commit and tree else "main"
+        # The repository and starting ref preview_plan gives every task, from
+        # the one helper it uses; several refs and no pin arm nothing.
+        ref = plan_starting_ref(settings)
+        if ref is None:
+            return False
+        branch = ref.removeprefix("refs/heads/").removeprefix("origin/")
         in_scope = bool(settings.repository_allowlist) and grant.covers(
             Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
             repository=canonical_repository(settings.repository_allowlist[0]),
@@ -5135,3 +5141,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

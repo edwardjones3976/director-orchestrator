@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -186,6 +187,21 @@ def configuration_digests(executor, account_files, routed=None) -> dict[str, str
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # One absolute bound for reading a request body, whatever its pace.
+    _BODY_READ_SECONDS = 30.0
+
+    def _read_body(self, length: int) -> bytes:
+        from .host_provider_bridge import read_until_deadline
+
+        from .host_provider_bridge import HostProviderBridgeError
+
+        try:
+            return read_until_deadline(
+                self.rfile, limit=length, exact=True, sock=self.connection,
+                deadline=time.monotonic() + self._BODY_READ_SECONDS)
+        except (TimeoutError, OSError) as exc:
+            raise HostProviderBridgeError("request body was not received in time") from exc
+
     server_version = "DirectorHostBridge/1"
     # A restart invalidates deadlines mapped from an earlier host process.
     _clock_id = secrets.token_hex(16)
@@ -317,7 +333,7 @@ class _Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 1024:
                     raise ValueError("validation request size invalid")
-                request = ValidationRequest.model_validate_json(self.rfile.read(length))
+                request = ValidationRequest.model_validate_json(self._read_body(length))
                 result = service.run(request, authorization.removeprefix("Bearer "))
                 self._json(200, {"ok": True, **result})
             except Exception:
@@ -347,7 +363,7 @@ class _Handler(BaseHTTPRequestHandler):
                 timestamp=int(self.headers.get("X-Director-Bridge-Timestamp", "0")),
                 nonce=self.headers.get("X-Director-Bridge-Nonce", ""),
                 signature=authorization.removeprefix("Director-HMAC "),
-                packet=self.rfile.read(length),
+                packet=self._read_body(length),
                 # Present only for a redacted lane. It is covered by the request
                 # signature, so stripping or forging it fails authentication.
                 work_packet_digest=self.headers.get(
@@ -498,3 +514,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

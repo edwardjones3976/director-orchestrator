@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -105,6 +106,81 @@ class HostBridgeAttestationStale(RuntimeError):
 
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _socket_of(stream: object) -> Any:
+    """The socket under an HTTP response, an HTTPError or a request file."""
+
+    for path in (("fp", "raw", "_sock"), ("fp", "fp", "raw", "_sock"), ("raw", "_sock"),
+                 ("_sock",)):
+        current = stream
+        for name in path:
+            current = getattr(current, name, None)
+            if current is None:
+                break
+        if current is not None and callable(getattr(current, "settimeout", None)):
+            return current
+    return None
+
+
+def _clamp(sock: Any, remaining: float) -> None:
+    """Clamp the next socket wait to what is left. A socket already closed
+    (a fully buffered response) has nothing left to wait for."""
+
+    if sock is None:
+        return
+    try:
+        sock.settimeout(remaining)
+    except OSError:
+        pass
+
+
+def read_until_deadline(stream: object, *, limit: int, deadline: float,
+                        exact: bool = False, sock: Any = None) -> bytes:
+    """Read at most ``limit + 1`` bytes (exactly ``limit`` when ``exact``),
+    never past the absolute ``deadline``.
+
+    Small chunks, each with its socket timeout clamped to what is left, and
+    the clock checked after every chunk: a peer trickling bytes cannot keep a
+    read open past the deadline the way a per-read inactivity timeout lets
+    it. Raises TimeoutError at the deadline.
+    """
+
+    sock = sock if sock is not None else _socket_of(stream)
+    target = limit if exact else limit + 1
+    reader = getattr(stream, "read1", None)
+    if not callable(reader):
+        # A stream without chunked reads gets one read, still bounded to
+        # what is left and checked against the clock after it.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded read reached its deadline")
+        _clamp(sock, remaining)
+        data = stream.read(target)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("bounded read reached its deadline")
+        if exact and len(data) != limit:
+            raise ValueError("request body ended before its declared length")
+        return data
+    chunks: list[bytes] = []
+    size = 0
+    while size < target:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded read reached its deadline")
+        _clamp(sock, remaining)
+        chunk = reader(min(8192, target - size))
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise TypeError("a bounded read returned something other than bytes")
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("bounded read reached its deadline")
+    if exact and size != limit:
+        raise ValueError("request body ended before its declared length")
+    return b"".join(chunks)
 
 
 def _require_token(value: str, name: str) -> str:
@@ -246,12 +322,16 @@ def challenge_host_provider_bridge(
         },
         method="GET",
     )
+    # One absolute bound for the whole challenge, never past the caller's.
+    read_deadline = time.monotonic() + timeout_seconds
+    if deadline is not None:
+        read_deadline = min(read_deadline, deadline)
     try:
         with urllib.request.build_opener(_NoRedirectHandler()).open(
-            request, timeout=timeout_seconds
+            request, timeout=max(0.001, read_deadline - time.monotonic())
         ) as response:
-            payload = response.read(65_537)
-    except (urllib.error.URLError, TimeoutError) as exc:
+            payload = read_until_deadline(response, limit=65_536, deadline=read_deadline)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise HostProviderBridgeError("host bridge challenge is unavailable") from exc
     if not payload or len(payload) > 65_536:
         raise HostProviderBridgeError("host bridge challenge response is not bounded")
@@ -979,17 +1059,24 @@ class HostBridgePacketTransport:
             remaining = cutoff - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError("host bridge deadline expired before dispatch")
+        read_deadline = (cutoff if cutoff is not None
+                         else time.monotonic() + remaining)
         try:
             with urllib.request.build_opener(_NoRedirectHandler()).open(
                 request, timeout=remaining
             ) as response:
-                payload = response.read(_MAX_RESULT_BYTES + 1)
+                payload = read_until_deadline(
+                    response, limit=_MAX_RESULT_BYTES, deadline=read_deadline)
                 response_digest = response.headers.get("X-Director-Response-Digest", "")
                 response_proof = response.headers.get("X-Director-Response-Proof", "")
         except urllib.error.HTTPError as exc:
             # Only an authenticated refusal of the argv proves nothing ran.
             if exc.code == 403 and attested_argv_digest:
-                body = exc.read(4096)
+                try:
+                    body = read_until_deadline(exc, limit=4095, deadline=read_deadline)
+                except (TimeoutError, OSError):
+                    raise RuntimeError(
+                        "host provider bridge outcome is ambiguous") from exc
                 proof = bridge_response_signature(
                     self.secret, nonce=nonce, idempotency_digest=idempotency_digest,
                     response_digest=_digest(body))
@@ -1084,3 +1171,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

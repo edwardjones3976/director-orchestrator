@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -336,6 +337,63 @@ class HostProviderBridgeTests(unittest.TestCase):
                     self.assertRaises(HostProviderBridgeError):
                 self.store.claim(plain)
 
+    def test_a_trickled_challenge_body_is_cut_off_at_the_deadline(self) -> None:
+        """Over real HTTP: a server sending one byte every 0.2 s never lets the
+        inactivity timeout fire; the absolute deadline ends the read."""
+
+        import socket
+        import time as time_module
+        from director_orchestrator.host_provider_bridge import challenge_host_provider_bridge
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        self.addCleanup(listener.close)
+
+        def trickle():
+            connection, _ = listener.accept()
+            with connection:
+                connection.recv(65536)
+                connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 400\r\n\r\n")
+                for _ in range(40):
+                    try:
+                        connection.sendall(b"x")
+                    except OSError:
+                        return
+                    time_module.sleep(0.2)
+
+        threading.Thread(target=trickle, daemon=True).start()
+        started = time_module.monotonic()
+        with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}), \
+                self.assertRaises(HostProviderBridgeError):
+            challenge_host_provider_bridge(
+                f"http://127.0.0.1:{port}/v1/provider/dispatch", SECRET, timeout_seconds=1.0)
+        self.assertLess(time_module.monotonic() - started, 2.5)
+
+    def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
+        import time as time_module
+        from director_orchestrator.host_provider_bridge import read_until_deadline
+
+        class Trickle:
+            def read1(self, size):
+                time_module.sleep(0.1)
+                return b"x"
+
+        started = time_module.monotonic()
+        with self.assertRaises(TimeoutError):
+            read_until_deadline(Trickle(), limit=1000, deadline=started + 0.35)
+        self.assertLess(time_module.monotonic() - started, 1.0)
+        with self.assertRaises(TimeoutError):
+            read_until_deadline(Trickle(), limit=1000, exact=True, deadline=started + 0.35)
+        self.assertEqual(b"abc", read_until_deadline(
+            io.BytesIO(b"abc"), limit=3, exact=True, deadline=time_module.monotonic() + 1))
+        with self.assertRaises(ValueError):
+            read_until_deadline(io.BytesIO(b"ab"), limit=3, exact=True,
+                                deadline=time_module.monotonic() + 1)
+        with self.assertRaises(TimeoutError):
+            read_until_deadline(io.BytesIO(b"abc"), limit=3, deadline=time_module.monotonic() - 1)
+
     def test_a_store_created_before_the_refused_state_is_migrated_in_place(self) -> None:
         import sqlite3
 
@@ -609,6 +667,8 @@ class HostProviderBridgeTests(unittest.TestCase):
     def _bridge_response(body: bytes, nonce: str, idempotency_digest: str):
         response = MagicMock()
         response.read.return_value = body
+        # The transport reads in bounded chunks, as a real HTTPResponse does.
+        response.read1 = io.BytesIO(body).read1
         response.headers = {
             "X-Director-Response-Digest": _digest(body),
             "X-Director-Response-Proof": bridge_response_signature(
@@ -1530,3 +1590,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

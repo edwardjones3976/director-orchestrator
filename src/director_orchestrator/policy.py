@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
@@ -688,6 +689,13 @@ _CREDENTIAL_FORMATS = re.compile(
     r"|\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"
     r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"
     r"|(?i:\b(?:password|passwd|pwd)\s*=\s*[^;\s]+)"
+    # Webhook URLs whose path is itself the credential.
+    r"|(?i:\bhttps?://(?:hooks\.slack\.com/(?:services|workflows|triggers)/"
+    r"|(?:[a-z0-9-]+\.)*discord(?:app)?\.com/api/webhooks/"
+    r"|(?:[a-z0-9-]+\.)*webhook\.office\.com/)\S+)"
+    # Any URL whose query carries a credential-bearing parameter.
+    r"|(?i:\bhttps?://[^\s?#]*\?[^\s#]*?(?<=[?&])"
+    r"(?:token|key|sig|signature|access_token|api_key|apikey|secret|client_secret)=[^&\s#]+)"
 )
 _ASSIGNED_VALUE = re.compile(r"[:=]\s*[\"']?([A-Za-z0-9+/_\-]{20,}={0,2})[\"']?")
 
@@ -698,6 +706,37 @@ def _high_entropy(value: str) -> bool:
                    for count in counts.values())
     return (entropy >= 3.5 and any(character.isdigit() for character in value)
             and any(character.isalpha() for character in value))
+
+
+# The fail-closed backstop for credential formats no named pattern lists: a
+# run of 24 or more token characters, split at "/", "=" and "_", any segment
+# of 12 or more characters that mixes lower case, upper case and digits, has
+# no run of six digits (timestamps, account numbers), is not mostly
+# lower-case words, and carries at least 3.0 bits a character. Lower-case hex
+# (git SHAs, digests) and UUIDs never mix cases, so never match. Tuned against
+# every tracked file of this repository (see the policy tests); a false
+# positive refuses the task back to the owner, the safe direction.
+_OPAQUE_RUN = re.compile(r"(?<![A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{24,}(?![A-Za-z0-9_+/=-])")
+
+
+def _opaque_segment(segment: str) -> bool:
+    if (len(segment) < 12 or not re.search(r"[a-z]", segment)
+            or not re.search(r"[A-Z]", segment) or not re.search(r"[0-9]", segment)
+            or re.search(r"[0-9]{6,}", segment)):
+        return False
+    words = sum(len(run) for run in re.findall(r"[a-z]{3,}|[A-Z]{4,}", segment))
+    counts = {character: segment.count(character) for character in set(segment)}
+    entropy = -sum(count / len(segment) * math.log2(count / len(segment))
+                   for count in counts.values())
+    return words <= 0.6 * len(segment) and entropy >= 3.0
+
+
+def holds_opaque_token(text: str) -> bool:
+    """Whether text carries a high-entropy opaque token of any format."""
+
+    return any(_opaque_segment(segment)
+               for match in _OPAQUE_RUN.finditer(text)
+               for segment in re.split(r"[/=_]+", match.group(0)))
 
 
 def holds_credential(text: str) -> bool:
@@ -723,6 +762,7 @@ def small_task_content_screened(text: str) -> bool:
     return (bool(reasons & {"sensitive data", "credential or permission change"})
             or any(_PERSONAL_DATA.search(form) for form in forms)
             or holds_credential(text)
+            or holds_opaque_token(text)
             or holds_identifier_format(text))
 
 
@@ -769,6 +809,22 @@ def _read_only_request(text: str) -> bool:
         and not holds_identifier_format(body)
         and not holds_credential(body)
     )
+
+
+def plan_starting_ref(settings: Settings) -> str | None:
+    """The ref every unpinned plan and readiness bind, from one place.
+
+    The project's pinned commit when pinned; otherwise the sole configured
+    starting ref, the one the repository authority binds its starting commit
+    to. None when several refs are configured and nothing is pinned: nothing
+    guesses between them.
+    """
+
+    commit, tree = settings.project_execution_authority_pins()
+    if commit and tree:
+        return commit
+    refs = [ref for ref in settings.allowed_starting_refs if ref]
+    return refs[0] if len(refs) == 1 else None
 
 
 def plan_within_limits(plan: DirectorPlan, settings: Settings) -> bool:
@@ -1926,7 +1982,9 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     )
     pinned_commit, pinned_tree = settings.project_execution_authority_pins()
     pinned_mode = bool(pinned_commit and pinned_tree)
-    plan_starting_ref = pinned_commit if pinned_mode else "main"
+    # With several refs and no pin there is no single ref: the preview keeps
+    # "main", and nothing pre-authorizes (plan_starting_ref is None there).
+    plan_ref = plan_starting_ref(settings) or "main"
     plan_worktree = (
         str(Path(settings.repository_snapshot_root).resolve())
         if pinned_mode
@@ -1949,7 +2007,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
         public_research_query=public_research_query,
         repository=assignment_repository,
-        starting_ref=plan_starting_ref,
+        starting_ref=plan_ref,
         requires_approval=provider == ProviderName.PERPLEXITY,
         estimated_cost_usd=0,
     )
@@ -1965,7 +2023,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
                 task=ANTIGRAVITY_CONSUMER_TASK,
                 acceptance=list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
                 repository=preview_repository,
-                starting_ref=plan_starting_ref,
+                starting_ref=plan_ref,
                 depends_on=[1],
                 estimated_cost_usd=0,
             )
@@ -1987,7 +2045,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             task="Independently review the bounded dry-run plan and required evidence",
             acceptance=["Report contradictions, missing evidence, and unresolved risk"],
             repository=preview_repository,
-            starting_ref=plan_starting_ref,
+            starting_ref=plan_ref,
             depends_on=[reviewed_sequence],
             estimated_cost_usd=0,
         )
@@ -2017,7 +2075,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             terminal_condition="\n".join(final_acceptance),
             repository=preview_repository,
             worktree=plan_worktree,
-            branch=plan_starting_ref,
+            branch=plan_ref,
             base_sha=pinned_commit if pinned_mode else "0" * 40,
             candidate_sha=None,
             producer=producer,
@@ -2097,3 +2155,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

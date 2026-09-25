@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -1019,6 +1020,93 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertTrue(small_task_content_screened(f"# Notes\n\nuse {token} here\n"))
                 self.assertIsNotNone(research.search(f"what is {token} used for"))
 
+    def test_credential_bearing_urls_are_screened_as_a_class(self) -> None:
+        """Webhook URLs whose path is the secret, and any URL whose query
+        carries a credential parameter, in any case. Built at runtime."""
+
+        import secrets
+        from director_orchestrator.policy import holds_credential, small_task_content_screened
+
+        scheme, slash = "https" + ":" + "//", "/"
+        secret = secrets.token_urlsafe(18)
+        urls = {
+            "slack": scheme + "hooks.slack.com" + slash + "services" + slash + "T0" + "AAAA"
+                     + slash + "B0" + "BBBB" + slash + secret,
+            "discord": scheme + "discord.com" + slash + "api" + slash + "webhooks" + slash
+                       + "123" + slash + secret,
+            "office": scheme + "contoso.webhook.office.com" + slash + "webhookb2" + slash + secret,
+        }
+        for name in ("token", "key", "sig", "signature", "access_token", "api_key", "secret",
+                     "TOKEN", "Api_Key"):
+            urls["query_" + name] = (scheme + "example.org" + slash + "hook?x=1&" + name
+                                     + "=" + secret)
+        for name, url in urls.items():
+            with self.subTest(url=name):
+                self.assertTrue(holds_credential(url))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\nSee {url} here.\n"))
+        for ordinary in (scheme + "example.org" + slash + "docs?page=2",
+                         scheme + "hooks.slack.com" + slash + "docs"):
+            with self.subTest(ordinary=ordinary):
+                self.assertFalse(holds_credential(ordinary))
+
+    def test_an_opaque_high_entropy_token_is_refused_in_file_text(self) -> None:
+        """The backstop for credential formats no pattern names."""
+
+        import base64
+        import secrets
+        import string
+        import uuid
+        from director_orchestrator.policy import holds_opaque_token, small_task_content_screened
+
+        alphabet = string.ascii_letters + string.digits
+        refused = 0
+        samples = 0
+        for _ in range(200):
+            for token in (base64.b64encode(secrets.token_bytes(32)).decode(),
+                          base64.urlsafe_b64encode(secrets.token_bytes(24)).decode().rstrip("="),
+                          "".join(secrets.choice(alphabet) for _ in range(40))):
+                samples += 1
+                refused += holds_opaque_token(f"value: {token}")
+        # Random 24-, 32- and 40-character tokens: nearly all are caught.
+        self.assertGreaterEqual(refused / samples, 0.97)
+        token = "".join(secrets.choice(alphabet) for _ in range(40))
+        while not holds_opaque_token(token):
+            token = "".join(secrets.choice(alphabet) for _ in range(40))
+        self.assertTrue(small_task_content_screened(f"# Notes\n\nuse {token} here\n"))
+        # Lower-case hex digests, UUIDs, identifiers and prose never match.
+        ordinary = [
+            secrets.token_hex(20), secrets.token_hex(32), str(uuid.uuid4()),
+            "sha256:" + secrets.token_hex(32), "test_a_blob_read_spends_the_shared_deadline",
+            "EntitlementOwnerActionV1", "backup-stageA-20260907T062414Z",
+            "com/example/project/blob/" + secrets.token_hex(20) + "/README",
+            "DIRECTOR_OPERATING_DIRECTIVE_SHA256=" + secrets.token_hex(32),
+        ]
+        for text in ordinary:
+            with self.subTest(ordinary=text[:40]):
+                self.assertFalse(holds_opaque_token(text))
+
+    def test_the_opaque_token_backstop_passes_every_tracked_doc_and_source_file(self) -> None:
+        """The negative corpus: this repository's own docs, prompts and source."""
+
+        import subprocess
+        from director_orchestrator.policy import holds_opaque_token
+
+        listed = subprocess.run(
+            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            cwd=ROOT, capture_output=True, text=True, check=False)
+        if listed.returncode != 0:
+            self.skipTest("git is unavailable")
+        checked = []
+        for name in listed.stdout.split():
+            try:
+                text = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            checked.append(name)
+            with self.subTest(file=name):
+                self.assertFalse(holds_opaque_token(text))
+        self.assertGreater(len(checked), 200)
+
     def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
         import subprocess as subprocess_module
         import time as time_module
@@ -1381,3 +1469,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
