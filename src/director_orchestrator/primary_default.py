@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -1080,9 +1081,14 @@ def _bounded_audit_history(ledger: Any, *, deadline: float | None = None) -> lis
         except DelegationAuditDeadlineExceeded:
             return None
         history.extend(page)
+        # A history of exactly the ceiling is whole; one more record is not.
+        # A full last page is followed by one more read, which comes back
+        # empty at the ceiling and holds the extra record past it.
+        if len(history) > _AUDIT_HISTORY_MAX_RECORDS:
+            return None
         if len(page) < 1_000:
             return history
-        if len(history) >= _AUDIT_HISTORY_MAX_RECORDS or monotonic() > deadline:
+        if monotonic() > deadline:
             return None
         after = page[-1].digest
 
@@ -5187,3 +5193,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]

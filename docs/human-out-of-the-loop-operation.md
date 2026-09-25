@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
@@ -243,7 +244,8 @@ suspended, a workload hold, a deployment that cannot execute, or a ledger that
 is absent or latched) and an exercise lost to a concurrent writer write no
 record; nothing runs without the button in either case. Neither does an
 exercise whose audit history is too long or too slow to read within its bound
-(10,000 records or five seconds, the deadline enforced inside the ledger's
+(more than 10,000 records, a history of exactly 10,000 being read whole, or
+five seconds, the deadline enforced inside the ledger's
 own verifying scan, and in the verification every audit append repeats; the
 wait for the store's lock and SQLite's busy wait spend the same deadline, which
 is checked again before the audit anchor advances, and every anchor read and
@@ -445,10 +447,16 @@ configuration: one turn, no tools, read-only, and a bounded compact input. Each 
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
 credential approval gate or the request text's personal-data exclusion (as
 written or with identifiers split into words), holding a secret-shaped value,
-or holding a credential-bearing value (a provider, chat or cloud token such as
-`sk-`, `pk-`, `rk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, a fine-grained
-`github_pat_`, `xox?-` or `AKIA`, one list the public-research query block
-shares; URI user information, an Authorization
+or holding a credential-bearing value (a vendor-prefixed token: any prefix in
+the one `VENDOR_TOKEN_PREFIXES` table the public-research query block shares,
+modelled on GitHub secret scanning and gitleaks (OpenAI, Anthropic, xAI,
+GitHub, GitLab, npm, PyPI, Hugging Face, Slack, Shopify, DigitalOcean,
+SendGrid, Stripe, Square, Meta, Google, Linear, Notion, Databricks,
+Atlassian, AWS), followed by 8 or more token characters that are not
+lower-case words joined by separators; a generic prefixed token, 2-10 letters
+and a separator before 16 or more token characters, when the prefix ends in
+`pat`, `key`, `token`, `secret` or `api` (or is `sk`) or the suffix holds a
+12-character segment mixing cases and digits; URI user information, an Authorization
 or Bearer value, a JWT, an AWS access key, a connection-string password, a
 Slack, Discord or Office webhook URL, a URL whose query carries a `token`,
 `key`, `sig`, `signature`, `access_token`, `api_key` or `secret` parameter in
@@ -845,3 +853,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->

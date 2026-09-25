@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -239,13 +240,31 @@ _PERPLEXITY_PROHIBITED_AUTHORITY: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("operational decision", re.compile(r"\b(?:assess|decide|determine|recommend|judge)\b.{0,60}\b(?:patch|pull request|pr|ship|merge|deploy|release|acceptance)\b", re.I | re.S)),
 )
 
-# Provider, chat and cloud token formats. The public-research query block and
-# the credential/file-content screen (_SECRET_SHAPED) both use this one list,
-# so neither can miss a prefix the other knows. Each length floor is the lower
-# of the two lists' former floors.
+# Vendor token prefixes, in the one table the public-research query block and
+# the credential screens both use, modelled on the well-known secret-scanning
+# sets (GitHub secret scanning, gitleaks). After a known prefix, 8 or more
+# token characters of any class count. Longer prefixes come first so the
+# alternation prefers them.
+VENDOR_TOKEN_PREFIXES: tuple[str, ...] = tuple(sorted({
+    # OpenAI, Anthropic, xAI and generic sk-/pk-/rk- keys
+    "sk-", "sk-proj-", "sk-ant-", "pk-", "rk-", "xai-",
+    # GitHub
+    "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+    # GitLab
+    "glpat-", "glptt-", "gldt-", "glrt-",
+    # Package registries and model hubs
+    "npm_", "pypi-", "hf_",
+    # Slack
+    "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-", "xoxe-", "xapp-",
+    # Shopify, DigitalOcean, SendGrid, Stripe, Square, Meta
+    "shpat_", "shpss_", "dop_v1_", "doo_v1_", "SG.",
+    "sk_live_", "sk_test_", "rk_live_", "pk_live_", "whsec_", "sq0atp-", "EAAC",
+    # Google, Linear, Notion, Databricks, Atlassian, AWS
+    "AIza", "ya29.", "lin_api_", "ntn_", "secret_", "dapi", "ATTA", "AKIA", "ASIA",
+}, key=lambda prefix: (-len(prefix), prefix)))
 _TOKEN_FORMATS = (
-    r"(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}"
-    r"|github_pat_[A-Za-z0-9_]{12,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}\b"
+    "(?:" + "|".join(re.escape(prefix) for prefix in VENDOR_TOKEN_PREFIXES) + ")"
+    r"[A-Za-z0-9_.+/-]{8,}"
 )
 
 _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -253,7 +272,7 @@ _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repository URL", re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+", re.I)),
     ("commit SHA", re.compile(r"\b[0-9a-f]{40}\b", re.I)),
     ("secret-like value", re.compile(
-        rf"-----BEGIN [A-Z ]*PRIVATE KEY|\b(?:{_TOKEN_FORMATS})", re.I)),
+        rf"-----BEGIN [A-Z ]*PRIVATE KEY|(?<![A-Za-z0-9_.-])(?:{_TOKEN_FORMATS})", re.I)),
     ("diff or source excerpt", re.compile(r"(?:diff --git|@@ -\d|```(?:python|javascript|typescript|diff|json)?\s)", re.I)),
     ("private-context language", re.compile(r"\b(?:private|internal|unpublished|our repository|our code|attached patch)\b", re.I)),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
@@ -608,16 +627,51 @@ def _identifier_words(text: str) -> str:
     return re.sub(r"(?<=[A-Za-z0-9])[_.-]+(?=[A-Za-z0-9])|_+", " ", text)
 
 
-# Secret-shaped values: private keys, provider and chat tokens, cloud access
-# keys, and upper-case credential variable names.
-# Token prefixes (_TOKEN_FORMATS: sk-, pk-, rk-, gh?_, github_pat_, xox?-,
-# AKIA) and upper-case variable names keep
-# their case: the formats themselves are case-sensitive. The key header
-# does not need to be.
+# Secret-shaped values: private keys and upper-case credential variable
+# names. Vendor tokens are matched by _holds_prefixed_token below. Variable
+# names keep their case; the key header does not need to.
 _SECRET_SHAPED = re.compile(
-    rf"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)|\b(?:{_TOKEN_FORMATS})"
+    r"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)"
     r"|(?-i:\b[A-Z][A-Z0-9]*_(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)\b)"
 )
+_VENDOR_TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])(" + "|".join(
+    re.escape(prefix) for prefix in VENDOR_TOKEN_PREFIXES) + r")([A-Za-z0-9_.+/-]{8,})")
+# A generic prefixed token: a short alphabetic prefix, one separator, then 16
+# or more token characters.
+_GENERIC_PREFIXED = re.compile(r"\b([A-Za-z]{2,10})[-_]([A-Za-z0-9_\-]{16,})\b")
+_CREDENTIAL_ENDINGS = ("pat", "key", "token", "secret", "api")
+# Lower-case words joined by separators: an identifier or a path, not a token
+# (``secret_scan_passed``, ``xai-responses-api``).
+_WORDS = re.compile(r"[a-z]+(?:[-_.][a-z0-9]+)+")
+
+
+def _mixed_classes(value: str) -> bool:
+    return bool(re.search(r"[a-z]", value) and re.search(r"[A-Z]", value)
+                and re.search(r"[0-9]", value))
+
+
+def _holds_prefixed_token(text: str) -> bool:
+    """A vendor-prefixed token, or a generic prefixed one.
+
+    Vendor: a known prefix and 8 or more token characters, unless they are
+    lower-case words joined by separators. Generic: a prefix of 2-10 letters
+    ending in pat, key, token, secret or api (or exactly sk) whose suffix is
+    not such a word list, or any prefix whose suffix holds a segment of 12 or
+    more characters mixing lower case, upper case and digits.
+    """
+
+    for match in _VENDOR_TOKEN.finditer(text):
+        if not _WORDS.fullmatch(match.group(2).rstrip(".")):
+            return True
+    for match in _GENERIC_PREFIXED.finditer(text):
+        prefix, suffix = match.group(1).lower(), match.group(2)
+        named = prefix == "sk" or prefix.endswith(_CREDENTIAL_ENDINGS)
+        if named and not _WORDS.fullmatch(suffix):
+            return True
+        if any(len(segment) >= 12 and _mixed_classes(segment)
+               for segment in re.split(r"[-_]+", suffix)):
+            return True
+    return False
 
 
 # Raw identifier formats, recognised without any label: e-mail addresses, US
@@ -811,6 +865,7 @@ def holds_credential(text: str) -> bool:
 
     return (_CREDENTIAL_FORMATS.search(text) is not None
             or _SECRET_SHAPED.search(text) is not None
+            or _holds_prefixed_token(text)
             or any(_high_entropy(match.group(1)) for match in _ASSIGNED_VALUE.finditer(text)))
 
 
@@ -2221,3 +2276,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]

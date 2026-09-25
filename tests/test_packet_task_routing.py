@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -1190,6 +1191,83 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertFalse(_read_only_request(f"Summarize README.md for {value}."))
         self.assertTrue(_read_only_request("Summarize README.md for the owner."))
 
+    def test_every_vendor_prefix_needs_only_eight_characters(self) -> None:
+        """One table; any known prefix plus 8 or more token characters is a
+        credential in file text, request text and a research query."""
+
+        import secrets
+        import string
+        from director_orchestrator.policy import (
+            _PUBLIC_RESEARCH_QUERY_BLOCKS, VENDOR_TOKEN_PREFIXES, holds_credential)
+
+        research = dict(_PUBLIC_RESEARCH_QUERY_BLOCKS)["secret-like value"]
+        for prefix in ("glpat-", "glptt-", "gldt-", "glrt-", "npm_", "pypi-", "hf_", "xapp-",
+                       "xoxe-", "shpat_", "shpss_", "dop_v1_", "doo_v1_", "SG.", "sk_live_",
+                       "sk_test_", "rk_live_", "whsec_", "pk_live_", "AIza", "ya29.", "ghr_",
+                       "github_pat_", "sq0atp-", "EAAC", "xai-", "sk-ant-", "sk-proj-",
+                       "lin_api_", "ntn_", "secret_", "dapi", "ATTA"):
+            self.assertIn(prefix, VENDOR_TOKEN_PREFIXES)
+        for prefix in VENDOR_TOKEN_PREFIXES:
+            for suffix in ("".join(secrets.choice(string.ascii_lowercase) for _ in range(20)),
+                           secrets.token_hex(4),
+                           "".join(secrets.choice(string.ascii_letters + string.digits)
+                                   for _ in range(8))):
+                token = prefix + suffix
+                with self.subTest(prefix=prefix, suffix=len(suffix)):
+                    self.assertTrue(holds_credential(f"use {token} here"))
+                    self.assertIsNotNone(research.search(f"what is {token}"))
+        # A known prefix before lower-case words is an identifier, not a token.
+        for identifier in ("secret_scan_passed", "xai-responses-command.py", "sk-learn-pipeline",
+                           "hf_hub_download"):
+            with self.subTest(identifier=identifier):
+                self.assertFalse(holds_credential(identifier))
+
+    def test_a_generic_prefixed_token_is_a_credential(self) -> None:
+        import secrets
+        import string
+        from director_orchestrator.policy import holds_credential
+
+        alphabet = string.ascii_letters + string.digits
+
+        def mixed(length):
+            while True:
+                value = "".join(secrets.choice(alphabet) for _ in range(length))
+                if (any(c.islower() for c in value) and any(c.isupper() for c in value)
+                        and any(c.isdigit() for c in value)):
+                    return value
+
+        for token in ("mypat-" + "q" * 16, "deploykey_" + mixed(18), "apitoken-" + "z" * 20,
+                      "sk_" + "a" * 16, "acme-" + mixed(20), "vendor_" + mixed(14) + "_x"):
+            with self.subTest(token=token[:12]):
+                self.assertTrue(holds_credential(f"value {token} end"))
+        for identifier in ("task_cancelled_before_dispatch", "token_budget_remaining",
+                           "owner_Pro20x_Max5x_not_API_entitlements",
+                           "backup-stageA-20260907T062414Z", "gate-ledger-DIR-COMPLETION-EXAMPLE-1-r2",
+                           "exact-40-character-PR-head", "task_api_gateway_attested"):
+            with self.subTest(identifier=identifier):
+                self.assertFalse(holds_credential(identifier))
+
+    def test_the_prefixed_token_rules_pass_every_tracked_doc_and_source_file(self) -> None:
+        """The negative corpus. policy.py itself holds the prefix table."""
+
+        import subprocess
+        from director_orchestrator.policy import _holds_prefixed_token
+
+        listed = subprocess.run(
+            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            cwd=ROOT, capture_output=True, text=True, check=False)
+        if listed.returncode != 0:
+            self.skipTest("git is unavailable")
+        for name in listed.stdout.split():
+            if name == "src/director_orchestrator/policy.py":
+                continue
+            try:
+                text = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            with self.subTest(file=name):
+                self.assertFalse(_holds_prefixed_token(text))
+
     def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
         import subprocess as subprocess_module
         import time as time_module
@@ -1554,3 +1632,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]

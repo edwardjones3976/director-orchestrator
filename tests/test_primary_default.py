@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
@@ -1033,7 +1034,9 @@ class StandingGrantExerciseTests(unittest.TestCase):
                     patch.object(self.ledger, "append_delegation_audit_record",
                                  side_effect=AssertionError("audit written")):
                 self.assertFalse(self.exercise(application, self.record()))
-                self.assertEqual(3 if name == "records" else 1, read.call_count)
+                # One read past the ceiling tells a history of exactly 3,000
+                # records from a longer one.
+                self.assertEqual(4 if name == "records" else 1, read.call_count)
                 self.assertFalse(application._delegation_tripped)
 
     def test_recovery_refuses_when_another_task_of_the_grant_failed_unrecorded(self):
@@ -1215,6 +1218,30 @@ class StandingGrantExerciseTests(unittest.TestCase):
         record = self.record()
         self.assertFalse(self.exercise(self.application(
             allowed_starting_refs=("main", "release/x")), record))
+
+    def test_a_history_at_exactly_the_ceiling_is_read_whole(self):
+        """Ten full pages and an empty eleventh are the whole history; one
+        record past the ceiling is refused."""
+
+        import director_orchestrator.primary_default as module
+
+        class Ledger:
+            def __init__(self, size):
+                self.records = [SimpleNamespace(digest=f"{index:064x}") for index in range(size)]
+                self.reads = 0
+
+            def delegation_audit_records(self, *, limit, after_digest, deadline):
+                self.reads += 1
+                start = 0 if after_digest is None else int(after_digest, 16) + 1
+                return self.records[start:start + limit]
+
+        ceiling = module._AUDIT_HISTORY_MAX_RECORDS
+        exact = Ledger(ceiling)
+        history = module._bounded_audit_history(exact)
+        self.assertEqual(ceiling, len(history))
+        self.assertEqual(ceiling // 1_000 + 1, exact.reads)
+        self.assertIsNone(module._bounded_audit_history(Ledger(ceiling + 1)))
+        self.assertEqual(ceiling - 1, len(module._bounded_audit_history(Ledger(ceiling - 1))))
 
     def test_a_proven_no_run_terminal_records_no_trip(self):
         application = self.application()
@@ -6113,3 +6140,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
