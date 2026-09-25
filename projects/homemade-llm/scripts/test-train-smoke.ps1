@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | BEGIN]]
 # Checks that the shared Invoke-Bounded (invoke-bounded.ps1) cannot hang on a stalled CLI and leaves no child
 # process behind (no Docker needed: a fake docker.cmd that never returns is put first on PATH), then the
@@ -25,6 +26,14 @@ try {
     if ($r[-1] -ne '__EXIT__timeout') { $fail += "hung docker: expected __EXIT__timeout, got '$($r[-1])'" }
     if ($t.Elapsed.TotalSeconds -gt 15) { $fail += "hung docker: returned after $([int]$t.Elapsed.TotalSeconds) s (bound 3 s)" }
     if ($orphans) { $fail += "hung docker: $orphans child process(es) still running after the timeout" }
+    # Cancellation (Ctrl+C or a stopped pipeline) while waiting must also kill the command's tree.
+    $rs = [powershell]::Create()
+    $null = $rs.AddScript(". '$(Join-Path $PSScriptRoot 'invoke-bounded.ps1')'; `$env:PATH = '$shim;' + `$env:PATH; Invoke-Bounded 'docker' @('stop', 'y') 600")
+    $h = $rs.BeginInvoke()
+    for ($i = 0; $i -lt 50 -and -not (Get-ShimPing).Count; $i++) { Start-Sleep -Milliseconds 200 }
+    $rs.Stop(); $rs.Dispose()
+    Start-Sleep 1
+    if ((Get-ShimPing).Count) { $fail += "cancelled wait: child process still running after PowerShell.Stop()" }
     # Output shape: one line, several lines, and none must all end in a separate exit marker.
     $one = @(Invoke-Bounded 'cmd' @('/c', 'echo one-line') 10)
     if ($one.Count -ne 2 -or $one[0] -ne 'one-line' -or $one[1] -ne '__EXIT__0') { $fail += "one-line output: got $($one | ConvertTo-Json -Compress)" }
@@ -67,6 +76,8 @@ try {
     $plain = Join-Path $tmpRoot 'plain'; New-Item -ItemType Directory $plain | Out-Null
     $o = Run $plain @('-Base', 'org/other-4bit', '-Revision', ('a' * 40))
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'needs a matching -MergeSource') { $fail += "base override without merge pin: not refused (exit $LASTEXITCODE)" }
+    $o = Run $plain @('-Revision', ('b' * 40))
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'needs a matching -MergeSource') { $fail += "revision override without merge pin: not refused (exit $LASTEXITCODE)" }
     $o = Run $plain @('-MergeRevision', 'main')
     if ($LASTEXITCODE -eq 0 -or $o -notmatch 'not a full 40-hex commit') { $fail += "moving merge revision: not refused (exit $LASTEXITCODE)" }
     # The shared GPU lock: while another process holds it, training must not start.
@@ -83,13 +94,23 @@ try {
     [IO.Directory]::Delete($tmpRoot, $true)
 }
 
+# Both scripts release the GPU lock in a finally block, so a run inside a long-lived session cannot keep it.
+foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
+    $a = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $f), [ref]$null, [ref]$null)
+    $release = @($a.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally -and $n.Finally.Extent.Text -match 'ReleaseMutex\(\)' }, $true))
+    if ($release.Count -ne 1) { $fail += "$f`: expected one finally that releases the GPU mutex, found $($release.Count)" }
+}
+
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
 Write-Output 'ok  stored Hugging Face token in the mounted cache refused'
 Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
-Write-Output 'ok  base override without a merge pin, and a non-commit revision, refused'
+Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
+Write-Output 'ok  both scripts release the GPU mutex in a finally block'
 Write-Output 'ok  GPU lock held by another process refused'
+Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

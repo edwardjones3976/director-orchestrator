@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 # Unit checks for serve-smoke.ps1's decision functions, loaded from its syntax tree (no LM Studio, no Docker).
 #   pwsh -File projects\homemade-llm\scripts\test-serve-smoke.ps1
@@ -39,6 +40,7 @@ $p = 'homemade-llm/smoke/new.gguf'
 $m = { param($path, $ttl, $id = 'smoke') [pscustomobject]@{ identifier = $id; path = $path; ttlMs = $ttl } }
 Assert-Equal (Test-LoadedModel @(& $m $p 900000) $p 900) $true 'load: right model with requested TTL passes'
 Assert-Equal (Test-LoadedModel @(& $m $p $null) $p 900) $false 'load: model without TTL (reload skipped) fails'
+Assert-Equal (Test-LoadedModel @(& $m $p $null) $p 0) $false 'load: missing TTL fails even when 0 is requested'
 Assert-Equal (Test-LoadedModel @(& $m $p 600000) $p 900) $false 'load: stale TTL from an earlier load fails'
 Assert-Equal (Test-LoadedModel @(& $m 'homemade-llm/smoke/old.gguf' 900000) $p 900) $false 'load: older build still loaded fails'
 Assert-Equal (Test-LoadedModel @() $p 900) $false 'load: nothing loaded fails'
@@ -108,3 +110,4 @@ if ($failures.Count) { $failures | ForEach-Object { Write-Output "FAIL $_" }; ex
 Write-Output 'test-serve-smoke: all cases passed'
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
