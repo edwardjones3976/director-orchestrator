@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -1291,7 +1292,8 @@ def small_producer_result_refusal(
     )
     if reviewer is None:
         return None
-    from .packet_routing import SmallTaskViewUnavailable, prepare_small_task_view
+    from .packet_routing import (
+        SmallTaskViewSensitive, SmallTaskViewUnavailable, prepare_small_task_view)
 
     refusal = "small_task_producer_result_over_cap"
     try:
@@ -1306,6 +1308,13 @@ def small_producer_result_refusal(
         # and kept by packet digest: the bytes measured are the bytes the
         # reviewer's transport will send.
         view = prepare_small_task_view(packet)
+    except SmallTaskViewSensitive:
+        # The reviewer view differs from the producer's by the producer's
+        # result and summary it embeds, so a sensitive value there is the
+        # result's. Owner ruling, "keep tripping": a class-condition refusal
+        # after a provider ran - nothing reaches the reviewer, the attempt
+        # fails and the grant trips; a false positive returns to the owner.
+        return "small_task_producer_result_sensitive"
     except SmallTaskViewUnavailable:
         # The producer already ran: an incomplete task, never a no-run.
         return "small_task_named_contents_unavailable"
@@ -4179,11 +4188,18 @@ class DefaultPrimaryActivation:
                         # these bytes rather than rebuilding them.
                         from .packet_contracts import PacketContractError
                         from .packet_routing import (
+                            SmallTaskViewSensitive,
                             SmallTaskViewUnavailable,
                             prepare_small_task_view,
                         )
                         try:
                             prepare_small_task_view(packet)
+                        except SmallTaskViewSensitive:
+                            # A class condition: it fails and trips, and
+                            # nothing is sent.
+                            return ParallelDispatchOutcome(
+                                ParallelAssignmentStatus.FAILED, None,
+                                "small_task_view_sensitive")
                         except SmallTaskViewUnavailable as exc:
                             # A read that may be transient, before any
                             # reservation or provider request: an owner hold
@@ -5194,3 +5210,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

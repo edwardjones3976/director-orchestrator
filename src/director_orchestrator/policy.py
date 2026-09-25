@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -691,7 +692,6 @@ _IDENTIFIER_FORMATS = re.compile(
     r"|(?i:\b(?:born|dob|date\s+of\s+birth|birth\s*date)\b[^\n]{0,24}?"
     r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b)"
     r"|(?i:\bpassport\b[^\n]{0,24}?\b[A-Z0-9]{6,9}\b)"
-    r"|(?i:\b[a-z]{1,2}\d{6,8}\b)"
 )
 _DIGIT_RUN = re.compile(r"(?<![\w.-])\d(?:[ -]?\d){8,18}(?![\w-]|\.\d)")
 # IBANs are checked case-insensitively (mod 97 reads letters in base 36).
@@ -773,16 +773,30 @@ def _holds_phone_like(text: str) -> bool:
     return False
 
 
+_BARE_PASSPORT = re.compile(r"(?i:\b[a-z]{1,2}\d{6,8}\b)")
+_HEX_IDENTIFIERS = re.compile(
+    r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
+    r"|\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b"
+)
+
+
 def holds_identifier_format(text: str) -> bool:
     """Whether text holds a raw personal or financial identifier, unlabeled."""
 
     if _IDENTIFIER_FORMATS.search(text) or _holds_ip_address(text) or _holds_phone_like(text):
         return True
-    for match in _DIGIT_RUN.finditer(text):
+    # The unlabeled shape checks (a bare passport-like value, a checksummed
+    # card, routing or IBAN run) read the text with UUIDs and lower-case hex
+    # digests set aside: those identify records, not people, and a UUID group
+    # such as "c0395302" or "de54b14240fa" can match a shape or a checksum.
+    cleaned = _HEX_IDENTIFIERS.sub(" ", text)
+    if _BARE_PASSPORT.search(cleaned):
+        return True
+    for match in _DIGIT_RUN.finditer(cleaned):
         digits = re.sub(r"\D", "", match.group(0))
         if (13 <= len(digits) <= 19 and _luhn(digits)) or (len(digits) == 9 and _aba(digits)):
             return True
-    return any(_iban(match.group(0)) for match in _IBAN.finditer(text))
+    return any(_iban(match.group(0)) for match in _IBAN.finditer(cleaned))
 
 
 # Credential-bearing formats: URI userinfo, Authorization and Bearer values,
@@ -1016,6 +1030,12 @@ def small_read_only_eligible(
     producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
     if (
         not _read_only_request(producer.task)
+        # Every assignment string a compact view carries (objective and
+        # acceptance checks) passes the one value screen here too; the view
+        # screens them again, with the router's constraints, when prepared.
+        or any(holds_sensitive_value(text)
+               for item in (producer, reviewer)
+               for text in (item.task, *item.acceptance))
         or producer.depends_on != []
         or reviewer.kind is not AssignmentKind.INDEPENDENT_REVIEW
         or reviewer.depends_on != [producer.sequence]
@@ -2277,3 +2297,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

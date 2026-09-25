@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -1165,6 +1166,22 @@ class CompactProviderViewTests(unittest.TestCase):
             with self.subTest(ordinary=name):
                 self.assertFalse(holds_identifier_format(value))
 
+    def test_record_identifiers_never_read_as_personal_identifiers(self) -> None:
+        """UUIDs and lower-case hex digests: a group such as "c0395302" is not
+        a passport number and "de54b14240fa" is not an IBAN."""
+
+        import secrets
+        import uuid
+        from director_orchestrator.policy import holds_sensitive_value
+
+        for _ in range(5_000):
+            value = str(uuid.uuid4())
+            self.assertFalse(holds_sensitive_value(value), value)
+        for size in (4, 20, 32):
+            for _ in range(2_000):
+                value = secrets.token_hex(size)
+                self.assertFalse(holds_sensitive_value(value), value)
+
     def test_request_text_and_file_text_share_one_value_screen(self) -> None:
         """An unlabeled mixed-case token, an address or a phone in the request
         keeps it out of the class, exactly as in a file."""
@@ -1633,3 +1650,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

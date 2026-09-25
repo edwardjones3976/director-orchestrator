@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -133,6 +134,11 @@ def read_deadline_remaining(default_seconds: float) -> float | None:
         return default_seconds
     remaining = min(default_seconds, shared - monotonic())
     return remaining if remaining > 0 else None
+
+
+class SmallTaskViewSensitive(PacketContractError):
+    """A small read-only task's view carries a sensitive value in text a
+    model would be shown: nothing is sent."""
 
 
 class SmallTaskViewUnavailable(PacketContractError):
@@ -399,11 +405,42 @@ _PREPARED_VIEWS_MAX = 64
 _PREPARED_VIEWS_LOCK = threading.Lock()
 
 
+def _view_strings(value: Any, *, in_contents: bool = False) -> Iterator[str]:
+    """Every string a view carries, but the named files' text itself, which
+    small_task_named_contents already screened when it was read."""
+
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            if in_contents and key == "text":
+                continue
+            yield from _view_strings(item, in_contents=in_contents or key == "contents")
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _view_strings(item, in_contents=in_contents)
+
+
 def _required_small_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    """A small task's view, built, validated and screened in one place.
+
+    Every string it carries besides the files' own text - objective,
+    acceptance checks, constraints (the producer's result and summary
+    embedded for a reviewer among them), paths and identifiers - passes the
+    one value screen, holds_sensitive_value. The prepared view and every
+    transport rebuild go through here, so no path to a model skips it.
+    """
+
+    from .policy import holds_sensitive_value
+
     view = compact_provider_view(work)
     if _read_only_packet(work) and "contents" not in view:
         raise SmallTaskViewUnavailable("a small task's named files cannot be shown")
-    return validate_compact_view(view)
+    view = validate_compact_view(view)
+    if _read_only_packet(work) and any(
+            holds_sensitive_value(text) for text in _view_strings(view)):
+        raise SmallTaskViewSensitive("a small task's view carries a sensitive value")
+    return view
 
 
 def prepare_small_task_view(work: Mapping[str, Any]) -> dict[str, Any]:
@@ -955,3 +992,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

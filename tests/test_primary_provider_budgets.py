@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
@@ -479,6 +480,68 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
                 self.record, self.settings, producer, result, "0" * 64, router,
                 compact_view_lanes=lanes))
 
+    def test_every_assignment_string_passes_the_value_screen_at_eligibility(self):
+        from director_orchestrator.policy import small_read_only_eligible
+
+        lanes = frozenset({"grok", "claude"})
+        self.assertTrue(small_read_only_eligible(self.record, self.settings, compact_view_lanes=lanes))
+        phone = "07700" + " " + "900123"
+        reviewer = self.record.plan.assignments[1]
+        for field, value in (("acceptance", [*reviewer.acceptance, f"Call {phone} to confirm"]),
+                             ("task", reviewer.task + f" Reach {phone}.")):
+            with self.subTest(field=field):
+                changed = self.record.model_copy(deep=True)
+                changed.plan.assignments[1] = reviewer.model_copy(update={field: value})
+                self.assertFalse(small_read_only_eligible(
+                    changed, self.settings, compact_view_lanes=lanes))
+
+    def test_a_sensitive_value_anywhere_in_a_view_is_never_sent(self):
+        """Constraints included: the prepared view and every rebuild screen
+        every string but the already-screened file text."""
+
+        from director_orchestrator.packet_routing import (
+            _PREPARED_VIEWS, SmallTaskViewSensitive, prepare_small_task_view,
+            validated_compact_view)
+
+        router = self.activation.services._packet_router
+        packet = dict(router.planned_work_packet(self.record, self.record.plan.assignments[0]))
+        prepare_small_task_view(packet)
+        leaked = {**packet, "constraints": [*packet["constraints"], "Owner line: 07700 900123."]}
+        _PREPARED_VIEWS.clear()
+        with self.assertRaises(SmallTaskViewSensitive):
+            prepare_small_task_view(leaked)
+        with self.assertRaises(SmallTaskViewSensitive):
+            validated_compact_view(leaked)
+
+    def test_a_sensitive_producer_result_is_never_forwarded_and_trips(self):
+        """Owner ruling, keep tripping: a class-condition refusal after the
+        producer ran; the reviewer is sent nothing."""
+
+        from director_orchestrator.primary_default import small_producer_result_refusal
+
+        router = self.activation.services._packet_router
+        producer = self.record.plan.assignments[0]
+        lanes = frozenset({"grok", "claude"})
+        self.record.assignment_outcomes = []
+        colon = ":"
+        for name, text in {"phone": "Call 07700 900123 for the summary.",
+                           "ipv6": "Host " + colon.join(("2001", "db8", "", "7334")) + ".",
+                           "vendor_token": "Use glpat-" + "q" * 20 + " to fetch."}.items():
+            with self.subTest(value=name):
+                result = {"status": "SUCCEEDED", "outcome": text, "run_reference": "run"}
+                self.assertEqual("small_task_producer_result_sensitive", small_producer_result_refusal(
+                    self.record, self.settings, producer, result, "0" * 64, router,
+                    compact_view_lanes=lanes))
+        # Through the real dispatch: FAILED with that code, nothing recorded.
+        self.adapter.dispatch = lambda _packet, *, context: {
+            "status": "SUCCEEDED", "run_reference": "run-producer",
+            "outcome": "Call 07700 900123 for the summary.", "usage": self.USAGE}
+        outcome = self.run_assignment(0)
+        self.assertEqual((ParallelAssignmentStatus.FAILED, "small_task_producer_result_sensitive"),
+                         (outcome.status, outcome.reason_code))
+        self.handle.claim_store.record_result_packet_artifact.assert_not_called()
+        self.assertEqual([], self.record.assignment_outcomes)
+
     def test_both_models_see_the_same_named_file_contents(self):
         router = self.activation.services._packet_router
         views = [validated_compact_view(router.planned_work_packet(self.record, item))
@@ -839,3 +902,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

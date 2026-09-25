@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
@@ -522,7 +523,21 @@ as `REFUSED`, never `AMBIGUOUS`, and a replay of the same request returns the
 same signed refusal without running anything, so recovery treats it as a
 no-run refusal. The one value screen (`holds_sensitive_value`: identifiers,
 credentials, opaque tokens) applies alike to the owner's request text and to
-every file shown. A no-run the Director cannot record (the write fails twice
+every file shown. Eligibility also screens every assignment's task and
+acceptance checks, and the one function that builds a small task's view
+(the prepared view and every transport rebuild) screens every string the
+view carries besides the files' own text: objective, acceptance checks,
+constraints, paths and identifiers, and for a reviewer the producer's result
+and summary embedded in its constraints. A view that fails is never sent:
+at dispatch it fails as `small_task_view_sensitive`, and a producer result
+that fails when its reviewer view is prepared fails as
+`small_task_producer_result_sensitive` before it is recorded. Owner ruling
+"keep tripping": both are class-condition refusals and trip the grant, the
+second after a provider ran; a false positive on a producer's wording
+therefore trips and returns the task to the owner, which is the safe
+direction, where forwarding it would not be. UUIDs and lower-case hex digests
+are set aside before the unlabeled passport-shape and checksum checks, so a
+record identifier is never read as a personal one. A no-run the Director cannot record (the write fails twice
 within the dispatch deadline) is logged and leaves the attempt `STARTED`, so
 the task trips the grant: by the owner's ruling, missing evidence that
 nothing ran is not proof of it. Every transport runs its final authority
@@ -854,3 +869,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
