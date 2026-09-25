@@ -12,7 +12,7 @@ project:
   name: "Homemade LLM"
   rollout_packet: "rollout-packet.md"
   proposition: "Fine-tune and serve two local models on the owner's PC (RTX 5070 12 GB): DIRECTOR, which writes model-work-packet-v1 packets for this orchestrator, and COMPANION, a friend/conversational persona with long-term memory."
-  state: "building" # exploring | framing | building | validating | operating | paused | closed
+  state: "framing" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
   updated_at: "2026-09-25T23:36:00Z"
@@ -224,12 +224,12 @@ assumptions:
     - "RTX 5070 12 GB; Unsloth supports RTX 50 series (Unsloth docs)"
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
+    - "LM Studio is reachable from a container via host.docker.internal while bound to 127.0.0.1 (serve-smoke, 2026-09-24)"
+    - "Paid-API spend baseline: USD 11.19 over 7 days to 2026-09-25, all projects, from dispatch receipts (O-033)"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
-  unknown:
-    - "LM Studio reachability from a container when bound to 127.0.0.1"
-    - "Current paid-API spend (no history recorded; metered from M0)"
+  unknown: []
   not_applicable: []
 
 fallbacks:
@@ -245,9 +245,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Owner merges PR-0; then M0.1 scripts/preflight.ps1"
+  action: "Close M0: owner runs tailscale serve (M0.5); OpenAI Codex reviews #276 (M0.9, M0.11); Grok post-merge review of #275; then move state to building"
   responsible_party: "owner"
-  expected_evidence: "main contains projects/homemade-llm/"
+  expected_evidence: "phone reaches Open WebUI over the tailnet; #276 merged with an eligible ACCEPT; Grok verdict on #275 recorded"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:36 UTC | END]]
