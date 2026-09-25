@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]] -->
@@ -690,7 +691,9 @@ a digest). Spend is outer-joined to usage and held the way
 `PrimaryProviderBudgetAuthority.reserve` holds it: an attempt with no spend
 reservation, or observed tokens over the reservation's limit, conflict; a
 reservation with no recorded attempt, or a settled attempt whose usage is not
-recorded yet, is in flight (`provider_usage_in_flight`). Each settling attempt
+recorded yet, is in flight (`provider_usage_in_flight`); usage recorded for no
+recorded attempt is an orphan conflict (usage cannot exist without its spend
+row, which it references). Each settling attempt
 event's `outcome_evidence_digest` is recomputed from the event as
 `primary_parallel` computes it for event 2 and for a callback's event 3. The
 readback recomputes the projection's canonical digest and refuses a projection
@@ -1063,3 +1066,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]] -->

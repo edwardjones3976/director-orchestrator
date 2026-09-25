@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
@@ -3359,6 +3360,17 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual((errors["usage"], states["usage"][0]), (None, "in_flight"))
         _, errors, states = check(lambda r: r["provider_usage"][0].update(observed_tokens=5000))
         self.assertEqual((errors["usage"], states["usage"][0]), (None, "conflict"))
+        # Cursor sweep C1, each direction: an attempt without spend is an error (above); a settled attempt without
+        # usage is in flight (above); spend without an attempt is in flight until usage is recorded, and usage whose
+        # attempt was never recorded is an orphan conflict.
+        orphan = {"attempt_digest": "sha256:" + "e" * 64, "provider_id": "claude", "reserved_microusd": 500,
+                  "token_limit": 1000}
+        _, errors, states = check(lambda r: r["provider_usage"].append({**orphan, "actual_microusd": None,
+                                                                         "observed_tokens": None}))
+        self.assertEqual((errors["usage"], states["usage"][0]), (None, "in_flight"))
+        _, errors, states = check(lambda r: r["provider_usage"].append({**orphan, "actual_microusd": 10,
+                                                                         "observed_tokens": 10}))
+        self.assertEqual((errors["usage"], states["usage"]), (None, ("conflict", "usage is recorded for no recorded attempt")))
         # A settling event's outcome evidence digest is recomputed from the event itself.
         readback = tf.readback_fixture()
         readback["provider_attempts"][1]["outcome_evidence_digest"] = "sha256:" + "7" * 64
@@ -3978,3 +3990,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]

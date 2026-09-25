@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
@@ -372,8 +373,9 @@ def validate_usage(usage_rows, latest, *, absent=False):
     evidence (a duplicated, malformed or provider-mismatched row, or an attempt with no spend reservation at all,
     reserve's own refusal "prior provider attempt lacks authoritative monetary accounting"); state is (kind, reason)
     for well-formed rows that are not settled: a conflict when observed tokens exceed the reservation's token limit
-    (reserve's other refusal), in flight when a reservation's attempt was never recorded or a settled attempt's usage
-    is not recorded yet. ``absent``: the spend and usage tables do not exist here, so there is no ledger to hold."""
+    (reserve's other refusal) or usage is recorded for no recorded attempt (an orphan), in flight when a reservation's
+    attempt was never recorded (reserve ran, the attempt did not start) or a settled attempt's usage is not recorded
+    yet. Usage can never exist without its spend row (director_primary_provider_usage references it). ``absent``: the spend and usage tables do not exist here, so there is no ledger to hold."""
     if absent:
         return None, None
     seen, state = set(), None
@@ -388,6 +390,9 @@ def validate_usage(usage_rows, latest, *, absent=False):
         seen.add(digest_value)
         if measured[1] is not None and measured[1] > row["token_limit"]:
             state = ("conflict", "observed provider tokens exceed the reserved token limit")
+        elif owner is None and measured != (None, None):
+            # Usage is recorded only for an attempt that ran: usage whose attempt was never recorded is an orphan.
+            state = ("conflict", "usage is recorded for no recorded attempt")
         elif state is None and owner is None:
             state = ("in_flight", "a spend reservation has no recorded attempt")
         elif state is None and owner.get("status") in ("SUCCEEDED", "FAILED") and measured == (None, None):
@@ -1015,3 +1020,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
