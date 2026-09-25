@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
@@ -459,9 +460,13 @@ not mostly lower-case words and carries at least 3.0 bits a character;
 lower-case hex digests and UUIDs never match, and it passes every tracked
 doc, prompt and source file of this repository), or holding a raw
 identifier with no label (an e-mail address, social security
-number, phone number, card, IBAN or routing number that passes its checksum,
-IP address, street address, a date next to a birth label, or a passport-like
-identifier) keeps the task out
+number, card, IBAN or routing number that passes its checksum, street
+address, a date next to a birth label, or a passport-like identifier; any
+token the standard library parses as an IP address, compressed IPv6 forms
+and zones included; and any phone-like run of 9 to 15 digits in groups
+joined by single spaces, dots, dashes or parentheses, with an optional
+leading "+", in any country's format, once ISO dates and times, dotted
+versions, UUIDs and hex digests are set aside) keeps the task out
 of the class: the grant is refused on `eligibility` at intake, and a dispatch
 fails with `small_task_named_contents_unavailable`. Dispatch builds and
 validates the view once, contents required, and keeps it by the packet's
@@ -507,7 +512,14 @@ a mismatch runs nothing and returns a signed refusal the Director also treats as
 `small_task_bridge_attestation_stale`. The bridge settles that attempt's claim
 as `REFUSED`, never `AMBIGUOUS`, and a replay of the same request returns the
 same signed refusal without running anything, so recovery treats it as a
-no-run refusal. A replay of any claimed attempt must carry the attested argv
+no-run refusal. The one value screen (`holds_sensitive_value`: identifiers,
+credentials, opaque tokens) applies alike to the owner's request text and to
+every file shown. A no-run the Director cannot record (the write fails twice
+within the dispatch deadline) is logged and leaves the attempt `STARTED`, so
+the task trips the grant: by the owner's ruling, missing evidence that
+nothing ran is not proof of it. Every transport runs its final authority
+recheck before it chooses the bytes it sends, and those bytes are the view
+prepared for that packet digest. A replay of any claimed attempt must carry the attested argv
 digest and attempt limits it was claimed under: otherwise a `SUCCEEDED`
 attempt's cached result is never returned (the replay is rejected as a binding
 conflict, which the Director treats as ambiguous, since that command did run),
@@ -539,7 +551,9 @@ flags. The argv is also bound into each lane's configuration digest, which the
 bridge's `/v1/provider/configuration-digest` endpoint reports with the per-lane
 verdicts. The Director keeps the full packet and rebinds
 every result to it by digest. The compact view a small task's reviewer is sent
-is at most 16 KB; its transport's fixed instructions are extra. The reviewer is
+is at most 16 KB, measured on the exact canonical bytes of the view prepared
+for that packet (its files' text required), never on a view whose contents
+were dropped; its transport's fixed instructions are extra. The reviewer is
 also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
 `SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000), one allowance for the whole
 review: only a transport failure is ever retried and its usage is unmeasured,
@@ -548,8 +562,8 @@ of a small task must report complete usage, integer token counts and a cost;
 the OpenAI Responses lane, which refuses any reply over its token allowance
 before returning it and is priced by its meter, reports tokens only. A result
 without that usage fails, which trips the grant. The producer's packet states the
-outcome size that fits, and a producer result whose review would exceed 16 KB is
-refused when it is accepted, before it is recorded and before any reviewer
+outcome size that fits, and a producer result whose prepared review view would
+exceed 16 KB (or cannot carry its files' text) is refused when it is accepted, before it is recorded and before any reviewer
 work. A result refused there still spent the producer's attempt. A
 pre-authorized task, one whose persisted graph skips the execution button, is
 refused at dispatch unless delegation is still enabled and unsuspended under a
@@ -830,3 +844,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->

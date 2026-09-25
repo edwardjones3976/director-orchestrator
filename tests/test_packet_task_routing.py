@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -1107,6 +1108,88 @@ class CompactProviderViewTests(unittest.TestCase):
                 self.assertFalse(holds_opaque_token(text))
         self.assertGreater(len(checked), 200)
 
+    def test_ip_addresses_are_found_by_parsing_not_by_shape(self) -> None:
+        """Any token the standard library parses as an address, compressed
+        IPv6 forms and zones included."""
+
+        from director_orchestrator.policy import holds_identifier_format
+
+        colon, dot = ":", "."
+        addresses = {
+            "ipv6_compressed_many_groups": colon.join(("2001", "db8", "85a3", "", "8a2e", "370", "7334")),
+            "ipv6_full": colon.join(["fd00"] + ["1"] * 7),
+            "ipv6_zone": colon.join(("fe80", "", "1")) + "%eth0",
+            "ipv6_leading": colon.join(("", "", "ffff", "10.0.0.1")),
+            "ipv4": dot.join(("10", "20", "30", "40")),
+        }
+        for name, value in addresses.items():
+            with self.subTest(address=name):
+                self.assertTrue(holds_identifier_format(f"reach it at {value} today"))
+        for ordinary in ("items[::2]", "std::io::Result", "at 12:30:45 UTC", "x = a[::-1]",
+                         "version 1.2.3", "a ratio of 3:4"):
+            with self.subTest(ordinary=ordinary):
+                self.assertFalse(holds_identifier_format(ordinary))
+
+    def test_phone_numbers_are_a_generic_digit_rule_not_country_formats(self) -> None:
+        """9 to 15 digits in single-separated groups, any country; only
+        shapes that cannot be phones are exempt."""
+
+        import secrets
+        import uuid
+        from director_orchestrator.policy import holds_identifier_format
+
+        space, dash = " ", "-"
+        phones = {
+            "uk_mobile_local": "07700" + space + "900123",
+            "uk_international": "+44" + space + "7700" + space + "900123",
+            "double_zero_prefix": "0044" + space + "20" + space + "7946" + space + "0958",
+            "us_bracketed": "(415)" + space + "555" + dash + "2671",
+            "dotted": "030.1234.5678",
+            "bare_run": "4915112345678",
+        }
+        for name, value in phones.items():
+            with self.subTest(phone=name):
+                self.assertTrue(holds_identifier_format(f"call {value} tonight"))
+        ordinary = {
+            "iso_datetime": "2026-09-25 17:48:03",
+            "iso_date_time_zone": "2026-09-25T17:48:03+00:00",
+            "version": "release 10.24.117",
+            "uuid": str(uuid.uuid4()),
+            "sha": secrets.token_hex(20),
+            "short_number": "port 47263 and 8080",
+            "test_summary": "Ran 3524 tests in 1484.041s",
+            "thread_ts": "1720000000.000001",
+        }
+        for name, value in ordinary.items():
+            with self.subTest(ordinary=name):
+                self.assertFalse(holds_identifier_format(value))
+
+    def test_request_text_and_file_text_share_one_value_screen(self) -> None:
+        """An unlabeled mixed-case token, an address or a phone in the request
+        keeps it out of the class, exactly as in a file."""
+
+        import secrets
+        import string
+        from director_orchestrator.policy import (
+            _read_only_request, holds_sensitive_value, small_task_content_screened)
+
+        alphabet = string.ascii_letters + string.digits
+        token = "".join(secrets.choice(alphabet) for _ in range(40))
+        from director_orchestrator.policy import holds_opaque_token
+        while not holds_opaque_token(token):
+            token = "".join(secrets.choice(alphabet) for _ in range(40))
+        colon = ":"
+        for name, value in {
+            "opaque_token": token,
+            "ipv6": colon.join(("2001", "db8", "", "7334")),
+            "phone": "07700 900123",
+        }.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_sensitive_value(value))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{value}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md for {value}."))
+        self.assertTrue(_read_only_request("Summarize README.md for the owner."))
+
     def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
         import subprocess as subprocess_module
         import time as time_module
@@ -1470,3 +1553,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

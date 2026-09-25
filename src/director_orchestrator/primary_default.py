@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
@@ -117,6 +118,7 @@ import os
 import re
 import secrets
 import subprocess
+import logging
 import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
@@ -271,6 +273,9 @@ def _digest(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def _execute_three_attempt_roster(
     *,
     format_roster: tuple[tuple[str, str], ...],
@@ -313,13 +318,22 @@ def _execute_three_attempt_roster(
             # host proved it ran nothing): settle it FAILED as refused before
             # I/O instead of leaving it STARTED. The reason is not transient,
             # so it authorizes no retry, and a replay of this ordinal is
-            # refused as already recorded. If even that write fails, the
-            # attempt stays STARTED and counts as unreconciled.
-            try:
-                record_attempt(attempt, ParallelAssignmentStatus.FAILED, None,
-                               PROVIDER_REFUSED_BEFORE_IO)
-            except Exception:
-                pass
+            # refused as already recorded. The write is tried twice, each
+            # within the dispatch's completion deadline that record_attempt
+            # carries. If both fail, the attempt stays STARTED: the no-run
+            # could not be recorded, so the task is not a proven no-run and
+            # its grant trips - deliberately, by the owner's ruling, because
+            # the evidence that nothing ran is missing.
+            for write in (1, 2):
+                try:
+                    record_attempt(attempt, ParallelAssignmentStatus.FAILED, None,
+                                   PROVIDER_REFUSED_BEFORE_IO)
+                    break
+                except Exception:
+                    if write == 2:
+                        _LOGGER.warning(
+                            "a refused-before-I/O attempt could not be recorded; it stays "
+                            "STARTED and its task will trip the grant", exc_info=True)
             raise
         except WorkloadAdmissionHold:
             # A proven policy hold - cancellation, a changed selection, a
@@ -811,7 +825,17 @@ def _live_assignment_attempt_budget(
 
 
 def _small_review_view_bytes(packet: Mapping[str, Any]) -> int:
-    return len(canonical_json_bytes(compact_provider_view(packet)))
+    """The exact canonical bytes a small task's view is sent as.
+
+    The view prepared for this packet digest, or, before dispatch prepares
+    it, the same view built with its named files' text required: never a
+    view whose contents were silently dropped. Raises
+    SmallTaskViewUnavailable when the files cannot be read.
+    """
+
+    from .packet_routing import validated_compact_view
+
+    return len(canonical_json_bytes(validated_compact_view(packet)))
 
 
 def _lane_transports(live_dependencies: Any, lane: str) -> list[Any]:
@@ -1261,6 +1285,8 @@ def small_producer_result_refusal(
     )
     if reviewer is None:
         return None
+    from .packet_routing import SmallTaskViewUnavailable, prepare_small_task_view
+
     refusal = "small_task_producer_result_over_cap"
     try:
         outcome = _accepted_outcome(assignment, result, result_digest)
@@ -1270,10 +1296,18 @@ def small_producer_result_refusal(
             outcome,
         ]})
         packet = router.planned_work_packet(candidate, reviewer)
+        # The reviewer's view is prepared here, its files' text required,
+        # and kept by packet digest: the bytes measured are the bytes the
+        # reviewer's transport will send.
+        view = prepare_small_task_view(packet)
+    except SmallTaskViewUnavailable:
+        # The producer already ran: an incomplete task, never a no-run.
+        return "small_task_named_contents_unavailable"
     except ValueError:
-        # The outcome model's and the router's own content bounds.
+        # The outcome model's and the router's own content bounds, and a view
+        # that fails its schema.
         return refusal
-    return refusal if _small_review_view_bytes(packet) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES else None
+    return refusal if len(canonical_json_bytes(view)) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES else None
 
 
 def _small_producer_constraints(
@@ -1307,7 +1341,15 @@ def _small_producer_constraints(
         review_summary="x",
         provider_result_digest="0" * 64,
     )]})
-    overhead = _small_review_view_bytes(router.planned_work_packet(probe, reviewer)) - 2
+    from .packet_routing import SmallTaskViewUnavailable
+
+    try:
+        overhead = _small_review_view_bytes(router.planned_work_packet(probe, reviewer)) - 2
+    except SmallTaskViewUnavailable:
+        # Advisory text only, never a size check: with the files unreadable
+        # the task cannot dispatch anyway (its view is required), so no
+        # ceiling is stated rather than one measured on a view without them.
+        return []
     # The outcome reaches the reviewer twice (result and summary), each copy
     # JSON-escaped twice. Per copy a character costs 1 byte (ASCII), 3 (a
     # newline or a tab), 2 to 4 (non-ASCII UTF-8) or 4 (a quote or backslash),
@@ -4118,12 +4160,6 @@ class DefaultPrimaryActivation:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
                             pre_authorization_refusal)
-                    review_refusal, review_token_cap = small_review_bounds(
-                        record, settings, assignment, packet,
-                        compact_view_lanes=compact_view_lanes)
-                    if review_refusal is not None:
-                        return ParallelDispatchOutcome(
-                            ParallelAssignmentStatus.FAILED, None, review_refusal)
                     small_class = small_read_only_eligible(
                         record, settings, compact_view_lanes=compact_view_lanes)
                     if small_class and not small_task_packet_read_only(packet):
@@ -4153,6 +4189,14 @@ class DefaultPrimaryActivation:
                             return ParallelDispatchOutcome(
                                 ParallelAssignmentStatus.FAILED, None,
                                 "small_task_view_invalid")
+                    # Measured on the view just prepared: the exact bytes the
+                    # reviewer's transport sends.
+                    review_refusal, review_token_cap = small_review_bounds(
+                        record, settings, assignment, packet,
+                        compact_view_lanes=compact_view_lanes)
+                    if review_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None, review_refusal)
                     if small_class and not _bridge_attestations_current(
                             live_dependencies, provider, deadline=early_deadline):
                         return ParallelDispatchOutcome(
@@ -5142,3 +5186,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
@@ -1267,6 +1268,46 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertIsNone(small_pre_authorization_refusal(
             record, self.settings, self.ledger, approval_free=True,
             compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None)))
+
+    def test_the_audit_commit_waits_only_for_what_is_left_of_the_deadline(self):
+        """Verify and the anchor advance spend most of the deadline; a reader
+        holding the file then must not let the commit wait the full busy
+        timeout set when the connection opened. The anchor already advanced,
+        so a commit that cannot finish is the ambiguous anchor failure."""
+
+        import sqlite3
+        import time as time_module
+        from director_orchestrator.store import DelegationAuditAnchorUnavailable
+
+        ledger = audit_ledger(self.directory)
+        readers = []
+        real_advance = ledger._audit_anchor.compare_and_set
+
+        def slow_advance(expected, updated, **kwargs):
+            real_advance(expected, updated, **kwargs)
+            reader = sqlite3.connect(ledger.path, isolation_level=None)
+            reader.execute("BEGIN")
+            reader.execute("SELECT count(*) FROM delegated_decision_audit").fetchone()
+            readers.append(reader)
+            time_module.sleep(0.7)
+
+        ledger._audit_anchor.compare_and_set = slow_advance
+        now = datetime.now(timezone.utc)
+        record = DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION, outcome=RecordedOutcome.REFUSED,
+            grant_id=None, grant_snapshot=None,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK, candidate_sha=SHA,
+            acting_agent="director-langgraph:DIR-LG-COMMIT", verdicts=(),
+            gate_results=(GateResult("authorization", GateStatus.FAIL, now),), recorded_at=now)
+        started = time_module.monotonic()
+        try:
+            with self.assertRaises(DelegationAuditAnchorUnavailable):
+                ledger.append_delegation_audit_record(record, deadline=started + 1.0)
+        finally:
+            for reader in readers:
+                reader.rollback()
+                reader.close()
+        self.assertLess(time_module.monotonic() - started, 1.5)
 
     def test_lock_busy_wait_and_anchor_advance_spend_the_same_deadline(self):
         """A contended or slow ledger refuses at the deadline and writes nothing."""
@@ -6071,3 +6112,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

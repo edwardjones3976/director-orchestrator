@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
@@ -88,6 +89,7 @@ from .langgraph_runtime import (
 from .packet_contracts import canonical_json_bytes, result_contract_properties, _decode_json, _validators
 from .packet_routing import (
     ANTIGRAVITY_DIRECTIVE_OBJECTIVE_PREFIX,
+    SmallTaskViewUnavailable,
     compact_provider_view,
     validated_compact_view,
 )
@@ -547,9 +549,9 @@ class OpenAIResponsesPacketTransport:
                 "Return a concise evidence-backed outcome. Do not use tools, "
                 "perform external effects, or widen the packet authority."
             ),
-            # The model sees the compact view; the meter, enrollment and result
-            # binding below all keep the full packet.
-            "input": canonical_json_bytes(validated_compact_view(work)).decode("utf-8"),
+            # "input" is the compact view, set inside the request below only
+            # after the final authority recheck; the meter, enrollment and
+            # result binding all keep the full packet.
             "store": False,
             "tools": [],
         }
@@ -558,7 +560,12 @@ class OpenAIResponsesPacketTransport:
         # Count the identical configured model and full input, including the
         # instructions and message framing. A packet label or character estimate
         # cannot establish the input side of an owner-signed total-token limit.
-        count_body = {key: value for key, value in body.items() if key != "store"}
+
+        def view_input() -> str:
+            # The prepared view for this exact packet digest (a small task's
+            # was built and validated at dispatch), never a fresh choice.
+            return canonical_json_bytes(validated_compact_view(work)).decode("utf-8")
+
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -641,6 +648,10 @@ class OpenAIResponsesPacketTransport:
                 # authority and grant recheck runs immediately before it.
                 if authority_recheck is not None:
                     authority_recheck()
+                # Chosen only after that recheck, and nothing else is read
+                # between here and the request.
+                body["input"] = view_input()
+                count_body = {key: value for key, value in body.items() if key != "store"}
                 count, _ = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
                 if (not isinstance(count, dict)
                         or count.get("object") != "response.input_tokens"
@@ -664,6 +675,16 @@ class OpenAIResponsesPacketTransport:
                 remaining_seconds()
                 if authority_recheck is not None:
                     authority_recheck()
+                # The generation sends the same prepared bytes the count
+                # measured, re-derived after this recheck; any change refuses.
+                # The count request already went out, so this is never a
+                # no-run refusal.
+                try:
+                    regenerated = view_input()
+                except ValueError as exc:
+                    raise RuntimeError("OpenAI input is unavailable after its token count") from exc
+                if regenerated != body["input"]:
+                    raise RuntimeError("OpenAI input changed after its token count")
                 if meter is not None:
                     meter.verify_current()
                     sent_at = meter.clock()
@@ -689,6 +710,9 @@ class OpenAIResponsesPacketTransport:
         try:
             native, input_tokens, output_allowance, response_headers = asyncio.run(invoke())
             sent_at = completed.get("sent_at")
+        except SmallTaskViewUnavailable:
+            # Raised building the input, before any request: nothing was sent.
+            raise
         except (TimeoutError, httpx.HTTPError, ValueError) as exc:
             _recover_delivered_generation(completed, delivered)
             if not completed:
@@ -1917,3 +1941,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

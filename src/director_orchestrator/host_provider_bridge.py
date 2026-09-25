@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
@@ -1070,6 +1071,12 @@ class HostBridgePacketTransport:
         idempotency_key = str(packet.get("idempotency_key", ""))
         if not idempotency_key:
             raise RuntimeError("host bridge packet lacks idempotency")
+        # The final authority recheck, after the host cutoff challenge and
+        # before the outbound bytes are chosen: nothing that could see
+        # different authority runs between choosing them and the request.
+        authority_recheck = getattr(context, "authority_recheck", None)
+        if callable(authority_recheck):
+            authority_recheck()
         work_packet_digest = ""
         outbound = work_packet_json
         if self.outbound_payload_builder is not None:
@@ -1143,9 +1150,6 @@ class HostBridgePacketTransport:
         remaining = context.timeout_seconds if cutoff is None else cutoff - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("host bridge deadline expired before dispatch")
-        authority_recheck = getattr(context, "authority_recheck", None)
-        if callable(authority_recheck):
-            authority_recheck()
         if cutoff is not None:
             remaining = cutoff - time.monotonic()
             if remaining <= 0:
@@ -1267,3 +1271,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

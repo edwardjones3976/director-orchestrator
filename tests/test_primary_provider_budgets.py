@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
@@ -457,6 +458,27 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
             self.run_assignment(0)
         self.assertEqual([], sent)
 
+    def test_the_review_cap_measures_the_prepared_bytes_never_a_view_without_contents(self):
+        """A read that fails after the producer ran is not measured as a
+        smaller view without the files: it is refused."""
+
+        from director_orchestrator.packet_routing import _PREPARED_VIEWS
+        from director_orchestrator.primary_default import small_producer_result_refusal
+
+        router = self.activation.services._packet_router
+        producer = self.record.plan.assignments[0]
+        result = {"status": "SUCCEEDED", "outcome": "short", "run_reference": "run"}
+        lanes = frozenset({"grok", "claude"})
+        self.record.assignment_outcomes = []
+        self.assertIsNone(small_producer_result_refusal(
+            self.record, self.settings, producer, result, "0" * 64, router,
+            compact_view_lanes=lanes))
+        _PREPARED_VIEWS.clear()
+        with patch("director_orchestrator.packet_routing._BLOB_READER", None):
+            self.assertEqual("small_task_named_contents_unavailable", small_producer_result_refusal(
+                self.record, self.settings, producer, result, "0" * 64, router,
+                compact_view_lanes=lanes))
+
     def test_both_models_see_the_same_named_file_contents(self):
         router = self.activation.services._packet_router
         views = [validated_compact_view(router.planned_work_packet(self.record, item))
@@ -816,3 +838,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

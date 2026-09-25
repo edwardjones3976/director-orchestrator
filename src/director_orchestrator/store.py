@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
@@ -4164,6 +4165,19 @@ class TaskStore:
                     # Ambiguous, a timeout included: the checkpoint may have
                     # advanced. Never a clean refusal.
                     raise DelegationAuditAnchorUnavailable("audit anchor advance failed") from exc
+                # The commit waits on SQLite's busy handler, which still holds
+                # the timeout set when the connection opened; verification
+                # and the anchor advance have spent most of that. It gets only
+                # what is left. The anchor has already advanced, so a commit
+                # that cannot finish is the same ambiguous anchor failure.
+                if deadline is not None:
+                    left = deadline - monotonic()
+                    connection.execute(f"PRAGMA busy_timeout = {max(1, int(left * 1000))}")
+                try:
+                    connection.commit()
+                except sqlite3.OperationalError as exc:
+                    raise DelegationAuditAnchorUnavailable(
+                        "audit commit did not finish after the anchor advanced") from exc
         except sqlite3.IntegrityError as exc:
             # Both the UNIQUE constraint and the no-replace trigger surface
             # here.  Neither is worked around: an identical record is refused.
@@ -4323,3 +4337,4 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
@@ -425,6 +426,31 @@ class HostProviderBridgeTests(unittest.TestCase):
             transport.send(canonical_json_bytes(work),
                            context=SimpleNamespace(timeout_seconds=1, fencing_generation=7))
         self.assertLess(time_module.monotonic() - started, 2.5)
+
+    def test_the_bridge_rechecks_authority_before_it_chooses_its_bytes(self) -> None:
+        from director_orchestrator.host_provider_bridge import HostBridgePacketTransport
+        from director_orchestrator.packet_routing import validated_compact_view
+
+        order = []
+
+        def build(packet):
+            order.append("build")
+            return validated_compact_view(packet)
+
+        transport = HostBridgePacketTransport(
+            "claude", "https://host.docker.internal:18765/v1/provider/dispatch", SECRET,
+            writer_owner_token_digest="sha256:" + "f" * 64,
+            outbound_payload_builder=build, result_normalizer=lambda packet, result: result)
+        opener = MagicMock()
+        opener.open.side_effect = lambda *args, **kwargs: (
+            order.append("send") or (_ for _ in ()).throw(urllib.error.URLError("stop")))
+        work = json.loads((ROOT / "docs/schemas/model-work-packet-v1.example.json").read_text())
+        context = SimpleNamespace(timeout_seconds=30, fencing_generation=7,
+                                  authority_recheck=lambda: order.append("recheck"))
+        with patch("director_orchestrator.host_provider_bridge.urllib.request.build_opener",
+                   return_value=opener), self.assertRaises(RuntimeError):
+            transport.send(canonical_json_bytes(work), context=context)
+        self.assertEqual(["recheck", "build", "send"], order)
 
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
         import time as time_module
@@ -1647,3 +1673,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

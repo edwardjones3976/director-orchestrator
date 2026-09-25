@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
@@ -381,6 +382,55 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
             transport.send(json.dumps(work).encode(), context=context)
         self.assertEqual(["recheck"], calls)
         self.assertEqual([], requests)
+
+    def test_responses_rechecks_before_it_chooses_the_input_bytes(self):
+        """The input is built only after the final recheck before a request."""
+
+        import director_orchestrator.primary_transports as module
+
+        order = []
+        real = module.validated_compact_view
+
+        def build(work):
+            order.append("build")
+            return real(work)
+
+        def recheck(**_):
+            order.append("recheck")
+
+        transport = OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test")
+        context = replace(self._context(), total_token_limit=40000, authority_recheck=recheck)
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                order.append("send")
+                raise httpx.ConnectError("stop here")
+
+        with patch.object(module, "validated_compact_view", side_effect=build), \
+                patch("director_orchestrator.primary_transports.httpx.AsyncClient", Client), \
+                self.assertRaises(RuntimeError):
+            transport.send(json.dumps(self._work()).encode(), context=context)
+        self.assertEqual(["recheck", "build", "send"], order)
+
+    def test_responses_refuses_a_generation_whose_input_changed_after_the_count(self):
+        import director_orchestrator.primary_transports as module
+
+        views = iter([{"schema_version": "a"}, {"schema_version": "b"}])
+        requests = []
+        with patch.object(module, "validated_compact_view", side_effect=lambda work: next(views)), \
+                self.assertRaisesRegex(RuntimeError, "input changed after its token count"):
+            self._openai_send([{"object": "response.input_tokens", "input_tokens": 10},
+                               self._openai_response()], requests=requests)
+        self.assertEqual(["/v1/responses/input_tokens"], [r.url.path for r in requests])
 
     def test_native_envelope_is_rebound_to_packet_and_exact_lane(self):
         work = {
@@ -1503,3 +1553,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

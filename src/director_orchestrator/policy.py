@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
@@ -55,6 +56,7 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 from collections.abc import Collection, Mapping, Sequence
@@ -625,14 +627,11 @@ _SECRET_SHAPED = re.compile(
 # Over-inclusive by design: a four-part version number reads as an IPv4
 # address and some long numeric identifiers pass a checksum by chance; such a
 # task keeps the button.
+# Phone numbers and IP addresses are not enumerated here: they are validated
+# structurally below (_holds_phone_like, _holds_ip_address).
 _IDENTIFIER_FORMATS = re.compile(
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
     r"|\b\d{3}-\d{2}-\d{4}\b"
-    r"|(?<![\w.-])(?:\+\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b"
-    r"|(?<![\w.-])\+\d{1,3}(?:[\s.-]?\d{2,4}){2,5}\b"
-    r"|\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
-    r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}(?![\w:])"
-    r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:){1,6}:(?:[0-9A-Fa-f]{1,4})?(?![\w:])"
     r"|(?i:\b\d{1,6}\s+(?:[a-z]+\s+){1,3}(?:street|st|avenue|ave|road|rd|boulevard"
     r"|blvd|lane|ln|drive|dr|court|ct|way|place|pl|terrace|parkway|pkwy|highway|hwy)\b)"
     r"|(?i:\b(?:born|dob|date\s+of\s+birth|birth\s*date)\b[^\n]{0,24}?"
@@ -667,10 +666,63 @@ def _iban(candidate: str) -> bool:
         return False
 
 
+# IP addresses: any token of hex digits, colons and dots (with an optional
+# IPv6 %zone) that the standard library parses as an address. An IPv6
+# candidate needs two non-empty groups, so slices such as "[::2]" do not
+# count; every IPv4 dotted quad does, version numbers included.
+_IP_CANDIDATE = re.compile(r"(?<![\w:.%])[0-9A-Fa-f:.]*[:.][0-9A-Fa-f:.]*(?:%[\w.-]+)?(?![\w:.])")
+
+
+def _holds_ip_address(text: str) -> bool:
+    for match in _IP_CANDIDATE.finditer(text):
+        token = match.group(0).rstrip(".")
+        address = token.split("%", 1)[0]
+        if ":" in address and len([group for group in address.split(":") if group]) < 2:
+            continue
+        if ":" not in address and address.count(".") != 3:
+            continue
+        try:
+            ipaddress.ip_address(token)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+# Phone numbers, generically: a run of 9 to 15 digits in groups separated by
+# single spaces, dots, dashes or parentheses, with an optional leading "+".
+# No country format is listed; only shapes that are provably not phones are
+# removed first: ISO dates and times, dotted version strings, UUIDs and hex
+# digests or SHAs.
+_NOT_PHONE_SHAPES = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+    r"|\b\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\b"
+    # A dotted version: groups of at most three digits, so a dotted phone
+    # number (a group of four or more) is not exempt.
+    r"|\b\d{1,3}(?:\.\d{1,3}){2,}\b"
+    r"|\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
+    r"|\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b"
+)
+# Digits joined by single separators: a space, dot or dash, or a
+# parenthesis with at most one of those beside it (a bracketed area code).
+_PHONE_CANDIDATE = re.compile(
+    r"(?<![\w.+-])\+?\(?\d(?:\d|(?:\)[ .-]?|[ .-]?\(|[ .-])(?=\d))*\d\)?(?![\w-]|\.\d)")
+
+
+def _holds_phone_like(text: str) -> bool:
+    cleaned = _NOT_PHONE_SHAPES.sub(" ", text)
+    for match in _PHONE_CANDIDATE.finditer(cleaned):
+        candidate = match.group(0)
+        digits = sum(character.isdigit() for character in candidate)
+        if 9 <= digits <= 15:
+            return True
+    return False
+
+
 def holds_identifier_format(text: str) -> bool:
     """Whether text holds a raw personal or financial identifier, unlabeled."""
 
-    if _IDENTIFIER_FORMATS.search(text):
+    if _IDENTIFIER_FORMATS.search(text) or _holds_ip_address(text) or _holds_phone_like(text):
         return True
     for match in _DIGIT_RUN.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))
@@ -701,11 +753,17 @@ _ASSIGNED_VALUE = re.compile(r"[:=]\s*[\"']?([A-Za-z0-9+/_\-]{20,}={0,2})[\"']?"
 
 
 def _high_entropy(value: str) -> bool:
-    counts = {character: value.count(character) for character in set(value)}
-    entropy = -sum(count / len(value) * math.log2(count / len(value))
-                   for count in counts.values())
-    return (entropy >= 3.5 and any(character.isdigit() for character in value)
-            and any(character.isalpha() for character in value))
+    """Whether an assigned value is secret-shaped, structurally.
+
+    Hex of any length but a git SHA's or a SHA-256 digest's (40 or 64
+    lower-case characters, which this repository's documents assign
+    everywhere), or any segment the opaque-token backstop flags. Identifiers
+    such as ``edge_oracle_exact_sha_review/v1`` are words, not secrets.
+    """
+
+    if re.fullmatch(r"[0-9a-fA-F]{20,}", value):
+        return not (len(value) in (40, 64) and value == value.lower())
+    return any(_opaque_segment(segment) for segment in re.split(r"[/=_]+", value))
 
 
 # The fail-closed backstop for credential formats no named pattern lists: a
@@ -739,6 +797,15 @@ def holds_opaque_token(text: str) -> bool:
                for segment in re.split(r"[/=_]+", match.group(0)))
 
 
+def holds_sensitive_value(text: str) -> bool:
+    """The one value screen every small-task text path uses: owner request
+    text and every file shown to a model. A raw identifier (structurally
+    validated where possible), a credential in any named format, or an
+    opaque high-entropy token."""
+
+    return holds_identifier_format(text) or holds_credential(text) or holds_opaque_token(text)
+
+
 def holds_credential(text: str) -> bool:
     """Whether text carries a credential-bearing value in any common format."""
 
@@ -761,9 +828,7 @@ def small_task_content_screened(text: str) -> bool:
     reasons = {reason for form in forms for reason in deterministic_approval_reasons(form)}
     return (bool(reasons & {"sensitive data", "credential or permission change"})
             or any(_PERSONAL_DATA.search(form) for form in forms)
-            or holds_credential(text)
-            or holds_opaque_token(text)
-            or holds_identifier_format(text))
+            or holds_sensitive_value(text))
 
 
 def _read_only_sentence(sentence: str) -> bool:
@@ -806,8 +871,7 @@ def _read_only_request(text: str) -> bool:
             for pattern in (_OUTSIDE_READ_ONLY, _WRITE_SCOPE, _PERSONAL_DATA, _MUTATION_VERB)
             for form in (body, _identifier_words(body)))
         and any(_NAMED_PATH.search(chunk) for chunk in request)
-        and not holds_identifier_format(body)
-        and not holds_credential(body)
+        and not holds_sensitive_value(body)
     )
 
 
@@ -2156,3 +2220,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
