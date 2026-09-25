@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | BEGIN]]
@@ -32,7 +33,7 @@ import uuid
 import httpx
 import jsonschema
 
-from director_orchestrator.models import canonical_slack_source_event_id
+from director_orchestrator.models import SlackIntake, canonical_slack_source_event_id
 
 
 COLLECTOR_PATH = Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py"
@@ -67,15 +68,40 @@ ENV = {
 SOURCE_EVENT = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": THREAD})
 
 
+def intake_claim(intake, created_at="2026-09-12T10:00:00+00:00"):
+    """The director_primary_intake_auth_claim row claim_authenticated_primary_intake writes for this intake, with
+    its digests produced by the producers themselves: main.py's verify_slack_intake_attestation over a
+    gateway-signed intake (payload) and the digest primary_default._request computes (idempotency key)."""
+    import secrets
+    from director_orchestrator import primary_default
+    from director_orchestrator.approvals import (
+        SLACK_INTAKE_ISSUED_AT_HEADER, SLACK_INTAKE_NONCE_HEADER, SLACK_INTAKE_SIGNATURE_HEADER,
+        build_slack_intake_attestation, verify_slack_intake_attestation)
+    model = SlackIntake.model_validate(intake)
+    assert model.model_dump(mode="json") == intake, "a served intake is the model's JSON form"
+    key = secrets.token_urlsafe(32)  # a runtime-only gateway key; never a literal
+    signed = build_slack_intake_attestation(key, "", model)
+    _, payload = verify_slack_intake_attestation(
+        key, "", model, expected_owner_user_id=model.user_id, expected_channel_id=model.channel_id,
+        issued_at=signed[SLACK_INTAKE_ISSUED_AT_HEADER], nonce=signed[SLACK_INTAKE_NONCE_HEADER],
+        signature=signed[SLACK_INTAKE_SIGNATURE_HEADER])
+    return {"payload_digest": "sha256:" + payload,
+            "idempotency_key_digest": primary_default._digest({"source_event_id": model.source_event_id,
+                                                               "channel_id": model.channel_id,
+                                                               "thread_ts": model.thread_ts}),
+            "authentication_class": "slack_gateway_attested", "created_at": created_at}
+
+
 def sample():
     # The /v1/tasks/{id} TaskRecord (models.TaskRecord), /v1/primary/tasks/{id}/deliveries rows
     # (primary_slack_delivery) and conversations.replies messages, with main.py's x-task-engine-owner headers.
     task = {
         "task_id": TASK_ID,
-        "intake": {
-            "channel_id": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": THREAD,
-            "user_id": OWNER, "source_event_id": SOURCE_EVENT, "text": "DIRECTOR audit trial",
-        },
+        # The served intake is SlackIntake's JSON form, defaults included, as the gateway attested it.
+        "intake": SlackIntake(
+            channel_id=ENV["SLACK_DIRECTOR_CHANNEL_ID"], thread_ts=THREAD, user_id=OWNER,
+            source_event_id=SOURCE_EVENT, text="DIRECTOR audit trial",
+            received_at=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)).model_dump(mode="json"),
         "intake_authentication": "slack_gateway_attested",
         "assignment_outcomes": [{
             # primary_default dispatch_offline_assignment: run_id is offline-double:<the reservation digest>.
@@ -169,6 +195,7 @@ def readback_fixture():
         "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": canonical_slack_source_event_id(
                                  {"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"}),
                              "created_at": "2026-09-12T10:00:40+00:00"}],
+        "intake_auth_claims": [intake_claim(sample()[0]["intake"])],
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
                             "observed_tokens": 900}],
@@ -205,11 +232,37 @@ class SummaryTests(unittest.TestCase):
     def setUp(self):
         self.task, self.deliveries, self.messages, self.headers = sample()
 
+    def test_gateway_attestation_needs_the_append_only_intake_claim(self):
+        """The projection's intake_authentication label alone never attests the gateway (checks 03, 08, 09, 10,
+        20): the complete readback must carry this task's one claim, whose digests are this intake's."""
+        self.task["qualification_evidence"] = readback_fixture()
+        self.assertTrue(self.summarize()["task_api_gateway_attested"])
+        for name, change in (
+                ("no readback", lambda task: task.pop("qualification_evidence")),
+                ("no claim row", lambda task: task["qualification_evidence"].update(intake_auth_claims=[])),
+                ("two claim rows", lambda task: task["qualification_evidence"]["intake_auth_claims"].append(
+                    dict(task["qualification_evidence"]["intake_auth_claims"][0]))),
+                ("another intake's payload", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(payload_digest=intake_claim({**task["intake"], "text": "another"})["payload_digest"])),
+                ("another source identity", lambda task: task["qualification_evidence"]["intake_auth_claims"][0]
+                 .update(idempotency_key_digest=intake_claim(
+                     {**task["intake"], "source_event_id": "CFIXTURE:1789219999.100000"})["idempotency_key_digest"])),
+                ("projection text edited after the claim", lambda task: task["intake"].update(text="edited")),
+                ("label says bearer", lambda task: task.update(intake_authentication="bearer_dry_run")),
+                ("incomplete readback", lambda task: task["qualification_evidence"].update(
+                    complete=False, truncated=["provider_attempts"]))):
+            with self.subTest(name):
+                self.task = deepcopy(sample()[0])
+                self.task["qualification_evidence"] = readback_fixture()
+                change(self.task)
+                self.assertFalse(self.summarize()["task_api_gateway_attested"])
+
     def summarize(self, *, complete=True, **options):
         return collector_module.summarize(THREAD, TASK_ID, self.task, self.deliveries,
             self.messages, complete, OWNER, BOT, self.headers, ENV["SLACK_DIRECTOR_CHANNEL_ID"], **options)
 
     def test_binds_actual_owner_source_message_and_observed_final(self):
+        self.task["qualification_evidence"] = readback_fixture()
         report = self.summarize()
         self.assertTrue(report["task_record_bound"])
         self.assertTrue(report["owner_account_input_matched"])
@@ -721,7 +774,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("incomplete", evidence["readback"]["state"])
         self.assertEqual({"row_counts": {"assignments": 1, "provider_attempts": 2, "effects": 1,
                                          "reconciliation_events": 0, "slack_deliveries": 1, "status_receipts": 1,
-                                         "provider_usage": 1}, "not_proof": True},
+                                         "intake_auth_claims": 1, "provider_usage": 1}, "not_proof": True},
                          evidence["readback"]["partial_diagnostics"])
         self.assertEqual(([], [], [], []), (evidence["chain"]["attempt_ids"], evidence["chain"]["effect_ids"],
                                             evidence["chain"]["delivery_ids"], evidence["chain"]["status_receipt_ids"]))
@@ -1490,3 +1543,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

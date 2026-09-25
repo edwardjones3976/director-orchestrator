@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
@@ -948,6 +949,7 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
+                "result_artifacts_without_assignment",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -1650,16 +1652,15 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         return [_observation(key, None, reason, _SLACK_SOURCE, {"task_created_at": readback["task_created_at"]},
                              at, **binding) for key in ("06", "08")]
     counters = readback["task_scope_counters"]
-    ordinals: dict[str, set[int]] = {}
-    for event in readback["provider_attempts"]:
-        ordinals.setdefault(event["assignment_id"], set()).add(event["attempt_ordinal"])
+    ordinals, contiguous = _attempt_ordinals(readback)
     redispatched = sorted(key for key, values in ordinals.items() if len(values) > 1)
     replies = row.get("terminal_reply_count")
     terminal = [r for r in readback["slack_deliveries"] if r.get("notification_key") == "terminal"]
     facts06 = {"thread_tasks": counters["thread_tasks"], "redispatched_assignments": len(redispatched),
                "terminal_reply_count": replies, "terminal_classification": readback["terminal_classification"],
                "process_started_at": runtime.started_at.isoformat(), "task_created_at": readback["task_created_at"],
-               "terminal_delivery_created_at": terminal[0]["created_at"] if len(terminal) == 1 else None}
+               "terminal_delivery_created_at": terminal[0]["created_at"] if len(terminal) == 1 else None,
+               "attempt_ordinals_contiguous": contiguous}
     if counters["thread_tasks"] > 1 or redispatched or (replies or 0) > 1:
         obs06 = _observation("06", False, "The approval task was duplicated, redispatched or replied to more than once.",
                              _SLACK_SOURCE, facts06, at, **binding)
@@ -1675,13 +1676,15 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         continued = (any(_when(e["recorded_at"]) > runtime.started_at for e in readback["provider_attempts"])
                      or _when(readback["task_updated_at"]) > runtime.started_at)
         facts06["continued_after_start"] = continued
-        # Every moment the resume rests on happened before the collection.
-        spans = (len(terminal) == 1 and processed and continued
+        # Every moment the resume rests on happened before the collection, and the terminal delivery is a settled
+        # DELIVERED lifecycle (the rule every final reply is graded by in 03, 09, 10 and 20).
+        spans = (len(terminal) == 1 and _delivery_settled(terminal[0]) and processed and continued
                  and _is_current(runtime.created_at, runtime.until(), _when(terminal[0]["created_at"]),
                                  *(_when(e["recorded_at"]) for e in readback["provider_attempts"]))
                  and _when(readback["task_created_at"]) < runtime.started_at < _when(terminal[0]["created_at"]))
         settled = all(a.get("status") in ("SUCCEEDED", "FAILED") for a in readback["assignments"])
         resumed = (readback["terminal_classification"] is not None and counters["thread_tasks"] == 1 and spans and settled
+                   and contiguous
                    and counters["started_attempts"] == counters["attempt_ordinals"]
                    # The one settlement rule: every latest attempt and started effect is terminal.
                    and _ambiguous_effects(row, readback, snapshot.get("latest")) == 0
@@ -1753,6 +1756,16 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
     else:
         passed08, explanation08 = None, "No complete, digest-bound owner approval was observed for this task."
     return [obs06, _observation("08", passed08, explanation08, _SLACK_SOURCE, facts08, at, **binding)]
+
+
+def _attempt_ordinals(readback: dict[str, Any]) -> tuple[dict[Any, set[Any]], bool]:
+    """Each assignment's attempt ordinals, and whether every assignment's run 1..n without a gap: the roster
+    numbers an assignment's attempts from 1, so a set that lacks attempt 1 or skips one is missing rows and is
+    not dispatch evidence (06 and 20 count dispatches only from contiguous ordinals)."""
+    ordinals: dict[Any, set[Any]] = {}
+    for event in readback.get("provider_attempts") or []:
+        ordinals.setdefault(event.get("assignment_id"), set()).add(event.get("attempt_ordinal"))
+    return ordinals, all(values == set(range(1, len(values) + 1)) for values in ordinals.values())
 
 
 def _run_mode(offline: bool, counters: dict[str, Any] | None, readback: dict[str, Any] | None) -> str | None:
@@ -2048,8 +2061,10 @@ def _answer_verified(facts: dict[str, Any], expected: list[str]) -> bool | None:
 
 def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | None:
     """Check 20: each settled assignment's persisted provider result packet (read by the in-image report and
-    revalidated against its stored digest) is the one its result digest names, and its outcome text is the graded
-    outcome's result. Not read or not persisted is unknown; any other difference is a mismatch."""
+    revalidated against its stored digest) is the one its result digest names, its outcome text is the graded
+    outcome's result and its provider the graded outcome's provider, and the packets' assignment IDs are exactly
+    the durable assignments' in both directions: an orphan packet is a mismatch, a missing one is unknown (not
+    read). Any other difference is a mismatch."""
     entry = ((consistency or {}).get("tasks") or {}).get(facts.get("task_id"))
     artifacts = entry.get("result_artifacts") if isinstance(entry, dict) else None
     readback = facts.get("readback") if isinstance(facts.get("readback"), dict) else {}
@@ -2057,13 +2072,19 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     assignments = readback.get("assignments") or []
     if not isinstance(artifacts, list) or not assignments:
         return None
+    persisted = {row.get("assignment_id") for row in artifacts if isinstance(row, dict)}
+    durable = {assignment.get("assignment_id") for assignment in assignments}
+    if persisted - durable:
+        return False  # a packet for no durable assignment of this task
+    if durable - persisted:
+        return None  # a settled assignment whose packet was not read
     for assignment in assignments:
-        rows = [row for row in artifacts if row.get("assignment_id") == assignment.get("assignment_id")]
-        if not rows:
-            return None
+        rows = [row for row in artifacts if isinstance(row, dict)
+                and row.get("assignment_id") == assignment.get("assignment_id")]
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
         if (len(rows) != 1 or rows[0].get("verified") is not True or len(matching) != 1
                 or not _same(rows[0].get("document_digest"), assignment.get("result_digest"))
+                or not _same(rows[0].get("provider"), matching[0].get("provider"))
                 or not isinstance(rows[0].get("outcome"), str) or rows[0]["outcome"] != matching[0].get("result")):
             return False
     return True
@@ -2095,7 +2116,10 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
     """The one settlement join for a run's work (checks 10 and 20): every readback assignment is SUCCEEDED and
     carries exactly one outcome of its sequence whose provider_result_digest is its result digest, and every
     outcome has its assignment; for paid runs each assignment's latest attempt is SUCCEEDED with that digest
-    too (as primary_default records them). Unreadable is unknown; any unsettled or mismatched row is not."""
+    too (as primary_default records them). Each outcome names its assignment's provider (primary_default records
+    AssignmentOutcome.provider as the plan item's agent, and the ledger row's provider_id as that agent's lane).
+    Unreadable, or attempt ordinals that do not run 1..n, is unknown; any unsettled or mismatched row is not."""
+    from .primary_default import _PRIMARY_LANE_AGENT
     readback = facts.get("readback")
     latest = facts.get("latest") if isinstance(facts.get("latest"), dict) else {}
     outcomes = [item for item in (facts.get("task") or {}).get("assignment_outcomes") or [] if isinstance(item, dict)]
@@ -2104,11 +2128,15 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
         return None
     if len(outcomes) != len(assignments):
         return False
+    if attempts and not _attempt_ordinals(readback)[1]:
+        return None
     for assignment in assignments:
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
         digest = "sha256:" + str(matching[0].get("provider_result_digest")) if len(matching) == 1 else None
+        agent = _PRIMARY_LANE_AGENT.get(str(assignment.get("provider_id")))
         if (digest is None or assignment.get("status") != "SUCCEEDED"
-                or not _same(assignment.get("result_digest"), digest)):
+                or not _same(assignment.get("result_digest"), digest)
+                or agent is None or not _same(matching[0].get("provider"), agent.value)):
             return False
         # Settled means completed after it was reserved (both also bound by _moments' freshness window).
         if not _ordered(assignment, _ASSIGNMENT_FIELDS, _required_moments("assignment", assignment)):
@@ -3181,3 +3209,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

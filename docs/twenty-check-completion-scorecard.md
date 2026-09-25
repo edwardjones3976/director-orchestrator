@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]] -->
@@ -549,6 +550,29 @@ subprocess the scorecard runs streams both stdout and stderr, each capped at
 `MAX_BYTES`; an overflow kills the child at once and the source reads as
 unavailable, never partially parsed.
 
+Gateway attestation (03, 08, 09, 10, 20) is never the task projection's
+mutable `intake_authentication` label alone. The qualification readback
+carries the append-only `director_primary_intake_auth_claim` row that
+`claim_authenticated_primary_intake` wrote before the graph existed (digests and
+class only, no nonce), and `task_api_gateway_attested` holds only when a
+complete readback has exactly one `slack_gateway_attested` claim for the task
+whose payload digest is `verify_slack_intake_attestation`'s digest of the
+served intake and whose idempotency digest is `primary_default._request`'s over
+its source event, channel and thread; a missing, duplicated or mismatched
+claim is not attested. Check 06's restart predicate grades its terminal
+delivery with the same `_delivery_settled` rule as every other final reply.
+Attempt ordinals count as dispatch evidence (06, 20) only when each
+assignment's run 1..n without a gap; an assignment showing only attempt 2, or 1
+and 3, is missing rows and is UNKNOWN. The settlement join (10, 20) also
+requires each outcome's provider to be its assignment's: the ledger row's lane
+mapped to its agent (`antigravity` carries a `gemini` outcome), as
+`primary_default` records both. For 20 the revalidated result packet's
+`provider` must equal the outcome's, and the packets' assignment IDs must equal
+the durable assignments' in both directions: an orphan packet FAILs, a missing
+one is UNKNOWN. Check 07 counts every persisted result packet that names no
+durable assignment of its task as a conflict
+(`result_artifacts_without_assignment`); the table has no such foreign key.
+
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
 `auth.test` names), to a run after the Slack credential's last update in n8n,
@@ -895,3 +919,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->

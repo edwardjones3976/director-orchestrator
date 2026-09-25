@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | BEGIN]]
@@ -290,7 +291,7 @@ READBACK_QUERY = {"include_qualification_evidence": "true"}
 READBACK_SCHEMA = "director-qualification-readback/v1"
 STATUS_RECEIPT_DEPENDENCY = "issue-230-receipts-collected;zero-work-delta-requires-prospective-baseline"
 SECTIONS = ("assignments", "provider_attempts", "effects", "reconciliation_events",
-            "slack_deliveries", "status_receipts", "provider_usage")
+            "slack_deliveries", "status_receipts", "intake_auth_claims", "provider_usage")
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
 
 
@@ -314,7 +315,7 @@ READBACK_KEYS = frozenset({
     "execution_mode", "terminal_classification", "terminal_reason_code", "task_created_at", "task_updated_at",
     "captured_at", "task_scope_counters", "snapshot", "bounds", "truncated", "absent", "complete",
     "assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
-    "status_receipts", "provider_usage",
+    "status_receipts", "intake_auth_claims", "provider_usage",
 })
 COUNTER_KEYS = ("thread_tasks", "assignments", "provider_attempts", "attempt_ordinals", "started_attempts",
                 "status_receipts", "effect_reservations")
@@ -610,6 +611,29 @@ def _readback(task_id, task):
     if not readback["complete"]:
         return readback, latest, "incomplete", "readback truncated: " + ",".join(map(str, readback.get("truncated", [])))
     return readback, latest, "collected", None
+
+
+def intake_claim_matches(task, readback):
+    """The gateway attestation joined to its append-only claim, never the mutable projection label alone.
+
+    True only when the task says slack_gateway_attested and the complete readback carries exactly one
+    director_primary_intake_auth_claim row of that class for this task whose payload digest is main.py's
+    digest of this very intake (approvals.verify_slack_intake_attestation) and whose idempotency digest is
+    primary_default._request's over its source event, channel and thread. Anything else is not attested.
+    """
+    from director_orchestrator.approvals import _canonical_digest
+    intake = task.get("intake")
+    claims = (readback or {}).get("intake_auth_claims")
+    if (not isinstance(intake, dict) or not isinstance(claims, list) or len(claims) != 1
+            or not isinstance(claims[0], dict) or task.get("intake_authentication") != "slack_gateway_attested"
+            or claims[0].get("authentication_class") != "slack_gateway_attested"):
+        return False
+    expected = ("sha256:" + _canonical_digest(intake),
+                "sha256:" + _canonical_digest({key: intake.get(key) for key in ("source_event_id", "channel_id",
+                                                                                "thread_ts")}))
+    observed = (claims[0].get("payload_digest"), claims[0].get("idempotency_key_digest"))
+    return all(isinstance(value, str) and hmac.compare_digest(value.encode(), wanted.encode())
+               for value, wanted in zip(observed, expected))
 
 
 def _provider_effect_state(latest):
@@ -1069,6 +1093,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     zero_recorded = (bound and all(task.get(key) == [] for key in empty_fields)
         if all(isinstance(task.get(key), list) for key in empty_fields) else None)
     approval_rows = [r for r in rows if str(r.get("notification_key", "")).startswith("approval:")]
+    claim_readback, _, claim_state, _ = _readback(task_id, task)
+    claim_attested = claim_state == "collected" and intake_claim_matches(task, claim_readback)
     pause, machine = owner_pause(rows, wall, input_message["ts"], final["ts"]) if (
         correlated and input_message and rows_bound and len(rows) < 100) else (None, None)
     safe_receipts = [{key: row.get(key) for key in ("notification_key", "projection_digest", "client_msg_id",
@@ -1082,7 +1108,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "source_event_id_sha256": digest(encode(intake["source_event_id"]))
             if isinstance(intake.get("source_event_id"), str) and intake["source_event_id"] else None,
         "owner_account_input_matched": bool(input_message), "human_typing_attested": None,
-        "task_api_gateway_attested": task.get("intake_authentication") == "slack_gateway_attested",
+        # Joined to the append-only intake claim in a complete readback, not read from the projection label.
+        "task_api_gateway_attested": claim_attested,
         "projection_digest": headers.get("x-primary-projection-digest"),
         "slack_thread_complete_at_read": complete, "observed_final_message_count": len(finals),
         "terminal_reply_count": len(finals) if complete else None,
@@ -1325,3 +1352,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 00:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

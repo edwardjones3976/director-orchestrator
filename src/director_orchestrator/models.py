@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | BEGIN]]
@@ -1228,6 +1229,17 @@ class QualificationStatusReceiptRow(BaseModel):
     created_at: datetime
 
 
+class QualificationIntakeAuthClaimRow(BaseModel):
+    """The append-only director_primary_intake_auth_claim row (digests only, no nonce)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    payload_digest: str
+    idempotency_key_digest: str
+    authentication_class: str
+    created_at: datetime
+
+
 class QualificationUsageRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1302,6 +1314,7 @@ class QualificationEvidenceReadback(BaseModel):
     reconciliation_events: list[QualificationReconciliationRow] = Field(default_factory=list)
     slack_deliveries: list[QualificationDeliveryRow] = Field(default_factory=list)
     status_receipts: list[QualificationStatusReceiptRow] = Field(default_factory=list)
+    intake_auth_claims: list[QualificationIntakeAuthClaimRow] = Field(default_factory=list)
     provider_usage: list[QualificationUsageRow] = Field(default_factory=list)
 
 
@@ -1504,3 +1517,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5 | 2026-09-22 | 00:15 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

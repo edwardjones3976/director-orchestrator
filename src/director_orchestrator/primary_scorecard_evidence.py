@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -40,7 +41,7 @@ _ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", 
                     "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
 _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
                "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
-               "projections_missing_batch",
+               "result_artifacts_without_assignment", "projections_missing_batch",
                "batches_without_projection",
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
@@ -106,6 +107,10 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
     OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id AND b.plan_digest=p.pd)
     OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
                    WHERE x.task_id=p.task_id AND x.status='SUCCEEDED'))) AS succeeded_projections_without_plan,
+ -- A persisted result packet names a durable assignment of its task (the table has no such foreign key).
+ (SELECT count(*) FROM {s}.director_primary_result_packet_artifact r WHERE NOT EXISTS
+    (SELECT 1 FROM {s}.director_primary_parallel_assignment x
+     WHERE x.task_id=r.task_id AND x.assignment_id=r.assignment_id)) AS result_artifacts_without_assignment,
  (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
     (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id)) AS projections_missing_batch,
  (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
@@ -267,11 +272,13 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                         f" writer_fencing_generation FROM {schema}.director_primary_result_packet_artifact"
                         " WHERE task_id = ANY(%(tasks)s) ORDER BY task_id, assignment_id", {"tasks": tasks}).fetchall():
                     try:
-                        outcome, verified = _result_packet_artifact_from_row(r).packet.get("outcome"), True
+                        packet = _result_packet_artifact_from_row(r).packet
+                        outcome, provider, verified = packet.get("outcome"), packet.get("provider"), True
                     except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
-                        outcome, verified = None, False
+                        outcome, provider, verified = None, None, False
                     artifacts.append({"task_id": r["task_id"], "assignment_id": r["assignment_id"],
-                                      "document_digest": r["document_digest"], "outcome": outcome, "verified": verified})
+                                      "document_digest": r["document_digest"], "outcome": outcome,
+                                      "provider": provider, "verified": verified})
                 for task_id in tasks:
                     per_task[task_id] = {"usage_tables_present": usage_tables, "verifier_secrets": verifiers,
                                          "result_artifacts": [{k: v for k, v in a.items() if k != "task_id"}
@@ -434,3 +441,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

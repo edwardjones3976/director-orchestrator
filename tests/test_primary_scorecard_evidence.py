@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -620,9 +621,27 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     f"INSERT INTO {self.schema}.director_primary_result_packet_artifact(task_id, assignment_id,"
                     " authority_snapshot_digest, document_digest, canonical_document, writer_fencing_generation)"
                     " VALUES (%s, %s, %s, %s, %s, 1)", values)
-        self.assertEqual(self.report(tasks=[task_id])["tasks"][task_id]["result_artifacts"], [
-            {"assignment_id": "A1", "document_digest": rows[0][3], "outcome": packet["outcome"], "verified": True},
-            {"assignment_id": "A2", "document_digest": rows[1][3], "outcome": None, "verified": False}])
+        report = self.report(tasks=[task_id])
+        self.assertEqual(report["tasks"][task_id]["result_artifacts"], [
+            {"assignment_id": "A1", "document_digest": rows[0][3], "outcome": packet["outcome"],
+             "provider": packet["provider"], "verified": True},
+            {"assignment_id": "A2", "document_digest": rows[1][3], "outcome": None, "provider": None,
+             "verified": False}])
+        # Neither packet names a durable assignment of its task (the table has no such foreign key): check 07
+        # counts both as conflicts until the assignments exist (PR #264 review 4100381678).
+        self.assertEqual(report["counts"]["result_artifacts_without_assignment"], 2)
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_parallel_batch"
+                "(task_id, plan_digest, owner_token, fencing_generation, max_concurrency)"
+                " VALUES (%s, %s, 'default-director-owner', 1, 2)", (task_id, "sha256:" + "4" * 64))
+            for sequence, assignment in enumerate(("A1", "A2"), 1):
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_parallel_assignment(task_id, assignment_id, sequence,"
+                    " provider_id, deployment_id, dependencies, write_surfaces, retry_limit, status)"
+                    " VALUES (%s, %s, %s, 'claude', 'fixture', '[]'::jsonb, '[]'::jsonb, 3, 'PENDING')",
+                    (task_id, assignment, sequence))
+        self.assertEqual(self.report()["counts"]["result_artifacts_without_assignment"], 0)
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -762,3 +781,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

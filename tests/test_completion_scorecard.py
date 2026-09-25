@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
@@ -266,7 +267,8 @@ def consistency_fixture():
                                   "approval_receipts": [],
                                   "result_artifacts": [{"assignment_id": PAID_TASK + "-A1",
                                                         "document_digest": "sha256:" + "2" * 64,
-                                                        "outcome": "The audit answer is 42", "verified": True}]},
+                                                        "outcome": "The audit answer is 42", "provider": "claude",
+                                                        "verified": True}]},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -377,6 +379,8 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
                                  None, datetime.fromisoformat(terminal["created_at"]))
         entry["messages"][-1]["text"] = payload["text"]
         entry["messages"][-1]["blocks"] = payload["blocks"]
+    # The gateway's append-only intake claim for this task's own (re-keyed) intake, digested by its producers.
+    readback_row["intake_auth_claims"] = [tf.intake_claim(entry["task"]["intake"], readback_row["task_created_at"])]
     return entry
 
 
@@ -2843,6 +2847,92 @@ class ScorecardCollectorTests(unittest.TestCase):
                     "terminal_recorded_at": "2026-09-12T10:00:02+00:00"}
         self.assertFalse(sc._ordered(terminal, sc._EFFECT_FIELDS, sc._required_moments("effect", terminal)))
 
+    def test_resume_final_delivery_is_a_settled_lifecycle_06(self):
+        """4100381657: the restart predicate's terminal delivery passes the same _delivery_settled rule as 03, 09,
+        10 and 20: a DELIVERED row without its claim or readback moment, or out of order, resumes nothing."""
+        self.assertEqual(self.world().state("06"), "PASS")
+        for name, change in (("unclaimed", {"claimed_at": None}), ("never read back", {"delivered_at": None}),
+                             ("read back before its claim", {"delivered_at": "2026-09-12T09:00:00+00:00"})):
+            case = self.world()
+            terminal = next(r for r in case.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"]
+                            if r["notification_key"] == "terminal")
+            terminal.update(change)
+            with self.subTest(name):
+                self.assertNotEqual(case.state("06"), "PASS")
+
+    def test_attempt_ordinals_must_start_at_one_and_be_contiguous_06_20(self):
+        """4100381664: an assignment that shows only attempt 2 (or 1 and 3) is missing attempt rows; its ordinals
+        are not dispatch evidence, so neither the restart (06) nor the paid join (20) passes."""
+        self.assertEqual([self.world().state(key) for key in ("06", "20")], ["PASS", "PASS"])
+        for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
+            case = self.world()
+            readback = case.tasks[task_id]["qualification_evidence"]
+            for event in readback["provider_attempts"]:
+                event["attempt_ordinal"] = 2  # the only attempt the readback shows is the second
+            tf.recount(readback)
+            with self.subTest(check=key):
+                self.assertEqual(case.state(key), "UNKNOWN")
+        self.assertEqual(sc._attempt_ordinals({"provider_attempts": [
+            {"assignment_id": "a", "attempt_ordinal": 1}, {"assignment_id": "a", "attempt_ordinal": 3}]})[1], False)
+        self.assertEqual(sc._attempt_ordinals({"provider_attempts": [
+            {"assignment_id": "a", "attempt_ordinal": 1}, {"assignment_id": "a", "attempt_ordinal": 2}]})[1], True)
+
+    def test_outcome_provider_joins_the_assignment_and_its_packet_10_20(self):
+        """4100381670: the projected outcome's provider is the assignment's (lane mapped to its agent, as
+        primary_default records both) and, for a paid run, the revalidated result packet's."""
+        self.assertEqual([self.world().state(key) for key in ("10", "20")], ["PASS", "PASS"])
+        for task_id, key in (("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
+            case = self.world()
+            readback = case.tasks[task_id]["qualification_evidence"]
+            readback["assignments"][0]["provider_id"] = "openai"  # the ledger ran another provider
+            for event in readback["provider_attempts"] + readback["provider_usage"]:
+                event["provider_id"] = "openai"  # consistently, so the typed readback itself still validates
+            with self.subTest(check=key, side="assignment"):
+                # An unjoined offline run has no mode (UNKNOWN, as for every join gap); a paid one is wrong.
+                self.assertEqual(case.state(key), "UNKNOWN" if key == "10" else "FAIL")
+        packet = self.world()
+        packet.consistency["tasks"][PAID_TASK]["result_artifacts"][0]["provider"] = "openai"
+        self.assertEqual(packet.state("20"), "FAIL")
+        # The lane-to-agent mapping: an antigravity ledger row carries a gemini outcome.
+        facts = {"readback": {"assignments": [{"assignment_id": "a", "sequence": 1, "provider_id": "antigravity",
+                                               "status": "SUCCEEDED", "result_digest": "sha256:" + "a" * 64,
+                                               "reserved_at": "2026-09-12T10:00:00+00:00",
+                                               "completed_at": "2026-09-12T10:00:01+00:00"}]},
+                 "task": {"assignment_outcomes": [{"assignment_sequence": 1, "provider": "gemini",
+                                                   "provider_result_digest": "a" * 64}]}}
+        self.assertIs(sc._assignments_joined(facts, attempts=False), True)
+        facts["task"]["assignment_outcomes"][0]["provider"] = "antigravity"
+        self.assertIs(sc._assignments_joined(facts, attempts=False), False)
+
+    def test_result_packets_equal_the_durable_assignment_set_07_20(self):
+        """4100381678: a result packet for no durable assignment is a conflict, for the task (20) and globally (07)."""
+        self.assertEqual([self.world().state(key) for key in ("07", "20")], ["PASS", "PASS"])
+        orphan = self.world()
+        artifacts = orphan.consistency["tasks"][PAID_TASK]["result_artifacts"]
+        artifacts.append({**artifacts[0], "assignment_id": PAID_TASK + "-A9"})
+        self.assertEqual(orphan.state("20"), "FAIL")
+        counted = self.world()
+        counted.consistency["counts"]["result_artifacts_without_assignment"] = 1
+        self.assertEqual(counted.state("07"), "FAIL")
+        missing = self.world()
+        missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
+        self.assertEqual(missing.state("20"), "UNKNOWN")
+
+    def test_gateway_attestation_joins_the_append_only_intake_claim_03_08_09_10_20(self):
+        """4100381682: the mutable projection label alone attests nothing; each task needs its one
+        director_primary_intake_auth_claim row whose digests are its own intake's."""
+        cases = (("DIR-LG-5E", "03"), (APPROVAL_TASK, "08"), ("DIR-LG-D0", "09"), ("DIR-LG-7A01", "10"),
+                 (PAID_TASK, "20"))
+        self.assertEqual([self.world().state(key) for _, key in cases], ["PASS"] * len(cases))
+        for task_id, key in cases:
+            for name, change in (("no claim", lambda claims: claims.clear()),
+                                 ("another intake's claim", lambda claims: claims[0].update(
+                                     payload_digest="sha256:" + "0" * 64))):
+                case = self.world()
+                change(case.tasks[task_id]["qualification_evidence"]["intake_auth_claims"])
+                with self.subTest(check=key, case=name):
+                    self.assertNotEqual(case.state(key), "PASS")
+
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
         for rows in (("budgets",), ("spend",), ("budgets", "spend")):
@@ -3428,3 +3518,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

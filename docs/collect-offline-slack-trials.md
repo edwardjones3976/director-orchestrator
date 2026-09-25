@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | BEGIN]] -->
@@ -256,7 +257,7 @@ evaluations are recomputed, and changed rubric hashes or conflicting checks fail
 | Receipt evidence | Run fields |
 | --- | --- |
 | Accepted task or unresolved thread | `run_id` |
-| Matched, gateway-attested owner input | `actual_owner_event` |
+| Matched owner input, gateway-attested by the task's one append-only intake claim (its digests re-derived from the served intake, in a complete readback) | `actual_owner_event` |
 | Recomputed predeclared rubric | `correctness_verified` |
 | Global deduplication authority | `task_count`, otherwise null |
 | Native terminal count and approved-pause arithmetic | `terminal_reply_count`, `wall_seconds`, `owner_pause_seconds`, `machine_seconds` |
@@ -333,3 +334,4 @@ evidence assertions. These are synthetic tests, not qualifying real Slack runs.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:02 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]] -->

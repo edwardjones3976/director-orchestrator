@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -3560,6 +3561,61 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual({"isolation": "REPEATABLE READ", "read_only": True,
                           "single_transaction": True, "covers_task_record": True}, document["snapshot"])
 
+    def test_qualification_readback_carries_the_append_only_intake_claim(self):
+        """The served readback carries the claim claim_authenticated_primary_intake wrote, and the scorecard's
+        collector re-derives both of its digests from the served intake (PR #264 review 4100381682)."""
+        import importlib.util
+        import secrets
+        from fastapi.testclient import TestClient
+        from director_orchestrator import main
+        from director_orchestrator.approvals import (
+            SLACK_INTAKE_ISSUED_AT_HEADER, SLACK_INTAKE_NONCE_HEADER, SLACK_INTAKE_SIGNATURE_HEADER,
+            build_slack_intake_attestation, verify_slack_intake_attestation)
+
+        spec = importlib.util.spec_from_file_location(
+            "claim_collector", Path(__file__).resolve().parents[1] / "scripts/collect-offline-slack-trials.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        intake = self.intake().model_copy(update={"source_event_id": "qa-claimed-intake"})
+        key = secrets.token_urlsafe(32)  # runtime-only gateway key
+        signed = build_slack_intake_attestation(key, "", intake)
+        identity = verify_slack_intake_attestation(
+            key, "", intake, expected_owner_user_id=intake.user_id, expected_channel_id=intake.channel_id,
+            issued_at=signed[SLACK_INTAKE_ISSUED_AT_HEADER], nonce=signed[SLACK_INTAKE_NONCE_HEADER],
+            signature=signed[SLACK_INTAKE_SIGNATURE_HEADER])
+        claimed = self.application.create_intake(
+            intake, intake_authentication=IntakeAuthentication.SLACK_GATEWAY_ATTESTED,
+            authenticated_replay_identity=identity)
+        bearer = self.application.create_intake(
+            self.intake().model_copy(update={"source_event_id": "qa-bearer-intake"}),
+            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        bearer_key = secrets.token_urlsafe(24)
+        settings = replace(self.settings, shared_secret=bearer_key, langgraph_primary_new_intake_enabled=True)
+        activation = SimpleNamespace(application=self.application, coordinator=self.coordinator)
+        with patch.object(main, "settings", settings), \
+             patch.object(main, "primary_default_activation", activation):
+            client = TestClient(main.app)
+            try:
+                served = {task_id: client.get(f"/v1/tasks/{task_id}", headers={"Authorization": "Bearer " + bearer_key},
+                                              params={"include_qualification_evidence": "true"}).json()
+                          for task_id in (claimed.task_id, bearer.task_id)}
+            finally:
+                client.close()
+        task = served[claimed.task_id]
+        claims = task["qualification_evidence"]["intake_auth_claims"]
+        self.assertEqual(1, len(claims))
+        self.assertEqual({"payload_digest", "idempotency_key_digest", "authentication_class", "created_at"},
+                         set(claims[0]))
+        self.assertEqual("slack_gateway_attested", claims[0]["authentication_class"])
+        self.assertTrue(collector.intake_claim_matches(task, task["qualification_evidence"]))
+        # The mutable label without its claim attests nothing; a relabelled or edited projection neither.
+        other = served[bearer.task_id]
+        self.assertEqual([], other["qualification_evidence"]["intake_auth_claims"])
+        self.assertFalse(collector.intake_claim_matches(
+            {**other, "intake_authentication": "slack_gateway_attested"}, other["qualification_evidence"]))
+        self.assertFalse(collector.intake_claim_matches(
+            {**task, "intake": {**task["intake"], "text": "edited"}}, task["qualification_evidence"]))
+
     def test_qualification_readback_is_bounded_by_one_deadline_across_pool_wait_and_blocked_sql(self):
         import time as clock
         import psycopg
@@ -4242,3 +4298,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]

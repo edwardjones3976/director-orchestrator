@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -2917,6 +2918,17 @@ class PostgresConditionalClaimStore:
                         FROM {schema}.director_primary_slack_status_receipt
                         WHERE task_id = %(task_id)s
                         ORDER BY created_at, receipt_id LIMIT %(limit)s
+                        """)
+                    # The append-only claim claim_authenticated_primary_intake wrote before
+                    # the graph existed: a reader re-derives its payload and idempotency
+                    # digests from the task's intake instead of trusting the mutable
+                    # projection's intake_authentication label. Digests only; no nonce.
+                    rows(cursor, "intake_auth_claims", f"""
+                        SELECT payload_digest, idempotency_key_digest,
+                               authentication_class, created_at
+                        FROM {schema}.director_primary_intake_auth_claim
+                        WHERE task_id = %(task_id)s
+                        ORDER BY created_at LIMIT %(limit)s
                         """)
                     # Task-and-thread-local counters for prospective status-only
                     # proof, from the same snapshot and deadline. They are not
@@ -6040,3 +6052,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
