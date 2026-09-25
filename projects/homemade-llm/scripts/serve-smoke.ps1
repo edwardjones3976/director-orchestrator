@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | BEGIN]]
 # M0.4: serve the M0.3 smoke GGUF through LM Studio and prove /v1 works from Windows and from a container.
 #   .\serve-smoke.ps1                      newest <HotRoot>\models\smoke\*.gguf
@@ -179,3 +180,4 @@ try {
     $lock.ReleaseMutex(); $lock.Dispose()
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

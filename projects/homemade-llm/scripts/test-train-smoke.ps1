@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | BEGIN]]
 # Checks that the shared Invoke-Bounded (invoke-bounded.ps1) cannot hang on a stalled CLI and leaves no child
 # process behind (no Docker needed: a fake docker.cmd that never returns is put first on PATH), then the
@@ -112,3 +113,4 @@ Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no outpu
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

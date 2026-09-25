@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 """M0.3 smoke fine-tune: prove the Unsloth container trains on the RTX 5070 and exports a GGUF.
 
@@ -255,3 +256,4 @@ def export() -> None:
 if __name__ == "__main__":
     export() if sys.argv[1:] == ["export"] else main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

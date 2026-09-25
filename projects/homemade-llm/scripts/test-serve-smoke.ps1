@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 # Unit checks for serve-smoke.ps1's decision functions, loaded from its syntax tree (no LM Studio, no Docker).
 #   pwsh -File projects\homemade-llm\scripts\test-serve-smoke.ps1
@@ -109,3 +110,4 @@ if ($failures.Count) { $failures | ForEach-Object { Write-Output "FAIL $_" }; ex
 Write-Output 'test-serve-smoke: all cases passed'
 exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

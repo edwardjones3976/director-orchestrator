@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 """Unit tests for smoke_train.py's non-GPU logic. The ML stack is stubbed, so this runs on any Python 3.10+:
     python projects/homemade-llm/train/test_smoke_train.py
@@ -174,3 +175,4 @@ class SmokeTrainTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

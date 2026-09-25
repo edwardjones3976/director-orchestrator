@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 # M0.3: run train/smoke_train.py inside the pinned Unsloth image.
 #   .\train-smoke.ps1                                   default pinned base
@@ -121,3 +122,4 @@ try {
     $gpuLock.ReleaseMutex(); $gpuLock.Dispose()
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

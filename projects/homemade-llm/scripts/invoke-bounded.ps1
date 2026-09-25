@@ -1,3 +1,4 @@
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | BEGIN]]
 # Shared by train-smoke.ps1 and serve-smoke.ps1 (dot-sourced): run a native command with a host-side deadline.
 # A stalled Docker or LM Studio daemon must not hang a run that holds the GPU lock, and a timed-out command
@@ -31,3 +32,4 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
     }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
