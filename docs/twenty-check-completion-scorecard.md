@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]] -->
@@ -76,7 +77,7 @@ whether any operation is permitted. The report always says
 | 11 | Every runtime lane used is its real product | Every lane the paid run actually used is attested as its real product (OpenAI/Codex Responses, xAI Grok, Claude) with no substitution (amended by owner decision 2026-09-23; Grok Bot and Antigravity team mode are follow-ups) |
 | 12 | Fresh activation captures | Unexpired verified captures bound to provider_bindings_sha256 |
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
-| 14 | Bounded execution | Workload-ledger window: bounds set and USD hard cap verified |
+| 14 | Bounded execution | Workload-ledger window: bounds set and a hard USD cap the operator attests (operator-attested, not cryptographically verified; owner ruling 2026-09-25) |
 | 15 | Monetary control and usage | Enrolled signed daily cap and holds, usage-monitor accounting, settled request-correlated meter rows |
 | 16 | Executed exact-head CI | The six `ci.yml` jobs executed at the exact head on hosted or registered self-hosted runners; only when none executed, a signed local-replica receipt against a main ancestor (amended by owner decision 2026-09-23) |
 | 17 | Independent ACCEPT | Adopted owner-local acceptance for the candidate with reviewer ≠ author |
@@ -710,8 +711,22 @@ Before twenty prospective admissions exist, UNKNOWN honestly describes the
 incomplete window. This observation does not authorize the journal's policy,
 authenticate declared provider identities or confer dispatch/production credit.
 Check 14 uses the same complete window: it passes when every admission
-declares positive timeout, call, turn and output bounds and a verified hard USD
-cap, and fails when any admission lacks a USD limit or a verified hard cap.
+declares positive timeout, call, turn and output bounds and an operator-attested
+hard USD cap with an evidence reference and SHA-256, and fails when any
+admission lacks a USD limit or that attestation. Owner ruling (2026-09-25),
+verbatim: option chosen: "Attestation, labelled". Check 14 keeps grading the
+operator's per-admission hard-cap attestation from the engineering workload
+ledger and says so plainly: its description, PASS explanation and facts
+(`cap_evidence: "operator_attestation"`, plus the ledger's own
+`operator_attestations_are_not_cryptographic_proof` flag) call the caps
+operator-attested, not cryptographically verified. The product has no
+authoritative source for these caps: the ledger stores the operator's boolean
+and evidence reference without checking them
+(`engineering_workload_ledger.py` `_bounds`), and only Director-runtime paid
+tasks carry owner-signed `ProviderBudget` caps (`antigravity_team.py`,
+enforced on every paid attempt by `PrimaryProviderBudgetAuthority.reserve`),
+which check 15 already grades. Team-journal admissions have no signed budget
+row and no join key to one.
 
 Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
@@ -866,3 +881,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]] -->

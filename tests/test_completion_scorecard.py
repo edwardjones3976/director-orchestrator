@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
@@ -3004,6 +3005,20 @@ class ScorecardCollectorTests(unittest.TestCase):
             ledger_fixture(capped)
             report = self.ledger_report(capped)
             self.assertEqual([row(report, key)["status"] for key in ("13", "14")], ["PASS", "PASS"])
+            # Owner ruling 2026-09-25: a PASS is labelled an operator attestation and never claims verification.
+            passed = row(report, "14")
+            facts = passed["evidence"][0]["facts"]
+            self.assertEqual((facts["cap_evidence"], facts["operator_attestations_are_not_cryptographic_proof"]),
+                             ("operator_attestation", True))
+            for text in (passed["explanation"], passed["action"]):
+                self.assertIn("operator-attested, not cryptographically verified", text)
+                self.assertIsNone(re.search(r"(?<!cryptographically )\bverified\b", text), text)
+            # The cap evidence reference keeps its shape: a malformed SHA-256 is not a PASS.
+            from director_orchestrator.engineering_workload_ledger import EngineeringWorkloadLedger
+            status = EngineeringWorkloadLedger(capped).status()
+            status["records"][0]["bounds"]["usd_cap_evidence"]["sha256"] = "not-a-digest"
+            with patch.object(EngineeringWorkloadLedger, "status", return_value=status):
+                self.assertNotEqual(row(self.ledger_report(capped), "14")["status"], "PASS")
             uncapped = Path(folder) / "uncapped.sqlite3"
             ledger_fixture(uncapped, first_bounds=lambda reference: {
                 "timeout_seconds": 60, "call_limit": 1, "turn_limit": 1, "output_bytes_limit": 1000, "usd_limit": 1,
@@ -3364,3 +3379,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]

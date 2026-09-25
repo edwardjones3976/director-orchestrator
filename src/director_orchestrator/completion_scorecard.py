@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | BEGIN]]
@@ -133,7 +134,7 @@ CHECKS = (
     Check("11", "Every runtime lane used is its real product", "runtime", "Attest every lane the paid run used as its real product (OpenAI/Codex Responses, xAI Grok, Claude) from verified validation-store captures; no substitution (owner decision 2026-09-23)."),
     Check("12", "Native activation evidence is fresh", "runtime", "Verify current native captures, binding digests, identities and expiry through the activation verifier."),
     Check("13", "Rolling twenty admissions recompute reported resource bounds", "coordination", "Use the authoritative append-only assignment ledger, including failed and ambiguous attempts. The ledger does not authenticate operator-reported usage or attestations; it only recomputes reported bound violations from journal rows."),
-    Check("14", "Attempts, time and output are bounded", "coordination", "Use the workload-ledger window: twenty post-cutover admissions whose bounds are all set and whose USD hard cap is verified."),
+    Check("14", "Attempts, time and output are bounded", "coordination", "Use the workload-ledger window: twenty post-cutover admissions whose bounds are all set and whose hard USD cap the operator attests with an evidence reference and SHA-256 (operator-attested, not cryptographically verified; owner ruling 2026-09-25)."),
     Check("15", "Daily monetary cap and actual usage are enforced", "runtime", "Verify enrolled daily budget reservations and correlated actual charges; unknown cost is not zero."),
     Check("16", "Exact candidate CI really executed and passed", "candidate", "Run the six required jobs at this exact head on hosted or registered self-hosted runners with executed steps; if none executed, supply an owner-signed local-replica receipt (owner decision 2026-09-23)."),
     Check("17", "Independent exact-candidate ACCEPT exists", "candidate", "Verify one non-author review against this exact head and original product identity."),
@@ -2672,19 +2673,29 @@ def _workload_observation(path: Path, at: datetime) -> list[Observation]:
                 and all(type(bounds.get(key)) is int and bounds[key] > 0
                         for key in ("timeout_seconds", "call_limit", "turn_limit", "output_bytes_limit"))
                 and _amount(bounds.get("usd_limit")) and bounds["usd_limit"] > 0
-                and bounds.get("hard_usd_cap_verified") is True)
+                and bounds.get("hard_usd_cap_verified") is True
+                and isinstance(bounds.get("usd_cap_evidence"), dict)
+                and isinstance(bounds["usd_cap_evidence"].get("reference"), str)
+                and bool(bounds["usd_cap_evidence"]["reference"].strip())
+                and bool(_HEX64.fullmatch(str(bounds["usd_cap_evidence"].get("sha256", "")))))
 
     uncapped = sum(1 for row in rows if not isinstance(row.get("bounds"), dict) or row["bounds"].get("usd_limit") is None
                    or row["bounds"].get("hard_usd_cap_verified") is not True)
     passed14, explanation14 = None, "A complete window of twenty post-cutover admissions is not yet available."
     if complete and uncapped:
-        passed14, explanation14 = False, "An admission in the window lacks a USD limit or a verified hard USD cap."
+        passed14, explanation14 = False, "An admission in the window lacks a USD limit or an operator-attested hard USD cap."
     elif complete and all(bounded(row.get("bounds")) for row in rows):
+        # Owner ruling 2026-09-25 ("Attestation, labelled"): the caps are the operator's attestation, never verification.
         passed14, explanation14 = True, ("Every one of the twenty post-cutover admissions declares positive timeout, call, "
-                                         "turn and output bounds and a verified hard USD cap.")
+                                         "turn and output bounds and an operator-attested hard USD cap with an evidence "
+                                         "reference and SHA-256. The caps are operator-attested, not cryptographically "
+                                         "verified: the ledger reports operator_attestations_are_not_cryptographic_proof.")
     elif complete:
-        explanation14 = "An admission's declared bounds are malformed."
-    facts14 = {"admissions": len(rows), "window_complete": complete, "uncapped_admissions": uncapped}
+        explanation14 = "An admission's declared bounds or cap evidence reference are malformed."
+    facts14 = {"admissions": len(rows), "window_complete": complete, "uncapped_admissions": uncapped,
+               "cap_evidence": "operator_attestation",
+               "operator_attestations_are_not_cryptographic_proof": (status.get("journal_consistency") or {}).get(
+                   "operator_attestations_are_not_cryptographic_proof")}
     return [_observation("13", passed, explanation, source, facts, at),
             _observation("14", passed14, explanation14, source, facts14, at)]
 
@@ -3103,3 +3114,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
