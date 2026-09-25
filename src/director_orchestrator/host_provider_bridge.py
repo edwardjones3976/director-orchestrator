@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -438,12 +439,26 @@ class BridgeClaimStore:
                     writer_generation INTEGER NOT NULL,
                     packet_digest TEXT NOT NULL,
                     writer_owner_token_digest TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS')),
+                    state TEXT NOT NULL CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS','REFUSED')),
                     response_json BLOB,
                     updated_at INTEGER NOT NULL
                 );
                 """
             )
+            # A store created before the REFUSED state existed: rebuild the
+            # table with the widened CHECK, keeping every row.
+            definition = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_attempts'"
+            ).fetchone()[0]
+            if "'REFUSED'" not in definition:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;"
+                    "ALTER TABLE bridge_attempts RENAME TO bridge_attempts_before_refused;"
+                    + definition.replace("'AMBIGUOUS')", "'AMBIGUOUS','REFUSED')") + ";"
+                    "INSERT INTO bridge_attempts SELECT * FROM bridge_attempts_before_refused;"
+                    "DROP TABLE bridge_attempts_before_refused;"
+                    "COMMIT;"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
@@ -483,6 +498,10 @@ class BridgeClaimStore:
                 connection.commit()
                 if row[6] == "SUCCEEDED" and isinstance(row[7], bytes):
                     return row[7]
+                if row[6] == "REFUSED":
+                    # Replayed as the same clean refusal: nothing ever ran.
+                    raise HostProviderBridgeAttestationMismatch(
+                        "host provider attempt was refused before execution")
                 raise HostProviderBridgeAmbiguous("host provider attempt is not safely replayable")
             connection.execute(
                 "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
@@ -498,8 +517,13 @@ class BridgeClaimStore:
             connection.commit()
         return None
 
-    def settle(self, idempotency_digest: str, *, response: bytes | None) -> None:
-        state = "SUCCEEDED" if response is not None else "AMBIGUOUS"
+    def settle(self, idempotency_digest: str, *, response: bytes | None,
+               refused: bool = False) -> None:
+        """Settle an INFLIGHT claim: SUCCEEDED with its response, REFUSED when
+        the executor proved it started nothing, otherwise AMBIGUOUS."""
+
+        state = ("REFUSED" if refused else
+                 "SUCCEEDED" if response is not None else "AMBIGUOUS")
         with closing(self._connect()) as connection:
             cursor = connection.execute(
                 "UPDATE bridge_attempts SET state = ?, response_json = ?, updated_at = ? "
@@ -992,6 +1016,11 @@ def dispatch_bridge_request(
         return replay
     try:
         result = executor.execute(request)
+    except HostProviderBridgeAttestationMismatch:
+        # Raised before any process starts: a clean, replayable refusal, never
+        # an ambiguous attempt.
+        store.settle(request.idempotency_digest, response=None, refused=True)
+        raise
     except Exception:
         store.settle(request.idempotency_digest, response=None)
         raise
@@ -1021,3 +1050,4 @@ def dispatch_bridge_request(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

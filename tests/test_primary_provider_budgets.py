@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -150,13 +151,16 @@ class _LiveDispatchHarness:
 
     budgets = '{"claude":4,"grok":0.55}'
     reserved_microusd = (550000, 4000000)
+    extra_settings: dict = {}
+    delegation_ledger = None
 
     def setUp(self):
         self.settings = settings(langgraph_primary_enabled=True,
             langgraph_primary_live_provider_dispatch_enabled=True, allow_paid_runs=True,
             langgraph_primary_owner_token="o" * 32, allowed_starting_refs=("main",),
             repository_snapshot_root=str(Path.cwd()),
-            langgraph_primary_provider_attempt_budgets_usd_json=self.budgets)
+            langgraph_primary_provider_attempt_budgets_usd_json=self.budgets,
+            **self.extra_settings)
         self.writer = SimpleNamespace(engine_owner="langgraph", owner_token="o" * 32,
             lease_live=True, fencing_generation=4)
 
@@ -213,7 +217,7 @@ class _LiveDispatchHarness:
                    provider_ready=lambda *_args, **_kwargs: True)), \
              patch("director_orchestrator.primary_default.PrimaryTaskCoordinator", return_value=coordinator):
             self.activation = DefaultPrimaryActivation(self.settings, live_dependencies=dependencies,
-                effect_gateways=gateways)
+                effect_gateways=gateways, delegation_ledger=self.delegation_ledger)
         self.record = record_for(self.settings)
         self.activation.services._packet_router = packet_router(self.settings)
         self.activation.services.register(self.record)
@@ -509,6 +513,138 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual(["short"], [item.result for item in self.record.assignment_outcomes])
 
 
+
+class SmallTaskHappyPathTests(_LiveDispatchHarness, unittest.TestCase):
+    """One real small task, end to end through every guard it meets.
+
+    The plan comes from the real live builder (_live_parallel_plan via
+    record_for), the grant pre-authorizes it through the real exercise and
+    audit ledger, and both assignments run through the real dispatch closure
+    with the production read-only router: producer, then reviewer, then the
+    acceptance predicate over the reviewer's result and its own packet.
+    """
+
+    budgets = '{"claude":0.15,"grok":0.1}'
+    reserved_microusd = (100000, 150000)
+    USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
+
+    def setUp(self):
+        import json
+        import tempfile
+        import uuid
+        from director_orchestrator.delegation import GRANT_SCHEMA_VERSION
+        from director_orchestrator.store import TaskStore
+        from tests.test_primary_default import _MemoryAuditAnchor
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.delegation_ledger = TaskStore(
+            str(Path(directory.name) / f"audit-{uuid.uuid4().hex}.sqlite3"),
+            delegation_audit_anchor=_MemoryAuditAnchor())
+        self.extra_settings = {
+            "delegation_enabled": True, "delegation_suspended": False,
+            "slack_owner_user_id": "U123", "slack_channel_id": "C123",
+            "delegation_grant_json": json.dumps({
+                "schema_version": GRANT_SCHEMA_VERSION, "grant_id": "grant-happy-path",
+                "repository": "owner/repository", "branch_pattern": "main",
+                "classes": ["execute_small_read_only_task"], "providers": ["grok", "claude"],
+                "expires_at": "2099-01-01T00:00:00+00:00", "max_exercises": 5,
+                "revoked": False}),
+        }
+        lanes = frozenset({"grok", "claude"})
+        with patch("director_orchestrator.primary_default._compact_view_lanes",
+                   return_value=lanes):
+            super().setUp()
+        use_fixture_blobs(self)
+        self.adapter = self.activation.live_dependencies.adapter_for_format()
+        self.activation.services._packet_router = packet_router(
+            self.settings, read_only_tools=lambda record: small_read_only_eligible(
+                record, self.settings, compact_view_lanes=lanes))
+        self.results = {}
+        self.handle.claim_store.record_result_packet_artifact = Mock(side_effect=lambda **kw:
+            self.results.__setitem__(kw["assignment_id"], kw["packet"])
+            or SimpleNamespace(document_digest=document_digest(kw["packet"])))
+        # This task is running and nothing else was pre-authorized before it.
+        self.activation.coordinator.get_projection.return_value = SimpleNamespace(
+            projection={"terminal_classification": None, "parallel_plan_digest": None})
+
+    def test_a_live_small_task_is_produced_reviewed_and_accepted_under_a_grant(self):
+        from director_orchestrator.models import IntakeAuthentication
+        from director_orchestrator.primary_default import (
+            result_acceptance_passes, small_pre_authorization_refusal)
+
+        record = self.record
+        record.assignment_outcomes = []
+        record.intake_authentication = IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+        producer, reviewer = sorted(record.plan.assignments, key=lambda item: item.sequence)
+        self.assertEqual(("grok", "claude"),
+                         (producer.primary_provider_lane, reviewer.primary_provider_lane))
+        lanes = frozenset({"grok", "claude"})
+        self.assertTrue(small_read_only_eligible(record, self.settings, compact_view_lanes=lanes))
+
+        # Pre-authorization: the real exercise writes PRE_AUTHORIZED.
+        application = self.activation.application
+        self.assertTrue(application._exercise_standing_grant(
+            record, attested=application._attested_owner_intake(record)))
+        [entry] = self.delegation_ledger.delegation_audit_records(limit=10)
+        self.assertEqual("PRE_AUTHORIZED", entry.outcome.value)
+        self.activation.services.register(record, approval_free=True)
+        record = self.record = self.activation.services._record(record.task_id)
+        router = self.activation.services._packet_router
+
+        def refusal():
+            return small_pre_authorization_refusal(
+                record, self.settings, self.delegation_ledger, approval_free=True,
+                compact_view_lanes=lanes, coordinator=self.activation.coordinator)
+
+        self.assertIsNone(refusal())
+
+        # Producer.
+        self.adapter.dispatch = lambda _packet, *, context: (
+            self.dispatch_contexts.append(context) or {
+                "status": "SUCCEEDED", "run_reference": "run-producer",
+                "outcome": "README.md describes a plain fixture file.", "usage": self.USAGE})
+        outcome = self.run_assignment(0)
+        self.assertEqual(("provider_result_authenticated", ParallelAssignmentStatus.SUCCEEDED),
+                         (outcome.reason_code, outcome.status))
+
+        # Reviewer: its packet names the producer's files and carries them.
+        review_packet = router.planned_work_packet(record, reviewer)
+        view = validated_compact_view(review_packet)
+        self.assertEqual(["README.md"], [item["path"] for item in view["contents"]])
+        checks = review_packet["acceptance_checks"]
+        self.adapter.dispatch = lambda _packet, *, context: (
+            self.dispatch_contexts.append(context) or {
+                "status": "SUCCEEDED", "run_reference": "run-reviewer",
+                "outcome": "The producer's summary matches README.md.",
+                "acceptance": [{"check": check, "status": "PASS", "evidence": "Read README.md."}
+                               for check in checks],
+                "risks": [], "blockers": [], "requested_decisions": [],
+                "usage": self.USAGE})
+        outcome = self.run_assignment(1)
+        self.assertEqual(("provider_result_authenticated", ParallelAssignmentStatus.SUCCEEDED),
+                         (outcome.reason_code, outcome.status))
+        self.assertEqual(2, len(self.dispatch_contexts))
+        # The reviewer ran under the narrowed small-task token cap.
+        self.assertEqual(self.settings.small_task_review_max_tokens,
+                         self.dispatch_contexts[-1].total_token_limit)
+
+        # Verdict: the reviewer's recorded result against its own packet.
+        review_id = router._assignment_id(record, reviewer)
+        self.assertTrue(result_acceptance_passes(self.results[review_id], checks))
+        # Still pre-authorized and untripped after both sends.
+        self.assertIsNone(refusal())
+        self.assertEqual(1, len(self.delegation_ledger.delegation_audit_records(limit=10)))
+
+    def run_assignment(self, index):
+        reservation, connection = self.request(index)
+        self.dispatch.preflight(reservation, writer=self.writer, connection=connection,
+                                wave_budget_usage={})
+        with patch("director_orchestrator.primary_default.live_provider_admissions",
+                   return_value={}), \
+                patch("director_orchestrator.primary_default._require_current_dispatch_authority"):
+            return self.dispatch(reservation)
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
@@ -520,3 +656,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

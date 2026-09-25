@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -234,11 +235,21 @@ _PERPLEXITY_PROHIBITED_AUTHORITY: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("operational decision", re.compile(r"\b(?:assess|decide|determine|recommend|judge)\b.{0,60}\b(?:patch|pull request|pr|ship|merge|deploy|release|acceptance)\b", re.I | re.S)),
 )
 
+# Provider, chat and cloud token formats. The public-research query block and
+# the credential/file-content screen (_SECRET_SHAPED) both use this one list,
+# so neither can miss a prefix the other knows. Each length floor is the lower
+# of the two lists' former floors.
+_TOKEN_FORMATS = (
+    r"(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}"
+    r"|github_pat_[A-Za-z0-9_]{12,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}\b"
+)
+
 _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repository path", re.compile(r"(?:[a-z]:\\|/(?:home|users|workspace)/|\b(?:src|tests|oracle|docs)/[\w./-]+)", re.I)),
     ("repository URL", re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+", re.I)),
     ("commit SHA", re.compile(r"\b[0-9a-f]{40}\b", re.I)),
-    ("secret-like value", re.compile(r"\b(?:sk-[a-z0-9_-]{12,}|ghp_[a-z0-9]{12,}|github_pat_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,})\b", re.I)),
+    ("secret-like value", re.compile(
+        rf"-----BEGIN [A-Z ]*PRIVATE KEY|\b(?:{_TOKEN_FORMATS})", re.I)),
     ("diff or source excerpt", re.compile(r"(?:diff --git|@@ -\d|```(?:python|javascript|typescript|diff|json)?\s)", re.I)),
     ("private-context language", re.compile(r"\b(?:private|internal|unpublished|our repository|our code|attached patch)\b", re.I)),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
@@ -595,12 +606,12 @@ def _identifier_words(text: str) -> str:
 
 # Secret-shaped values: private keys, provider and chat tokens, cloud access
 # keys, and upper-case credential variable names.
-# Token prefixes (sk-, ghp_, xox?-, AKIA) and upper-case variable names keep
+# Token prefixes (_TOKEN_FORMATS: sk-, pk-, rk-, gh?_, github_pat_, xox?-,
+# AKIA) and upper-case variable names keep
 # their case: the formats themselves are case-sensitive. The key header
 # does not need to be.
 _SECRET_SHAPED = re.compile(
-    r"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"
-    r"|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b"
+    rf"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)|\b(?:{_TOKEN_FORMATS})"
     r"|(?-i:\b[A-Z][A-Z0-9]*_(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)\b)"
 )
 
@@ -2076,3 +2087,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

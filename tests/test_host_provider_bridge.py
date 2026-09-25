@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -244,6 +245,54 @@ class HostProviderBridgeTests(unittest.TestCase):
                 now=1_000,
             )
         self.assertEqual(1, executor.calls)
+
+    def test_an_attestation_refusal_is_a_clean_replayable_no_run(self) -> None:
+        """Nothing ran, so the claim settles REFUSED, never AMBIGUOUS, and a
+        replay returns the same refusal without executing."""
+
+        from director_orchestrator.host_provider_bridge import (
+            HostProviderBridgeAttestationMismatch,
+        )
+
+        class _Refusing(_Executor):
+            def execute(self, request):
+                self.calls += 1
+                raise HostProviderBridgeAttestationMismatch("host argv differs")
+
+        executor = _Refusing()
+        for nonce in ("nonce-refused-1", "nonce-refused-2"):
+            with self.subTest(nonce=nonce), \
+                    self.assertRaises(HostProviderBridgeAttestationMismatch):
+                dispatch_bridge_request(request(nonce=nonce), secret=SECRET,
+                                        store=self.store, executor=executor, now=1_000)
+        self.assertEqual(1, executor.calls)
+        with closing(self.store._connect()) as connection:
+            states = connection.execute("SELECT state FROM bridge_attempts").fetchall()
+        self.assertEqual([("REFUSED",)], states)
+
+    def test_a_store_created_before_the_refused_state_is_migrated_in_place(self) -> None:
+        import sqlite3
+
+        path = Path(self.temporary.name) / "legacy-bridge.sqlite3"
+        with closing(sqlite3.connect(path)) as connection:
+            connection.executescript(
+                "CREATE TABLE bridge_attempts (idempotency_digest TEXT PRIMARY KEY, "
+                "provider TEXT NOT NULL, task_id TEXT NOT NULL, assignment_id TEXT NOT NULL, "
+                "writer_generation INTEGER NOT NULL, packet_digest TEXT NOT NULL, "
+                "writer_owner_token_digest TEXT NOT NULL, state TEXT NOT NULL "
+                "CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS')), response_json BLOB, "
+                "updated_at INTEGER NOT NULL);"
+                "INSERT INTO bridge_attempts VALUES "
+                "('d', 'claude', 't', 'a', 1, 'p', 'w', 'SUCCEEDED', x'7b7d', 1);")
+        store = BridgeClaimStore(path)
+        BridgeClaimStore(path)  # idempotent
+        with closing(store._connect()) as connection:
+            rows = connection.execute(
+                "SELECT idempotency_digest, state, response_json FROM bridge_attempts").fetchall()
+            connection.execute(
+                "INSERT INTO bridge_attempts VALUES "
+                "('e', 'claude', 't', 'a', 1, 'p', 'w', 'REFUSED', NULL, 1)")
+        self.assertEqual([("d", "SUCCEEDED", b"{}")], rows)
 
     def test_rejects_nonce_replay_writer_drift_and_unsupported_lanes(self) -> None:
         valid = request()
@@ -1404,3 +1453,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

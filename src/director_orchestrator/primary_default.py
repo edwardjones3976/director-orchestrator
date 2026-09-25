@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -118,7 +119,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Collection, Mapping
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
@@ -879,24 +880,43 @@ def small_task_usage_refusal(
     return None
 
 
+# Every term a PRE_AUTHORIZED record must carry: the pre-execution terms but
+# `audit`, which the record itself is.
+_PRE_AUTHORIZED_TERMS = frozenset(PRE_EXECUTION_TERMS) - {"audit"}
+
+
+def _pre_authorization_complete(item: DelegationAuditRecord) -> bool:
+    """Every pre-execution term exactly once, each PASS: a record holding only
+    some of them, or a term twice, pre-authorizes nothing."""
+
+    names = [gate.gate for gate in item.gate_results]
+    return (len(names) == len(set(names)) and set(names) == _PRE_AUTHORIZED_TERMS
+            and all(gate.status is GateStatus.PASS for gate in item.gate_results))
+
+
 # Bound on one exercise's audit-history read: past either, it keeps the button.
 _AUDIT_HISTORY_MAX_RECORDS = 10_000
 _AUDIT_HISTORY_MAX_SECONDS = 5.0
 
 
-def result_acceptance_passes(packet: Mapping[str, Any] | None) -> bool:
-    """Whether an authenticated review result accepts: every check PASS, and
-    no risk, blocker or requested decision."""
+def result_acceptance_passes(
+    packet: Mapping[str, Any] | None, expected_checks: Sequence[str] | None,
+) -> bool:
+    """Whether an authenticated review result accepts: it disposes of exactly
+    the review packet's acceptance checks, each once and each PASS, with no
+    extra check, and reports no risk, blocker or requested decision."""
 
     acceptance = packet.get("acceptance", []) if packet is not None else []
+    expected = list(expected_checks or ())
+    observed = [item.get("check") if isinstance(item, Mapping) else None
+                for item in acceptance] if isinstance(acceptance, list) else [None]
     return bool(
         packet is not None
         and packet.get("status") == "SUCCEEDED"
-        and acceptance
-        and all(
-            isinstance(item, Mapping) and item.get("status") == "PASS"
-            for item in acceptance
-        )
+        and expected
+        and len(set(expected)) == len(expected) == len(observed) == len(set(observed))
+        and set(observed) == set(expected)
+        and all(item.get("status") == "PASS" for item in acceptance)
         and not packet.get("risks")
         and not packet.get("blockers")
         and not packet.get("requested_decisions")
@@ -1053,7 +1073,8 @@ def small_pre_authorization_refusal(
         if item.outcome is RecordedOutcome.PRE_AUTHORIZED
         and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
         and item.acting_agent == agent
-        and item.grant_id == grant.grant_id]
+        and item.grant_id == grant.grant_id
+        and _pre_authorization_complete(item)]
     if not records:
         return "small_task_pre_authorization_unaudited"
     # The grant that authorized it, not merely one with its grant_id: the
@@ -1702,7 +1723,9 @@ def build_automatic_primary_live_dependencies(
 
     def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
         packet = authenticated_result(context)
-        accepted = result_acceptance_passes(packet)
+        binding = packet_result(context) if packet is not None else None
+        accepted = binding is not None and result_acceptance_passes(
+            packet, binding.work_packet.get("acceptance_checks"))
         return AcceptanceResult(
             _digest(
                 {
@@ -4870,3 +4893,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

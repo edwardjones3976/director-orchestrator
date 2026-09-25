@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -376,13 +377,45 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
             "acceptance": [{"check": check, "status": "PASS", "evidence": "Checked against README.md."}
                            for check in work["acceptance_checks"]]})
         result = _normalize_host_native_result("grok", work, passing)
-        self.assertTrue(result_acceptance_passes(result))
+        self.assertTrue(result_acceptance_passes(result, work["acceptance_checks"]))
         self.assertIsNone(small_task_usage_refusal(result, "grok", small_class=True))
         self.assertFalse(result_acceptance_passes(
-            _normalize_host_native_result("grok", work, grok_response())))
+            _normalize_host_native_result("grok", work, grok_response()), work["acceptance_checks"]))
         # Responses results always report NOT_RUN: never an accepted review.
         self.assertFalse(result_acceptance_passes(
-            _bound_research_result("openai", work, run_reference="resp-1", outcome="done")))
+            _bound_research_result("openai", work, run_reference="resp-1", outcome="done"),
+            work["acceptance_checks"]))
+
+    def test_an_accepted_review_disposes_of_exactly_the_packet_checks(self):
+        """Every required check exactly once, no extra, no duplicate, all PASS."""
+
+        from director_orchestrator.primary_default import result_acceptance_passes
+
+        checks = ["First check", "Second check"]
+
+        def review(*names, status="PASS"):
+            return {"status": "SUCCEEDED", "risks": [], "blockers": [],
+                    "requested_decisions": [],
+                    "acceptance": [{"check": name, "status": status} for name in names]}
+
+        self.assertTrue(result_acceptance_passes(review(*checks), checks))
+        self.assertTrue(result_acceptance_passes(review(*reversed(checks)), checks))
+        for name, (result, expected) in {
+            "missing": (review("First check"), checks),
+            "extra": (review(*checks, "Invented check"), checks),
+            "duplicate": (review("First check", "First check", "Second check"), checks),
+            "duplicate_hides_missing": (review("First check", "First check"), checks),
+            "renamed": (review("First check", "Second check."), checks),
+            "unrelated": (review("Anything"), checks),
+            "not_pass": (review(*checks, status="NOT_RUN"), checks),
+            "no_expected": (review(*checks), []),
+            "unknown_expected": (review(*checks), None),
+            "duplicate_expected": (review(*checks), [*checks, "First check"]),
+            "not_a_mapping": ({**review(), "acceptance": ["First check", "Second check"]},
+                              checks),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(result_acceptance_passes(result, expected))
 
     def test_the_grok_reviewer_cap_is_enforced_on_the_result(self):
         """Owner ruling 2026-09-24, "Accept post-hoc cap": over-cap reported
@@ -401,7 +434,7 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
         # 140 tokens reported (input 100 + output 40) and $0.0005.
         within, _ = self.dispatch("grok", review, tokens=140, budget=Decimal("0.0005"))
         self.assertEqual("SUCCEEDED", within["status"])
-        self.assertTrue(result_acceptance_passes(within))
+        self.assertTrue(result_acceptance_passes(within, work["acceptance_checks"]))
         self.assertIsNone(small_task_usage_refusal(within, "grok", small_class=True))
         for limits in ({"tokens": 139}, {"budget": Decimal("0.00049")}):
             with self.subTest(limits=limits):
@@ -410,7 +443,7 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 # task's terminal is not SUCCEEDED, and its grant trips.
                 self.assertEqual("FAILED", over["status"])
                 self.assertIn("admitted attempt limit", over["blockers"][-1])
-                self.assertFalse(result_acceptance_passes(over))
+                self.assertFalse(result_acceptance_passes(over, work["acceptance_checks"]))
         # A Responses-shaped Grok reply without usage is refused outright; a
         # result that reaches dispatch without usage is unmeasured.
         unmeasured = dict(review)
@@ -667,3 +700,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

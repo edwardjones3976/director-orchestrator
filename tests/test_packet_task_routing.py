@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -987,6 +988,35 @@ class CompactProviderViewTests(unittest.TestCase):
             with self.subTest(ordinary=text):
                 self.assertFalse(holds_credential(text))
 
+    def test_every_token_format_is_screened_in_files_and_research_queries(self) -> None:
+        """Bare tokens, built at runtime: the file-content screen and the public
+        research block share one list, so neither misses a prefix."""
+
+        from director_orchestrator.policy import (
+            _PUBLIC_RESEARCH_QUERY_BLOCKS, holds_credential, small_task_content_screened)
+
+        body = "Zk3pQ9vL2mN8xR4tW7yB5cJ1aB"
+        underscore, dash = "_", "-"
+        tokens = {
+            "github_fine_grained": "github" + underscore + "pat" + underscore
+                                   + "11ABCDEFG0" + underscore + body,
+            "github_classic": "gh" + "p" + underscore + body,
+            "github_oauth": "gh" + "o" + underscore + body,
+            "github_server": "gh" + "s" + underscore + body,
+            "openai": "sk" + dash + body,
+            "publishable": "pk" + dash + body,
+            "restricted": "rk" + dash + body,
+            "slack_bot": "xox" + "b" + dash + "1234567890" + dash + body,
+            "aws": "AKIA" + "IOSFODNN7EXAMPLE",
+            "private_key": dash * 5 + "BEGIN EC " + "PRIVATE KEY" + dash * 5,
+        }
+        research = dict(_PUBLIC_RESEARCH_QUERY_BLOCKS)["secret-like value"]
+        for name, token in tokens.items():
+            with self.subTest(token=name):
+                self.assertTrue(holds_credential(token))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\nuse {token} here\n"))
+                self.assertIsNotNone(research.search(f"what is {token} used for"))
+
     def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
         import subprocess as subprocess_module
         import time as time_module
@@ -1216,3 +1246,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]

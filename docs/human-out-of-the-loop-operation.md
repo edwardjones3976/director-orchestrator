@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
@@ -379,7 +380,10 @@ review can never pass. With native lanes excluded and the Claude bridge lane
 not attestable, the one pair that could complete a small task is an OpenAI
 Responses producer with an attested Grok bridge reviewer, whose result must
 carry structured acceptance evidence with every check PASS; readiness reports
-armed only when such a pair exists.
+armed only when such a pair exists. A review accepts only when its result
+disposes of exactly the review packet's `acceptance_checks`: each required
+check once, none missing, no extra and no duplicate, all PASS, and no risk,
+blocker or requested decision. Any other result is a rejection.
 
 **Post-hoc reviewer cap.** Owner ruling, 2026-09-24: "Accept post-hoc cap".
 The attested Grok host-bridge reviewer is admitted even though the Grok CLI
@@ -394,7 +398,10 @@ configuration: one turn, no tools, read-only, and a bounded compact input. Each 
 prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
 credential approval gate or the request text's personal-data exclusion (as
 written or with identifiers split into words), holding a secret-shaped value,
-or holding a credential-bearing value (URI user information, an Authorization
+or holding a credential-bearing value (a provider, chat or cloud token such as
+`sk-`, `pk-`, `rk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, a fine-grained
+`github_pat_`, `xox?-` or `AKIA`, one list the public-research query block
+shares; URI user information, an Authorization
 or Bearer value, a JWT, an AWS access key, a connection-string password, or a
 high-entropy value assigned in an env or config line), or holding a raw
 identifier with no label (an e-mail address, social security
@@ -427,7 +434,10 @@ attestation is gone, changed, or cannot be authenticated, nothing is sent
 carries the pinned argv digest, and the bridge compares it, in constant time,
 with the digest of the argv it is about to run, immediately before starting it;
 a mismatch runs nothing and returns a signed refusal the Director also treats as
-`small_task_bridge_attestation_stale`. The same signed request carries the
+`small_task_bridge_attestation_stale`. The bridge settles that attempt's claim
+as `REFUSED`, never `AMBIGUOUS`, and a replay of the same request returns the
+same signed refusal without running anything, so recovery treats it as a no-run
+refusal and it never trips the grant. The same signed request carries the
 attempt's dollar budget and token limit; the bridge passes them to the host
 command as `DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD` and
 `DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT` and records them with the attempt, and
@@ -473,7 +483,9 @@ live grant for the class whose canonical document is the snapshot recorded
 when the task was pre-authorized and which still covers the task's repository,
 branch and both lanes (`small_task_pre_authorization_revoked`), the verified
 audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
-grant_id (`small_task_pre_authorization_unaudited`; an absent, unreadable or
+grant_id, carrying every pre-execution term but `audit` exactly once and each
+`PASS` (`small_task_pre_authorization_unaudited`; a record with only some of
+the terms, an extra one or a repeat counts as none; an absent, unreadable or
 replaced ledger has none, and a history past its bound counts as unread),
 no `delegation_trip` for that grant_id exists anywhere in it and no task that
 grant pre-authorized has failed, stopped ambiguous, or become unreadable
@@ -724,3 +736,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->

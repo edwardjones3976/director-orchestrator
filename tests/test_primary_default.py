@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -803,6 +804,40 @@ class StandingGrantExerciseTests(unittest.TestCase):
         self.assertEqual("DIR-LG-INFLIGHT", request.task_id)
         self.assertTrue(request.execution_approval_required)
         self.assertEqual([], self.audit())
+
+    def test_a_pre_authorized_record_must_carry_every_term_exactly_once(self):
+        """Non-empty and all PASS is not enough: it must cover the term set."""
+
+        record = self.record()
+        now = datetime.now(timezone.utc)
+
+        def refusal(gates):
+            ledger = audit_ledger(self.directory)
+            ledger.append_delegation_audit_record(DelegationAuditRecord(
+                schema_version=AUDIT_SCHEMA_VERSION,
+                outcome=RecordedOutcome.PRE_AUTHORIZED,
+                grant_id="grant-small-1",
+                grant_snapshot=self.settings.delegation_grant_json,
+                decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                candidate_sha=SHA,
+                acting_agent=f"director-langgraph:{record.task_id}",
+                verdicts=(),
+                gate_results=tuple(GateResult(term, GateStatus.PASS, now) for term in gates),
+                recorded_at=now,
+            ))
+            return small_pre_authorization_refusal(
+                record, self.settings, ledger, approval_free=True,
+                compact_view_lanes=SMALL_LANES, coordinator=self.coordinator(None))
+
+        self.assertIsNone(refusal(TERM_ORDER))
+        for name, gates in {
+            "one_term": ["authorization"],
+            "missing_bounds": [term for term in TERM_ORDER if term != "bounds"],
+            "extra_term": [*TERM_ORDER, "gates"],
+            "duplicate": [*TERM_ORDER, "bounds"],
+        }.items():
+            with self.subTest(gates=name):
+                self.assertEqual("small_task_pre_authorization_unaudited", refusal(gates))
 
     def test_a_pre_authorized_task_that_no_longer_qualifies_is_refused(self):
         record = self.record()
@@ -5824,3 +5859,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
