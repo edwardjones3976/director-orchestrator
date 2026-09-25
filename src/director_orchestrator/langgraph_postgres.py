@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
@@ -1912,6 +1913,72 @@ def _validated_result_packet(
     return validated, document_digest(validated), authority_digest
 
 
+# The qualification readback's evidence sections, one definition each: (columns, tables, task column, order).
+# read_primary_qualification_evidence selects one task's rows; the in-image consistency command selects every
+# task's rows with the same columns and joins, so both feed the same shared validation
+# (primary_scorecard_evidence.task_evidence_errors) the same shapes.
+_QUALIFICATION_SECTIONS = {
+    "assignments": (
+        """assignment_id, sequence, provider_id, deployment_id, status,
+               reservation_digest, result_digest, reason_code, reserved_at, completed_at""",
+        "{schema}.director_primary_parallel_assignment", "task_id", "sequence, assignment_id"),
+    "provider_attempts": (
+        """a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
+               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
+               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
+               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
+               a.budget_evidence_digest, a.recorded_at""",
+        """{schema}.director_primary_provider_attempt a
+        JOIN {schema}.director_primary_parallel_assignment p
+          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id""",
+        "a.task_id", "p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence"),
+    "effects": (
+        """r.reservation_key, r.claim_key, r.effect_key_digest,
+               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
+               r.reserved_units, r.reserved_at,
+               e.started_at AS execution_started_at,
+               b.remote_system, b.remote_identifier, b.bound_at,
+               t.disposition AS terminal_disposition,
+               t.evidence_digest AS terminal_evidence_digest,
+               t.recorded_at AS terminal_recorded_at""",
+        """{schema}.director_primary_effect_reservation r
+        LEFT JOIN {schema}.director_primary_effect_execution e
+          ON e.reservation_key = r.reservation_key AND e.task_id = r.task_id
+        LEFT JOIN {schema}.director_primary_remote_binding b
+          ON b.reservation_key = r.reservation_key AND b.task_id = r.task_id
+        LEFT JOIN {schema}.director_primary_terminal_evidence t
+          ON t.claim_key = r.claim_key AND t.task_id = r.task_id""",
+        "r.task_id", "r.reserved_at, r.reservation_key"),
+    "slack_deliveries": (
+        """notification_key, projection_digest, client_msg_id, state,
+               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
+               readback_attempts, last_error, owner_decision, owner_decision_at,
+               owner_command_id""",
+        "{schema}.director_primary_slack_delivery", "task_id", "created_at, notification_key"),
+    "status_receipts": (
+        "receipt_id, source_event_id, created_at",
+        "{schema}.director_primary_slack_status_receipt", "task_id", "created_at, receipt_id"),
+    "provider_usage": (
+        """u.attempt_digest, s.provider_id, s.reserved_microusd,
+               s.token_limit, u.actual_microusd, u.observed_tokens""",
+        """{schema}.director_primary_provider_usage u
+        JOIN {schema}.director_primary_provider_spend s
+          ON s.attempt_digest = u.attempt_digest""",
+        "s.task_id", "u.attempt_digest"),
+}
+
+
+def qualification_section_sql(schema: str, name: str, *, all_tasks: bool = False) -> str:
+    """One readback section's SELECT: this task's rows (%(task_id)s), or every task's rows led by their task_id
+    and ordered by it (all_tasks), both capped at %(limit)s rows."""
+    columns, tables, task_column, order = _QUALIFICATION_SECTIONS[name]
+    tables = tables.format(schema=schema)
+    if all_tasks:
+        return (f"SELECT {task_column} AS task_id, {columns} FROM {tables} "
+                f"ORDER BY {task_column}, {order} LIMIT %(limit)s")
+    return f"SELECT {columns} FROM {tables} WHERE {task_column} = %(task_id)s ORDER BY {order} LIMIT %(limit)s"
+
+
 def _result_packet_artifact_from_row(
     row: Mapping[str, Any],
 ) -> PrimaryResultPacketArtifact:
@@ -2859,66 +2926,17 @@ class PostgresConditionalClaimStore:
                     head = cursor.fetchone()
                     if head is None:
                         return None
-                    rows(cursor, "assignments", f"""
-                        SELECT assignment_id, sequence, provider_id, deployment_id, status,
-                               reservation_digest, result_digest, reason_code, reserved_at, completed_at
-                        FROM {schema}.director_primary_parallel_assignment
-                        WHERE task_id = %(task_id)s
-                        ORDER BY sequence, assignment_id LIMIT %(limit)s
-                        """)
-                    rows(cursor, "provider_attempts", f"""
-                        SELECT a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
-                               a.event_sequence, a.provider_id, a.format_id, a.transport_id,
-                               a.idempotency_key_digest, a.attempt_digest, a.provider_run_id_digest,
-                               a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
-                               a.budget_evidence_digest, a.recorded_at
-                        FROM {schema}.director_primary_provider_attempt a
-                        JOIN {schema}.director_primary_parallel_assignment p
-                          ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
-                        WHERE a.task_id = %(task_id)s
-                        ORDER BY p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence
-                        LIMIT %(limit)s
-                        """)
-                    rows(cursor, "effects", f"""
-                        SELECT r.reservation_key, r.claim_key, r.effect_key_digest,
-                               r.effect_attempt_digest, r.writer_owner_id, r.fencing_generation,
-                               r.reserved_units, r.reserved_at,
-                               e.started_at AS execution_started_at,
-                               b.remote_system, b.remote_identifier, b.bound_at,
-                               t.disposition AS terminal_disposition,
-                               t.evidence_digest AS terminal_evidence_digest,
-                               t.recorded_at AS terminal_recorded_at
-                        FROM {schema}.director_primary_effect_reservation r
-                        LEFT JOIN {schema}.director_primary_effect_execution e
-                          ON e.reservation_key = r.reservation_key AND e.task_id = r.task_id
-                        LEFT JOIN {schema}.director_primary_remote_binding b
-                          ON b.reservation_key = r.reservation_key AND b.task_id = r.task_id
-                        LEFT JOIN {schema}.director_primary_terminal_evidence t
-                          ON t.claim_key = r.claim_key AND t.task_id = r.task_id
-                        WHERE r.task_id = %(task_id)s
-                        ORDER BY r.reserved_at, r.reservation_key LIMIT %(limit)s
-                        """)
+                    rows(cursor, "assignments", qualification_section_sql(schema, "assignments"))
+                    rows(cursor, "provider_attempts", qualification_section_sql(schema, "provider_attempts"))
+                    rows(cursor, "effects", qualification_section_sql(schema, "effects"))
                     rows(cursor, "reconciliation_events", f"""
                         SELECT event_id, claim_key, state, evidence_digest, recorded_at
                         FROM {schema}.director_primary_reconciliation_event
                         WHERE task_id = %(task_id)s
                         ORDER BY event_id LIMIT %(limit)s
                         """)
-                    rows(cursor, "slack_deliveries", f"""
-                        SELECT notification_key, projection_digest, client_msg_id, state,
-                               created_at, claimed_at, acknowledged_at, delivered_at, slack_ts,
-                               readback_attempts, last_error, owner_decision, owner_decision_at,
-                               owner_command_id
-                        FROM {schema}.director_primary_slack_delivery
-                        WHERE task_id = %(task_id)s
-                        ORDER BY created_at, notification_key LIMIT %(limit)s
-                        """)
-                    rows(cursor, "status_receipts", f"""
-                        SELECT receipt_id, source_event_id, created_at
-                        FROM {schema}.director_primary_slack_status_receipt
-                        WHERE task_id = %(task_id)s
-                        ORDER BY created_at, receipt_id LIMIT %(limit)s
-                        """)
+                    rows(cursor, "slack_deliveries", qualification_section_sql(schema, "slack_deliveries"))
+                    rows(cursor, "status_receipts", qualification_section_sql(schema, "status_receipts"))
                     # The append-only claim claim_authenticated_primary_intake wrote before
                     # the graph existed: a reader re-derives its payload and idempotency
                     # digests from the task's intake instead of trusting the mutable
@@ -2978,15 +2996,7 @@ class PostgresConditionalClaimStore:
                         absent.append("provider_usage")
                         sections["provider_usage"] = []
                     else:
-                        rows(cursor, "provider_usage", f"""
-                            SELECT u.attempt_digest, s.provider_id, s.reserved_microusd,
-                                   s.token_limit, u.actual_microusd, u.observed_tokens
-                            FROM {schema}.director_primary_provider_usage u
-                            JOIN {schema}.director_primary_provider_spend s
-                              ON s.attempt_digest = u.attempt_digest
-                            WHERE s.task_id = %(task_id)s
-                            ORDER BY u.attempt_digest LIMIT %(limit)s
-                            """)
+                        rows(cursor, "provider_usage", qualification_section_sql(schema, "provider_usage"))
         # Construction and size validation spend the same deadline; a late
         # document is refused rather than returned after the bound.
         require_deadline_remaining(deadline, "qualification readback document")
@@ -6053,3 +6063,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]] -->
@@ -575,7 +576,7 @@ mapped to its agent (`antigravity` carries a `gemini` outcome), as
 the durable assignments' in both directions: an orphan packet FAILs, a missing
 one is UNKNOWN. Check 07 counts every persisted result packet that names no
 durable assignment of its task as a conflict
-(`result_artifacts_without_assignment`); the table has no such foreign key.
+(counted within `result_artifacts_invalid`); the table has no such foreign key.
 
 Every durable timestamp an evidence row carries, and every store the
 evidence lives in, is bounded. The intake claim's own `created_at` must be
@@ -650,6 +651,27 @@ count is unknown. Review actors (check 17, the adoption loader and the
 acceptance evidence) go through one `canonical_actor` rule: a padded, empty or
 control-character actor is rejected, never normalized; canonical actors are
 compared casefolded and must all be distinct.
+
+One per-task validation, `task_evidence_errors` in
+`primary_scorecard_evidence`, serves both readers. The collector's typed
+readback and the in-image consistency command run it on the same sections
+(`langgraph_postgres.qualification_section_sql`: one task, or every task in
+the snapshot): attempt histories, usage, external effects (terminal evidence
+joined by claim and task), deliveries and receipts, lifecycle order (every
+attempt event inside its assignment's reservation and completion, every
+assignment, effect and DELIVERED delivery carrying the moments its state
+requires) and settlement (each assignment's status and result digest agree
+with its last attempt's final event; a SUCCEEDED assignment with no attempt
+only in an offline mode). Check 07 counts failing tasks per category
+(`provider_attempts_invalid`, `provider_usage_invalid`, `effects_invalid`,
+`slack_deliveries_invalid`, `lifecycle_invalid`, `settlement_invalid`) and
+packets through `artifact_assignment_conflict` (`result_artifacts_invalid`,
+which now includes orphans, and `result_artifacts_in_flight`); over 20000
+rows in any read every count is unknown. The global counts' terminal-evidence
+joins match on task as well as claim. `/health` is read through the same
+`bounded_get` as every other HTTP source. A Codex CLI capture names no product
+or model, so it is labelled `openai-codex-unattested` and check 11 is UNKNOWN
+for that lane; it is never credited as Codex.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -853,8 +875,10 @@ Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
 products above or its verified capture names another product; a verified,
 bound capture with no product counts as a substitution. On the OpenAI lane the product must also match the
-attempts' transport: `responses-api` needs `openai-responses` and any other
-transport `openai-codex`. 11 is UNKNOWN when the running container was created
+attempts' transport: `responses-api` needs `openai-responses`; the Codex
+transports (`native-cli`, `authenticated-windows-host-bridge`) can only carry an
+`openai-codex-unattested` capture, which leaves the lane UNKNOWN because the
+Codex stream names no product or model. 11 is UNKNOWN when the running container was created
 after the paid task, the captures are not bound to the running generation pin
 and provider bindings, or a lane's runtime-adapter capture does not verify now,
 was observed after its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
@@ -1009,3 +1033,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]] -->

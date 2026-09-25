@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -632,18 +633,20 @@ class World:
                             drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200), "transport-failure": ts(150),
                                            "duplicate-input": ts(300), "ambiguous-post": ts(400)})
         selected.update(options)
-        response = Mock()
-        response.__enter__ = Mock(return_value=response)
-        response.__exit__ = Mock(return_value=False)
-        response.geturl.return_value = HEALTH
-        # An HTTP body read in chunks, as http.client serves it: the payload, then end of stream.
-        body = [json.dumps(self.payload).encode()]
-        response.read.side_effect = lambda size=-1: body.pop() if body else b""
-        with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "build_opener") as opener, \
+        opened = []
+
+        def health_server(request):
+            # /health, read through the one bounded HTTP path (bounded_get), never redirected.
+            opened.append(str(request.url))
+            return httpx.Response(200, json=self.payload)
+
+        def client():
+            return httpx.Client(transport=httpx.MockTransport(health_server), follow_redirects=False, trust_env=False)
+
+        with patch.object(sc, "_run_bytes", side_effect=self.run), patch.object(sc, "_http_client", client), \
                 patch.object(sc, "_SlackThreads", side_effect=self.slack):
-            opener.return_value.open.return_value = response
             observations = sc.collect(SHA, now=self.now, until=self.until, **selected)
-            self.opened = [call.args[0] for call in opener.return_value.open.call_args_list]
+        self.opened = opened
         return observations
 
     def report(self, **options):
@@ -1613,7 +1616,7 @@ class ScorecardCollectorTests(unittest.TestCase):
     def test_live_requires_explicit_deployment_and_never_probes_legacy(self):
         forbidden = Mock(side_effect=AssertionError("no probe may run without --deployment"))
         with patch.object(sc, "_run_bytes", forbidden), patch.object(sc, "_run_json", forbidden), \
-                patch.object(sc, "build_opener", forbidden), patch.object(sc, "_SlackThreads", forbidden):
+                patch.object(sc, "_http_client", forbidden), patch.object(sc, "_SlackThreads", forbidden):
             observations = sc.collect(SHA, now=NOW, channel=CHANNEL_FIXTURE, approval_task=APPROVAL_TASK)
         self.assertEqual([(item.check_id, item.passed) for item in observations], [("19", None)])
         self.assertIn("--deployment", observations[0].explanation)
@@ -2171,9 +2174,19 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual([row(report, key)["status"] for key in ("06", "08")], ["PASS", "PASS"])
         redispatched = self.world()
         readback = redispatched.tasks[APPROVAL_TASK]["qualification_evidence"]
-        for event in json.loads(json.dumps(readback["provider_attempts"])):
-            event.update(attempt_ordinal=2, attempt_digest="sha256:" + "3" * 64)  # a second dispatch, same window
+        # A second dispatch, in the product's order: attempt 1 failed, attempt 2 ran after it and succeeded, then
+        # the assignment settled (the shared lifecycle and settlement rules refuse any other order).
+        first = json.loads(json.dumps(readback["provider_attempts"]))
+        last = max(datetime.fromisoformat(event["recorded_at"]) for event in first)
+        readback["provider_attempts"][-1].update(status="FAILED", result_digest=None, reason_code="attempt_failed")
+        for index, event in enumerate(first, 1):
+            event.update(attempt_ordinal=2, attempt_digest="sha256:" + "3" * 64,
+                         recorded_at=(last + timedelta(seconds=index)).isoformat())
+            if index == len(first):
+                event.update(status="SUCCEEDED", result_digest=readback["assignments"][0]["result_digest"],
+                             reason_code="attempt_succeeded")
             readback["provider_attempts"].append(event)
+        readback["assignments"][0]["completed_at"] = (last + timedelta(seconds=len(first) + 1)).isoformat()
         tf.recount(readback)
         self.assertEqual(redispatched.state("06"), "FAIL")
         early = self.world()
@@ -2966,7 +2979,7 @@ class ScorecardCollectorTests(unittest.TestCase):
         artifacts.append({**artifacts[0], "assignment_id": PAID_TASK + "-A9"})
         self.assertEqual(orphan.state("20"), "FAIL")
         counted = self.world()
-        counted.consistency["counts"]["result_artifacts_without_assignment"] = 1
+        counted.consistency["counts"]["result_artifacts_invalid"] = 1  # the global count now folds orphans in
         self.assertEqual(counted.state("07"), "FAIL")
         missing = self.world()
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
@@ -3171,27 +3184,20 @@ class ScorecardCollectorTests(unittest.TestCase):
                 sc._run_bytes([sys.executable, "-c", "import time; time.sleep(30)"], timeout=60)
             self.assertLess(time.monotonic() - started, 10)
 
-            class Slow:
-                def __enter__(self):
-                    return self
+            # 4102705135: /health goes through the same bounded_get path, so a trickle ends by the deadline too.
+            health_seen = []
 
-                def __exit__(self, *exc):
-                    return False
-
-                def geturl(self):
-                    return HEALTH
-
-                def read(self, size=-1):
-                    time.sleep(0.05)
-                    return b" "
+            def slow_health(request):
+                health_seen.append(request.extensions["timeout"])
+                return httpx.Response(200, stream=Trickle())
 
             sc._DEADLINE[0] = time.monotonic() + 0.4
             started = time.monotonic()
-            with patch.object(sc, "build_opener") as opener, self.assertRaisesRegex(ValueError, "time bound"):
-                opener.return_value.open.return_value = Slow()
+            with patch.object(sc, "_http_client", lambda: httpx.Client(transport=httpx.MockTransport(slow_health))), \
+                    self.assertRaisesRegex(ValueError, "time bound"):
                 sc._health(HEALTH, "local")
             self.assertLess(time.monotonic() - started, 2)
-            self.assertLessEqual(opener.return_value.open.call_args.kwargs["timeout"], 0.4)
+            self.assertTrue(all(0 < value <= 0.4 for value in health_seen[0].values() if value is not None))
             sc._DEADLINE[0] = time.monotonic() - 1
             with self.assertRaisesRegex(ValueError, "deadline"):
                 sc._run_bytes([sys.executable, "-c", "print(1)"])
@@ -3265,6 +3271,32 @@ class ScorecardCollectorTests(unittest.TestCase):
             events = [{**event, "attempt_ordinal": ordinal} for event in readback["provider_attempts"]]
             with self.subTest(ordinal=ordinal):
                 self.assertIn("ordinals", validate_attempt_history(readback["assignments"], events)[1])
+
+    def test_one_task_evidence_rule_for_the_collector_and_the_global_count(self):
+        """Reviews 4102705142, 4102705148, 4102705162: task_evidence_errors is the one per-task validation the
+        collector's readback and the in-image global count both run: attempts bounded by their assignment's
+        reservation and completion, effects carrying their execution start before terminal evidence, and each
+        assignment's status and digest agreeing with its last attempt's final event."""
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+        clean = tf.readback_fixture()
+        latest, errors = task_evidence_errors(clean)
+        self.assertEqual(set(errors.values()), {None})
+        self.assertEqual(len(latest), 1)
+        for category, change in (
+                ("lifecycle", lambda r: r["assignments"][0].update(completed_at="2026-09-12T10:00:10+00:00")),
+                ("lifecycle", lambda r: r["assignments"][0].update(reserved_at="2026-09-12T10:00:07+00:00")),
+                ("lifecycle", lambda r: r["effects"][0].update(execution_started_at=None)),
+                ("settlement", lambda r: r["assignments"][0].update(result_digest="sha256:" + "8" * 64)),
+                ("settlement", lambda r: r["provider_attempts"][1].update(status="FAILED", result_digest=None)),
+                ("settlement", lambda r: (r.update(execution_mode="live", provider_attempts=[], provider_usage=[])))):
+            case = tf.readback_fixture()
+            change(case)
+            with self.subTest(category=category):
+                self.assertIsNotNone(task_evidence_errors(case)[1][category])
+        # The collector refuses the same readback it would count globally.
+        refused = tf.readback_fixture()
+        refused["assignments"][0]["result_digest"] = "sha256:" + "8" * 64
+        self.assertEqual(tf.collector_module._readback(tf.TASK_ID, {"qualification_evidence": refused})[2], "rejected")
 
     def test_enrolled_caps_bind_to_the_accounting_day_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
@@ -3358,14 +3390,14 @@ class ScorecardCollectorTests(unittest.TestCase):
                 readback.replace('"claude"', '"openai"').replace('"native-command"', f'"{transport}"'))
             case.captures["lanes"]["openai"]["product"] = product
             return case.state("11")
-        # The OpenAI capture must be the product the attempts' transport actually used.
-        self.assertEqual(openai_lane("openai-codex", "native-cli"), "PASS")
-        self.assertEqual(openai_lane("openai-codex", "authenticated-windows-host-bridge"), "PASS")
+        # The OpenAI capture must be the product the attempts' transport actually used. Review 4102705154: a Codex
+        # stream names no product or model, so a Codex lane is unattested (UNKNOWN), never credited as Codex.
+        for transport in ("native-cli", "authenticated-windows-host-bridge", "native-command", "some-proxy"):
+            with self.subTest(transport=transport):
+                self.assertEqual(openai_lane("openai-codex-unattested", transport), "UNKNOWN")
+        self.assertEqual(openai_lane("openai-codex", "native-cli"), "FAIL")  # no longer a product anything names
         self.assertEqual(openai_lane("openai-responses", "native-cli"), "FAIL")
-        # An unknown transport is unattested, never assumed to be Codex.
-        self.assertEqual(openai_lane("openai-codex", "native-command"), "UNKNOWN")
-        self.assertEqual(openai_lane("openai-codex", "some-proxy"), "UNKNOWN")
-        self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
+        self.assertEqual(openai_lane("openai-codex-unattested", "responses-api"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
         for required in (["claude", "grok", "openai", "cursor"], ["claude", "grok"], None):
@@ -3753,7 +3785,7 @@ class ScorecardCollectorTests(unittest.TestCase):
                           trials=list(world.trials), rubric_path=world.rubric_path, paid_thread=ts(20000),
                           paid_rubric_path=world.paid_rubric_path, ci_replica_receipt=world.root / "missing-receipt.json")
         with patch.object(sc, "_run_bytes", side_effect=ValueError("fixture-secret-bot")), \
-                patch.object(sc, "build_opener", side_effect=OSError("fixture-director-secret")), \
+                patch.object(sc, "_http_client", side_effect=OSError("fixture-director-secret")), \
                 patch.object(sc, "_native_security_index", return_value=world.root / "missing-index.sqlite3"):
             report = sc.score(SHA, sc.collect(SHA, now=NOW, **selections), now=NOW)
         self.assertEqual(len(report["checks"]), 20)
@@ -3857,3 +3889,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

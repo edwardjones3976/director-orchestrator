@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
@@ -3757,6 +3758,13 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         assignment = base["assignments"][0]
         digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
         with self.handle.pool.connection() as connection:
+            # Attempts run only on a reserved assignment (primary_parallel reserves it ACTIVE with reserved_at before
+            # the roster records STARTED): the shared lifecycle rule refuses attempts outside that reservation.
+            connection.execute(sql.SQL(
+                "UPDATE {}.director_primary_parallel_assignment SET status='ACTIVE', reservation_digest=%s,"
+                " reserved_at=now() - interval '1 minute' WHERE task_id=%s AND assignment_id=%s"
+            ).format(sql.Identifier(self.schema)),
+                (digest("reservation:" + record.task_id), record.task_id, assignment["assignment_id"]))
             for event, status in ((1, "STARTED"), (2, "SUCCEEDED")):
                 connection.execute(sql.SQL("""
                     INSERT INTO {}.director_primary_provider_attempt
@@ -4308,3 +4316,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:38 UTC | END]]

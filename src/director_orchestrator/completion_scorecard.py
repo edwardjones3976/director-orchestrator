@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -80,12 +81,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, build_opener
 
 import httpx
 
 from .primary_activation_evidence import actors_distinct, canonical_actor
-from .primary_scorecard_evidence import artifact_assignment_conflict
+from .primary_scorecard_evidence import (
+    ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
+    EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
+    delivery_settled as _delivery_settled, lifecycle_error, ordered as _ordered,
+    required_moments as _required_moments, settlement_error, validate_attempt_history)
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
 
 REPOSITORY = "edwardjones3976/director-orchestrator"
@@ -101,9 +105,12 @@ _HEX64 = re.compile(r"[0-9a-f]{64}")
 DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "transport-failure", "duplicate-input", "ambiguous-post")
 # Owner decision 2026-09-23: every runtime lane actually used must be its real product.
 # The product transport IDs (primary_transports / primary_parallel) that run each OpenAI product.
-_OPENAI_TRANSPORTS = {"responses-api": "openai-responses", "native-cli": "openai-codex",
-                      "authenticated-windows-host-bridge": "openai-codex"}
-REAL_PRODUCTS = {"openai": {"openai-responses", "openai-codex"},
+_OPENAI_TRANSPORTS = {"responses-api": "openai-responses", "native-cli": "openai-codex-unattested",
+                      "authenticated-windows-host-bridge": "openai-codex-unattested"}
+# The Codex CLI's stream carries no product or model identity and no release descriptor pins its executable, so a
+# Codex capture is only ever unattested: never credited as a real product, never counted as a substitution.
+_UNATTESTED_PRODUCTS = {"openai-codex-unattested"}
+REAL_PRODUCTS = {"openai": {"openai-responses"},
                  "grok": {"xai-grok-responses", "xai-grok-cli"},
                  "claude": {"anthropic-claude"}}
 # Fixed, owner-installed verification key with no CLI override, the same
@@ -251,22 +258,38 @@ def _run_json(arguments: list[str], timeout: int = 15) -> Any:
     return json.loads(_run_bytes(arguments, timeout))
 
 
-def _health(url: str, environment: str) -> dict[str, Any]:
-    class NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
+def bounded_get(client: httpx.Client, url: str, *, end: float, params: dict | None = None,
+                headers: dict | None = None) -> tuple[int, dict[str, str], bytes]:
+    """The one HTTP read path of the scorecard and the offline collector (Slack, Director API, /health).
 
-    allowance = _remaining(5)
-    end = time.monotonic() + allowance
-    with build_opener(NoRedirect).open(url, timeout=allowance) as response:
-        if response.geturl() != url:
-            raise ValueError("health endpoint redirected")
-        raw = bytearray()
-        # Chunked, with the clock checked after each chunk: a slow trickle cannot outlast the allowance.
-        while chunk := response.read(65536):
-            raw += chunk
-            if len(raw) > MAX_BYTES or time.monotonic() >= end:
-                raise ValueError("health response exceeds its byte or time bound")
+    A streamed GET bounded in bytes and in wall clock: it ends by `end` (a time.monotonic() value, already the
+    earlier of the read's own cap and the collection deadline). HTTPX gets a timeout clamped to what remains, so no
+    connect or single read can wait past it, and the clock is checked after every chunk as it arrives (iter_bytes
+    unsized: a sized iterator buffers until the size fills, which a trickle never reaches), so a slow trickle cannot
+    keep the read open either. The client must not follow redirects.
+    """
+    now = time.monotonic()
+    if now >= end:
+        raise ValueError("Collection deadline reached")
+    with client.stream("GET", url, params=params, headers=headers or {}, timeout=end - now) as response:
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            body.extend(chunk)
+            if len(body) > MAX_BYTES or time.monotonic() >= end:
+                raise ValueError("Read exceeded byte/time bound")
+        return response.status_code, dict(response.headers), bytes(body)
+
+
+def _http_client() -> httpx.Client:
+    """A client that never follows a redirect or reads proxy settings from the environment."""
+    return httpx.Client(follow_redirects=False, trust_env=False)
+
+
+def _health(url: str, environment: str) -> dict[str, Any]:
+    with _http_client() as client:
+        status, _, raw = bounded_get(client, url, end=time.monotonic() + _remaining(5))
+    if status != 200:  # a redirect is not followed and answers nothing
+        raise ValueError("health endpoint did not answer 200")
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("environment") != environment:
         raise ValueError("endpoint is not the selected deployment's Director")
@@ -1015,7 +1038,9 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
 
 _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_requiring_reconciliation",
                 "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
-                "result_artifacts_without_assignment", "result_artifacts_invalid", "provider_attempts_invalid",
+                # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
+                "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
+                "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -1201,6 +1226,14 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
     if ("openai" in used and "openai" not in unbound and products.get("openai") in REAL_PRODUCTS["openai"]
             and not set(transports.get("openai", [])) <= set(_OPENAI_TRANSPORTS)):
         unbound.append("openai")  # an unknown transport is unattested, never assumed to be Codex
+
+    # A lane whose capture names only an unattested dialect cannot be credited: unknown when its attempts ran that
+    # dialect's transport (or one no product is known for); another known product's transport is a substitution.
+    for lane in used:
+        if lane not in unbound and products.get(lane) in _UNATTESTED_PRODUCTS:
+            mapped = {_OPENAI_TRANSPORTS.get(transport) for transport in transports[lane]}
+            if None in mapped or mapped == {products[lane]}:
+                unbound.append(lane)
 
     def attested(lane: str) -> bool:
         if lane not in REAL_PRODUCTS or products[lane] not in REAL_PRODUCTS[lane]:
@@ -1487,22 +1520,6 @@ def _final_correlated(snapshot: dict[str, Any] | None) -> bool:
             and _same(terminal[0].get("client_msg_id"), finals[0].get("client_msg_id"))
             and _same(terminal[0].get("slack_ts"), finals[0].get("ts"))
             and sorted(map(identity, receipts)) == sorted(map(identity, readback.get("slack_deliveries") or [])))
-
-
-def _delivery_settled(row: dict[str, Any]) -> bool:
-    """A DELIVERED row as PrimarySlackDelivery produces one: created (PENDING), claimed (POSTING), acknowledged when
-    Slack answered the post (null on the AMBIGUOUS recovery path), then DELIVERED only by readback, which counts one
-    or two attempts first; every present moment in that order."""
-    attempts = row.get("readback_attempts")
-    posted = row.get("slack_ts")
-    if not (isinstance(posted, str) and _TS.fullmatch(posted)):
-        return False
-    # Slack stamps the message between the claim (claimed_at=now() before chat.postMessage) and the
-    # acknowledgement (settled with the returned ts), or, on the ambiguous path, before the readback finds it.
-    posted_at = datetime.fromtimestamp(float(Decimal(posted)), timezone.utc).isoformat()
-    lifecycle = {**row, "posted_at": posted_at}
-    return (row.get("state") == "DELIVERED" and type(attempts) is int and 1 <= attempts <= 2
-            and _ordered(lifecycle, _DELIVERY_FIELDS, _required_moments("delivery", lifecycle)))
 
 
 def _final_is_rendering(facts: dict[str, Any]) -> bool:
@@ -1914,70 +1931,12 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     if row["qualification_evidence"].get("effect_state") == "AMBIGUOUS_DELIVERY_EFFECT":
         return 1
     attempts = (latest or {}).values() if isinstance(latest, dict) else []
-    # Every attempt's events and every effect's lifecycle must be chronological: an impossible order settles nothing.
-    chains: dict[Any, list[Any]] = {}
-    for event in sorted(readback.get("provider_attempts") or [], key=lambda event: event.get("event_sequence") or 0):
-        chains.setdefault((event.get("assignment_id"), event.get("attempt_ordinal")), []).append(event.get("recorded_at"))
-    # The product's write order: primary_parallel reserves the assignment (reserved_at=now(), ACTIVE) before any
-    # attempt; primary_default's roster records each attempt STARTED then its terminal event; only afterwards does
-    # primary_parallel settle the assignment (completed_at=now()). Every attempt event lies inside the assignment.
-    for assignment in readback.get("assignments") or []:
-        events = sorted((event for event in readback.get("provider_attempts") or []
-                         if event.get("assignment_id") == assignment.get("assignment_id")),
-                        key=lambda event: (event.get("attempt_ordinal") or 0, event.get("event_sequence") or 0))
-        if events:
-            chains[("assignment", assignment.get("assignment_id"))] = [
-                assignment.get("reserved_at"), *(event.get("recorded_at") for event in events)] + (
-                [assignment.get("completed_at")] if assignment.get("status") in ("SUCCEEDED", "FAILED") else [])
-    ordered = (all(_chain(*chain) for chain in chains.values())
-               and all(_ordered(assignment, _ASSIGNMENT_FIELDS, _required_moments("assignment", assignment))
-                       for assignment in readback.get("assignments") or [])
-               and all(_ordered(effect, _EFFECT_FIELDS, _required_moments("effect", effect))
-                       for effect in readback.get("effects") or []))
-    settled = (ordered and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
+    # The shared lifecycle rule (the collector and the in-image consistency command apply it too): an impossible
+    # order settles nothing.
+    settled = (lifecycle_error(readback) is None and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
                and all(effect.get("terminal_disposition") or not effect.get("execution_started_at")
                        for effect in readback.get("effects") or []))
     return 0 if settled else None
-
-
-def _ordered(row: dict[str, Any], fields: Sequence[str], required: Sequence[str]) -> bool:
-    """The one lifecycle rule for every row type: each required moment (one the product writes for this row's type
-    and state) is present, and every present moment in `fields` is parseable and chronological. Only moments the
-    product may legitimately leave unset (acknowledged_at on the ambiguous path, bound_at) are optional."""
-    if any(not row.get(key) for key in required):
-        return False
-    try:
-        times = [_when(row[key]) for key in fields if row.get(key)]
-    except (ValueError, TypeError):
-        return False
-    return all(earlier <= later for earlier, later in zip(times, times[1:]))
-
-
-def _chain(*moments: Any) -> bool:
-    """Every moment present and chronological (attempt events, an assignment around its attempts)."""
-    keys = [str(index) for index in range(len(moments))]
-    return _ordered(dict(zip(keys, moments)), keys, keys)
-
-
-_DELIVERY_FIELDS = ("created_at", "claimed_at", "posted_at", "acknowledged_at", "delivered_at")
-_EFFECT_FIELDS = ("reserved_at", "execution_started_at", "bound_at", "terminal_recorded_at")
-_ASSIGNMENT_FIELDS = ("reserved_at", "completed_at")
-
-
-def _required_moments(kind: str, row: dict[str, Any]) -> tuple[str, ...]:
-    """The moments the product always writes for a row of this type in this state."""
-    if kind == "delivery":  # DELIVERED, the only state credited (PrimarySlackDelivery claim, post, readback)
-        return ("created_at", "claimed_at", "posted_at", "delivered_at")
-    if kind == "effect":  # reservation, then execution claim before any I/O, then terminal evidence
-        if row.get("terminal_disposition"):
-            return ("reserved_at", "execution_started_at", "terminal_recorded_at")
-        return ("reserved_at", "execution_started_at") if row.get("execution_started_at") else ("reserved_at",)
-    status = row.get("status")  # assignment: primary_parallel reserve (ACTIVE) and settlement writes
-    if status in ("SUCCEEDED", "FAILED"):
-        # A PENDING assignment cancelled before dispatch is FAILED with completed_at but never reserved.
-        cancelled = status == "FAILED" and row.get("reason_code") == "task_cancelled_before_dispatch"
-        return ("completed_at",) if cancelled else ("reserved_at", "completed_at")
-    return ("reserved_at",) if status in ("ACTIVE", "AMBIGUOUS", "OWNER_DECISION_REQUIRED") else ()
 
 
 def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, label: str) -> dict[str, Any]:
@@ -2263,8 +2222,16 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
             != sorted(assignment.get("sequence") for assignment in assignments if isinstance(assignment.get("sequence"), int))
             or len({assignment.get("sequence") for assignment in assignments}) != len(assignments)):
         return False
-    if attempts and not _attempt_ordinals(readback)[1]:
-        return None
+    # The shared per-task rules (the collector and the in-image consistency command apply the same): every
+    # assignment's moments in order, and, for paid runs, each assignment's status and digest agreeing with its last
+    # attempt's final event (settlement_error; attempt ordinals 1..n are validate_attempt_history's).
+    if lifecycle_error(readback) is not None:
+        return False
+    if attempts:
+        if validate_attempt_history(assignments, readback.get("provider_attempts") or [])[1] is not None:
+            return None  # the attempt history itself is not readable evidence
+        if settlement_error({**readback, "execution_mode": "live"}, latest) is not None:
+            return False  # a paid assignment's status or digest disagrees with its last attempt
     for assignment in assignments:
         matching = [item for item in outcomes if item.get("assignment_sequence") == assignment.get("sequence")]
         digest = "sha256:" + str(matching[0].get("provider_result_digest")) if len(matching) == 1 else None
@@ -2273,18 +2240,6 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
                 or not _same(assignment.get("result_digest"), digest)
                 or agent is None or not _same(matching[0].get("provider"), agent.value)):
             return False
-        # Settled means completed after it was reserved (both also bound by _moments' freshness window).
-        if not _ordered(assignment, _ASSIGNMENT_FIELDS, _required_moments("assignment", assignment)):
-            return False
-        if attempts:
-            # The latest event of the assignment's last attempt (latest is keyed per attempt).
-            events = sorted((event for event in latest.values() if isinstance(event, dict)
-                             and event.get("assignment_id") == assignment.get("assignment_id")),
-                            key=lambda event: event.get("attempt_ordinal") or 0)
-            attempt = events[-1] if events else None
-            if (not isinstance(attempt, dict) or attempt.get("status") != "SUCCEEDED"
-                    or not _same(attempt.get("result_digest"), digest)):
-                return False
     return True
 
 
@@ -3383,3 +3338,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

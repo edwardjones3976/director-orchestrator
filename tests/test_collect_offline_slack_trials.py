@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -133,6 +134,12 @@ def sample():
     }]
     headers = {"x-task-engine-owner": "langgraph", "x-primary-projection-digest": PROJECTION}
     return task, deliveries, messages, headers
+
+
+def unsettled(readback):
+    """The fixture's assignment still reserved (ACTIVE): not yet settled, so no completion or result digest."""
+    readback["assignments"][0].update(status="ACTIVE", completed_at=None, result_digest=None, reason_code="reserved")
+    return readback
 
 
 def recount(readback):
@@ -568,6 +575,7 @@ class SummaryTests(unittest.TestCase):
     def test_readback_distinguishes_pre_effect_ambiguous_and_zero_effect_outcomes(self):
         started_only = readback_fixture()
         started_only["provider_attempts"] = [started_only["provider_attempts"][0]]
+        unsettled(started_only)  # an attempt still running belongs to an assignment still reserved (settlement rule)
         started_only["effects"] = [dict(started_only["effects"][0], execution_started_at=None,
                                         remote_identifier=None, remote_system=None, terminal_disposition=None,
                                         terminal_evidence_digest=None)]
@@ -686,8 +694,9 @@ class SummaryTests(unittest.TestCase):
                  "typed model at provider_usage.0.actual_microusd")
         rejected(lambda r: r["provider_usage"][0].update(observed_tokens=-1),
                  "typed model at provider_usage.0.observed_tokens")
+        from director_orchestrator.primary_scorecard_evidence import validate_usage
         self.assertEqual("usage is orphaned, duplicated, provider-mismatched or non-integer",
-                         collector_module._validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
+                         validate_usage([{**readback_fixture()["provider_usage"][0], "observed_tokens": True}],
                                                           {("a", 1): readback_fixture()["provider_attempts"][1]}))
         # malformed identities, sequences and statuses
         rejected(lambda r: r["provider_attempts"][1].update(event_sequence=7),
@@ -717,6 +726,8 @@ class SummaryTests(unittest.TestCase):
         readback["provider_attempts"][1].update(status="AMBIGUOUS", result_digest=None, outcome_evidence_digest=None,
                                                 provider_run_id_digest=None, reason_code="callback_timeout",
                                                 recorded_at="2026-09-12T10:00:20+00:00")
+        settled = dict(readback["assignments"][0])
+        unsettled(readback)  # the assignment settles only once event 3 lands
         self.task["qualification_evidence"] = readback
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("PROVIDER_ATTEMPT_AMBIGUOUS", evidence["provider_effect_state"])
@@ -724,6 +735,7 @@ class SummaryTests(unittest.TestCase):
         readback["provider_attempts"].append({**readback_fixture()["provider_attempts"][1], "event_sequence": 3,
                                               "reason_code": "authenticated_callback_settled",
                                               "recorded_at": "2026-09-12T10:00:26+00:00"})
+        readback["assignments"][0] = {**settled, "completed_at": "2026-09-12T10:00:27+00:00"}
         self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
         self.assertEqual("collected", evidence["readback"]["state"], evidence["readback"]["reason"])
@@ -743,9 +755,14 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:COMPLETED", evidence["external_effect_state"])
         # retry (second ordinal, same provider) is not reported as a fallback
         readback = readback_fixture()
+        # Attempt 1 failed; attempt 2 ran after it and succeeded, then the assignment settled (the product's order).
+        readback["provider_attempts"][1].update(status="FAILED", result_digest=None, reason_code="attempt_failed")
         second = [{**e, "attempt_ordinal": 2, "attempt_digest": "sha256:" + "a" * 64,
-                   "idempotency_key_digest": "sha256:" + "c" * 64} for e in readback["provider_attempts"]]
+                   "idempotency_key_digest": "sha256:" + "c" * 64,
+                   "recorded_at": "2026-09-12T10:00:2%d+00:00" % (6 + index)}
+                  for index, e in enumerate(readback_fixture()["provider_attempts"])]
         readback["provider_attempts"].extend(second)
+        readback["assignments"][0]["completed_at"] = "2026-09-12T10:00:28+00:00"
         readback["provider_usage"] = []
         self.task["qualification_evidence"] = recount(readback)
         evidence = self.summarize()["qualification_evidence"]
@@ -1597,3 +1614,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

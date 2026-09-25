@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -181,24 +182,11 @@ class Collector:
         return json.loads(body), headers
 
     def drain(self, url, params, token, cap=10):
-        """One streamed GET, bounded in bytes and in wall clock. The read ends by the earlier of its own cap and
-        the collection deadline: HTTPX gets a timeout clamped to what remains (so no connect or single read can
-        wait past it), and the clock is checked after every chunk (so a slow trickle, each chunk inside the
-        per-read timeout, cannot keep the read open past it either)."""
-        now = time.monotonic()
-        end = min(self.deadline, now + cap)
-        if now >= end:
-            raise ValueError("Collection deadline reached")
-        with self.client.stream("GET", url, params=params, headers={"Authorization": "Bearer " + token},
-                                timeout=end - now) as response:
-            body = bytearray()
-            # No chunk_size: iter_bytes(n) buffers until n bytes arrive, so a trickle would never reach the clock
-            # check; unsized, each chunk is handed over as it arrives.
-            for chunk in response.iter_bytes():
-                body.extend(chunk)
-                if len(body) > MAX_BYTES or time.monotonic() >= end:
-                    raise ValueError("Read exceeded byte/time bound")
-            return response.status_code, dict(response.headers), bytes(body)
+        """One streamed GET through the scorecard's single read path (completion_scorecard.bounded_get), ending by
+        the earlier of its own cap and the collection deadline."""
+        from director_orchestrator.completion_scorecard import bounded_get
+        return bounded_get(self.client, url, params=params, headers={"Authorization": "Bearer " + token},
+                           end=min(self.deadline, time.monotonic() + cap))
 
     def replies(self, thread):
         messages, cursors = {}, set()
@@ -320,8 +308,6 @@ def _typed_list(task, key):
     return task.get(key) if isinstance(task.get(key), list) else None
 
 
-ATTEMPT_STATUSES = ("STARTED", "SUCCEEDED", "FAILED", "AMBIGUOUS")
-DELIVERY_STATES = ("PENDING", "POSTING", "ACKNOWLEDGED", "DELIVERED", "AMBIGUOUS", "REFUSED", "SUPPRESSED", "SUPERSEDED")
 IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
 # The exact top-level shape of the typed response-only readback; any other
 # key, or a missing one, means the response is not the contract this
@@ -356,100 +342,10 @@ def _when(value):
     return parsed if parsed.tzinfo is not None else None
 
 
-# One attempt-history rule for the collector (selected tasks) and the in-image consistency command (every task).
-from director_orchestrator.primary_scorecard_evidence import validate_attempt_history as _validate_attempts  # noqa: E402
-
-
-def _validate_effects(effects):
-    keys = set()
-    for row in effects:
-        if (not DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not DIGEST.fullmatch(str(row.get("claim_key", "")))
-                or not DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
-                or not DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
-                or not _is_id(row.get("writer_owner_id")) or not _is_count(row.get("fencing_generation"))
-                or not _is_count(row.get("reserved_units")) or _when(row.get("reserved_at")) is None):
-            return "malformed external-effect reservation identity"
-        if row["reservation_key"] in keys:
-            return "duplicate external-effect reservation"
-        keys.add(row["reservation_key"])
-        if (row.get("remote_identifier") is None) != (row.get("remote_system") is None):
-            return "remote binding lacks its system or identifier"
-        if row.get("remote_identifier") is not None and (not _is_id(row["remote_system"])
-                                                          or not isinstance(row["remote_identifier"], str)
-                                                          or not row["remote_identifier"].strip()
-                                                          or _when(row.get("bound_at")) is None):
-            return "malformed remote binding"
-        if row.get("terminal_disposition") is not None and (
-                not _is_id(row["terminal_disposition"]) or not DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
-                or _when(row.get("terminal_recorded_at")) is None):
-            return "terminal evidence lacks its digest or time"
-        for field in ("execution_started_at", "bound_at", "terminal_recorded_at"):
-            if row.get(field) is not None and _when(row[field]) is None:
-                return "malformed external-effect timestamp"
-    return None
-
-
-# Notification-key families exactly as the delivery producer builds them
-# (primary_slack_delivery.enqueue): the fixed terminal key, hold:<state digest>
-# and approval:<request digest>:<projection digest>, each digest being one
-# sha256-prefixed value. Generic identity bounds are not widened for these.
-NOTIFICATION_KEY_FAMILIES = (
-    ("terminal", re.compile(r"terminal\Z")),
-    ("hold", re.compile(r"hold:sha256:[a-f0-9]{64}\Z")),
-    ("approval", re.compile(r"approval:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}\Z")),
-)
-
-
-def notification_key_family(value):
-    """Return the producer family of a notification key, or None when malformed."""
-    if not isinstance(value, str):
-        return None
-    for family, pattern in NOTIFICATION_KEY_FAMILIES:
-        if pattern.fullmatch(value):
-            return family
-    return None
-
-
-def _validate_deliveries_and_receipts(deliveries, receipts):
-    if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
-        return "duplicate Slack delivery identity"
-    if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
-        return "duplicate Slack notification key"
-    for row in deliveries:
-        if (not _is_id(row.get("client_msg_id")) or notification_key_family(row.get("notification_key")) is None
-                or row.get("state") not in DELIVERY_STATES or not _is_count(row.get("readback_attempts"))
-                or _when(row.get("created_at")) is None):
-            return "malformed Slack delivery row"
-        if row.get("owner_decision") not in (None, "approve", "reject"):
-            return "malformed Slack delivery row"
-        if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
-            return "owner decision recorded on a non-approval notification"
-        for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
-            if row.get(field) is not None and _when(row[field]) is None:
-                return "malformed Slack delivery timestamp"
-        if row.get("slack_ts") is not None and not TS.fullmatch(str(row["slack_ts"])):
-            return "malformed Slack delivery timestamp"
-    if len({r.get("receipt_id") for r in receipts}) != len(receipts):
-        return "duplicate status receipt identity"
-    for row in receipts:
-        if not _is_id(row.get("receipt_id")) or not isinstance(row.get("source_event_id"), str) \
-                or not row["source_event_id"] or _when(row.get("created_at")) is None:
-            return "malformed status receipt row"
-    return None
-
-
-def _validate_usage(usage_rows, latest):
-    """Usage joins exactly one valid attempt of the same provider, never twice."""
-    seen = set()
-    for row in usage_rows:
-        digest_value = row.get("attempt_digest")
-        owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
-        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
-                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
-                                                            "reserved_microusd", "token_limit"))):
-            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
-        seen.add(digest_value)
-    return None
+# The per-task evidence rules live in the package, shared with the in-image consistency command
+# (primary_scorecard_evidence.task_evidence_errors runs them over every task).
+from director_orchestrator.primary_scorecard_evidence import (  # noqa: E402
+    NOTIFICATION_KEY_FAMILIES, notification_key_family, task_evidence_errors)
 
 
 def _has_nonfinite(value):
@@ -540,13 +436,10 @@ def _readback(task_id, task):
     error = _typed_readback_error(readback, task_id)
     if error is not None:
         return None, None, "rejected", error
-    latest, error = _validate_attempts(readback["assignments"], readback["provider_attempts"])
-    if error is None:
-        error = _validate_usage(readback["provider_usage"], latest)
-    if error is None:
-        error = _validate_effects(readback["effects"])
-    if error is None:
-        error = _validate_deliveries_and_receipts(readback["slack_deliveries"], readback["status_receipts"])
+    # The shared per-task validation (the in-image consistency command runs the same over every task): attempt
+    # histories, usage, effects, deliveries and receipts, lifecycle order and settlement.
+    latest, errors = task_evidence_errors(readback)
+    error = next((value for value in errors.values() if value is not None), None)
     if error is None:
         error = _counter_consistency_error(readback)
     if error is not None:
@@ -1318,3 +1211,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

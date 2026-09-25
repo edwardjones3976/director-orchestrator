@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -44,7 +45,7 @@ _ADOPTION_FIELDS = ("repository", "pull_request_number", "pull_request_author", 
                     "security_reviewer", "reviewed_source_commit", "reviewed_source_tree", "adoption_digest")
 _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assignments",
                "succeeded_projections_with_unsucceeded_assignments", "succeeded_projections_without_plan",
-               "result_artifacts_without_assignment", "projections_missing_batch",
+               "projections_missing_batch",
                "batches_without_projection",
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
@@ -75,14 +76,15 @@ _COUNTS = """WITH RECURSIVE a AS (SELECT fencing_generation FROM {s}.director_pr
 SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencing_generation,
  (SELECT count(*) FROM p) AS graph_task_count,
  (SELECT count(DISTINCT r.claim_key) FROM {s}.director_primary_reconciliation_event r
-    LEFT JOIN {s}.director_primary_terminal_evidence t USING (claim_key) WHERE t.claim_key IS NULL) AS unresolved_reconciliation,
+    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=r.claim_key AND t.task_id=r.task_id
+    WHERE t.claim_key IS NULL) AS unresolved_reconciliation,
  (SELECT count(*) FROM {s}.director_primary_parallel_assignment WHERE status='AMBIGUOUS') AS ambiguous_assignments,
  (SELECT count(*) FROM p WHERE tc='RECONCILIATION_REQUIRED') AS tasks_requiring_reconciliation,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
     WHERE p.settled AND x.status IN ('PENDING','ACTIVE','AMBIGUOUS') AND NOT EXISTS
       (SELECT 1 FROM blocked b WHERE b.task_id=x.task_id AND b.assignment_id=x.assignment_id)) AS terminal_tasks_open_assignments,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
-    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
+    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key AND t.task_id=e.task_id
     WHERE t.claim_key IS NULL AND p.settled) AS terminal_tasks_open_effects,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_batch b USING (task_id)
     WHERE p.pd IS NULL AND p.settled) AS terminal_batches_unbound,
@@ -90,7 +92,7 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
     WHERE p.pd IS NOT NULL AND p.pd<>b.plan_digest) AS projection_batch_digest_conflicts,
  (SELECT count(*) FROM p WHERE p.intake_fencing_generation>(SELECT fencing_generation FROM a)) AS projections_ahead_of_fence,
  (SELECT count(*) FROM {s}.director_primary_effect_reservation e JOIN p USING (task_id)
-    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key
+    LEFT JOIN {s}.director_primary_terminal_evidence t ON t.claim_key=e.claim_key AND t.task_id=e.task_id
     WHERE t.claim_key IS NULL AND NOT p.settled) AS open_effect_reservations,
  (SELECT count(*) FROM p JOIN {s}.director_primary_parallel_assignment x USING (task_id)
     WHERE NOT p.settled AND x.status IN ('PENDING','ACTIVE') AND NOT EXISTS
@@ -110,10 +112,6 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
     OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id AND b.plan_digest=p.pd)
     OR NOT EXISTS (SELECT 1 FROM {s}.director_primary_parallel_assignment x
                    WHERE x.task_id=p.task_id AND x.status='SUCCEEDED'))) AS succeeded_projections_without_plan,
- -- A persisted result packet names a durable assignment of its task (the table has no such foreign key).
- (SELECT count(*) FROM {s}.director_primary_result_packet_artifact r WHERE NOT EXISTS
-    (SELECT 1 FROM {s}.director_primary_parallel_assignment x
-     WHERE x.task_id=r.task_id AND x.assignment_id=r.assignment_id)) AS result_artifacts_without_assignment,
  (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
     (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id)) AS projections_missing_batch,
  (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
@@ -259,6 +257,230 @@ def validate_attempt_history(assignments, attempts):
     return latest, None
 
 
+_SLACK_TS = re.compile(r"\d{10,}\.\d{1,6}\Z")
+DELIVERY_STATES = ("PENDING", "POSTING", "ACKNOWLEDGED", "DELIVERED", "AMBIGUOUS", "REFUSED", "SUPPRESSED", "SUPERSEDED")
+
+
+def validate_effects(effects):
+    keys = set()
+    for row in effects:
+        if (not _DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not _DIGEST.fullmatch(str(row.get("claim_key", "")))
+                or not _DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
+                or not _DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
+                or not _is_id(row.get("writer_owner_id")) or not _is_count(row.get("fencing_generation"))
+                or not _is_count(row.get("reserved_units")) or _when(row.get("reserved_at")) is None):
+            return "malformed external-effect reservation identity"
+        if row["reservation_key"] in keys:
+            return "duplicate external-effect reservation"
+        keys.add(row["reservation_key"])
+        if (row.get("remote_identifier") is None) != (row.get("remote_system") is None):
+            return "remote binding lacks its system or identifier"
+        if row.get("remote_identifier") is not None and (not _is_id(row["remote_system"])
+                                                          or not isinstance(row["remote_identifier"], str)
+                                                          or not row["remote_identifier"].strip()
+                                                          or _when(row.get("bound_at")) is None):
+            return "malformed remote binding"
+        if row.get("terminal_disposition") is not None and (
+                not _is_id(row["terminal_disposition"]) or not _DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
+                or _when(row.get("terminal_recorded_at")) is None):
+            return "terminal evidence lacks its digest or time"
+        for field in ("execution_started_at", "bound_at", "terminal_recorded_at"):
+            if row.get(field) is not None and _when(row[field]) is None:
+                return "malformed external-effect timestamp"
+    return None
+
+
+# Notification-key families exactly as the delivery producer builds them
+# (primary_slack_delivery.enqueue): the fixed terminal key, hold:<state digest>
+# and approval:<request digest>:<projection digest>, each digest being one
+# sha256-prefixed value. Generic identity bounds are not widened for these.
+NOTIFICATION_KEY_FAMILIES = (
+    ("terminal", re.compile(r"terminal\Z")),
+    ("hold", re.compile(r"hold:sha256:[a-f0-9]{64}\Z")),
+    ("approval", re.compile(r"approval:sha256:[a-f0-9]{64}:sha256:[a-f0-9]{64}\Z")),
+)
+
+
+def notification_key_family(value):
+    """Return the producer family of a notification key, or None when malformed."""
+    if not isinstance(value, str):
+        return None
+    for family, pattern in NOTIFICATION_KEY_FAMILIES:
+        if pattern.fullmatch(value):
+            return family
+    return None
+
+
+def validate_deliveries_and_receipts(deliveries, receipts):
+    if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
+        return "duplicate Slack delivery identity"
+    if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
+        return "duplicate Slack notification key"
+    for row in deliveries:
+        if (not _is_id(row.get("client_msg_id")) or notification_key_family(row.get("notification_key")) is None
+                or row.get("state") not in DELIVERY_STATES or not _is_count(row.get("readback_attempts"))
+                or _when(row.get("created_at")) is None):
+            return "malformed Slack delivery row"
+        if row.get("owner_decision") not in (None, "approve", "reject"):
+            return "malformed Slack delivery row"
+        if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
+            return "owner decision recorded on a non-approval notification"
+        for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
+            if row.get(field) is not None and _when(row[field]) is None:
+                return "malformed Slack delivery timestamp"
+        if row.get("slack_ts") is not None and not _SLACK_TS.fullmatch(str(row["slack_ts"])):
+            return "malformed Slack delivery timestamp"
+    if len({r.get("receipt_id") for r in receipts}) != len(receipts):
+        return "duplicate status receipt identity"
+    for row in receipts:
+        if not _is_id(row.get("receipt_id")) or not isinstance(row.get("source_event_id"), str) \
+                or not row["source_event_id"] or _when(row.get("created_at")) is None:
+            return "malformed status receipt row"
+    return None
+
+
+def validate_usage(usage_rows, latest):
+    """Usage joins exactly one valid attempt of the same provider, never twice."""
+    seen = set()
+    for row in usage_rows:
+        digest_value = row.get("attempt_digest")
+        owner = next((e for e in latest.values() if e["attempt_digest"] == digest_value), None)
+        if (owner is None or digest_value in seen or row.get("provider_id") != owner["provider_id"]
+                or not all(_is_count(row.get(k)) for k in ("actual_microusd", "observed_tokens",
+                                                            "reserved_microusd", "token_limit"))):
+            return "usage is orphaned, duplicated, provider-mismatched or non-integer"
+        seen.add(digest_value)
+    return None
+
+
+def ordered(row, fields, required):
+    """The one lifecycle rule for every row type: each required moment (one the product writes for this row's type
+    and state) is present, and every present moment in `fields` is parseable and chronological. Only moments the
+    product may legitimately leave unset (acknowledged_at on the ambiguous path, bound_at) are optional."""
+    if any(not row.get(key) for key in required):
+        return False
+    times = [_when(row[key]) for key in fields if row.get(key)]
+    if None in times:
+        return False
+    return all(earlier <= later for earlier, later in zip(times, times[1:]))
+
+
+def chain(*moments):
+    """Every moment present and chronological (attempt events, an assignment around its attempts)."""
+    keys = [str(index) for index in range(len(moments))]
+    return ordered(dict(zip(keys, moments)), keys, keys)
+
+
+DELIVERY_FIELDS = ("created_at", "claimed_at", "posted_at", "acknowledged_at", "delivered_at")
+EFFECT_FIELDS = ("reserved_at", "execution_started_at", "bound_at", "terminal_recorded_at")
+ASSIGNMENT_FIELDS = ("reserved_at", "completed_at")
+
+
+def required_moments(kind, row):
+    """The moments the product always writes for a row of this type in this state."""
+    if kind == "delivery":  # DELIVERED, the only state credited (PrimarySlackDelivery claim, post, readback)
+        return ("created_at", "claimed_at", "posted_at", "delivered_at")
+    if kind == "effect":  # reservation, then execution claim before any I/O, then terminal evidence
+        if row.get("terminal_disposition"):
+            return ("reserved_at", "execution_started_at", "terminal_recorded_at")
+        return ("reserved_at", "execution_started_at") if row.get("execution_started_at") else ("reserved_at",)
+    status = row.get("status")  # assignment: primary_parallel reserve (ACTIVE) and settlement writes
+    if status in ("SUCCEEDED", "FAILED"):
+        # A PENDING assignment cancelled before dispatch is FAILED with completed_at but never reserved.
+        cancelled = status == "FAILED" and row.get("reason_code") == "task_cancelled_before_dispatch"
+        return ("completed_at",) if cancelled else ("reserved_at", "completed_at")
+    return ("reserved_at",) if status in ("ACTIVE", "AMBIGUOUS", "OWNER_DECISION_REQUIRED") else ()
+
+
+def delivery_settled(row):
+    """A DELIVERED row as PrimarySlackDelivery produces one: created (PENDING), claimed (POSTING), acknowledged when
+    Slack answered the post (null on the AMBIGUOUS recovery path), then DELIVERED only by readback, which counts one
+    or two attempts first; every present moment in that order."""
+    attempts = row.get("readback_attempts")
+    posted = row.get("slack_ts")
+    if not (isinstance(posted, str) and _SLACK_TS.fullmatch(posted)):
+        return False
+    # Slack stamps the message between the claim (claimed_at=now() before chat.postMessage) and the
+    # acknowledgement (settled with the returned ts), or, on the ambiguous path, before the readback finds it.
+    posted_at = datetime.fromtimestamp(float(Decimal(posted)), timezone.utc).isoformat()
+    lifecycle = {**row, "posted_at": posted_at}
+    return (row.get("state") == "DELIVERED" and type(attempts) is int and 1 <= attempts <= 2
+            and ordered(lifecycle, DELIVERY_FIELDS, required_moments("delivery", lifecycle)))
+
+
+def lifecycle_error(sections):
+    """The one ordering rule over a task's rows: each attempt's events in sequence order and chronological; every
+    attempt event inside its assignment (primary_parallel reserves, the roster records STARTED then the terminal
+    event, primary_parallel settles); every assignment, effect and DELIVERED delivery carrying the moments the
+    product writes for its state, in order. None, or the first violation."""
+    events = sections.get("provider_attempts") or []
+    chains = {}
+    for event in sorted(events, key=lambda event: event.get("event_sequence") or 0):
+        chains.setdefault((event.get("assignment_id"), event.get("attempt_ordinal")), []).append(event.get("recorded_at"))
+    for assignment in sections.get("assignments") or []:
+        own = sorted((event for event in events if event.get("assignment_id") == assignment.get("assignment_id")),
+                     key=lambda event: (event.get("attempt_ordinal") or 0, event.get("event_sequence") or 0))
+        if own:
+            chains[("assignment", assignment.get("assignment_id"))] = [
+                assignment.get("reserved_at"), *(event.get("recorded_at") for event in own)] + (
+                [assignment.get("completed_at")] if assignment.get("status") in ("SUCCEEDED", "FAILED") else [])
+    if not all(chain(*moments) for moments in chains.values()):
+        return "attempt events are out of order or outside their assignment's reservation and completion"
+    if not all(ordered(row, ASSIGNMENT_FIELDS, required_moments("assignment", row))
+               for row in sections.get("assignments") or []):
+        return "an assignment lacks a moment its state requires, or its moments are out of order"
+    if not all(ordered(row, EFFECT_FIELDS, required_moments("effect", row)) for row in sections.get("effects") or []):
+        return "an external effect lacks a moment its state requires, or its moments are out of order"
+    if not all(delivery_settled(row) for row in sections.get("slack_deliveries") or [] if row.get("state") == "DELIVERED"):
+        return "a DELIVERED Slack delivery is not a settled delivery lifecycle"
+    return None
+
+
+def settlement_error(sections, latest):
+    """Each assignment's status and result digest agree with its last attempt's final event (``latest``, from
+    validate_attempt_history): a SUCCEEDED assignment's last attempt ended SUCCEEDED with its result digest, and a
+    last attempt that ended SUCCEEDED belongs to a SUCCEEDED assignment or one still settling (ACTIVE, AMBIGUOUS).
+    A SUCCEEDED assignment with no attempt at all is an offline double's (execution mode offline_simulation or
+    paid_off), which records no provider attempt. None, or the first disagreement."""
+    offline = sections.get("execution_mode") in ("offline_simulation", "paid_off")
+    for assignment in sections.get("assignments") or []:
+        finals = [event for (assignment_id, _), event in sorted(latest.items(), key=lambda item: str(item[0][1]))
+                  if assignment_id == assignment.get("assignment_id")]
+        final = max(finals, key=lambda event: event.get("attempt_ordinal") or 0) if finals else None
+        status = assignment.get("status")
+        if final is None:
+            if status == "SUCCEEDED" and not offline:
+                return "a SUCCEEDED assignment has no provider attempt"
+            continue
+        if status == "SUCCEEDED" and (final.get("status") != "SUCCEEDED"
+                                      or final.get("result_digest") != assignment.get("result_digest")):
+            return "a SUCCEEDED assignment's last attempt did not succeed with its result digest"
+        if final.get("status") == "SUCCEEDED" and status not in ("SUCCEEDED", "ACTIVE", "AMBIGUOUS"):
+            return "a succeeded last attempt belongs to an assignment that did not succeed"
+    return None
+
+
+EVIDENCE_CATEGORIES = ("attempts", "usage", "effects", "deliveries", "lifecycle", "settlement")
+
+
+def task_evidence_errors(sections):
+    """The one per-task evidence validation, for the offline collector (a selected task's typed readback) and the
+    in-image consistency command (every task's rows, the same columns and joins through qualification_section_sql).
+
+    ``sections``: assignments, provider_attempts, effects, slack_deliveries, status_receipts, provider_usage (times
+    as ISO strings) and execution_mode. Returns (latest valid event per attempt, {category: first error or None}).
+    Usage and settlement need a valid attempt history, so they read as that history's error when it has one."""
+    latest, attempts = validate_attempt_history(sections.get("assignments") or [], sections.get("provider_attempts") or [])
+    errors = {"attempts": attempts,
+              "usage": attempts or validate_usage(sections.get("provider_usage") or [], latest),
+              "effects": validate_effects(sections.get("effects") or []),
+              "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
+                                                             sections.get("status_receipts") or []),
+              "lifecycle": lifecycle_error(sections),
+              "settlement": attempts or settlement_error(sections, latest)}
+    return (latest or {}), errors
+
+
 def _secret(settings, name):
     """An entitlement secret file's contents, or None: without it nothing it signs verifies."""
     try:
@@ -325,16 +547,6 @@ def _require_instance(connection, schema, identity):
                                    instance_id=identity.database_instance_id)
 
 
-# Every attached result packet is revalidated in the snapshot, globally; past this many rows the count is unknown.
-ARTIFACT_VALIDATION_CAP = 2000
-_ATTACHED_ARTIFACTS = """SELECT r.task_id, r.assignment_id, r.authority_snapshot_digest, r.document_digest,
- r.canonical_document, r.writer_fencing_generation, r.recorded_at, x.provider_id, x.status, x.result_digest,
- x.reserved_at, x.completed_at
-FROM {s}.director_primary_result_packet_artifact r JOIN {s}.director_primary_parallel_assignment x
- ON x.task_id=r.task_id AND x.assignment_id=r.assignment_id
-ORDER BY r.task_id, r.assignment_id LIMIT %(limit)s"""
-
-
 def artifact_assignment_conflict(artifact, assignment):
     """The one packet-to-assignment rule, for the global count here and check 20's per-task join.
 
@@ -366,59 +578,71 @@ def artifact_assignment_conflict(artifact, assignment):
     return None
 
 
-def _attached_artifacts(connection, schema):
-    """(invalid, in_flight) over every result packet attached to a durable assignment, through
-    artifact_assignment_conflict; (None, None) past ARTIFACT_VALIDATION_CAP rows, so neither count ever validates
-    a subset."""
-    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row
-    rows = connection.execute(_ATTACHED_ARTIFACTS.format(s=schema), {"limit": ARTIFACT_VALIDATION_CAP + 1}).fetchall()
-    if len(rows) > ARTIFACT_VALIDATION_CAP:
-        return None, None
-    invalid = in_flight = 0
-    for row in rows:
-        try:
-            provider, verified = _result_packet_artifact_from_row(row).packet.get("provider"), True
-        except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
-            provider, verified = None, False
-        conflict = artifact_assignment_conflict(
-            {"verified": verified, "provider": provider, "document_digest": row["document_digest"],
-             "recorded_at": _plain(row["recorded_at"])},
-            {key: _plain(row[key]) for key in ("provider_id", "status", "result_digest", "reserved_at", "completed_at")})
-        in_flight += conflict == "in_flight"
-        invalid += conflict not in (None, "in_flight")
-    return invalid, in_flight
+# Every task's evidence, validated by the same per-task rules the collector applies to one task's readback.
+EVIDENCE_ROW_CAP = 20000
+EVIDENCE_COUNT_KEYS = {"attempts": "provider_attempts_invalid", "usage": "provider_usage_invalid",
+                       "effects": "effects_invalid", "deliveries": "slack_deliveries_invalid",
+                       "lifecycle": "lifecycle_invalid", "settlement": "settlement_invalid"}
+_ARTIFACT_ROWS = """SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,
+ writer_fencing_generation, recorded_at FROM {s}.director_primary_result_packet_artifact
+ORDER BY task_id, assignment_id LIMIT %(limit)s"""
+_TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode
+FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
 
 
-# Every task's provider attempts, through the collector's own rule (validate_attempt_history).
-ATTEMPT_VALIDATION_CAP = 5000
-_ALL_ASSIGNMENTS = """SELECT task_id, assignment_id, sequence, provider_id, deployment_id, status, reservation_digest,
- result_digest, reason_code, reserved_at, completed_at FROM {s}.director_primary_parallel_assignment
-ORDER BY task_id, sequence, assignment_id LIMIT %(limit)s"""
-_ALL_ATTEMPTS = """SELECT a.task_id, a.assignment_id, p.sequence AS assignment_sequence, a.attempt_ordinal,
- a.event_sequence, a.provider_id, a.format_id, a.transport_id, a.idempotency_key_digest, a.attempt_digest,
- a.provider_run_id_digest, a.status, a.result_digest, a.outcome_evidence_digest, a.reason_code,
- a.budget_evidence_digest, a.recorded_at
-FROM {s}.director_primary_provider_attempt a JOIN {s}.director_primary_parallel_assignment p
- ON p.task_id = a.task_id AND p.assignment_id = a.assignment_id
-ORDER BY a.task_id, p.sequence, a.assignment_id, a.attempt_ordinal, a.event_sequence LIMIT %(limit)s"""
+def _global_task_evidence(connection, schema, usage_tables):
+    """Run the per-task validation over every task: task_evidence_errors (attempt histories, usage, effects,
+    deliveries and receipts, lifecycle order, settlement) and artifact_assignment_conflict for each result packet,
+    on the same sections the readback serves (qualification_section_sql, all tasks), in this snapshot.
 
+    Returns {count key: number of tasks (packets, for the two artifact counts) failing it}; every count is None when
+    any read exceeds EVIDENCE_ROW_CAP rows, so a count never covers a subset."""
+    from .langgraph_postgres import PostgresControlPlaneError, _result_packet_artifact_from_row, qualification_section_sql
+    keys = [*EVIDENCE_COUNT_KEYS.values(), "result_artifacts_invalid", "result_artifacts_in_flight"]
+    limit = {"limit": EVIDENCE_ROW_CAP + 1}
+    names = ["assignments", "provider_attempts", "effects", "slack_deliveries", "status_receipts"]
+    names += ["provider_usage"] if usage_tables else []
+    tasks = {}
 
-def _invalid_attempt_histories(connection, schema):
-    """How many tasks' provider-attempt histories fail validate_attempt_history, the rule the collector applies to
-    a selected task's readback (same rows, same columns, times as ISO strings); None past ATTEMPT_VALIDATION_CAP
-    assignments or attempt events, so the count never validates a subset."""
-    limit = {"limit": ATTEMPT_VALIDATION_CAP + 1}
-    assignments = connection.execute(_ALL_ASSIGNMENTS.format(s=schema), limit).fetchall()
-    attempts = connection.execute(_ALL_ATTEMPTS.format(s=schema), limit).fetchall()
-    if len(assignments) > ATTEMPT_VALIDATION_CAP or len(attempts) > ATTEMPT_VALIDATION_CAP:
-        return None
-    by_task = {}
-    for row in assignments:
-        by_task.setdefault(row["task_id"], ([], []))[0].append({k: _plain(v) for k, v in row.items() if k != "task_id"})
-    for row in attempts:
-        by_task.setdefault(row["task_id"], ([], []))[1].append({k: _plain(v) for k, v in row.items() if k != "task_id"})
-    return sum(1 for task_assignments, task_attempts in by_task.values()
-               if validate_attempt_history(task_assignments, task_attempts)[1] is not None)
+    def task(task_id):
+        return tasks.setdefault(task_id, {"assignments": [], "provider_attempts": [], "effects": [],
+                                          "slack_deliveries": [], "status_receipts": [], "provider_usage": [],
+                                          "execution_mode": None, "artifacts": []})
+
+    reads = [(name, qualification_section_sql(schema, name, all_tasks=True)) for name in names]
+    reads += [("execution_mode", _TASK_MODES.format(s=schema)), ("artifacts", _ARTIFACT_ROWS.format(s=schema))]
+    for name, query in reads:
+        rows = connection.execute(query, limit).fetchall()
+        if len(rows) > EVIDENCE_ROW_CAP:
+            return {key: None for key in keys}
+        for row in rows:
+            if name == "execution_mode":
+                task(row["task_id"])["execution_mode"] = row["execution_mode"]
+            elif name == "artifacts":
+                task(row["task_id"])["artifacts"].append(row)
+            else:
+                task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
+    counts = dict.fromkeys(keys, 0)
+    for sections in tasks.values():
+        _, errors = task_evidence_errors(sections)
+        for category, key in EVIDENCE_COUNT_KEYS.items():
+            counts[key] += errors[category] is not None
+        by_id = {row["assignment_id"]: row for row in sections["assignments"]}
+        for row in sections["artifacts"]:
+            assignment = by_id.get(row["assignment_id"])
+            if assignment is None:  # a packet for no durable assignment of its task (no such foreign key exists)
+                counts["result_artifacts_invalid"] += 1
+                continue
+            try:
+                provider, verified = _result_packet_artifact_from_row(row).packet.get("provider"), True
+            except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
+                provider, verified = None, False
+            conflict = artifact_assignment_conflict(
+                {"verified": verified, "provider": provider, "document_digest": row["document_digest"],
+                 "recorded_at": _plain(row["recorded_at"])}, assignment)
+            counts["result_artifacts_in_flight"] += conflict == "in_flight"
+            counts["result_artifacts_invalid"] += conflict not in (None, "in_flight")
+    return counts
 
 
 def consistency_report(settings, identity, *, tasks=()) -> dict:
@@ -445,8 +669,10 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
         with connection.transaction():
             _require_instance(connection, schema, identity)
             counts = connection.execute(_COUNTS.format(s=schema)).fetchone()
-            invalid_artifacts, in_flight_artifacts = _attached_artifacts(connection, schema)
-            invalid_attempts = _invalid_attempt_histories(connection, schema)
+            present = connection.execute(
+                "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage",
+                [f"{schema}.director_primary_provider_{name}" for name in ("spend", "usage")]).fetchone()
+            evidence_counts = _global_task_evidence(connection, schema, all(present.values()))
             if tasks:
                 present = connection.execute(
                     "SELECT to_regclass(%s) IS NOT NULL AS spend, to_regclass(%s) IS NOT NULL AS usage,"
@@ -515,9 +741,7 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
             "intake_fencing_generation": _plain(counts["intake_fencing_generation"]),
             # None (over the row cap) is not a count: check 07 reads the snapshot as malformed, never as zero.
             "counts": {**{key: int(counts[key]) for key in _COUNT_KEYS},
-                       "result_artifacts_invalid": invalid_artifacts,
-                       "result_artifacts_in_flight": in_flight_artifacts,
-                       "provider_attempts_invalid": invalid_attempts},
+                       **evidence_counts},
             "tasks": per_task}
 
 
@@ -541,7 +765,10 @@ def _capture_product(provider, output: bytes):
 
     The product comes from the capture's own dialect and model, never from the
     lane name: a Responses envelope naming another vendor's model is a
-    substitution, and None is what check 11 counts as one.
+    substitution, and None is what check 11 counts as one. Every named product
+    rests on an identity the output itself carries: the Responses and grok CLI
+    model, Claude's modelUsage keys. A dialect that carries none is labelled
+    ``-unattested``, which check 11 reads as unknown, not as the product.
     """
     try:
         native = json.loads(output)
@@ -552,7 +779,10 @@ def _capture_product(provider, output: bytes):
     if provider == "openai":
         if envelope.get("object") == "response":
             return "openai-responses" if isinstance(model, str) and _OPENAI_MODEL.match(model) else None
-        return "openai-codex" if _codex_stream(output) else None
+        # The Codex CLI's JSONL names no product and no model (native_codex_transport records "actual model and cost
+        # are not reported by this event stream"), and no release descriptor pins the Codex executable's digest, so
+        # a well-formed stream attests only its dialect: labelled unattested (check 11 UNKNOWN), never openai-codex.
+        return "openai-codex-unattested" if _codex_stream(output) else None
     if provider == "grok":
         if envelope.get("object") == "response":
             return "xai-grok-responses" if isinstance(model, str) and model.startswith("grok") else None
@@ -663,3 +893,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | BEGIN]]
@@ -86,8 +87,10 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  # Substitutions: another vendor's model, or no model, on the OpenAI Responses route.
                  ("openai", b'{"object":"response","id":"resp_1","model":"grok-4"}', None),
                  ("openai", b'{"object":"response","id":"resp_1"}', None),
-                 ("openai", codex, "openai-codex"),
-                 ("openai", b'{"type":"thread.started"}\n{"type":"turn.completed"}', "openai-codex"),
+                 # Review 4102705154: the Codex CLI stream carries no product or model identity (as
+                 # native_codex_transport notes), so even a full turn is only labelled unattested.
+                 ("openai", codex, "openai-codex-unattested"),
+                 ("openai", b'{"type":"thread.started"}\n{"type":"turn.completed"}', "openai-codex-unattested"),
                  ("openai", b'{"type":"thread.started"}\n{"type":"message"}\n{"type":"turn.completed"}', None),
                  ("openai", b'{"type":"turn.completed"}', None),
                  ("openai", b'{"type":"message"}', None),
@@ -669,9 +672,9 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
              "provider": packet["provider"], "verified": True},
             {"assignment_id": "A2", "document_digest": rows[1][3], "outcome": None, "provider": None,
              "verified": False}])
-        # Neither packet names a durable assignment of its task (the table has no such foreign key): check 07
-        # counts both as conflicts until the assignments exist (PR #264 review 4100381678).
-        self.assertEqual(report["counts"]["result_artifacts_without_assignment"], 2)
+        # Neither packet names a durable assignment of its task (the table has no such foreign key): the shared
+        # per-task packet rule counts both as conflicts until the assignments exist (PR #264 review 4100381678).
+        self.assertEqual(report["counts"]["result_artifacts_invalid"], 2)
         with self.handle.pool.connection() as connection:
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_parallel_batch"
@@ -684,7 +687,6 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                     " VALUES (%s, %s, %s, 'claude', 'fixture', '[]'::jsonb, '[]'::jsonb, 3, 'PENDING')",
                     (task_id, assignment, sequence))
         attached = self.report()["counts"]
-        self.assertEqual(attached["result_artifacts_without_assignment"], 0)
         # Review 4102375061: a packet on a PENDING assignment is never one it settled (both conflict: A2's stored
         # document also no longer matches its digest).
         self.assertEqual((attached["result_artifacts_invalid"], attached["result_artifacts_in_flight"]), (2, 0))
@@ -719,7 +721,7 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 self.assertEqual(self.report()["counts"]["result_artifacts_invalid"], 2)
                 assignment("status='SUCCEEDED', result_digest=%s, provider_id='claude'", rows[0][3])
         # Past the row cap the count is unknown (None), never a partial number.
-        with patch.object(evidence, "ARTIFACT_VALIDATION_CAP", 1):
+        with patch.object(evidence, "EVIDENCE_ROW_CAP", 1):
             self.assertIsNone(self.report()["counts"]["result_artifacts_invalid"])
 
     def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
@@ -747,9 +749,30 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         event(1, 1, "STARTED", 0)
         event(1, 2, "SUCCEEDED", 1)
         self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 0)
+
+        def assignment(sql, *values):
+            with self.handle.pool.connection() as connection:
+                connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET {sql}"
+                                   " WHERE task_id=%s AND assignment_id='a1'", (*values, task_id))
+
+        # Reviews 4102705142/48/62: the global counts run the same per-task rules. Settled around its attempts with
+        # the last attempt's digest: consistent.
+        assignment("status='SUCCEEDED', result_digest=%s, reason_code='completed', reservation_digest=%s,"
+                   " reserved_at=now() - interval '1 hour', completed_at=now() + interval '1 hour'",
+                   "sha256:" + "2" * 64, "sha256:" + "5" * 64)
+        counts = self.report()["counts"]
+        self.assertEqual((counts["settlement_invalid"], counts["lifecycle_invalid"]), (0, 0))
+        # Settled with another digest than its last attempt's final event: a settlement conflict.
+        assignment("result_digest=%s", "sha256:" + "8" * 64)
+        self.assertEqual(self.report()["counts"]["settlement_invalid"], 1)
+        assignment("result_digest=%s", "sha256:" + "2" * 64)
+        # Completed before its attempts ran: the events lie outside the assignment's lifecycle.
+        assignment("completed_at=now() - interval '30 minutes'")
+        self.assertEqual(self.report()["counts"]["lifecycle_invalid"], 1)
+        assignment("completed_at=now() + interval '1 hour'")
         event(3, 1, "STARTED", 2)  # attempt 3 with no attempt 2: the ordinals have a gap
         self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 1)
-        with patch.object(evidence, "ATTEMPT_VALIDATION_CAP", 1):
+        with patch.object(evidence, "EVIDENCE_ROW_CAP", 1):
             self.assertIsNone(self.report()["counts"]["provider_attempts_invalid"])
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
@@ -894,3 +917,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 05:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
