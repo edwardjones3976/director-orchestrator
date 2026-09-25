@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -408,7 +409,8 @@ class HostProviderBridgeTests(unittest.TestCase):
             HostBridgePacketTransport,
         )
         from director_orchestrator.host_provider_bridge_server import _Handler
-        from director_orchestrator.packet_routing import validated_compact_view
+        from director_orchestrator.packet_routing import (
+            git_blob_sha, prepare_small_task_view, validated_compact_view)
 
         python = str(Path(sys.executable).resolve(strict=True))
         marker = Path(self.temporary.name) / "spawned"
@@ -422,7 +424,14 @@ class HostProviderBridgeTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         work = json.loads((ROOT / "docs/schemas/model-work-packet-v1.example.json").read_text())
-        work.update(allowed_tools=["READ_REPOSITORY"], allowed_external_effects=[])
+        text = b"# Agents\n"
+        work.update(allowed_tools=["READ_REPOSITORY"], allowed_external_effects=[],
+                    objective="Summarize AGENTS.md.",
+                    authority_snapshot=[{**work["authority_snapshot"][0],
+                                         "blob_sha": git_blob_sha(text)}])
+        # Dispatch prepares the one view the transport sends.
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: text):
+            prepare_small_task_view(work)
         transport = HostBridgePacketTransport(
             "grok", f"http://127.0.0.1:{server.server_port}/v1/provider/dispatch", SECRET,
             writer_owner_token_digest="sha256:" + "f" * 64,
@@ -1454,3 +1463,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

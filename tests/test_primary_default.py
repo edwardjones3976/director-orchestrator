@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
@@ -731,8 +732,27 @@ class StandingGrantExerciseTests(unittest.TestCase):
         import importlib
 
         main = importlib.import_module("director_orchestrator.main")
+
+        def live(application):
+            # The live plan builder: each lane's frozen budget, not the preview's zero.
+            application.services._live_composition = True
+            return application
+
         cases = {
             "capable": (self.application(), True),
+            # The class's own budget and token terms, by the predicate
+            # eligibility uses: no pair can be eligible, so nothing is armed.
+            "no_review_tokens": (self.application(small_task_review_max_tokens=0), False),
+            "live_default_budgets": (live(self.application()), False),
+            "live_budgets_over_the_class": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.3,"cursor":0.3}')),
+                False),
+            "live_reviewer_over_its_cap": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.1,"cursor":0.1}',
+                small_task_review_max_usd=0.2)), False),
+            "live_budgets_in_the_class": (live(self.application(
+                langgraph_primary_provider_attempt_budgets_usd_json='{"claude":0.15,"cursor":0.1}')),
+                True),
             "no_ledger": (self.application(None), False),
             "no_compact_lane": (self.application(lanes=frozenset()), False),
             # A small task needs a producer and an independent reviewer.
@@ -5860,3 +5880,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

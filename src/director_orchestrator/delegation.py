@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
@@ -312,7 +313,8 @@ def delegation_readiness(
     primary application that could pre-authorize a task: an audit ledger
     wired and not latched attended, a grant whose repository and branch cover
     the plan the deployment builds, two compact-view lanes that grant names
-    from different provider families, and a deployment that executes. Then ``phase`` reads ``"4S"``; otherwise it stays
+    from different provider families whose frozen costs pass the class's own
+    budget and token predicate, and a deployment that executes. Then ``phase`` reads ``"4S"``; otherwise it stays
     1 and nothing is resolved. A per-task check can still refuse an armed path,
     and a per-grant ``delegation_trip`` is not reflected here: it is visible
     only in the audit ledger, which this payload does not read.
@@ -356,3 +358,4 @@ def delegation_readiness(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

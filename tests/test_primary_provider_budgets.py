@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
@@ -303,17 +304,23 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
             SimpleNamespace(document_digest=document_digest(kw["packet"])))
         use_fixture_blobs(self)
 
-    def run_assignment(self, index):
+    def selected(self, index):
+        """A reservation whose readiness selection (and deadline) exists."""
+
         reservation, connection = self.request(index)
         self.dispatch.preflight(reservation, writer=self.writer, connection=connection,
                                 wave_budget_usage={})
+        return reservation, connection
+
+    def run_assignment(self, index):
+        reservation, _ = self.selected(index)
         with patch("director_orchestrator.primary_default.live_provider_admissions",
                    return_value={}):
             return self.dispatch(reservation)
 
     def test_an_oversized_reviewer_fails_before_budget_admission_or_artifacts(self):
         self.record.assignment_outcomes[0].result = "x" * 20_000
-        reservation, _ = self.request(1)
+        reservation, _ = self.selected(1)
         with patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
             outcome = self.dispatch(reservation)
         self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
@@ -333,7 +340,7 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
     USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost_usd": 0.001}
 
     def test_a_class_task_whose_named_files_cannot_be_shown_is_refused(self):
-        reservation, _ = self.request(0)
+        reservation, _ = self.selected(0)
         with patch("director_orchestrator.packet_routing._BLOB_READER", None), \
                 patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
             outcome = self.dispatch(reservation)
@@ -341,6 +348,58 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual("small_task_named_contents_unavailable", outcome.reason_code)
         admission.assert_not_called()
         self.assertEqual([], self.dispatch_contexts)
+
+    def test_the_initial_grant_check_spends_the_selection_deadline(self):
+        """Looked up before any packet or ledger work; no selection holds."""
+
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        self.record.assignment_outcomes = []
+        deadlines = []
+
+        def refusal(*args, **kwargs):
+            deadlines.append(kwargs.get("deadline"))
+            return "small_task_pre_authorization_revoked"
+
+        with patch.object(self.activation.services, "execution_approval_free", return_value=True), \
+                patch("director_orchestrator.primary_default.small_pre_authorization_refusal",
+                      side_effect=refusal):
+            # Without a selection there is no bound to spend: held before
+            # the packet, the ledger or any blob is read.
+            reservation, _ = self.request(0)
+            with patch.object(self.activation.services._packet_router, "planned_work_packet",
+                              side_effect=AssertionError("packet built")), \
+                    self.assertRaisesRegex(WorkloadAdmissionHold,
+                                           "readiness_selection_unavailable_before_admission"):
+                self.dispatch(reservation)
+            self.assertEqual([], deadlines)
+            reservation, _ = self.selected(0)
+            outcome = self.dispatch(reservation)
+            self.assertEqual("small_task_pre_authorization_revoked", outcome.reason_code)
+            self.assertEqual(1, len(deadlines))
+            self.assertIsNotNone(deadlines[0])
+
+    def test_a_view_the_transport_cannot_rebuild_is_a_no_send_hold(self):
+        """A read failure after the dispatch check refuses before provider I/O
+        as a hold, never a failed attempt that would trip the grant."""
+
+        from director_orchestrator.packet_routing import _PREPARED_VIEWS, validated_compact_view
+        from director_orchestrator.primary_workload import WorkloadAdmissionHold
+
+        sent = []
+
+        def transport(packet, *, context):
+            # What every compact-view transport does before its request.
+            _PREPARED_VIEWS.clear()
+            with patch("director_orchestrator.packet_routing._BLOB_READER", None):
+                validated_compact_view(packet)
+            sent.append(context)
+
+        self.adapter.dispatch = transport
+        self.record.assignment_outcomes = []
+        with self.assertRaisesRegex(WorkloadAdmissionHold, "small_task_named_contents_unavailable"):
+            self.run_assignment(0)
+        self.assertEqual([], sent)
 
     def test_both_models_see_the_same_named_file_contents(self):
         router = self.activation.services._packet_router
@@ -455,8 +514,8 @@ class SmallTaskDispatchWiringTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual(1, len(self.dispatch_contexts))
 
     def test_a_class_packet_with_any_other_tool_is_refused_before_admission(self):
+        reservation, _ = self.selected(1)
         self.activation.services._packet_router = packet_router(self.settings)
-        reservation, _ = self.request(1)
         with patch("director_orchestrator.primary_default.live_provider_admissions") as admission:
             outcome = self.dispatch(reservation)
         self.assertIs(ParallelAssignmentStatus.FAILED, outcome.status)
@@ -657,3 +716,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

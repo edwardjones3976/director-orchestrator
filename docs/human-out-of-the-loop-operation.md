@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
@@ -380,7 +381,12 @@ review can never pass. With native lanes excluded and the Claude bridge lane
 not attestable, the one pair that could complete a small task is an OpenAI
 Responses producer with an attested Grok bridge reviewer, whose result must
 carry structured acceptance evidence with every check PASS; readiness reports
-armed only when such a pair exists. A review accepts only when its result
+armed only when such a pair exists and, by the same budget and token predicate
+eligibility applies, could be eligible: the costs the deployment's plan
+builder would freeze for that pair (each lane's configured attempt budget
+times three when live, so the default equal split of a $2 task budget never
+qualifies) are within $1 and the task budget, the reviewer's within its cap,
+and `SMALL_TASK_REVIEW_MAX_TOKENS` is at least 1. A review accepts only when its result
 disposes of exactly the review packet's `acceptance_checks`: each required
 check once, none missing, no extra and no duplicate, all PASS, and no risk,
 blocker or requested decision. Any other result is a rejection.
@@ -409,7 +415,16 @@ number, phone number, card, IBAN or routing number that passes its checksum,
 IP address, street address, a date next to a birth label, or a passport-like
 identifier) keeps the task out
 of the class: the grant is refused on `eligibility` at intake, and a dispatch
-fails with `small_task_named_contents_unavailable`. The cursor,
+fails with `small_task_named_contents_unavailable`. Dispatch builds and
+validates the view once, contents required, and keeps it by the packet's
+digest; every transport sends exactly those bytes. A transport that must
+rebuild it and cannot read the files refuses before any provider request, a
+hold that sends nothing and does not trip the grant, never a view carrying
+hashes only. Every blob read spends the caller's deadline: an assignment's
+reads spend its readiness selection's absolute deadline (a small task with no
+selection is held before any read), intake's check one bounded window for all
+files, and a read that reaches the deadline ends its process within what is
+left, never a fresh cleanup window. The cursor,
 github-copilot, native Codex, and Antigravity host-bridge lanes still post the
 full packet or a closed directive, so a task using any of them is outside the
 class and keeps the button. Every native CLI lane (Claude, Grok, Cursor, GitHub
@@ -504,7 +519,8 @@ send of a pre-authorized task, each retry included, and inside the transport
 before each provider request it makes (the OpenAI Responses token count and
 its generation alike); a lapse sends nothing. Those rechecks spend what is left
 of the dispatch's shared deadline, never a fresh window, and with nothing left
-refuse before any read. Every identifier, personal-data and credential screen
+refuse before any read; the first check at dispatch, and the bridge
+re-attestation before admission, spend it too. Every identifier, personal-data and credential screen
 ignores letter case except where the format itself is case-sensitive (token
 prefixes such as `AKIA`, JWTs, upper-case variable names).
 
@@ -737,3 +753,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->

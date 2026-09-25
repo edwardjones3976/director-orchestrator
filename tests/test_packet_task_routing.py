@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -1049,6 +1050,90 @@ class CompactProviderViewTests(unittest.TestCase):
         self.assertLess(time_module.monotonic() - started, 2.5)
         self.assertEqual([True], killed)
 
+    def test_a_blob_read_spends_the_shared_deadline_and_opens_no_cleanup_window(self) -> None:
+        """Every wait, the reap included, is clamped to what is left of the
+        caller's deadline; a process not yet exited is reaped by a daemon."""
+
+        import subprocess as subprocess_module
+        import time as time_module
+        from director_orchestrator.packet_routing import blob_read_deadline, git_blob_reader
+
+        waits, reaped = [], []
+
+        class Stuck:
+            def __init__(self, *args, **kwargs):
+                self.returncode = None
+                self.stdout = SimpleNamespace(
+                    read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout=None):
+                if timeout is None:
+                    reaped.append(True)
+                    return -9
+                waits.append(timeout)
+                raise subprocess_module.TimeoutExpired("git", timeout)
+
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+        runs = []
+
+        def run(*args, **kwargs):
+            runs.append(kwargs["timeout"])
+            return sized
+
+        # A 10 s reader inside a 0.3 s caller deadline.
+        reader = git_blob_reader(".", timeout_seconds=10)
+        started = time_module.monotonic()
+        with patch("director_orchestrator.packet_routing.subprocess.run", side_effect=run), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", Stuck), \
+                blob_read_deadline(time_module.monotonic() + 0.3):
+            self.assertIsNone(reader("a" * 40))
+        self.assertLess(time_module.monotonic() - started, 1.5)
+        self.assertLessEqual(runs[0], 0.3)
+        self.assertEqual(1, len(waits))
+        self.assertLessEqual(waits[0], 0.3)
+        time_module.sleep(0.05)
+        self.assertEqual([True], reaped)
+        # A deadline already spent reads nothing at all.
+        with patch("director_orchestrator.packet_routing.subprocess.run",
+                   side_effect=AssertionError("spawned")), \
+                blob_read_deadline(time_module.monotonic() - 1):
+            self.assertIsNone(reader("a" * 40))
+
+    def test_a_small_task_view_is_prepared_once_and_sent_as_prepared(self) -> None:
+        """The transport sends the prepared bytes; without them it rebuilds with
+        contents required and refuses rather than ship hashes only."""
+
+        from director_orchestrator.packet_contracts import document_digest
+        from director_orchestrator.packet_routing import (
+            SmallTaskViewUnavailable, _PREPARED_VIEWS, git_blob_sha,
+            prepare_small_task_view, validated_compact_view)
+
+        text = b"# Notes\n"
+        work = {"objective": "Summarize NOTES.md.", "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [], "starting_ref": "a" * 40,
+                "authority_snapshot_digest": "sha256:" + "b" * 64,
+                "authority_snapshot": [{"path": "NOTES.md", "commit_sha": "a" * 40,
+                                        "blob_sha": git_blob_sha(text)}]}
+        with patch("director_orchestrator.packet_routing.validate_compact_view",
+                   side_effect=lambda view: view):
+            with patch("director_orchestrator.packet_routing._BLOB_READER", None), \
+                    self.assertRaises(SmallTaskViewUnavailable):
+                validated_compact_view(work)
+            with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: text):
+                prepared = prepare_small_task_view(work)
+            self.assertEqual("# Notes\n", prepared["contents"][0]["text"])
+            # A read that now fails still sends the prepared view.
+            with patch("director_orchestrator.packet_routing._BLOB_READER",
+                       side_effect=AssertionError("rebuilt")):
+                self.assertEqual(prepared, validated_compact_view(work))
+            _PREPARED_VIEWS.pop(document_digest(work))
+
     def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
         """Extensionless files count: conventional names and any exact snapshot path."""
 
@@ -1247,3 +1332,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

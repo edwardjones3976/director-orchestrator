@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
@@ -196,6 +197,7 @@ from .policy import (
     SMALL_TASK_PRODUCER_ONLY_LANES,
     plan_within_limits,
     small_read_only_eligible,
+    small_task_costs_admissible,
     small_task_packet_read_only,
     _canonical_prestage_record,
 )
@@ -800,7 +802,9 @@ def _lane_transports(live_dependencies: Any, lane: str) -> list[Any]:
     return [getattr(item, "_transport", None) for item in adapters if item is not None]
 
 
-def _bridge_attestations_current(live_dependencies: Any, lane: str) -> bool:
+def _bridge_attestations_current(
+    live_dependencies: Any, lane: str, *, deadline: float | None = None,
+) -> bool:
     """Every host-bridge transport of this lane is still attested read-only now.
 
     A fresh authenticated challenge per transport, before any admission: the
@@ -810,8 +814,10 @@ def _bridge_attestations_current(live_dependencies: Any, lane: str) -> bool:
 
     from .host_provider_bridge import HostBridgePacketTransport
 
-    # One shared window for every transport of the lane, not one each.
-    deadline = monotonic() + 5
+    # One shared window for every transport of the lane, not one each, and
+    # never past the caller's own deadline.
+    window = monotonic() + 5
+    deadline = window if deadline is None else min(deadline, window)
     return all(
         transport.read_only_attestation_current(deadline=deadline)
         for transport in _lane_transports(live_dependencies, lane)
@@ -1011,12 +1017,16 @@ def _bounded_audit_history(ledger: Any, *, deadline: float | None = None) -> lis
 
 def _independent_lane_pair(
     lanes: Collection[str], *, reviewer_excluded: Collection[str] = (),
+    admissible: Callable[[str, str], bool] | None = None,
 ) -> bool:
     """Whether a producer and a reviewer from different provider families
-    exist among these lanes, the reviewer outside ``reviewer_excluded``."""
+    exist among these lanes, the reviewer outside ``reviewer_excluded`` and
+    the pair ``admissible`` when that is given."""
 
     for producer, reviewer in itertools.permutations(sorted(lanes), 2):
         if reviewer in reviewer_excluded:
+            continue
+        if admissible is not None and not admissible(producer, reviewer):
             continue
         try:
             if not share_provider_family(producer, reviewer):
@@ -2880,7 +2890,9 @@ class DefaultPrimaryApplication:
         class whose repository and branch cover the plan this deployment
         builds; two compact-view lanes the grant names, from different
         provider families (a small task needs a producer and an independent
-        reviewer); and a deployment that executes. A per-grant delegation_trip
+        reviewer) whose frozen costs pass small_task_costs_admissible, the
+        budget and token predicate eligibility applies; and a deployment that
+        executes. A per-grant delegation_trip
         is not reflected: it is visible only in the audit ledger.
         """
 
@@ -2899,11 +2911,25 @@ class DefaultPrimaryApplication:
             repository=canonical_repository(settings.repository_allowlist[0]),
             branch=branch,
         )
+        live = bool(getattr(self.services, "_live_composition", False))
+
+        def admissible(producer: str, reviewer: str) -> bool:
+            # The costs the plan builder this deployment runs would freeze
+            # for this pair (the paid-off preview declares zero), judged by
+            # the same predicate eligibility applies.
+            try:
+                costs = (_live_assignment_budgets(settings, (producer, reviewer))
+                         if live else (0.0, 0.0))
+            except ValueError:
+                return False
+            return small_task_costs_admissible(costs, settings)
+
         return (self._delegation_ledger is not None
                 and not self._delegation_tripped
                 and in_scope
                 and _independent_lane_pair(self._compact_view_lanes & grant.providers,
-                                           reviewer_excluded=SMALL_TASK_PRODUCER_ONLY_LANES)
+                                           reviewer_excluded=SMALL_TASK_PRODUCER_ONLY_LANES,
+                                           admissible=admissible)
                 and self._executes())
 
     def _named_contents_available(self, record: TaskRecord) -> bool:
@@ -2911,13 +2937,18 @@ class DefaultPrimaryApplication:
 
         from .packet_routing import small_task_named_contents
 
+        from .packet_routing import blob_read_deadline
+
         router = getattr(self.services, "_packet_router", None)
         if router is None or record.plan is None:
             return False
         try:
             producer = min(record.plan.assignments, key=lambda item: item.sequence)
-            return small_task_named_contents(
-                router.planned_work_packet(record, producer)) is not None
+            # One window for every file (and the packet build that measures
+            # the reviewer's view), not one per read.
+            with blob_read_deadline(monotonic() + _AUDIT_HISTORY_MAX_SECONDS):
+                return small_task_named_contents(
+                    router.planned_work_packet(record, producer)) is not None
         except Exception:
             return False
 
@@ -3881,6 +3912,18 @@ class DefaultPrimaryActivation:
                 def dispatch_parallel_assignment(
                     reservation: ParallelReservation,
                 ) -> ParallelDispatchOutcome:
+                    """One assignment's dispatch, every blob read inside it
+                    bounded by its readiness selection's absolute deadline."""
+
+                    from .packet_routing import blob_read_deadline
+                    selected = _readiness_selections.get(
+                        (reservation.task_id, reservation.assignment_id))
+                    with blob_read_deadline(None if selected is None else selected.deadline):
+                        return _dispatch_parallel_assignment(reservation)
+
+                def _dispatch_parallel_assignment(
+                    reservation: ParallelReservation,
+                ) -> ParallelDispatchOutcome:
                     if not services.paid_dispatch_allowed(reservation.task_id):
                         # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never ambiguous.
                         from .primary_workload import WorkloadAdmissionHold
@@ -3913,6 +3956,18 @@ class DefaultPrimaryActivation:
                             None,
                             "provider_activation_not_ready",
                         )
+                    # The selection's absolute deadline, looked up before any
+                    # packet, ledger or blob work: every small-task check
+                    # below spends it. A small task with no selection has no
+                    # bound to spend, so it is held here before any read.
+                    early_selection = _readiness_selections.get((record.task_id, assignment_id))
+                    early_deadline = (None if early_selection is None
+                                      else early_selection.deadline)
+                    if early_selection is None and small_read_only_eligible(
+                            record, settings, compact_view_lanes=compact_view_lanes):
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold(
+                            "readiness_selection_unavailable_before_admission")
                     packet = validate_packet(
                         "work",
                         services._packet_router.planned_work_packet(record, assignment),
@@ -3922,7 +3977,7 @@ class DefaultPrimaryActivation:
                         record, settings, delegation_ledger,
                         approval_free=services.execution_approval_free(record.task_id),
                         compact_view_lanes=compact_view_lanes, coordinator=coordinator,
-                        packet=packet)
+                        packet=packet, deadline=early_deadline)
                     if pre_authorization_refusal is not None:
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
@@ -3940,23 +3995,27 @@ class DefaultPrimaryActivation:
                             ParallelAssignmentStatus.FAILED, None,
                             "small_task_packet_not_read_only")
                     if small_class:
+                        # The one view this assignment's model is shown, its
+                        # named files' text required, validated once and
+                        # kept by packet digest: the transport sends exactly
+                        # these bytes rather than rebuilding them.
                         from .packet_contracts import PacketContractError
                         from .packet_routing import (
-                            small_task_named_contents,
-                            validated_compact_view,
+                            SmallTaskViewUnavailable,
+                            prepare_small_task_view,
                         )
-                        if small_task_named_contents(packet) is None:
+                        try:
+                            prepare_small_task_view(packet)
+                        except SmallTaskViewUnavailable:
                             return ParallelDispatchOutcome(
                                 ParallelAssignmentStatus.FAILED, None,
                                 "small_task_named_contents_unavailable")
-                        try:
-                            validated_compact_view(packet)
                         except PacketContractError:
                             return ParallelDispatchOutcome(
                                 ParallelAssignmentStatus.FAILED, None,
                                 "small_task_view_invalid")
                     if small_class and not _bridge_attestations_current(
-                            live_dependencies, provider):
+                            live_dependencies, provider, deadline=early_deadline):
                         return ParallelDispatchOutcome(
                             ParallelAssignmentStatus.FAILED, None,
                             "small_task_bridge_attestation_stale")
@@ -4296,6 +4355,7 @@ class DefaultPrimaryActivation:
                                 if lapsed is not None:
                                     raise WorkloadAdmissionHold(lapsed)
                         from .host_provider_bridge import HostBridgeAttestationStale
+                        from .packet_routing import SmallTaskViewUnavailable
                         try:
                             return adapter.dispatch(
                                 packet,
@@ -4337,6 +4397,12 @@ class DefaultPrimaryActivation:
                             # proven hold as a stale attestation before the send.
                             raise WorkloadAdmissionHold(
                                 "small_task_bridge_attestation_stale") from exc
+                        except SmallTaskViewUnavailable as exc:
+                            # Raised by the transport while building its
+                            # payload, before any provider request: nothing
+                            # was sent.
+                            raise WorkloadAdmissionHold(
+                                "small_task_named_contents_unavailable") from exc
 
                     try:
                         attempt_status, result, result_digest, attempt_reason = (
@@ -4411,6 +4477,17 @@ class DefaultPrimaryActivation:
 
                 def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage,
                                                   deadline=None):
+                    """Readiness for one assignment, every blob read inside it
+                    bounded by the caller's deadline."""
+
+                    from .packet_routing import blob_read_deadline
+                    with blob_read_deadline(deadline):
+                        return _preflight_parallel_assignment(
+                            reservation, writer=writer, connection=connection,
+                            wave_budget_usage=wave_budget_usage, deadline=deadline)
+
+                def _preflight_parallel_assignment(reservation, *, writer, connection,
+                                                   wave_budget_usage, deadline=None):
                     from .primary_paid_preflight import (
                         check_budget_setup, check_team_setup, PlannedProviderAttempt, ReadinessSelection,
                     )
@@ -4894,3 +4971,4 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

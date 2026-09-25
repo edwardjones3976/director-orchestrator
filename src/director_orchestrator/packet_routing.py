@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
@@ -24,19 +25,24 @@ deploy, or widen an assignment's approval state.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import re
 import subprocess
 import threading
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from time import monotonic
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from typing import Any, Protocol
 
 from .approvals import assignment_is_approved
 from .langgraph_runtime import PacketBoundaryAdapter, WriterOwnershipToken
 from .models import AntigravityDirective, Assignment, AssignmentKind, TaskRecord
 from .packet_contracts import (
+    PacketContractError,
     canonical_json_bytes,
     document_digest,
     validate_compact_view,
@@ -99,6 +105,31 @@ def set_compact_view_blob_reader(reader: Callable[[str], bytes | None] | None) -
     _BLOB_READER = reader
 
 
+# The caller's absolute deadline for every blob read made in this context. A
+# reader never runs past it; nesting only narrows it.
+_READ_DEADLINE: ContextVar[float | None] = ContextVar("blob_read_deadline", default=None)
+
+
+@contextmanager
+def blob_read_deadline(deadline: float | None) -> Iterator[None]:
+    """Spend ``deadline`` on every blob read in this block instead of a fresh window."""
+
+    current = _READ_DEADLINE.get()
+    bound = deadline if current is None else current if deadline is None else min(current, deadline)
+    token = _READ_DEADLINE.set(bound)
+    try:
+        yield
+    finally:
+        _READ_DEADLINE.reset(token)
+
+
+class SmallTaskViewUnavailable(PacketContractError):
+    """A small read-only task's view could not carry its named files' text.
+
+    Raised before any provider request, so nothing was sent.
+    """
+
+
 def git_blob_sha(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
@@ -122,10 +153,15 @@ def git_blob_reader(
         if re.fullmatch(r"[0-9a-f]{40}", blob_sha) is None:
             return None
         deadline = monotonic() + timeout_seconds
+        shared = _READ_DEADLINE.get()
+        if shared is not None:
+            deadline = min(deadline, shared)
+        if deadline - monotonic() <= 0:
+            return None
         try:
             size = subprocess.run(
                 (*git, "-s", blob_sha), cwd=root, shell=False, check=False,
-                capture_output=True, timeout=timeout_seconds,
+                capture_output=True, timeout=max(0.001, deadline - monotonic()),
             )
             if size.returncode != 0 or int(size.stdout.strip() or b"-1") > max_bytes:
                 return None
@@ -144,14 +180,20 @@ def git_blob_reader(
         if process.poll() is None:
             process.kill()
         try:
-            process.wait(timeout=5)
+            # Reaped within what is left of the deadline, never a new window.
+            process.wait(timeout=max(0.0, deadline - monotonic()))
         except subprocess.TimeoutExpired:
+            # Killed but not yet exited: a daemon reaps it, so nothing is
+            # left behind and this read still returns at the deadline.
+            threading.Thread(target=process.wait, daemon=True).start()
             return None
         if timed_out:
             # The killed process ends the pipe; the daemon reader is not
             # waited for, so the deadline holds.
             return None
-        pump.join(5)
+        pump.join(max(0.0, deadline - monotonic()))
+        if pump.is_alive():
+            return None
         process.stdout.close()
         if not received:
             return None
@@ -279,10 +321,53 @@ def compact_provider_view(work: Mapping[str, Any]) -> dict[str, Any]:
     return view
 
 
-def validated_compact_view(work: Mapping[str, Any]) -> dict[str, Any]:
-    """compact_provider_view, validated against its v1 schema before any send."""
+# Views prepared and validated at dispatch, by work-packet digest, so every
+# transport sends exactly those bytes instead of rebuilding them.
+# ponytail: bounded per-process LRU; a durable artifact if dispatch and send ever run in different processes
+_PREPARED_VIEWS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_PREPARED_VIEWS_MAX = 64
+_PREPARED_VIEWS_LOCK = threading.Lock()
 
-    return validate_compact_view(compact_provider_view(work))
+
+def _required_small_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    view = compact_provider_view(work)
+    if _read_only_packet(work) and "contents" not in view:
+        raise SmallTaskViewUnavailable("a small task's named files cannot be shown")
+    return validate_compact_view(view)
+
+
+def prepare_small_task_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    """Build and validate a small read-only task's one view, contents required.
+
+    Stored by the packet's digest, so the transport sends these exact bytes.
+    Raises SmallTaskViewUnavailable when the named files cannot be shown.
+    """
+
+    view = _required_small_view(work)
+    with _PREPARED_VIEWS_LOCK:
+        _PREPARED_VIEWS[view["work_packet_digest"]] = view
+        _PREPARED_VIEWS.move_to_end(view["work_packet_digest"])
+        while len(_PREPARED_VIEWS) > _PREPARED_VIEWS_MAX:
+            _PREPARED_VIEWS.popitem(last=False)
+    return copy.deepcopy(view)
+
+
+def validated_compact_view(work: Mapping[str, Any]) -> dict[str, Any]:
+    """compact_provider_view, validated against its v1 schema before any send.
+
+    A small read-only task's view is the one prepared at dispatch for this
+    exact packet digest. Without one it is rebuilt with its contents
+    required: a read that fails now raises SmallTaskViewUnavailable before
+    any provider request, never a view carrying hashes only.
+    """
+
+    if not _read_only_packet(work):
+        return validate_compact_view(compact_provider_view(work))
+    with _PREPARED_VIEWS_LOCK:
+        prepared = _PREPARED_VIEWS.get(document_digest(work))
+    if prepared is not None:
+        return copy.deepcopy(prepared)
+    return _required_small_view(work)
 
 
 class AuthoritySnapshotResolver(Protocol):
@@ -798,3 +883,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
@@ -55,7 +56,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -872,8 +873,15 @@ def small_read_only_eligible(
             return False
     except UnknownContactError:
         return False
-    costs = [float(item.estimated_cost_usd) for item in (producer, reviewer)]
-    if any(not math.isfinite(cost) or cost < 0 for cost in costs):
+    return small_task_costs_admissible(
+        [float(item.estimated_cost_usd) for item in (producer, reviewer)], settings)
+
+
+def small_task_costs_admissible(costs: Sequence[float], settings: Settings) -> bool:
+    """The class's deterministic budget and token terms for a (producer,
+    reviewer) cost pair: the one predicate eligibility and /health share."""
+
+    if len(costs) != 2 or any(not math.isfinite(cost) or cost < 0 for cost in costs):
         return False
     return (
         math.fsum(costs)
@@ -2088,3 +2096,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
