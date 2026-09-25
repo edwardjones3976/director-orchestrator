@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 """M0.3 smoke fine-tune: prove the Unsloth container trains on the RTX 5070 and exports a GGUF.
@@ -126,10 +127,10 @@ def publish(src: Path, dest: Path) -> None:
         shutil.copy2(src, part)
         if part.stat().st_size != src.stat().st_size:
             raise SystemExit(f"short copy of {src.name}")
+        os.replace(part, dest)
     except BaseException:  # includes a full volume, an I/O error and cancellation: never leave a large .part behind
         part.unlink(missing_ok=True)
         raise
-    os.replace(part, dest)
 
 
 def publish_all(src_dir: Path, model_dir: Path, report: dict, report_path: Path) -> None:
@@ -257,3 +258,4 @@ if __name__ == "__main__":
     export() if sys.argv[1:] == ["export"] else main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | BEGIN]]
 """Unit tests for smoke_train.py's non-GPU logic. The ML stack is stubbed, so this runs on any Python 3.10+:
@@ -73,6 +74,16 @@ class SmokeTrainTests(unittest.TestCase):
                 Path(d).write_bytes(b"x" * 100)
                 raise OSError("No space left on device")
             with mock.patch.object(smoke_train.shutil, "copy2", partial_then_fail):
+                with self.assertRaises(OSError):
+                    smoke_train.publish(src, dest)
+            self.assertEqual(list(dest.parent.iterdir()), [])
+
+    def test_publish_rename_error_leaves_no_part_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dest = Path(tmp, "a.gguf"), Path(tmp, "out", "b.gguf")
+            dest.parent.mkdir()
+            src.write_bytes(b"x" * 4096)
+            with mock.patch.object(smoke_train.os, "replace", side_effect=OSError("rename failed")):
                 with self.assertRaises(OSError):
                     smoke_train.publish(src, dest)
             self.assertEqual(list(dest.parent.iterdir()), [])
@@ -176,3 +187,4 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:36 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | END]]
