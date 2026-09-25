@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
@@ -65,6 +66,7 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 from contextlib import closing
 from dataclasses import asdict, dataclass, field, replace
@@ -185,11 +187,39 @@ def _when(value: Any) -> datetime:
 
 
 def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
-    # No shell, secret-bearing stderr, retries or caller-provided commands.
-    result = subprocess.run(arguments, capture_output=True, timeout=timeout, check=False)
-    if result.returncode or len(result.stdout) > MAX_BYTES:
+    """Run one read-only command (no shell, stdin closed, no retries). Both pipes are streamed and capped at
+    MAX_BYTES while the child runs: an overflow on either kills it at once, and an overflow, timeout or failure
+    raises, so the source reads as unavailable and nothing partial is parsed. stderr is never returned."""
+    process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    overflow = threading.Event()
+
+    def drain(name: str) -> None:
+        stream = getattr(process, name)
+        while chunk := stream.read1(65536):
+            if len(captured[name]) + len(chunk) > MAX_BYTES:
+                overflow.set()
+                process.kill()
+                return
+            captured[name] += chunk
+
+    readers = [threading.Thread(target=drain, args=(name,), daemon=True) for name in captured]
+    for reader in readers:
+        reader.start()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        for reader in readers:
+            reader.join(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+    if overflow.is_set() or process.returncode:
         raise ValueError("read-only command failed or exceeded its output bound")
-    return result.stdout
+    return bytes(captured["stdout"])
 
 
 def _run_json(arguments: list[str], timeout: int = 15) -> Any:
@@ -1265,7 +1295,8 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
     # may be older than a newer successful run that had nothing to post.)
     latest = found.get("latest") if isinstance(found.get("latest"), dict) else {}
     marks = [latest.get("startedAt"), latest.get("stoppedAt")]
-    if not all(isinstance(mark, str) for mark in marks) or not _ordered(*marks) or not _is_current(
+    if not all(isinstance(mark, str) for mark in marks) or not _ordered(
+            latest, ("startedAt", "stoppedAt"), ("startedAt", "stoppedAt")) or not _is_current(
             max(runtime.created_at, n8n_created), runtime.until(), *(_when(mark) for mark in marks)):
         return _observation("04", None, "The newest scheduled Director Status run lacks a start or stop time, stopped "
                             "before it started, started before the running Director container or n8n was created, "
@@ -1311,7 +1342,7 @@ def _status_observation(at: datetime, runtime: _Runtime, t: _SlackThreads) -> Ob
                             "latest update.", source, facts, at, **binding)
     # No producer records the posting image: an execution that started before the
     # running container was created was posted by an earlier runtime.
-    if not _ordered(execution["startedAt"], execution["stoppedAt"]) or not _is_current(
+    if not _ordered(execution, ("startedAt", "stoppedAt"), ("startedAt", "stoppedAt")) or not _is_current(
             max(runtime.created_at, n8n_created), runtime.until(), started, stopped):
         return _observation("04", None, "The newest saved status execution started before the running Director "
                             "container or the running n8n was created, so it cannot attest them.",
@@ -1360,9 +1391,9 @@ def _delivery_settled(row: dict[str, Any]) -> bool:
     # Slack stamps the message between the claim (claimed_at=now() before chat.postMessage) and the
     # acknowledgement (settled with the returned ts), or, on the ambiguous path, before the readback finds it.
     posted_at = datetime.fromtimestamp(float(Decimal(posted)), timezone.utc).isoformat()
-    return (row.get("state") == "DELIVERED" and all(row.get(key) for key in ("created_at", "claimed_at", "delivered_at"))
-            and type(attempts) is int and 1 <= attempts <= 2
-            and _ordered(row["created_at"], row["claimed_at"], posted_at, row.get("acknowledged_at"), row["delivered_at"]))
+    lifecycle = {**row, "posted_at": posted_at}
+    return (row.get("state") == "DELIVERED" and type(attempts) is int and 1 <= attempts <= 2
+            and _ordered(lifecycle, _DELIVERY_FIELDS, _required_moments("delivery", lifecycle)))
 
 
 def _final_is_rendering(facts: dict[str, Any]) -> bool:
@@ -1758,12 +1789,11 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
         if events:
             chains[("assignment", assignment.get("assignment_id"))] = [
                 assignment.get("reserved_at"), *(event.get("recorded_at") for event in events)] + (
-                [assignment["completed_at"]] if assignment.get("completed_at") else [])
-    ordered = (all(all(chain) and _ordered(*chain) for chain in chains.values())
-               and all(_ordered(effect.get("reserved_at"), effect.get("execution_started_at"), effect.get("bound_at"),
-                                effect.get("terminal_recorded_at"))
-                       and (not effect.get("terminal_disposition")
-                            or bool(effect.get("reserved_at") and effect.get("terminal_recorded_at")))
+                [assignment.get("completed_at")] if assignment.get("status") in ("SUCCEEDED", "FAILED") else [])
+    ordered = (all(_chain(*chain) for chain in chains.values())
+               and all(_ordered(assignment, _ASSIGNMENT_FIELDS, _required_moments("assignment", assignment))
+                       for assignment in readback.get("assignments") or [])
+               and all(_ordered(effect, _EFFECT_FIELDS, _required_moments("effect", effect))
                        for effect in readback.get("effects") or []))
     settled = (ordered and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
                and all(effect.get("terminal_disposition") or not effect.get("execution_started_at")
@@ -1771,13 +1801,44 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     return 0 if settled else None
 
 
-def _ordered(*moments: Any) -> bool:
-    """The present moments (absent ones skipped) are parseable and chronological."""
+def _ordered(row: dict[str, Any], fields: Sequence[str], required: Sequence[str]) -> bool:
+    """The one lifecycle rule for every row type: each required moment (one the product writes for this row's type
+    and state) is present, and every present moment in `fields` is parseable and chronological. Only moments the
+    product may legitimately leave unset (acknowledged_at on the ambiguous path, bound_at) are optional."""
+    if any(not row.get(key) for key in required):
+        return False
     try:
-        times = [_when(moment) for moment in moments if moment]
+        times = [_when(row[key]) for key in fields if row.get(key)]
     except (ValueError, TypeError):
         return False
     return all(earlier <= later for earlier, later in zip(times, times[1:]))
+
+
+def _chain(*moments: Any) -> bool:
+    """Every moment present and chronological (attempt events, an assignment around its attempts)."""
+    keys = [str(index) for index in range(len(moments))]
+    return _ordered(dict(zip(keys, moments)), keys, keys)
+
+
+_DELIVERY_FIELDS = ("created_at", "claimed_at", "posted_at", "acknowledged_at", "delivered_at")
+_EFFECT_FIELDS = ("reserved_at", "execution_started_at", "bound_at", "terminal_recorded_at")
+_ASSIGNMENT_FIELDS = ("reserved_at", "completed_at")
+
+
+def _required_moments(kind: str, row: dict[str, Any]) -> tuple[str, ...]:
+    """The moments the product always writes for a row of this type in this state."""
+    if kind == "delivery":  # DELIVERED, the only state credited (PrimarySlackDelivery claim, post, readback)
+        return ("created_at", "claimed_at", "posted_at", "delivered_at")
+    if kind == "effect":  # reservation, then execution claim before any I/O, then terminal evidence
+        if row.get("terminal_disposition"):
+            return ("reserved_at", "execution_started_at", "terminal_recorded_at")
+        return ("reserved_at", "execution_started_at") if row.get("execution_started_at") else ("reserved_at",)
+    status = row.get("status")  # assignment: primary_parallel reserve (ACTIVE) and settlement writes
+    if status in ("SUCCEEDED", "FAILED"):
+        # A PENDING assignment cancelled before dispatch is FAILED with completed_at but never reserved.
+        cancelled = status == "FAILED" and row.get("reason_code") == "task_cancelled_before_dispatch"
+        return ("completed_at",) if cancelled else ("reserved_at", "completed_at")
+    return ("reserved_at",) if status in ("ACTIVE", "AMBIGUOUS", "OWNER_DECISION_REQUIRED") else ()
 
 
 def _run_record(runtime: _Runtime, snapshot: dict[str, Any], correctness: bool, label: str) -> dict[str, Any]:
@@ -2050,8 +2111,7 @@ def _assignments_joined(facts: dict[str, Any], *, attempts: bool) -> bool | None
                 or not _same(assignment.get("result_digest"), digest)):
             return False
         # Settled means completed after it was reserved (both also bound by _moments' freshness window).
-        if not (assignment.get("reserved_at") and assignment.get("completed_at")
-                and _ordered(assignment["reserved_at"], assignment["completed_at"])):
+        if not _ordered(assignment, _ASSIGNMENT_FIELDS, _required_moments("assignment", assignment)):
             return False
         if attempts:
             # The latest event of the assignment's last attempt (latest is keyed per attempt).
@@ -2143,7 +2203,12 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
         # (ProviderBudget.verify) and it binds a provider the paid task was charged against.
         # Each charged attempt must join the exact signed document it reserved against: same grant, same provider.
         spend = ((consistency or {}).get("tasks") or {}).get((paid or {}).get("task_id"), {}).get("spend") or []
-        unsigned = any(row.get("signature_verified") is not True for row in budgets) or not all(
+        # /health reports today's accounting (usage.py _daily_accounting, the UTC day it was read) and names no day,
+        # so the enrolled caps and charges graded with it are the rows of the collection's UTC budget day.
+        day = (runtime.collected_at or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        spend = [row for row in spend if row.get("budget_day") == day]
+        budgets = [row for row in budgets if row.get("day") == day]
+        unsigned = not spend or any(row.get("signature_verified") is not True for row in budgets) or not all(
             any(_same(budget.get("authority_digest"), charge.get("grant_digest"))
                 and (budget.get("task_id"), budget.get("project_id"), budget.get("day"), budget.get("provider_id"))
                 == (charge.get("task_id"), charge.get("project_id"), charge.get("budget_day"), charge.get("provider_id"))
@@ -3115,3 +3180,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]

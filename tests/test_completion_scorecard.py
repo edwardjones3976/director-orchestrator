@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]]
@@ -2819,6 +2820,52 @@ class ScorecardCollectorTests(unittest.TestCase):
                 with self.subTest(check=key, field=field):
                     self.assertNotEqual(case.state(key), "PASS")
 
+    def test_terminal_rows_need_their_required_moments_06_10_20(self):
+        self.assertEqual([self.world().state(key) for key in ("06", "10", "20")], ["PASS", "PASS", "PASS"])
+        for task_id, key in ((APPROVAL_TASK, "06"), ("DIR-LG-7A01", "10"), (PAID_TASK, "20")):
+            case = self.world()
+            case.tasks[task_id]["qualification_evidence"]["assignments"][0]["completed_at"] = None
+            with self.subTest(check=key, row="assignment"):
+                self.assertNotEqual(case.state(key), "PASS")
+        for task_id, key in ((APPROVAL_TASK, "06"), (PAID_TASK, "20")):
+            case = self.world()
+            case.tasks[task_id]["qualification_evidence"]["effects"][0]["execution_started_at"] = None
+            with self.subTest(check=key, row="effect"):
+                self.assertNotEqual(case.state(key), "PASS")
+        # Required moments per state, from the product's writes; only legitimately unset ones may be absent.
+        self.assertFalse(sc._ordered({"status": "SUCCEEDED", "reserved_at": "2026-09-12T10:00:00+00:00"},
+                                     sc._ASSIGNMENT_FIELDS,
+                                     sc._required_moments("assignment", {"status": "SUCCEEDED"})))
+        cancelled = {"status": "FAILED", "reason_code": "task_cancelled_before_dispatch",
+                     "completed_at": "2026-09-12T10:00:00+00:00"}
+        self.assertTrue(sc._ordered(cancelled, sc._ASSIGNMENT_FIELDS, sc._required_moments("assignment", cancelled)))
+        terminal = {"terminal_disposition": "COMPLETED", "reserved_at": "2026-09-12T10:00:00+00:00",
+                    "terminal_recorded_at": "2026-09-12T10:00:02+00:00"}
+        self.assertFalse(sc._ordered(terminal, sc._EFFECT_FIELDS, sc._required_moments("effect", terminal)))
+
+    def test_enrolled_caps_bind_to_the_accounting_day_15(self):
+        self.assertEqual(self.world().state("15"), "PASS")
+        for rows in (("budgets",), ("spend",), ("budgets", "spend")):
+            case = self.world()
+            for name in rows:
+                for item in case.consistency["tasks"][PAID_TASK][name]:
+                    item["day" if name == "budgets" else "budget_day"] = "2026-09-11"  # the day before
+            with self.subTest(rows=rows):
+                self.assertNotEqual(case.state("15"), "PASS")
+
+    def test_subprocess_output_is_capped_on_both_pipes_while_running(self):
+        import sys
+        self.assertEqual(sc._run_bytes([sys.executable, "-c", "print('ok')"]).strip(), b"ok")
+        for pipe in ("stdout", "stderr"):
+            # More than MAX_BYTES, then it would keep writing forever: killed on overflow, never parsed.
+            script = ("import sys\nblock = b'x' * 65536\nwhile True:\n    sys.%s.buffer.write(block)\n" % pipe)
+            started = time.monotonic()
+            with self.subTest(pipe=pipe), self.assertRaises(ValueError):
+                sc._run_bytes([sys.executable, "-c", script], timeout=60)
+            self.assertLess(time.monotonic() - started, 30)
+        with self.assertRaises(ValueError):
+            sc._run_bytes([sys.executable, "-c", "import sys; sys.exit(3)"])
+
     def test_ten_offline_trials_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
         called = self.world()
@@ -3380,3 +3427,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]]

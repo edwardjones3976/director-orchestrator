@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | BEGIN]] -->
@@ -535,7 +536,18 @@ valid names). A DELIVERED row's Slack timestamp lies inside its lifecycle
 (claimed, then posted, then acknowledged or read back); every attempt event lies
 between its assignment's reservation and completion (the product's write order);
 and check 07 counts a SUCCEEDED projection without a bound batch or a SUCCEEDED
-assignment as a conflict (`succeeded_projections_without_plan`).
+assignment as a conflict (`succeeded_projections_without_plan`). The one
+lifecycle rule takes the moments the product always writes for each row type
+and state and fails when one is missing: a DELIVERED row needs its creation,
+claim, Slack post and delivery; a SUCCEEDED or FAILED assignment its reservation
+(unless cancelled before dispatch) and completion; a terminal external effect
+its reservation, execution start and terminal record. Only moments the product
+may leave unset (the acknowledgement on the ambiguous path, a remote binding)
+are optional. Check 15 grades only the enrolled caps and charges of the
+collection's UTC budget day, the day `/health` accounting covers. Every
+subprocess the scorecard runs streams both stdout and stderr, each capped at
+`MAX_BYTES`; an overflow kills the child at once and the source reads as
+unavailable, never partially parsed.
 
 Documented limit (check 04): the check binds the status post to the
 authenticated Director bot identity (the posted message's user is the bot
@@ -882,3 +894,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:34 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:00 UTC | END]] -->
