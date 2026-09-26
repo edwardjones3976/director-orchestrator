@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | BEGIN]] -->
 # Project state report — homemade-llm, M0 "Foundation" gate (closed)
@@ -40,13 +41,13 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | Group | Receipts | USD |
 |---|---|---|
 | M0 before the gate: PR #266 review (Grok CLI `homemade-llm/grok-20260924T080222Z.out.json`), M0.11 brief (Perplexity) and its xAI fact-check, #275 review and post-merge review, the eight #277 reviews, and three #279 reviews | 16 costed | **1.43271956** |
-| Shared M0/M1: one xAI base-impact check covering #279 and #280, not split | 1 | 0.020078 |
+| Shared M0/M1: one xAI base-impact check covering #279 and #280, charged conservatively to M0 | 1 | 0.020078 |
 | xAI and Perplexity receipts with no project tag (09-24 and 09-25), not assigned to M0 | 12 costed, 1 uncosted | 0.221056 |
 | Uncosted xAI attempts (HTTP 0, no recorded cost; not USD 0): `20260925T090508Z` (a #275 review attempt), `20260926T172551Z` (a #291 review attempt that timed out), `20260926T173050Z` (no purpose recorded) | 3 | unknown |
 
 - The first 13 M0 receipts reproduce the independent audit's USD 1.22778956 exactly ([#277 comment 5842706191](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842706191)). The three #279 reviews add USD 0.20493.
 - This supersedes the USD 0.55 stamped at 2026-09-26 00:01 UTC, which missed the PR #266 review, the post-merge #275 review and the #279 reviews.
-- The M0 lower bound is well inside the USD 25 envelope. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), gives an **M0 charged total of USD 2.31480556**. That is still a lower bound (D-017).
+- The M0 lower bound is well inside the USD 25 envelope. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), and the shared #279/#280 check (USD 0.020078), charged conservatively to M0, gives an **M0 charged total of USD 2.33488356**. That is still a lower bound (D-017).
 - Codex, Cursor and Claude subscription usage carries no per-call USD cost and is not in this ledger.
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
@@ -79,6 +80,29 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
   - The set A file counts and the 22 unchanged originals are `[verified 2026-09-26 18:16 UTC, file counts]`; each later fact carries its own grade above.
 - **Concurrency:** several Director sessions work this project. Deconfliction is in the decision log (D-011) `[verified]`. This record's authorship was reassigned by the owner (O-033) `[relayed]`.
 
+### Charter milestone record (`docs/team-operating-charter.md`, "Evidence-first milestone record")
+
+| # | Field | Where, or why not applicable |
+|---|---|---|
+| 1 | Project and assignment IDs | Top of this report |
+| 2 | Objective, scope, categorized status | Top of this report and the M0 table |
+| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; current `main` `052553f`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
+| 4 | Provider participation, unavailable providers, drafts or simulations | Every paid call has a receipt (M0 paid spend table). Unavailable during M0: Grok Build CLI (HTTP 402, D-009) and GitHub Copilot (out of quota, D-005). No draft, simulation or predicted-position content. |
+| 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
+| 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
+| 7 | Dissent, counter-bias, alternatives | **Not applicable:** no committee debate was held. Reviewer disagreements and their resolutions are in the PR threads. |
+| 8 | Tests, CI, security scan, independent review | Per PR in the M0 table (for example #275: CI run 36120719806 and xAI ACCEPT receipt). **Security scan not applicable:** no Codex Security scan is configured for this project. |
+| 9 | Risks, limitations, blockers, confidence | "Not done, and what remains unverified" below |
+| 10 | Cost, tokens, elapsed time | Cost: M0 paid spend (a lower bound). Tokens are per receipt and not aggregated. Elapsed: 2026-09-24 06:05 (O-001) to 2026-09-26 03:15 (O-031), about 45 hours. |
+| 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Unavailable:** M0 ran analysis-only (`rollout-packet.md`) without pre-stage packets or writer leases. Reviewers are named per PR. |
+| 12 | Status-check, duplicate-validation, action and wave counts | **Unavailable:** not measured in M0. |
+| 13 | Avoidable-commit baseline | **Unavailable:** not measured in M0. |
+| 14 | Scope or authority changes, owner authorization | No authority change. Owner authorizations: O-029 to O-034. |
+| 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Rollback is a revert of the merged PRs. Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
+| 16 | Next gate and responsible party | "Next bounded action" below |
+| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-034 |
+| 18 | Not done and unverified | "Not done, and what remains unverified" below |
+
 ### Not done, and what remains unverified
 
 1. **`WEBUI_URL` runbook step** (M0.5): an owner config-change gate, recorded as open (D-016). The working phone chat is separate evidence and does not depend on it.
@@ -102,3 +126,4 @@ M1, base shootout on the held-out sets:
 - **Expected evidence:** per-base scorer output on both held-out sets, and a decision-log row naming the winner.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
