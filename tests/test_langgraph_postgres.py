@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
@@ -1312,7 +1313,11 @@ class EffectControlPlaneTests(unittest.TestCase):
                 _reservation_row(),
                 _claimed_row(),
                 {"reservation_key": DIGEST_A},
-                {"remote_system": "provider", "remote_identifier": "remote-1"},
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "remote-1",
+                    "claim_precedes": True,
+                },
             ]
         )
         self.bind(store)
@@ -1330,6 +1335,26 @@ class EffectControlPlaneTests(unittest.TestCase):
         ):
             self.bind(store)
         self.assertIn("director_primary_effect_execution", connection.statements()[2])
+        self.assertEqual(1, connection.rollbacks)
+
+    def test_replay_of_a_binding_that_predates_its_claim_is_refused(self):
+        store, connection = _store(
+            [
+                _lock_row(),
+                _reservation_row(),
+                _claimed_row(),
+                {"reservation_key": DIGEST_A},
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "remote-1",
+                    "claim_precedes": False,
+                },
+            ]
+        )
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.bind(store)
         self.assertEqual(1, connection.rollbacks)
 
     def test_binding_a_different_remote_object_is_refused(self):
@@ -3568,6 +3593,34 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
             )
         )
 
+    def test_a_legacy_binding_recorded_before_its_claim_is_never_confirmed(self):
+        key = self.prepare_claim("a7f1")
+        reservation = self.reserve(self.store, key, "a7f2")
+        # Reproduce a pre-guard row: bound, then claimed afterwards.
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_remote_binding "
+                "(reservation_key, task_id, owner_token, remote_system, "
+                "remote_identifier, bound_at) "
+                "VALUES (%s, %s, 'owner-a', 'provider', 'remote-legacy', "
+                "now() - interval '1 minute')",
+                (reservation.reservation_key, self.task_id),
+            )
+        self.assertTrue(
+            self.store.claim_effect_execution(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
+        )
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.store.bind_remote_effect(
+                reservation_key=reservation.reservation_key,
+                owner_token="owner-a",
+                remote_system="provider",
+                remote_identifier="remote-legacy",
+            )
+
     def test_a_remote_identifier_cannot_be_reused_across_reservations(self):
         first_key = self.prepare_claim("1d")
         first = self.reserve(self.store, first_key, "2d", units=1)
@@ -4032,3 +4085,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]

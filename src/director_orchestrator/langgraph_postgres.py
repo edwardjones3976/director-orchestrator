@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
@@ -4936,9 +4937,13 @@ class PostgresConditionalClaimStore:
                 held = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {schema}.director_primary_remote_binding bound
+                    JOIN {schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
@@ -4949,6 +4954,12 @@ class PostgresConditionalClaimStore:
                     ):
                         raise PostgresControlPlaneError(
                             "remote binding already names a different remote object"
+                        )
+                    # A binding recorded before its claim is never confirmed.
+                    if held["claim_precedes"] is not True:
+                        raise PostgresControlPlaneError(
+                            "remote binding refused; the existing binding "
+                            "predates its execution claim"
                         )
                     return
                 self._one_row(
@@ -6059,3 +6070,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
