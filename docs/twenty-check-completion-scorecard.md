@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]] -->
@@ -725,6 +726,31 @@ before the execution start of the effect the graph bound to it
 (`director_primary_effect_approval_binding`); an unbound effect approval is
 unproven. Activation captures are classified from the exact bytes
 `CaptureVerifier.verified_output` read and verified, never a second read.
+
+Independent wall clocks. `bounded_get` runs the whole request (resolve,
+connect, TLS, status line, headers and body) in a worker thread and waits for
+it only until its absolute end: HTTPX's timeouts bound each read's inactivity,
+so trickled headers could otherwise hold `client.stream()` open indefinitely;
+a worker still running at the end is abandoned as a daemon. `_run_bytes`
+launches its command through `process_isolation` (a kill-on-close Job Object on
+Windows, a new session on POSIX), ends the whole tree with
+`stop_contained_process` under its own 5-second grace, reads the raw pipe fds
+(never the buffered streams, whose lock a descendant holding the pipe could
+keep a close waiting on), joins its readers only until its end and abandons any
+still blocked; the offline collector's commands (`whoami`, `icacls`,
+`docker inspect`) go through it too. The Security index's SQLite read aborts
+any statement past its wall clock through a progress handler (sqlite3's
+`timeout` bounds only lock waits). The in-image consistency and captures commands open Postgres
+with `connect_timeout` and `statement_timeout`, and their `docker exec` runs
+under `_run_bytes`. A Responses capture names `openai-responses` only when the
+verifier's Responses route, whose signed configuration digest pins its endpoint
+and must equal the capture's, targets exactly
+`https://api.openai.com/v1/responses`; otherwise it is
+`openai-responses-unattested` and check 11 is UNKNOWN for a Responses-transport
+lane. A grok Responses envelope is `xai-grok-responses-unattested`: a grok
+validation capture is a native command's output whose configuration pin (argv,
+files, auth environment) names no endpoint. A work packet must be recorded no earlier than its assignment's
+`reserved_at` and no later than its first attempt.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
 newest run on purpose (it is graded first) and `_activation_recorded_at` reads
@@ -1090,3 +1116,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]] -->

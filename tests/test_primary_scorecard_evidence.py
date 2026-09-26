@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -97,7 +98,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("openai", b'{"type":"turn.completed"}', None),
                  ("openai", b'{"type":"message"}', None),
                  ("openai", b'{"type":"result","result":"ok"}', None),
-                 ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-responses"),
+                 # 4109777108 sweep: nothing binds a grok Responses envelope to xAI's endpoint.
+                 ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-responses-unattested"),
                  ("grok", b'{"object":"response","model":"gpt-5"}', None),
                  ("grok", b'{"object":"response"}', None),
                  ("grok", b'{"stopReason":"end_turn","num_turns":1,"sessionId":"s-1"}', None),
@@ -118,7 +120,11 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("cursor", b'{"type":"result"}', None))
         for provider, output, expected in cases:
             with self.subTest(provider=provider, output=output):
-                self.assertEqual(expected, evidence._capture_product(provider, output))
+                self.assertEqual(expected, evidence._capture_product(provider, output, official_openai=True))
+        # 4109777108: the envelope shape alone never names the product; without a route bound to the official
+        # OpenAI endpoint a Responses capture is unattested (check 11 UNKNOWN), and a foreign model stays a substitution.
+        self.assertEqual(evidence._capture_product("openai", cases[0][1]), "openai-responses-unattested")
+        self.assertIsNone(evidence._capture_product("openai", cases[2][1]))
 
     def test_capture_attestations_report_digests_and_expiry_but_health_is_unchanged(self):
         store = MemoryStore()
@@ -193,7 +199,7 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
 
     @contextmanager
     def capture_sources(self, store, output=b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}',
-                        verifier_present=True):
+                        verifier_present=True, route=None):
         writes = Mock(side_effect=AssertionError("activation store append reached"))
 
         @contextmanager
@@ -217,7 +223,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
 
         verifier = SimpleNamespace(store=SimpleNamespace(dsn="postgresql://fixture"),
                                    verify=lambda *_args, **_kwargs: True,
-                                   verified_output=verified_output) if verifier_present else None
+                                   verified_output=verified_output,
+                                   openai_responses_route=route) if verifier_present else None
         with patch("director_orchestrator.provider_validation.capture_verifier_from_environment", return_value=verifier), \
                 patch("director_orchestrator.primary_provider_evidence._BoundedCaptureReader", Reader), \
                 patch("director_orchestrator.langgraph_postgres.open_provider_activation_store", open_store), \
@@ -258,6 +265,23 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         with self.capture_sources(store, verifier_present=False), self.assertRaises(ActivationEvidenceError), \
                 patch.object(evidence, "_activation_recorded_at", return_value=None):
             evidence.activation_capture_report(settings, identity, {"provider_bindings_sha256": "d" * 64})
+        # 4109777108: an OpenAI Responses capture names the product only when the verifier's route (whose signed
+        # configuration digest pins it) targets exactly the official endpoint.
+        openai = {"openai": binding("openai")}
+        for surface in ProviderActivationSurface:
+            advance(store, openai["openai"], surface)
+        settings.primary_provider_activation_bindings = lambda: openai
+        settings.langgraph_primary_required_providers = ("openai",)
+        responses = b'{"object":"response","id":"resp_1","model":"gpt-5.6"}'
+        for url, product in ((evidence.OFFICIAL_OPENAI_RESPONSES_URL, "openai-responses"),
+                             ("https://proxy.example.test/v1/responses", "openai-responses-unattested"),
+                             ("https://api.openai.com.example.test/v1/responses", "openai-responses-unattested"),
+                             (None, "openai-responses-unattested")):
+            route = None if url is None else SimpleNamespace(transport=SimpleNamespace(api_url=url))
+            with self.subTest(url=url), self.capture_sources(store, output=responses, route=route), \
+                    patch.object(evidence, "_activation_recorded_at", return_value=None):
+                self.assertEqual(evidence.activation_capture_report(
+                    settings, identity, {"provider_bindings_sha256": "d" * 64})["lanes"]["openai"]["product"], product)
 
     def run_main(self, *argv):
         settings = SimpleNamespace(langgraph_primary_postgres_dsn="postgresql://fixture",
@@ -759,6 +783,13 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment SET status='ACTIVE',"
                                " reservation_digest=%s, reserved_at=now() WHERE task_id=%s AND assignment_id='A2'",
                                ("sha256:" + "6" * 64, task_id))
+        # Review 4109777111: reserved after its work packet was recorded, the packet predates its dispatch.
+        self.assertEqual(self.report()["counts"]["work_packets_invalid"], 1)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment x SET reserved_at="
+                               f"(SELECT recorded_at FROM {self.schema}.director_primary_work_packet_artifact"
+                               " WHERE task_id=x.task_id AND assignment_id=x.assignment_id) - interval '1 second'"
+                               " WHERE task_id=%s AND assignment_id='A2'", (task_id,))
         self.assertEqual(self.report()["counts"]["work_packets_invalid"], 0)
 
     def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
@@ -1016,3 +1047,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]

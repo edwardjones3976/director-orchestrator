@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -581,7 +582,8 @@ def work_packet_error(sections):
     """Work packets against dispatch and results (primary_default persists the revalidated work packet, through
     record_work_packet_artifact, before any provider attempt of the assignment, and a result packet under the same
     authority snapshot). Every work packet revalidates and names an assignment of the task that left PENDING, once;
-    every dispatched assignment (one with a provider attempt) has exactly one, recorded before its first attempt; and
+    every dispatched assignment (one with a provider attempt) has exactly one, recorded no earlier than the
+    assignment's reservation and no later than its first attempt; and
     every result packet has its assignment's work packet under the same authority snapshot digest. None when the
     sections carry no work packets at all (the collector's readback does not serve them), else the first violation."""
     packets = sections.get("work_packets")
@@ -597,6 +599,9 @@ def work_packet_error(sections):
             return "a stored work packet fails revalidation"
         if assignment is None or assignment.get("status") == "PENDING":
             return "a work packet names no dispatched assignment of its task"
+        reserved, recorded = _when(assignment.get("reserved_at")), _when(packet.get("recorded_at"))
+        if reserved is None or recorded is None or recorded < reserved:
+            return "a work packet was recorded before its assignment was reserved"
         by_id[packet["assignment_id"]] = packet
     for event in sections.get("provider_attempts") or []:
         packet = by_id.get(event.get("assignment_id"))
@@ -971,7 +976,11 @@ def _codex_stream(output: bytes) -> bool:
             and events[0]["type"] == "thread.started" and events[-1]["type"] == "turn.completed")
 
 
-def _capture_product(provider, output: bytes):
+# The official OpenAI Responses endpoint (primary_transports.OpenAIResponsesPacketTransport's default).
+OFFICIAL_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+
+def _capture_product(provider, output: bytes, *, official_openai: bool = False):
     """Name the real product that produced a verified native capture, or None.
 
     The product comes from the capture's own dialect and model, never from the
@@ -979,7 +988,10 @@ def _capture_product(provider, output: bytes):
     substitution, and None is what check 11 counts as one. Every named product
     rests on an identity the output itself carries: the Responses and grok CLI
     model, Claude's modelUsage keys. A dialect that carries none is labelled
-    ``-unattested``, which check 11 reads as unknown, not as the product.
+    ``-unattested``, which check 11 reads as unknown, not as the product. So is a Responses envelope unless
+    ``official_openai``: the verified capture's route is bound (its signed configuration digest, which pins the
+    endpoint, equals the route's current one) to exactly the official OpenAI API endpoint. The envelope's shape
+    alone says nothing about which service produced it.
     """
     try:
         native = json.loads(output)
@@ -989,14 +1001,18 @@ def _capture_product(provider, output: bytes):
     model = envelope.get("model")
     if provider == "openai":
         if envelope.get("object") == "response":
-            return "openai-responses" if isinstance(model, str) and _OPENAI_MODEL.match(model) else None
+            if not (isinstance(model, str) and _OPENAI_MODEL.match(model)):
+                return None
+            return "openai-responses" if official_openai else "openai-responses-unattested"
         # The Codex CLI's JSONL names no product and no model (native_codex_transport records "actual model and cost
         # are not reported by this event stream"), and no release descriptor pins the Codex executable's digest, so
         # a well-formed stream attests only its dialect: labelled unattested (check 11 UNKNOWN), never openai-codex.
         return "openai-codex-unattested" if _codex_stream(output) else None
     if provider == "grok":
         if envelope.get("object") == "response":
-            return "xai-grok-responses" if isinstance(model, str) and model.startswith("grok") else None
+            # A grok validation capture is a native command's output, and its configuration pin (argv, files, auth
+            # environment) names no endpoint: nothing binds a Responses envelope to xAI's API, so it is unattested.
+            return "xai-grok-responses-unattested" if isinstance(model, str) and model.startswith("grok") else None
         # The grok CLI dialect grok_terminal_success accepts: stopReason and an integer num_turns,
         # and it must name a Grok model: the lane name alone attests nothing.
         cli = "stopReason" in envelope and type(envelope.get("num_turns")) is int
@@ -1061,7 +1077,12 @@ def activation_capture_report(settings, identity, manifest) -> dict:
             bindings=settings.primary_provider_activation_bindings(),
             required_providers=settings.langgraph_primary_required_providers, capture_verifier=verifier)
         # The product is named from the exact bytes the verifier read and verified, in the same call.
-        lanes = service.capture_attestations(classify=_capture_product)
+        # A verified Responses capture passed the route's configuration-digest check (CaptureVerifier: without a
+        # bound route it does not normalise at all), and that digest pins the route's api_url.
+        route = getattr(verifier, "openai_responses_route", None)
+        official = getattr(getattr(route, "transport", None), "api_url", None) == OFFICIAL_OPENAI_RESPONSES_URL
+        lanes = service.capture_attestations(
+            classify=lambda provider, output: _capture_product(provider, output, official_openai=official))
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         surface = lane["surfaces"].get("runtime_adapter")
@@ -1106,3 +1127,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]

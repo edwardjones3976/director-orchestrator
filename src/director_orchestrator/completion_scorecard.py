@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -70,6 +71,7 @@ import html
 import importlib.util
 import json
 import math
+import os
 import re
 import sqlite3
 import subprocess
@@ -87,6 +89,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .primary_activation_evidence import actors_distinct, canonical_actor
+from .process_isolation import ProcessContainmentError, launch_contained_process, stop_contained_process
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
@@ -111,7 +114,11 @@ _OPENAI_TRANSPORTS = {"responses-api": "openai-responses", "native-cli": "openai
                       "authenticated-windows-host-bridge": "openai-codex-unattested"}
 # The Codex CLI's stream carries no product or model identity and no release descriptor pins its executable, so a
 # Codex capture is only ever unattested: never credited as a real product, never counted as a substitution.
-_UNATTESTED_PRODUCTS = {"openai-codex-unattested"}
+_UNATTESTED_PRODUCTS = {"openai-codex-unattested": "openai-codex-unattested",
+                        # A Responses envelope from a route whose bound endpoint is not the official OpenAI API host.
+                        "openai-responses-unattested": "openai-responses",
+                        # A grok Responses envelope: its capture's configuration pin binds no endpoint.
+                        "xai-grok-responses-unattested": "xai-grok-responses"}
 REAL_PRODUCTS = {"openai": {"openai-responses"},
                  "grok": {"xai-grok-responses", "xai-grok-cli"},
                  "claude": {"anthropic-claude"}}
@@ -219,39 +226,61 @@ def _remaining(cap: float) -> float:
 
 
 def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
-    """Run one read-only command (no shell, stdin closed, no retries). Both pipes are streamed and capped at
-    MAX_BYTES while the child runs: an overflow on either kills it at once, and an overflow, timeout or failure
-    raises, so the source reads as unavailable and nothing partial is parsed. stderr is never returned. Its wall
-    clock is its timeout clamped to the collection deadline."""
-    timeout = _remaining(timeout)
-    process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
-    overflow = threading.Event()
+    """Run one read-only command (no shell, stdin closed, no retries) as a contained process tree: a kill-on-close
+    Job Object on Windows, a new session on POSIX (process_isolation, the transports' own boundary). Both pipes are
+    streamed and capped at MAX_BYTES while the child runs: an overflow on either kills it at once, and an overflow,
+    timeout or failure raises, so the source reads as unavailable and nothing partial is parsed. stderr is never
+    returned. Its wall clock is its timeout clamped to the collection deadline, and nothing waits past it: the whole
+    tree is ended (stop_contained_process, under its own short grace), the readers read the raw pipe fds, never the
+    buffered streams (a descendant that kept a pipe open would otherwise hold the buffered lock a close waits on), and
+    readers still blocked when the time is up are abandoned as daemons after their fds are closed."""
+    end = time.monotonic() + _remaining(timeout)
+    process, guard = launch_contained_process(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE)
+    streams = {"stdout": process.stdout, "stderr": process.stderr}
+    process.stdout = process.stderr = None  # stop_contained_process must not touch what a reader may still hold
+    captured = {name: bytearray() for name in streams}
+    overflow, done = threading.Event(), threading.Event()
 
     def drain(name: str) -> None:
-        stream = getattr(process, name)
-        while chunk := stream.read1(65536):
-            if len(captured[name]) + len(chunk) > MAX_BYTES:
-                overflow.set()
-                process.kill()
-                return
-            captured[name] += chunk
+        fd = streams[name].fileno()
+        try:
+            while not done.is_set() and (chunk := os.read(fd, 65536)):
+                if len(captured[name]) + len(chunk) > MAX_BYTES:
+                    overflow.set()
+                    process.kill()
+                    return
+                captured[name] += chunk
+        except OSError:
+            pass
 
-    readers = [threading.Thread(target=drain, args=(name,), daemon=True) for name in captured]
+    readers = [threading.Thread(target=drain, args=(name,), daemon=True) for name in streams]
     for reader in readers:
         reader.start()
+    timed_out = False
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-        raise
+        try:
+            process.wait(timeout=max(0.0, end - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            timed_out = True
     finally:
+        try:
+            stop_contained_process(process, guard, grace_seconds=5.0)
+            contained = True
+        except ProcessContainmentError:
+            contained = False
         for reader in readers:
-            reader.join(timeout=5)
-        process.stdout.close()
-        process.stderr.close()
-    if overflow.is_set() or process.returncode:
+            reader.join(timeout=max(0.0, end - time.monotonic()))
+        drained = not any(reader.is_alive() for reader in readers)
+        done.set()
+        for stream in streams.values():
+            try:
+                stream.close()  # never contended: the readers use os.read on the fd, not this buffered object
+            except OSError:
+                pass
+    if timed_out:
+        raise subprocess.TimeoutExpired(arguments, timeout)
+    if overflow.is_set() or process.returncode or not contained or not drained:
         raise ValueError("read-only command failed or exceeded its output bound")
     return bytes(captured["stdout"])
 
@@ -265,21 +294,44 @@ def bounded_get(client: httpx.Client, url: str, *, end: float, params: dict | No
     """The one HTTP read path of the scorecard and the offline collector (Slack, Director API, /health).
 
     A streamed GET bounded in bytes and in wall clock: it ends by `end` (a time.monotonic() value, already the
-    earlier of the read's own cap and the collection deadline). HTTPX gets a timeout clamped to what remains, so no
-    connect or single read can wait past it, and the clock is checked after every chunk as it arrives (iter_bytes
-    unsized: a sized iterator buffers until the size fills, which a trickle never reaches), so a slow trickle cannot
-    keep the read open either. The client must not follow redirects.
+    earlier of the read's own cap and the collection deadline). HTTPX's timeouts bound only each connect or read's
+    inactivity, so a peer that trickles its status line and headers could hold `client.stream()` open past any
+    deadline. The whole request - resolve, connect, TLS, headers and body - therefore runs in a worker thread that
+    this call waits for only until `end`: past it the read raises, the worker is told to stop at its next chunk and
+    is abandoned as a daemon, never joined. The body is also checked against the clock and the byte cap after every
+    chunk (iter_bytes unsized: a sized iterator buffers until the size fills, which a trickle never reaches). The
+    client must not follow redirects.
     """
     now = time.monotonic()
     if now >= end:
         raise ValueError("Collection deadline reached")
-    with client.stream("GET", url, params=params, headers=headers or {}, timeout=end - now) as response:
-        body = bytearray()
-        for chunk in response.iter_bytes():
-            body.extend(chunk)
-            if len(body) > MAX_BYTES or time.monotonic() >= end:
-                raise ValueError("Read exceeded byte/time bound")
-        return response.status_code, dict(response.headers), bytes(body)
+    stop = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def fetch() -> None:
+        try:
+            with client.stream("GET", url, params=params, headers=headers or {},
+                               timeout=max(0.001, end - time.monotonic())) as response:
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_BYTES or stop.is_set() or time.monotonic() >= end:
+                        raise ValueError("Read exceeded byte/time bound")
+                outcome["value"] = (response.status_code, dict(response.headers), bytes(body))
+        except BaseException as exc:  # handed to the caller, never lost with the thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.0, end - time.monotonic()))
+    if worker.is_alive():
+        stop.set()  # ponytail: an abandoned worker holds its socket until the peer's next byte or httpx's read timeout
+        raise ValueError("Read exceeded byte/time bound")
+    if "error" in outcome:
+        raise outcome["error"]
+    if time.monotonic() > end:
+        raise ValueError("Read exceeded byte/time bound")
+    return outcome["value"]
 
 
 def _http_client() -> httpx.Client:
@@ -1235,7 +1287,7 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
     for lane in used:
         if lane not in unbound and products.get(lane) in _UNATTESTED_PRODUCTS:
             mapped = {_OPENAI_TRANSPORTS.get(transport) for transport in transports[lane]}
-            if None in mapped or mapped == {products[lane]}:
+            if None in mapped or mapped == {_UNATTESTED_PRODUCTS[products[lane]]}:
                 unbound.append(lane)
 
     def attested(lane: str) -> bool:
@@ -2659,7 +2711,10 @@ def _security_observation(scan_id: str, candidate_sha: str, at: datetime) -> Obs
     index = _native_security_index()
     if not index.is_file() or index.is_symlink():
         raise ValueError("native Security index unavailable")
+    end = time.monotonic() + _remaining(5)
     with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(5))) as db:
+        # sqlite3's timeout bounds only lock waits; the progress handler aborts any statement past the wall clock.
+        db.set_progress_handler(lambda: time.monotonic() > end, 1000)
         db.row_factory = sqlite3.Row
         row = db.execute("SELECT id,status,scan_dir,target_path,target_revision,mode,diff_base_revision,"
                          "diff_head_revision,seal_manifest_digest,completed_at FROM scans WHERE id=?", (scan_id,)).fetchone()
@@ -3418,3 +3473,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]

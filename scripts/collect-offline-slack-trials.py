@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -87,26 +88,29 @@ def validate_observations(report):
     jsonschema.Draft202012Validator(json.loads(schema.read_bytes())).validate(report)
 
 
+def _run(arguments, timeout):
+    """Every collector command through the scorecard's one contained runner (completion_scorecard._run_bytes): the
+    whole process tree ends by an independent wall clock, and a nonzero exit or oversized output raises."""
+    from director_orchestrator.completion_scorecard import _run_bytes
+    return _run_bytes(arguments, timeout)
+
+
 def protect_directory(directory):
     """Create a new private directory using only platform tools, before writes."""
     directory.mkdir(mode=0o700, parents=False, exist_ok=False)
     if os.name == "nt":
-        result = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
-                                capture_output=True, timeout=10, check=True)
-        sid = list(csv.reader(result.stdout.decode().splitlines()))[0][1]
+        sid = list(csv.reader(_run(["whoami", "/user", "/fo", "csv", "/nh"], 10).decode().splitlines()))[0][1]
         if not re.fullmatch(r"S-1-[0-9-]+", sid):
             raise ValueError("Private directory identity unavailable")
-        subprocess.run(["icacls", str(directory), "/inheritance:r", "/grant:r",
-                        f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F",
-                        "*S-1-5-32-544:(OI)(CI)F"],
-                       capture_output=True, timeout=10, check=True)
+        _run(["icacls", str(directory), "/inheritance:r", "/grant:r",
+              f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F"], 10)
 
 
 def inspect_runtime(expected_head):
-    result = subprocess.run(["docker", "inspect", SERVICE], capture_output=True, timeout=15)
-    if result.returncode or len(result.stdout) > MAX_BYTES:
+    stdout = _run(["docker", "inspect", SERVICE], 15)
+    if len(stdout) > MAX_BYTES:
         raise ValueError("Canonical runtime inspection failed")
-    item = json.loads(result.stdout)[0]
+    item = json.loads(stdout)[0]
     labels = item.get("Config", {}).get("Labels") or {}
     ports = item.get("NetworkSettings", {}).get("Ports", {}).get("8080/tcp") or []
     if (labels.get("org.director.candidate.commit") != expected_head
@@ -1226,3 +1230,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]

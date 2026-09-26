@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
@@ -990,9 +991,11 @@ class SummaryTests(unittest.TestCase):
                                "Env": [f"{k}={v}" for k, v in {**ENV, **env_pairs}.items()]},
                     "State": {"Running": True, "StartedAt": "2026-09-12T09:00:00Z"},
                     "NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8080"}]}}}
-            completed = SimpleNamespace(returncode=0, stdout=json.dumps([item]).encode())
-            with patch.object(collector_module.subprocess, "run", return_value=completed):
-                return collector_module.inspect_runtime("e" * 40)
+            with patch.object(collector_module, "_run", return_value=json.dumps([item]).encode()) as run:
+                inspected_runtime = collector_module.inspect_runtime("e" * 40)
+            # 4109777106 sweep: the collector's commands go through the scorecard's contained, wall-clock runner.
+            run.assert_called_once_with(["docker", "inspect", collector_module.SERVICE], 15)
+            return inspected_runtime
         baseline_public, baseline_env = inspected({"LANGGRAPH_PRIMARY_OFFLINE_SIMULATION_ENABLED": "true",
                                                    "ALLOW_PAID_RUNS": "false"})
         self.assertEqual((True, False), (baseline_public["offline_configured"], baseline_public["paid_configured"]))
@@ -1648,3 +1651,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]

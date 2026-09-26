@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -3453,6 +3454,11 @@ class ScorecardCollectorTests(unittest.TestCase):
                              ("fails revalidation", {"work_packets": [{**packet, "verified": False}]}),
                              ("recorded after the first attempt",
                               {"work_packets": [{**packet, "recorded_at": "2026-09-12T10:00:07+00:00"}]}),
+                             # 4109777111: nor before its assignment was reserved.
+                             ("recorded before the reservation",
+                              {"work_packets": [{**packet, "recorded_at": "2026-09-12T09:00:00+00:00"}]}),
+                             ("an assignment with no reservation time",
+                              {"assignments": [{**readback["assignments"][0], "reserved_at": None}]}),
                              ("two for one assignment", {"work_packets": [packet, dict(packet)]}),
                              ("another authority than the result's",
                               {"result_artifacts": [{**result, "authority_snapshot_digest": "sha256:" + "d" * 64}]}),
@@ -3496,6 +3502,36 @@ class ScorecardCollectorTests(unittest.TestCase):
                     item["day" if name == "budgets" else "budget_day"] = "2026-09-11"  # the day before
             with self.subTest(rows=rows):
                 self.assertNotEqual(case.state("15"), "PASS")
+
+    def test_http_read_is_bounded_by_wall_clock_while_headers_trickle(self):
+        """4109777101: httpx's timeouts bound only each read's inactivity, so headers trickled byte by byte could hold
+        client.stream() open past the deadline; the whole request now runs under the absolute end."""
+        def handle(request):
+            time.sleep(3)  # the response (status line and headers) has not finished arriving
+            return httpx.Response(200, content=b"{}")
+
+        with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+            started = time.monotonic()
+            with self.assertRaisesRegex(ValueError, "time bound"):
+                sc.bounded_get(client, HEALTH, end=time.monotonic() + 0.3)
+            self.assertLess(time.monotonic() - started, 1.5)
+            status, _, body = sc.bounded_get(
+                httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"{}"))),
+                HEALTH, end=time.monotonic() + 5)
+            self.assertEqual((status, body), (200, b"{}"))
+
+    def test_subprocess_cleanup_ends_the_tree_and_never_waits_on_an_inherited_pipe(self):
+        """4109777106: a descendant that inherits stdout keeps the pipe open after its parent exits; the whole tree is
+        ended and nothing (reader join, stream close) waits past the call's own clock."""
+        spawn = ("import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+                 "print('ok', flush=True)")
+        started = time.monotonic()
+        self.assertEqual(sc._run_bytes([sys.executable, "-c", spawn], timeout=20).strip(), b"ok")
+        self.assertLess(time.monotonic() - started, 15)
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            sc._run_bytes([sys.executable, "-c", spawn + "; import time; time.sleep(60)"], timeout=1)
+        self.assertLess(time.monotonic() - started, 10)
 
     def test_subprocess_output_is_capped_on_both_pipes_while_running(self):
         import sys
@@ -3573,6 +3609,12 @@ class ScorecardCollectorTests(unittest.TestCase):
                 case.captures["lanes"][lane]["product"] = product
             with self.subTest(lane=lane):
                 self.assertEqual(case.state("11"), "FAIL")
+        # 4109777108 sweep: a grok Responses envelope bound to no endpoint is unattested, so the lane is UNKNOWN.
+        case = self.world()
+        case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
+            json.dumps(case.tasks[PAID_TASK]["qualification_evidence"]).replace('"claude"', '"grok"')))
+        case.captures["lanes"]["grok"]["product"] = "xai-grok-responses-unattested"
+        self.assertEqual(case.state("11"), "UNKNOWN")
         def openai_lane(product, transport):
             case = self.world()
             readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
@@ -3588,6 +3630,10 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(openai_lane("openai-codex", "native-cli"), "FAIL")  # no longer a product anything names
         self.assertEqual(openai_lane("openai-responses", "native-cli"), "FAIL")
         self.assertEqual(openai_lane("openai-codex-unattested", "responses-api"), "FAIL")
+        # 4109777108: a Responses envelope from a route not bound to the official OpenAI endpoint is unattested:
+        # UNKNOWN on the Responses transport, a substitution on another product's transport.
+        self.assertEqual(openai_lane("openai-responses-unattested", "responses-api"), "UNKNOWN")
+        self.assertEqual(openai_lane("openai-responses-unattested", "native-cli"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "responses-api"), "PASS")
         # Captures must be the ones that gated the paid attempts, under the running bindings.
         for required in (["claude", "grok", "openai", "cursor"], ["claude", "grok"], None):
@@ -4083,3 +4129,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
