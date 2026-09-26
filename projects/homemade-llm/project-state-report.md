@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
@@ -55,7 +56,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
-- **M1 after the audit cutoff:** the set A v2 Grok review (USD 0.1881, `xai/20260926T193234Z.json`, 19:32 UTC) is M1 spend. M1 spend from here on is summed in the M1 workstream plan (`workstream-plan-m1.md`, #294).
+- **M1 after the audit cutoff:** the set A v2 Grok review (USD 0.1881, `xai/20260926T193234Z.json`, 19:32 UTC) is M1 spend. Later M1 spend is summed from receipts in the M1 workstream plan once it is written and approved. A draft is proposed separately, and this record does not rely on it.
 - **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
@@ -159,3 +160,4 @@ M1, base shootout on the held-out sets:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | END]] -->
