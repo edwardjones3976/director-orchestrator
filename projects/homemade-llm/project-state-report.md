@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | BEGIN]] -->
@@ -65,7 +66,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
   - Set A v2 Grok review: USD 0.1881 (`xai/20260926T193234Z.json`, 19:32 UTC) `[verified, receipt]`.
   - Set B v2 Grok review, batch 2: USD 0.141568 (`xai/20260926T203729Z.json`) `[verified, receipt]`.
   - Set B v2 Grok review, batch 1: USD 0.1494, charged as spent. Its original receipt was overwritten. The figure comes from the wrapper's captured output, and `xai/20260926T203729Z-reconstructed-batch1.json` was written by Claude Code from that output, so it is `[unverified, not provider-authenticated]`.
-  - With the pre-gate USD 0.280142 below, **M1 has charged USD 0.75921 so far**, before any further paid call. Later M1 spend is summed from receipts under the M1 workstream plan.
+  - With the pre-gate USD 0.280142 below, **M1 has charged USD 0.75921 so far**, before any further paid call. Later M1 spend will be summed from receipts once an M1 workstream plan is approved; none is approved in this record.
 - **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
@@ -180,3 +181,4 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
