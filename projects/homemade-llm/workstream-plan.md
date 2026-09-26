@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
@@ -16,13 +17,13 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 ## Phase frame
 
 - **Project:** `homemade-llm` — Homemade LLM
-- **Final state:** M0 closed (O-031). #275, #276 (one-time exception, D-015) and #277 merged; the record was reconciled in the M0 record PR
+- **Final state:** M0 closed (O-031). #275, #276 (one-time exception, D-015) and #277 merged; M0 record reconciliation pending until PR #293 review, CI and merge gates pass
 - **Phase outcome:** storage laid out; the Unsloth container trains on the GPU; LM Studio serves a merged GGUF over `/v1`; Open WebUI reaches it over Tailscale; paid-spend metering on; gitleaks available for datasets
 - **Stopping point:** M0 gate — `project-state-report.md` with every number [verified]; target 2026-10-01
 - **Total phase budget/time:** USD 25; ~1 week; max 3 dispatches in flight
 - **Project channel/thread:** pending (no Slack surface; analysis-only)
 - **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b84` at PR-0, `58fb485` at the M0 gate (main when O-031 was given; `f0a7752e` was main when the gate report was first filed), worktree `.worktrees\homemade-llm`
-- **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — explicitly_scoped
+- **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — rollout state/deployment intent `analysis_only`; external-effects mode `explicitly_scoped`
 - **Deployment isolation:** no Slack app or channel; Open WebUI + SearXNG run under compose namespace `homemade-llm` with the ignored profile `C:\llm\secrets\open-webui.env` and state under `C:\llm` plus volume `homemade-llm_open-webui-data` (see rollout-packet.md); no orchestrator instance
 
 ## Selected modules
@@ -98,7 +99,7 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 | M0.3/M0.4 hardening (#275) | merged at ed317a81 (f0a7752e, 23:31 UTC) | main |
 | M0.5 | done: tailnet phone chat with web search accepted; the `WEBUI_URL` runbook step is open as an owner gate (D-016) | `compose/RUNBOOK.md` section 2 |
 | M0.9, M0.11 | merged in #276 (`58fb485`) under the one-time exception (D-015) | main |
-| M0.12 | merged in #277 (`79e538f`); reconciled in the M0 record PR | main |
+| M0.12 | merged in #277 (`79e538f`); M0 record reconciliation pending until PR #293 review, CI and merge gates pass | main |
 
 Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
@@ -108,3 +109,4 @@ the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:39 UTC | END]] -->
