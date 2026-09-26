@@ -1,3 +1,7 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -30,7 +34,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .bridge_attestation import lane_attestations
+from .packet_contracts import canonical_json_bytes
 from .host_provider_bridge import (
+    HostProviderBridgeAttestationMismatch,
     BRIDGE_PROTOCOL,
     BridgeClaimStore,
     BridgeRequest,
@@ -180,6 +187,21 @@ def configuration_digests(executor, account_files, routed=None) -> dict[str, str
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # One absolute bound for reading a request body, whatever its pace.
+    _BODY_READ_SECONDS = 30.0
+
+    def _read_body(self, length: int) -> bytes:
+        from .host_provider_bridge import read_until_deadline
+
+        from .host_provider_bridge import HostProviderBridgeError
+
+        try:
+            return read_until_deadline(
+                self.rfile, limit=length, exact=True, sock=self.connection,
+                deadline=time.monotonic() + self._BODY_READ_SECONDS)
+        except (TimeoutError, OSError) as exc:
+            raise HostProviderBridgeError("request body was not received in time") from exc
+
     server_version = "DirectorHostBridge/1"
     # A restart invalidates deadlines mapped from an earlier host process.
     _clock_id = secrets.token_hex(16)
@@ -221,15 +243,26 @@ class _Handler(BaseHTTPRequestHandler):
                     json.dumps(configured, separators=(",", ":")).encode("utf-8")
                 )
                 host_monotonic = self._clock_id + ":" + time.monotonic().hex()
+                # The exact argv each restricted lane runs, and whether it
+                # carries that lane's read-only restriction set (owner ruling
+                # 2026-09-24, "Bridge with attested sandbox"). Bound into the
+                # proof, so a stripped or altered attestation fails.
+                attestations = lane_attestations({
+                    lane: argv for lane, argv in self.server.executor.commands.items()  # type: ignore[attr-defined]
+                    if lane in configured})
+                attestation_digest = "sha256:" + _digest(canonical_json_bytes(attestations))
                 self._json(200, {
                     "ok": True, "protocol": BRIDGE_PROTOCOL,
                     "configured_providers": configured,
                     "command_map_digest": command_map_digest,
                     "host_monotonic": host_monotonic,
+                    "lane_attestations": attestations,
+                    "lane_attestation_digest": attestation_digest,
                     "proof": bridge_challenge_signature(
                         self.server.bridge_secret, timestamp=timestamp, nonce=nonce,  # type: ignore[attr-defined]
                         command_map_digest=command_map_digest,
                         host_monotonic=host_monotonic,
+                        lane_attestation_digest=attestation_digest,
                     ),
                 })
             except (HostProviderBridgeError, ValueError):
@@ -257,8 +290,14 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json(409, {"ok": False, "reason": "configuration_unavailable"})
                 return
+            # Digests and verdicts only; the argv itself is reported on the
+            # HMAC challenge, and each lane's configuration digest binds it.
+            attestations = {
+                lane: {key: item[key] for key in ("argv_digest", "read_only_attested")}
+                for lane, item in lane_attestations(service.production.commands).items()}
             self._json(200, {
                 "ok": True, "configuration_digests": digests,
+                "lane_attestations": attestations,
                 "pinned_environment": bool(getattr(self.server, "pinned_environment", False)),
             })
             return
@@ -294,7 +333,7 @@ class _Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 1024:
                     raise ValueError("validation request size invalid")
-                request = ValidationRequest.model_validate_json(self.rfile.read(length))
+                request = ValidationRequest.model_validate_json(self._read_body(length))
                 result = service.run(request, authorization.removeprefix("Bearer "))
                 self._json(200, {"ok": True, **result})
             except Exception:
@@ -324,13 +363,16 @@ class _Handler(BaseHTTPRequestHandler):
                 timestamp=int(self.headers.get("X-Director-Bridge-Timestamp", "0")),
                 nonce=self.headers.get("X-Director-Bridge-Nonce", ""),
                 signature=authorization.removeprefix("Director-HMAC "),
-                packet=self.rfile.read(length),
+                packet=self._read_body(length),
                 # Present only for a redacted lane. It is covered by the request
                 # signature, so stripping or forging it fails authentication.
                 work_packet_digest=self.headers.get(
                     "X-Director-Work-Packet-Digest", ""
                 ),
                 host_deadline=self.headers.get("X-Director-Host-Deadline", ""),
+                attested_argv_digest=self.headers.get("X-Director-Attested-Argv-Digest", ""),
+                attempt_budget_usd=self.headers.get("X-Director-Attempt-Budget-Usd", ""),
+                total_token_limit=self.headers.get("X-Director-Total-Token-Limit", ""),
             )
             if request.host_deadline and request.host_deadline.split(":", 1)[0] != self._clock_id:
                 raise HostProviderBridgeError("host deadline clock changed")
@@ -354,6 +396,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("X-Director-Response-Proof", proof)
             self.end_headers()
             self.wfile.write(result)
+        except HostProviderBridgeAttestationMismatch:
+            # Nothing ran. Signed, so the Director can trust that it did not.
+            body = json.dumps({"ok": False, "reason": "attestation_mismatch"},
+                              separators=(",", ":")).encode("utf-8")
+            response_digest = _digest(body)
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Director-Response-Digest", response_digest)
+            self.send_header("X-Director-Response-Proof", bridge_response_signature(
+                self.server.bridge_secret,  # type: ignore[attr-defined]
+                nonce=request.nonce, idempotency_digest=request.idempotency_digest,
+                response_digest=response_digest))
+            self.end_headers()
+            self.wfile.write(body)
         except HostProviderBridgeAmbiguous:
             self._json(409, {"ok": False, "reason": "reconciliation_required"})
         except (HostProviderBridgeError, ValueError):
@@ -454,3 +511,7 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]

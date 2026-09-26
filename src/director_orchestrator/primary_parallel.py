@@ -1,3 +1,5 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | BEGIN]]
@@ -122,6 +124,9 @@ PROVIDER_TRANSIENT_TRANSPORT_FAILURE = "provider_transient_transport_failure"
 PROVIDER_RETRY_REQUIRES_TRANSIENT_FAILURE = "provider_retry_requires_transient_failure"
 PROVIDER_RETRY_EVIDENCE_INSUFFICIENT = "provider_retry_evidence_insufficient"
 PROVIDER_ATTEMPT_BUDGET_EXHAUSTED = "provider_attempt_budget_exhausted"
+# An admitted attempt settled FAILED because it was refused before any
+# provider request. Never transient, so it authorizes no retry.
+PROVIDER_REFUSED_BEFORE_IO = "provider_refused_before_io"
 
 _TRANSPORT_BY_ID = {
     "api": Transport.PROVIDER_API,
@@ -223,6 +228,30 @@ class ParallelAssignmentStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     OWNER_DECISION_REQUIRED = "OWNER_DECISION_REQUIRED"
+
+
+def _proven_no_run(projected: Mapping[str, str], attempt_rows: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a terminal task stopped having sent no provider request at all.
+
+    Every assignment is held for the owner or blocked behind one (at least
+    one held), none SUCCEEDED, FAILED or AMBIGUOUS, and every admitted
+    attempt of every assignment ended FAILED as refused before I/O. A task in
+    which any provider ran - a succeeded producer, a transient failure, an
+    attempt left STARTED - is an incomplete task, not a no-run.
+    """
+
+    last: dict[str, Mapping[str, Any]] = {}
+    for event in attempt_rows:
+        last[str(event["attempt_digest"])] = event
+    return (
+        any(value == "OWNER_DECISION_REQUIRED" for value in projected.values())
+        and all(value in {"BLOCKED", "OWNER_DECISION_REQUIRED"} for value in projected.values())
+        and all(
+            str(event["status"]) == "FAILED"
+            and str(event["reason_code"]) == PROVIDER_REFUSED_BEFORE_IO
+            for event in last.values()
+        )
+    )
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -408,6 +437,11 @@ class ParallelAggregate:
     ambiguous_slot_count: int
     workload_hold_reasons: tuple[str, ...] = ()
     setup_hold_reasons: tuple[str, ...] = ()
+    # Terminal, not succeeded, nothing ambiguous, and every assignment that
+    # did not succeed was held with no provider request sent: each of its
+    # admitted attempts was settled as refused before I/O, and none is left
+    # STARTED. Such a task stopped for the owner without running anything.
+    proven_no_run: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -2020,7 +2054,9 @@ class PostgresParallelDispatch:
             }
         )
         terminal = all(value in {"SUCCEEDED", "FAILED", "BLOCKED", "OWNER_DECISION_REQUIRED"} for value in projected.values())
+        proven_no_run = terminal and _proven_no_run(projected, attempt_rows)
         return ParallelAggregate(
+            proven_no_run=proven_no_run,
             task_id=task_id,
             statuses=projected,
             result_digests=results,
@@ -2067,3 +2103,5 @@ class PostgresParallelDispatch:
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:05 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 12:57 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]

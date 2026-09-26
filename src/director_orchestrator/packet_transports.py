@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
@@ -403,11 +404,22 @@ class LocalGitAuthoritySnapshotResolver(AuthoritySnapshotResolver):
         self.max_files = max_files
 
     def _git(self, *arguments: str) -> str:
-        completed = subprocess.run(
-            ("git", "-c", f"safe.directory={self.root}", *arguments),
-            cwd=self.root, shell=False, check=False,
-            capture_output=True, text=True, timeout=30,
-        )
+        from .packet_routing import read_deadline_remaining
+
+        # 30 s each, clamped to what is left of the caller's deadline
+        # (blob_read_deadline): never a fresh window under it.
+        timeout = read_deadline_remaining(30.0)
+        if timeout is None:
+            raise PacketRoutingError("repository authority snapshot deadline is spent")
+        try:
+            completed = subprocess.run(
+                ("git", "-c", f"safe.directory={self.root}", *arguments),
+                cwd=self.root, shell=False, check=False,
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise PacketRoutingError(
+                "repository authority snapshot deadline is spent") from exc
         if completed.returncode != 0:
             raise PacketRoutingError("repository authority snapshot could not be authenticated")
         return completed.stdout
@@ -1212,3 +1224,4 @@ def build_primary_packet_adapters(
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

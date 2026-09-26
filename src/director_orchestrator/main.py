@@ -1,4 +1,6 @@
-# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:45 UTC | BEGIN]]
@@ -547,7 +549,14 @@ def health() -> dict:
             if primary_slack_delivery is not None else {"configured": False, "worker_recent": False}),
         # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
         "execution_profile": settings.execution_profile_readiness(),
-        "delegation": settings.delegation_readiness(),
+        # Armed only while the application could pre-authorize a task, which
+        # needs an audit ledger; this module wires none.
+        "delegation": settings.delegation_readiness(
+            pre_execution_capable=bool(getattr(
+                getattr(primary_default_activation, "application", None),
+                "pre_execution_capable", lambda: False,
+            )())
+        ),
         "workload_policy": settings.workload_policy_readiness(
             effective_mode=effective_workload_mode.value
         ),
@@ -727,6 +736,11 @@ def intake(
                 payload,
                 intake_authentication=intake_authentication,
                 authenticated_replay_identity=replay_identity,
+                # A standing grant starts execution after this response, through
+                # the same recovery path a restart uses.
+                on_dispatch_ready=lambda task_id: background.add_task(
+                    primary_default_activation.application.recover, task_id
+                ),
             )
         except Exception as exc:
             raise HTTPException(
@@ -1908,4 +1922,6 @@ def complete_run(
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 04:05 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

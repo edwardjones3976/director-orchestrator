@@ -1,3 +1,9 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | BEGIN]]
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | BEGIN]]
@@ -268,6 +274,10 @@ class Settings:
     delegation_enabled: bool = _bool("DELEGATION_ENABLED", False)
     delegation_suspended: bool = _bool("DELEGATION_SUSPENDED", False)
     delegation_grant_json: str = os.getenv("DELEGATION_GRANT_JSON", "")
+    # Deterministic ceilings for the independent reviewer of a small read-only
+    # task (policy.small_read_only_eligible). They only ever narrow a review.
+    small_task_review_max_usd: float = _positive_float("SMALL_TASK_REVIEW_MAX_USD", 0.50)
+    small_task_review_max_tokens: int = _int("SMALL_TASK_REVIEW_MAX_TOKENS", 40_000)
     max_agent_hops: int = _int("MAX_AGENT_HOPS", 6)
     max_revisions: int = _int("MAX_REVISIONS", 2)
     max_task_budget_usd: float = _float("MAX_TASK_BUDGET_USD", 2.0)
@@ -468,6 +478,27 @@ class Settings:
             "LANGGRAPH_PRIMARY_HOST_BRIDGE_SECRET", ""
         )
     )
+    # {"lane": "sha256:<argv digest>"}: the only bridge argv the owner has
+    # pinned as read-only for the small class. Empty admits no bridge lane.
+    langgraph_primary_host_bridge_attested_argv_json: str = field(
+        default_factory=lambda: os.getenv(
+            "LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON", ""
+        ).strip()
+    )
+
+    def host_bridge_attested_argv(self) -> dict[str, str]:
+        """The pinned per-lane argv digests; malformed or absent pins none."""
+
+        try:
+            pins = json.loads(self.langgraph_primary_host_bridge_attested_argv_json or "{}")
+        except ValueError:
+            return {}
+        if not isinstance(pins, dict) or not all(
+                isinstance(lane, str) and isinstance(value, str)
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+                for lane, value in pins.items()):
+            return {}
+        return dict(pins)
     langgraph_primary_allow_insecure_local_postgres: bool = field(
         default_factory=lambda: _bool(
             "LANGGRAPH_PRIMARY_ALLOW_INSECURE_LOCAL_POSTGRES", False
@@ -1127,14 +1158,20 @@ class Settings:
             "perplexity": readiness["perplexity"],
         }
 
-    def delegation_readiness(self, *, moment=None) -> dict:
+    def delegation_readiness(
+        self, *, moment=None, pre_execution_capable: bool = False
+    ) -> dict:
         """Report the human-out-of-the-loop state as readiness booleans.
 
-        Phase 1 only. This reports configuration; it resolves nothing, and the
-        payload says so explicitly so an operator does not have to infer it.
-        Grant contents are never reported: /health returns readiness booleans
-        and never secret or allowlist values, and a grant names real
-        repositories and providers.
+        This reports configuration and resolves nothing itself. The payload
+        says whether the phase-4S pre-execution path is armed, which needs a
+        primary application able to pre-authorize a task (an audit ledger, a
+        grant in scope for the deployment's plan, two compact-view lanes that
+        grant names from different provider families, an executing
+        deployment), so an operator does not
+        have to infer it. Grant contents are never reported: /health
+        returns readiness booleans and never secret or allowlist values, and a
+        grant names real repositories and providers.
         """
 
         from datetime import datetime, timezone
@@ -1146,6 +1183,7 @@ class Settings:
             suspended=self.delegation_suspended,
             grant_document=self.delegation_grant_json,
             moment=moment or datetime.now(timezone.utc),
+            pre_execution_capable=pre_execution_capable,
         )
 
     def workload_policy_readiness(
@@ -2537,3 +2575,9 @@ class Settings:
 # [[Auto (Cursor Agent) | Composer 2.5 | 2026-09-22 | 18:12 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 00:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]

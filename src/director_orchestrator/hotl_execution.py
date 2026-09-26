@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | BEGIN]]
@@ -20,9 +23,12 @@ carries, because an unmapped item is the failure this had.
 Two properties matter more than the conjunction itself.
 
 The tier check runs before any term is evaluated and fails closed. Tier 1 is the
-closed three-class list in docs/human-out-of-the-loop-operation.md; anything not
+closed four-class list in docs/human-out-of-the-loop-operation.md; anything not
 plainly one of those is tier 0 and can never be autonomous, however many terms
-pass. A grant naming an unlisted class does not create one.
+pass. A grant naming an unlisted class does not create one. The one
+pre-execution class is decided by `decide_pre_execution` over its own closed
+term list, never by H(a), because it is decided before any candidate or verdict
+exists.
 
 A hold names the blocking term rather than asking for permission. Missing
 evidence routes to verification, a temporary failure routes to an authorized
@@ -44,6 +50,7 @@ TIER_ONE_CLASSES: frozenset[str] = frozenset(
         "eligible_merge_non_protected_branch",
         "mark_pull_request_ready_for_review",
         "post_to_own_designated_slack_channel",
+        "execute_small_read_only_task",
     }
 )
 
@@ -99,6 +106,37 @@ TERMS: tuple[str, ...] = (
 # to an authorized recovery" describes.
 NON_RECOVERABLE_TERMS: frozenset[str] = frozenset(
     {"authorization", "gates", "independence", "scope", "audit"}
+)
+
+# The one tier-1 class decided before any candidate or verdict exists. H(a)
+# cannot evaluate it: `gates` (items 1, 2, 7) and `independence` (items 3-5)
+# need a candidate head and an ACCEPT, so reusing those names here would record
+# a PASS for evidence nobody read. It has its own closed term list instead, and
+# items 1-5 stay with the task's own exact-SHA review and CI/security gates.
+#
+#   authorization          item 9   live, in-scope, unexhausted, untripped grant
+#                                   and an attested owner intake
+#   eligibility            --       policy.small_read_only_eligible() admits it: no
+#                                   deterministic approval reason (a keyword scan)
+#                                   and a read-shaped request; this is not item 7,
+#                                   which nothing evaluates before execution
+#   bounds                 item 8   hop and revision ledgers within bounds
+#   verification           the exact starting commit and snapshot digest are bound
+#   lane_independence      two distinct lanes from different provider families
+#   safe_stopping          a positive provider timeout is configured
+#   owned_paths_declared   item 6 before any change: owned paths declared and
+#                          no write surface
+#   audit                  item 10  PRE_AUTHORIZED written before execution
+PRE_EXECUTION_CLASSES: frozenset[str] = frozenset({"execute_small_read_only_task"})
+PRE_EXECUTION_TERMS: tuple[str, ...] = (
+    "authorization",
+    "eligibility",
+    "bounds",
+    "verification",
+    "lane_independence",
+    "safe_stopping",
+    "owned_paths_declared",
+    "audit",
 )
 
 
@@ -193,6 +231,17 @@ def decide(
         )
 
     states = {term: evidence[term].satisfied for term in TERMS}
+    if action.action_class in PRE_EXECUTION_CLASSES:
+        # H(a) has no candidate to read for this class; decide_pre_execution
+        # alone evaluates it. Holding here only adds a requirement.
+        return Decision(
+            outcome=Outcome.HOLD,
+            action=action,
+            tier=1,
+            blockers=(f"{action.action_class} is decided before execution, not by H(a)",),
+            evaluated_at=now,
+            terms=states,
+        )
     unmet = tuple(term for term in TERMS if not states[term])
     if not unmet:
         return Decision(Outcome.EXECUTE, action, 1, (), None, now, states)
@@ -243,6 +292,44 @@ def decide(
     )
 
 
+def decide_pre_execution(
+    action: ProposedAction,
+    evidence: dict[str, TermEvidence],
+    *,
+    now: datetime | None = None,
+) -> Decision:
+    """Decide whether a pre-execution class may start without the owner.
+
+    Exactly PRE_EXECUTION_TERMS, each required; no recovery, since every term
+    is either a grant boundary or evidence that cannot be retried into being.
+    Anything but a PRE_EXECUTION_CLASSES action holds.
+    """
+
+    if set(evidence) != set(PRE_EXECUTION_TERMS):
+        raise ValueError("the pre-execution predicate evaluates exactly PRE_EXECUTION_TERMS")
+    states = {term: evidence[term].satisfied for term in PRE_EXECUTION_TERMS}
+    if action.action_class not in PRE_EXECUTION_CLASSES:
+        return Decision(
+            outcome=Outcome.HOLD,
+            action=action,
+            tier=classify(action),
+            blockers=(f"{action.action_class} is not a pre-execution class",),
+            evaluated_at=now,
+            terms=states,
+        )
+    unmet = tuple(term for term in PRE_EXECUTION_TERMS if not states[term])
+    if unmet:
+        return Decision(
+            outcome=Outcome.HOLD,
+            action=action,
+            tier=1,
+            blockers=tuple(f"{t}: {evidence[t].reason}" for t in unmet),
+            evaluated_at=now,
+            terms=states,
+        )
+    return Decision(Outcome.EXECUTE, action, 1, (), None, now, states)
+
+
 @dataclass(frozen=True, slots=True)
 class CompletionRate:
     """Autonomous completion over a fixed denominator.
@@ -271,3 +358,6 @@ class CompletionRate:
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 02:32 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

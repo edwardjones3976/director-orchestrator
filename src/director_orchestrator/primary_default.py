@@ -1,3 +1,32 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | BEGIN]]
@@ -84,19 +113,22 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import os
 import re
 import secrets
 import subprocess
+import logging
 import threading
 from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 from .lease_diagnostics import LeaseRenewalDiagnostics
 from .config import Settings
@@ -130,6 +162,21 @@ from .langgraph_primary import (
     _context as _handler_context_from_state,
 )
 from .approvals import StaleApproval
+from .contact_families import UnknownContactError, share_provider_family
+from .delegation import DelegationConfigurationError, Tier1Class, parse_grant
+from .delegation_ledger import (
+    AUDIT_SCHEMA_VERSION,
+    DelegationAuditRecord,
+    GateResult,
+    GateStatus,
+    RecordedOutcome,
+)
+from .hotl_execution import (
+    PRE_EXECUTION_TERMS,
+    ProposedAction,
+    TermEvidence,
+    decide_pre_execution,
+)
 from .models import (
     AntigravityDirective,
     AntigravityFixtureLane,
@@ -144,13 +191,25 @@ from .models import (
     TaskRecord,
     TaskStatus,
 )
-from .packet_contracts import document_digest, validate_packet
-from .packet_routing import DirectorPacketTaskRouter
+from .packet_contracts import canonical_json_bytes, document_digest, validate_packet
+from .packet_routing import DirectorPacketTaskRouter, compact_provider_view
+from .store import DelegationAuditAdvanced, DelegationAuditDeadlineExceeded
 from .packet_transports import (
     LocalGitAuthoritySnapshotResolver,
     canonical_github_remote_repository,
 )
-from .policy import preview_plan, _canonical_prestage_record
+from .policy import (
+    SMALL_TASK_REVIEW_MAX_PACKET_BYTES,
+    canonical_repository,
+    preview_plan,
+    SMALL_TASK_PRODUCER_ONLY_LANES,
+    plan_starting_ref,
+    plan_within_limits,
+    small_read_only_eligible,
+    small_task_costs_admissible,
+    small_task_packet_read_only,
+    _canonical_prestage_record,
+)
 from .primary_coordinator import PrimaryTaskCoordinator
 from .primary_effects import (
     DeterministicExternalEffectExecutor,
@@ -216,6 +275,9 @@ def _digest(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def _execute_three_attempt_roster(
     *,
     format_roster: tuple[tuple[str, str], ...],
@@ -225,21 +287,56 @@ def _execute_three_attempt_roster(
         None,
     ],
     dispatch_attempt: Callable[[ProviderAttemptReservation], Mapping[str, Any]],
+    retry_allowed: Callable[[], bool] | None = None,
 ) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
-    """Run up to three bounded slots; stop after authenticated success."""
+    """Run up to three bounded slots; stop after authenticated success.
 
-    from .primary_workload import WorkloadAdmissionHold
+    ``retry_allowed`` is asked before every retry is reserved; False stops the
+    roster with ``small_task_review_tokens_exhausted`` and reserves nothing.
+    """
+
+    from .primary_parallel import PROVIDER_REFUSED_BEFORE_IO
+    from .primary_workload import ProvenNoRunHold, WorkloadAdmissionHold
 
     if not 1 <= len(format_roster) <= 3:
         raise RuntimeError("provider format roster must contain one to three entries")
     last_digest: str | None = None
     for attempt_ordinal in range(1, 4):
+        if attempt_ordinal > 1 and retry_allowed is not None and not retry_allowed():
+            return (
+                ParallelAssignmentStatus.FAILED,
+                None,
+                last_digest,
+                "small_task_review_tokens_exhausted",
+            )
         attempt = reserve_attempt(attempt_ordinal)
         expected = format_roster[(attempt_ordinal - 1) % len(format_roster)]
         if (attempt.format_id, attempt.transport_id) != expected:
             raise RuntimeError("reserved provider format order changed")
         try:
             result = dispatch_attempt(attempt)
+        except ProvenNoRunHold:
+            # Nothing left this process for this admitted attempt (or the
+            # host proved it ran nothing): settle it FAILED as refused before
+            # I/O instead of leaving it STARTED. The reason is not transient,
+            # so it authorizes no retry, and a replay of this ordinal is
+            # refused as already recorded. The write is tried twice, each
+            # within the dispatch's completion deadline that record_attempt
+            # carries. If both fail, the attempt stays STARTED: the no-run
+            # could not be recorded, so the task is not a proven no-run and
+            # its grant trips - deliberately, by the owner's ruling, because
+            # the evidence that nothing ran is missing.
+            for write in (1, 2):
+                try:
+                    record_attempt(attempt, ParallelAssignmentStatus.FAILED, None,
+                                   PROVIDER_REFUSED_BEFORE_IO)
+                    break
+                except Exception:
+                    if write == 2:
+                        _LOGGER.warning(
+                            "a refused-before-I/O attempt could not be recorded; it stays "
+                            "STARTED and its task will trip the grant", exc_info=True)
+            raise
         except WorkloadAdmissionHold:
             # A proven policy hold - cancellation, a changed selection, a
             # replaced enrollment, a lost writer lease. A provider transport
@@ -729,6 +826,559 @@ def _live_assignment_attempt_budget(
     return float(amount) / 3.0
 
 
+def _small_review_view_bytes(packet: Mapping[str, Any]) -> int:
+    """The exact canonical bytes a small task's view is sent as.
+
+    The view prepared for this packet digest, or, before dispatch prepares
+    it, the same view built with its named files' text required: never a
+    view whose contents were silently dropped. Raises
+    SmallTaskViewUnavailable when the files cannot be read.
+    """
+
+    from .packet_routing import validated_compact_view
+
+    return len(canonical_json_bytes(validated_compact_view(packet)))
+
+
+def _lane_transports(live_dependencies: Any, lane: str) -> list[Any]:
+    attempt = getattr(live_dependencies, "attempt_adapters", None) or {}
+    adapters = [live_dependencies.adapters.get(lane),
+                *dict(attempt.get(lane, {})).values()]
+    return [getattr(item, "_transport", None) for item in adapters if item is not None]
+
+
+def _bridge_attestations_current(
+    live_dependencies: Any, lane: str, *, deadline: float | None = None,
+) -> bool:
+    """Every host-bridge transport of this lane is still attested read-only now.
+
+    A fresh authenticated challenge per transport, before any admission: the
+    argv the bridge runs must still carry the restriction set and match the
+    pinned digest the lane was admitted under.
+    """
+
+    from .host_provider_bridge import HostBridgePacketTransport
+
+    # One shared window for every transport of the lane, not one each, and
+    # never past the caller's own deadline.
+    window = monotonic() + 5
+    deadline = window if deadline is None else min(deadline, window)
+    return all(
+        transport.read_only_attestation_current(deadline=deadline)
+        for transport in _lane_transports(live_dependencies, lane)
+        if isinstance(transport, HostBridgePacketTransport))
+
+
+def _compact_view_lanes(live_dependencies: Any) -> frozenset[str]:
+    """Lanes whose every configured adapter shows the model only the compact view."""
+
+    from .primary_transports import sends_compact_provider_view
+
+    attempt = getattr(live_dependencies, "attempt_adapters", None) or {}
+    return frozenset(
+        lane
+        for lane, adapter in live_dependencies.adapters.items()
+        if all(
+            sends_compact_provider_view(getattr(item, "_transport", None))
+            for item in (adapter, *dict(attempt.get(lane, {})).values())
+        )
+    )
+
+
+def _measured_tokens(result: Mapping[str, Any], *, require_cost: bool) -> int | None:
+    """A result's reported token usage, or None unless its usage is complete.
+
+    Complete means integer token counts (input and output, or a total) and,
+    when ``require_cost``, a finite non-negative ``cost_usd``.
+    """
+
+    usage = result.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    total = usage.get("total_tokens")
+    total = total if type(total) is int and total >= 0 else None
+    counts = (usage.get("input_tokens"), usage.get("output_tokens"))
+    if all(type(value) is int and value >= 0 for value in counts):
+        tokens = max(sum(counts), total or 0)
+    elif total is not None:
+        tokens = total
+    else:
+        return None
+    if require_cost:
+        cost = usage.get("cost_usd")
+        if (isinstance(cost, bool) or not isinstance(cost, (int, float))
+                or not math.isfinite(cost) or cost < 0):
+            return None
+    return tokens
+
+
+def small_task_usage_refusal(
+    result: Mapping[str, Any], provider: str, *, small_class: bool,
+) -> str | None:
+    """Refuse a small task's result whose usage the class's caps cannot check.
+
+    Every producer and reviewer result must report complete token usage, and
+    a cost, or the reviewer's token and dollar caps are unenforced for it. The
+    OpenAI Responses lane is the one exception to the cost: it reports none,
+    but refuses before returning any reply over its token allowance and is
+    priced from those tokens by its meter.
+    """
+
+    if not small_class:
+        return None
+    if _measured_tokens(result, require_cost=provider != "openai") is None:
+        return "small_task_usage_unmeasured"
+    return None
+
+
+# The gate of an append-only REFUSED record that retires a task's
+# PRE_AUTHORIZED record: its first intake stopped before creating the task,
+# and a replay created it attended instead, so the grant never started it.
+PRE_AUTHORIZATION_SUPERSEDED = "pre_authorization_superseded"
+
+
+# Refusals about the grant's own state (expired or revoked, its audit
+# unreadable or its deadline spent, the pre-authorized commit moved), as
+# opposed to the class conditions the task itself must meet.
+_GRANT_STATE_REFUSALS = frozenset({
+    "small_task_pre_authorization_revoked",
+    "small_task_pre_authorization_unaudited",
+    "small_task_pre_authorization_commit_changed",
+})
+
+
+def _superseded_agents(records) -> set[str]:
+    return {item.acting_agent for item in records
+            if item.outcome is RecordedOutcome.REFUSED
+            and any(gate.gate == PRE_AUTHORIZATION_SUPERSEDED for gate in item.gate_results)}
+
+
+# Every term a PRE_AUTHORIZED record must carry: the pre-execution terms but
+# `audit`, which the record itself is.
+_PRE_AUTHORIZED_TERMS = frozenset(PRE_EXECUTION_TERMS) - {"audit"}
+
+
+def _pre_authorization_complete(item: DelegationAuditRecord) -> bool:
+    """Every pre-execution term exactly once, each PASS: a record holding only
+    some of them, or a term twice, pre-authorizes nothing."""
+
+    names = [gate.gate for gate in item.gate_results]
+    return (len(names) == len(set(names)) and set(names) == _PRE_AUTHORIZED_TERMS
+            and all(gate.status is GateStatus.PASS for gate in item.gate_results))
+
+
+# Bound on one exercise's audit-history read: past either, it keeps the button.
+_AUDIT_HISTORY_MAX_RECORDS = 10_000
+_AUDIT_HISTORY_MAX_SECONDS = 5.0
+
+
+def result_acceptance_passes(
+    packet: Mapping[str, Any] | None, expected_checks: Sequence[str] | None,
+) -> bool:
+    """Whether an authenticated review result accepts: it disposes of exactly
+    the review packet's acceptance checks, each once and each PASS, with no
+    extra check, and reports no risk, blocker or requested decision."""
+
+    acceptance = packet.get("acceptance", []) if packet is not None else []
+    expected = list(expected_checks or ())
+    observed = [item.get("check") if isinstance(item, Mapping) else None
+                for item in acceptance] if isinstance(acceptance, list) else [None]
+    return bool(
+        packet is not None
+        and packet.get("status") == "SUCCEEDED"
+        and expected
+        and len(set(expected)) == len(expected) == len(observed) == len(set(observed))
+        and set(observed) == set(expected)
+        and all(item.get("status") == "PASS" for item in acceptance)
+        and not packet.get("risks")
+        and not packet.get("blockers")
+        and not packet.get("requested_decisions")
+    )
+
+
+def _failed_pre_authorized_task(
+    coordinator: Any, records, *, deadline: float | None = None,
+) -> str | None:
+    """The first task these records pre-authorized that must trip its grant.
+
+    Read from durable state, so a task settled through a provider callback,
+    one left with an ambiguous slot, and one whose process died after its
+    terminal was persisted all count the same way. A terminal other than
+    SUCCEEDED counts, and so does an unreadable task. A task with no
+    projection never started: its intake failed after the audit record.
+
+    ``deadline`` bounds the whole scan: every read is given it, and running
+    out raises DelegationAuditDeadlineExceeded rather than counting a task as
+    failed, so a slow store refuses without tripping the grant.
+    """
+
+    bound = {} if deadline is None else {"deadline": deadline}
+
+    def out_of_time() -> bool:
+        return deadline is not None and monotonic() >= deadline
+
+    records = list(records)
+    superseded = _superseded_agents(records)
+    for item in records:
+        if (item.outcome is not RecordedOutcome.PRE_AUTHORIZED
+                or item.acting_agent in superseded):
+            continue
+        task_id = item.acting_agent.removeprefix("director-langgraph:")
+        if out_of_time():
+            raise DelegationAuditDeadlineExceeded("prior-task scan reached its deadline")
+        try:
+            projection = coordinator.get_projection(task_id, **bound)
+        except Exception:
+            if out_of_time():
+                raise DelegationAuditDeadlineExceeded(
+                    "prior-task scan reached its deadline") from None
+            return task_id
+        if projection is None:
+            continue
+        classification = projection.projection.get("terminal_classification")
+        if classification == "SUCCEEDED":
+            continue
+        if classification is None and not isinstance(
+                projection.projection.get("parallel_plan_digest"), str):
+            # Its plan is not registered yet, so nothing has dispatched.
+            continue
+        try:
+            aggregate = coordinator.parallel_aggregate(task_id, **bound)
+        except Exception:
+            if out_of_time():
+                raise DelegationAuditDeadlineExceeded(
+                    "prior-task scan reached its deadline") from None
+            return task_id
+        # A task that stopped for the owner having sent nothing is not a
+        # failure of the class: every one of its admitted attempts was
+        # settled refused-before-I/O. Anything else that did not succeed
+        # counts: a failed terminal, and a terminal, failed aggregate the
+        # graph never classified (resume raised, or the process stopped).
+        if getattr(aggregate, "proven_no_run", False) is True:
+            continue
+        if (classification is not None or aggregate.ambiguous_slot_count
+                or (aggregate.terminal and not aggregate.succeeded)):
+            return task_id
+    return None
+
+
+def _bounded_audit_history(ledger: Any, *, deadline: float | None = None) -> list | None:
+    """The whole verified audit history, or None past its record or time bound.
+
+    The deadline is passed into the ledger's own verifying traversal, so a
+    large or slow ledger stops mid-scan instead of blocking. Any other failure
+    is raised to the caller.
+    """
+
+    history, after = [], None
+    # A caller's shared deadline is spent as given, never widened.
+    if deadline is None:
+        deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+    while True:
+        # ponytail: each page re-verifies the whole chain, so the read is bounded by record count and time instead of made linear; a per-grant ledger read when history grows past it
+        try:
+            page = ledger.delegation_audit_records(
+                limit=1_000, after_digest=after, deadline=deadline)
+        except DelegationAuditDeadlineExceeded:
+            return None
+        history.extend(page)
+        # A history of exactly the ceiling is whole; one more record is not.
+        # A full last page is followed by one more read, which comes back
+        # empty at the ceiling and holds the extra record past it.
+        if len(history) > _AUDIT_HISTORY_MAX_RECORDS:
+            return None
+        if len(page) < 1_000:
+            return history
+        if monotonic() > deadline:
+            return None
+        after = page[-1].digest
+
+
+def _independent_lane_pair(
+    lanes: Collection[str], *, reviewer_excluded: Collection[str] = (),
+    admissible: Callable[[str, str], bool] | None = None,
+) -> bool:
+    """Whether a producer and a reviewer from different provider families
+    exist among these lanes, the reviewer outside ``reviewer_excluded`` and
+    the pair ``admissible`` when that is given."""
+
+    for producer, reviewer in itertools.permutations(sorted(lanes), 2):
+        if reviewer in reviewer_excluded:
+            continue
+        if admissible is not None and not admissible(producer, reviewer):
+            continue
+        try:
+            if not share_provider_family(producer, reviewer):
+                return True
+        except UnknownContactError:
+            continue
+    return False
+
+
+def small_pre_authorization_refusal(
+    record: TaskRecord, settings: Settings, ledger: Any, *,
+    approval_free: bool, compact_view_lanes: Collection[str], coordinator: Any,
+    packet: Mapping[str, Any] | None = None,
+    deadline: float | None = None,
+) -> str | None:
+    """Why a task a standing grant pre-authorized may not be dispatched, if at all.
+
+    ``deadline`` is the caller's shared dispatch deadline: the ledger scan and
+    the prior-task reads spend what is left of it, and with nothing left the
+    task is refused before any read.
+
+    Its graph was persisted without the execution button, so nothing but this
+    check stands between a restart and an unbounded run. Delegation must still
+    be enabled and unsuspended, under a live grant for the class; the
+    verified audit chain must hold this task's own PRE_AUTHORIZED record under
+    that grant_id (an absent, unreadable or replaced ledger has none); and the
+    task must still qualify, or every bound tied to the class (the reviewer's
+    byte and token caps, the producer's result cap) would silently lapse. A
+    task whose graph keeps the button is never affected and never reads the
+    ledger.
+    """
+
+    if not approval_free:
+        return None
+    try:
+        grant = parse_grant(settings.delegation_grant_json)
+    except DelegationConfigurationError:
+        grant = None
+    if (not settings.delegation_enabled or settings.delegation_suspended
+            or grant is None or not grant.live_at(datetime.now(timezone.utc))
+            or Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK not in grant.classes):
+        return "small_task_pre_authorization_revoked"
+    agent = f"director-langgraph:{record.task_id}"
+    if deadline is not None and not deadline - monotonic() > 0:
+        return "small_task_pre_authorization_unaudited"
+    try:
+        history = _bounded_audit_history(ledger, deadline=deadline)
+    except Exception:
+        # None, unreadable, or failing verification alike.
+        history = None
+    # The whole bounded history is read: an unread tail could hold a trip.
+    superseded = set() if history is None else _superseded_agents(history)
+    records = [] if history is None else [
+        item for item in history
+        if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+        and item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+        and item.acting_agent == agent
+        and agent not in superseded
+        and item.grant_id == grant.grant_id
+        and _pre_authorization_complete(item)]
+    if not records:
+        return "small_task_pre_authorization_unaudited"
+    # The grant that authorized it, not merely one with its grant_id: the
+    # recorded snapshot must be the current grant's canonical document, and
+    # that grant must still cover this task's repository, branch and lanes.
+    current = json.dumps(json.loads(settings.delegation_grant_json), ensure_ascii=True,
+                         sort_keys=True, separators=(",", ":"))
+    plan = record.plan
+    try:
+        producer = min(plan.assignments, key=lambda item: item.sequence)
+        covered = plan.prestage is not None and grant.covers(
+            Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            repository=canonical_repository(plan.prestage.repository),
+            branch=DirectorPacketTaskRouter._authority_base_ref(producer),
+        )
+    except (ValueError, AttributeError):
+        covered = False
+    if (any(item.grant_snapshot != current for item in records)
+            or not covered
+            or not {_assignment_provider_lane(item) for item in plan.assignments}
+            <= grant.providers):
+        return "small_task_pre_authorization_revoked"
+    # The packet being dispatched must work from the exact commit the task
+    # was pre-authorized at: a rebuilt packet on a moved repository is not
+    # the work the grant authorized.
+    if packet is not None and any(
+            item.candidate_sha is None or item.candidate_sha != packet.get("starting_ref")
+            for item in records):
+        return "small_task_pre_authorization_commit_changed"
+    if any(item.grant_id == grant.grant_id
+           and item.outcome is RecordedOutcome.REFUSED
+           and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+           for item in history):
+        # Suspended in any process: no task it pre-authorized dispatches again.
+        return "small_task_pre_authorization_tripped"
+    # A failure no later intake has recorded yet: derived here from the
+    # durable state of every task this grant pre-authorized.
+    try:
+        failed = _failed_pre_authorized_task(coordinator, [
+            item for item in history
+            if item.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+            and item.grant_id == grant.grant_id],
+            deadline=deadline if deadline is not None
+            else monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+    except DelegationAuditDeadlineExceeded:
+        return "small_task_pre_authorization_unaudited"
+    if failed is not None:
+        return "small_task_pre_authorization_tripped"
+    if not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return "small_task_pre_authorization_lapsed"
+    # The history and prior-task scans above can take seconds: the grant must
+    # still be live, and the caller's deadline unspent, at the moment this
+    # authorizes the send.
+    if not grant.live_at(datetime.now(timezone.utc)):
+        return "small_task_pre_authorization_revoked"
+    if deadline is not None and deadline - monotonic() <= 0:
+        return "small_task_pre_authorization_unaudited"
+    return None
+
+
+def small_review_bounds(
+    record: TaskRecord, settings: Settings, assignment: Assignment, packet: Mapping[str, Any],
+    *, compact_view_lanes: Collection[str],
+) -> tuple[str | None, int | None]:
+    """(refusal reason, token cap) for the reviewer of an eligible small read-only
+    task; (None, None) for every other assignment.
+
+    The reviewer is sent the compact view of its packet: the objective,
+    acceptance checks, the producer's result embedded as a predecessor
+    constraint and the evidence digests. Membership requires both lanes to
+    send exactly that view, so the bytes measured here are the packet bytes
+    the reviewer's model is shown; its transport adds only fixed instructions.
+    Over the byte cap it is refused before any budget, admission or artifact
+    work. The token cap only ever narrows.
+    """
+
+    if (assignment.kind is not AssignmentKind.INDEPENDENT_REVIEW
+            or not small_read_only_eligible(
+                record, settings, compact_view_lanes=compact_view_lanes)):
+        return None, None
+    if _small_review_view_bytes(packet) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES:
+        return "small_task_review_packet_over_cap", settings.small_task_review_max_tokens
+    return None, settings.small_task_review_max_tokens
+
+
+def _accepted_outcome(
+    assignment: Assignment, result: Mapping[str, Any], result_digest: str
+) -> AssignmentOutcome:
+    return AssignmentOutcome(
+        assignment_sequence=assignment.sequence,
+        provider=assignment.agent,
+        run_id=str(result["run_reference"]),
+        result=str(result["outcome"]),
+        review_summary=str(result["outcome"]),
+        provider_result_digest=result_digest.removeprefix("sha256:"),
+    )
+
+
+def small_producer_result_refusal(
+    record: TaskRecord,
+    settings: Settings,
+    assignment: Assignment,
+    result: Mapping[str, Any],
+    result_digest: str,
+    router: DirectorPacketTaskRouter,
+    *,
+    compact_view_lanes: Collection[str],
+) -> str | None:
+    """Refuse a small task's producer result its reviewer could not be sent.
+
+    Runs when the producer's result is accepted, before it is recorded and
+    before any reviewer work: it builds the exact review packet this result
+    would produce and applies the cap small_review_bounds applies at reviewer
+    dispatch. None for every other assignment and every other task.
+    """
+
+    plan = record.plan
+    if plan is None or not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return None
+    reviewer = next(
+        (item for item in plan.assignments if assignment.sequence in item.depends_on), None
+    )
+    if reviewer is None:
+        return None
+    from .packet_routing import (
+        SmallTaskViewSensitive, SmallTaskViewUnavailable, prepare_small_task_view)
+
+    refusal = "small_task_producer_result_over_cap"
+    try:
+        outcome = _accepted_outcome(assignment, result, result_digest)
+        candidate = record.model_copy(update={"assignment_outcomes": [
+            *(item for item in record.assignment_outcomes
+              if item.assignment_sequence != assignment.sequence),
+            outcome,
+        ]})
+        packet = router.planned_work_packet(candidate, reviewer)
+        # The reviewer's view is prepared here, its files' text required,
+        # and kept by packet digest: the bytes measured are the bytes the
+        # reviewer's transport will send.
+        view = prepare_small_task_view(packet)
+    except SmallTaskViewSensitive:
+        # The reviewer view differs from the producer's by the producer's
+        # result and summary it embeds, so a sensitive value there is the
+        # result's. Owner ruling, "keep tripping": a class-condition refusal
+        # after a provider ran - nothing reaches the reviewer, the attempt
+        # fails and the grant trips; a false positive returns to the owner.
+        return "small_task_producer_result_sensitive"
+    except SmallTaskViewUnavailable:
+        # The producer already ran: an incomplete task, never a no-run.
+        return "small_task_named_contents_unavailable"
+    except ValueError:
+        # The outcome model's and the router's own content bounds, and a view
+        # that fails its schema.
+        return refusal
+    return refusal if len(canonical_json_bytes(view)) > SMALL_TASK_REVIEW_MAX_PACKET_BYTES else None
+
+
+def _small_producer_constraints(
+    settings: Settings,
+    router: DirectorPacketTaskRouter,
+    record: TaskRecord,
+    assignment: Assignment,
+    *,
+    compact_view_lanes: Collection[str],
+) -> list[str]:
+    """Tell a small task's producer, before dispatch, what its outcome must fit.
+
+    Only a member of the class under the activation's compact-view lanes is
+    told, because only its review is refused. Those lanes are fixed for the
+    life of the activation, so the approval packet and the dispatched one
+    agree. small_producer_result_refusal enforces the bound exactly.
+    """
+
+    plan = record.plan
+    if plan is None or not small_read_only_eligible(
+            record, settings, compact_view_lanes=compact_view_lanes):
+        return []
+    producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+    if assignment.sequence != producer.sequence:
+        return []
+    probe = record.model_copy(update={"assignment_outcomes": [AssignmentOutcome(
+        assignment_sequence=producer.sequence,
+        provider=producer.agent,
+        run_id="size-probe",
+        result="x",
+        review_summary="x",
+        provider_result_digest="0" * 64,
+    )]})
+    from .packet_routing import SmallTaskViewUnavailable
+
+    try:
+        overhead = _small_review_view_bytes(router.planned_work_packet(probe, reviewer)) - 2
+    except SmallTaskViewUnavailable:
+        # Advisory text only, never a size check: with the files unreadable
+        # the task cannot dispatch anyway (its view is required), so no
+        # ceiling is stated rather than one measured on a view without them.
+        return []
+    # The outcome reaches the reviewer twice (result and summary), each copy
+    # JSON-escaped twice. Per copy a character costs 1 byte (ASCII), 3 (a
+    # newline or a tab), 2 to 4 (non-ASCII UTF-8) or 4 (a quote or backslash),
+    # so 8 review bytes a character is the worst case for everything but other
+    # control characters.
+    ceiling = max(0, SMALL_TASK_REVIEW_MAX_PACKET_BYTES - overhead) // 8
+    return [
+        f"Small read-only task: keep the outcome under {ceiling} characters, with "
+        f"no control characters other than newline and tab. Its independent "
+        f"review is refused above {SMALL_TASK_REVIEW_MAX_PACKET_BYTES} bytes, so "
+        "a longer outcome fails before review."
+    ]
+
+
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         available: tuple[str, ...], history: tuple[str, ...]) -> None:
     """Freeze a minimal capability-selected DAG before execution approval."""
@@ -1118,7 +1768,7 @@ def build_automatic_primary_live_dependencies(
             else ""
         ),
         host_bridge_challenge=bridge_challenge,
-
+        host_bridge_attested_argv=settings.host_bridge_attested_argv(),
     )
     adapters = build_graph_native_packet_adapters(
         transports={k: v for k, v in transports.items() if k in settings.langgraph_primary_required_providers},
@@ -1196,19 +1846,9 @@ def build_automatic_primary_live_dependencies(
 
     def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
         packet = authenticated_result(context)
-        acceptance = packet.get("acceptance", []) if packet is not None else []
-        accepted = bool(
-            packet is not None
-            and packet.get("status") == "SUCCEEDED"
-            and acceptance
-            and all(
-                isinstance(item, Mapping) and item.get("status") == "PASS"
-                for item in acceptance
-            )
-            and not packet.get("risks")
-            and not packet.get("blockers")
-            and not packet.get("requested_decisions")
-        )
+        binding = packet_result(context) if packet is not None else None
+        accepted = binding is not None and result_acceptance_passes(
+            packet, binding.work_packet.get("acceptance_checks"))
         return AcceptanceResult(
             _digest(
                 {
@@ -1414,9 +2054,15 @@ class DefaultDryRunServices:
         self._live_composition = live_composition
         self.available_provider_lanes: tuple[str, ...] = ()
         self.provider_lane_ready: Callable[[str], bool] = lambda _provider: False
+        # Set once by the activation from its live transports, before any
+        # packet is built; empty tells no producer about the small class.
+        self.compact_view_lanes: frozenset[str] = frozenset()
         if packet_router is None:
             if len(settings.repository_allowlist) != 1:
                 raise ValueError("Default packet planning requires one repository")
+            from .packet_routing import git_blob_reader, set_compact_view_blob_reader
+            # Small read-only tasks show their named files from this snapshot.
+            set_compact_view_blob_reader(git_blob_reader(settings.repository_snapshot_root))
             execution_commit, execution_tree = settings.project_execution_authority_pins()
             packet_router = DirectorPacketTaskRouter(
                 authority_snapshots=LocalGitAuthoritySnapshotResolver(
@@ -1434,18 +2080,30 @@ class DefaultDryRunServices:
                 ),
                 timeout_seconds=settings.provider_timeout_seconds,
                 typed_effect_grant_kinds=typed_external_effect_grant_kinds(settings),
+                extra_constraints=lambda router, record, assignment: (
+                    _small_producer_constraints(
+                        settings, router, record, assignment,
+                        compact_view_lanes=self.compact_view_lanes)),
+                read_only_tools=lambda record: small_read_only_eligible(
+                    record, settings, compact_view_lanes=self.compact_view_lanes),
             )
         self._packet_router = packet_router
         self._records: dict[str, TaskRecord] = {}
         self._effect_grants: dict[str, dict | None] = {}
         self._execution_modes: dict[str, str] = {}
+        # Task ids whose graph was created without the execution button. Only a
+        # standing grant does that; it is persisted in the application
+        # projection beside the graph's own flag, so dispatch reads it without
+        # a checkpoint read ahead of its readiness refusals.
+        self._approval_free: dict[str, bool] = {}
         self._lock = threading.RLock()
         self._owners: dict[str, int] = {}
 
     def register(self, record: TaskRecord, *, effect_grant: dict | None = None,
-                 execution_mode: str | None = None) -> None:
+                 execution_mode: str | None = None, approval_free: bool = False) -> None:
         self._acquire_record(
-            record, effect_grant=effect_grant, execution_mode=execution_mode
+            record, effect_grant=effect_grant, execution_mode=execution_mode,
+            approval_free=approval_free,
         )
 
     def paid_dispatch_allowed(self, task_id: str) -> bool:
@@ -1478,6 +2136,7 @@ class DefaultDryRunServices:
             self._records.pop(task_id, None)
             self._effect_grants.pop(task_id, None)
             self._execution_modes.pop(task_id, None)
+            self._approval_free.pop(task_id, None)
 
     def occupied(self, task_id: str) -> bool:
         """Return whether an in-process caller still owns this task record."""
@@ -1512,6 +2171,9 @@ class DefaultDryRunServices:
             TaskRecord.model_validate(dict(raw)),
             effect_grant=application.get("effect_grant"),
             execution_mode=recovered if isinstance(recovered, str) else "unknown",
+            # Absent on every projection written before the standing grant
+            # existed, and those tasks all kept the button.
+            approval_free=application.get("execution_approval_required") is False,
             exclusive=exclusive,
         )
 
@@ -1521,6 +2183,7 @@ class DefaultDryRunServices:
         *,
         effect_grant: dict | None = None,
         execution_mode: str | None = None,
+        approval_free: bool = False,
         exclusive: bool = False,
     ) -> bool:
         with self._lock:
@@ -1542,8 +2205,15 @@ class DefaultDryRunServices:
                 if self.settings.langgraph_primary_offline_simulation_enabled
                 else "live" if self._live_composition else "paid_off"
             )
+            self._approval_free[task_id] = approval_free
             self._owners[task_id] = 1
             return True
+
+    def execution_approval_free(self, task_id: str) -> bool:
+        """Whether this task's graph was created without the execution button."""
+
+        with self._lock:
+            return self._approval_free.get(task_id, False)
 
     def _record(self, task_id: str) -> TaskRecord:
         with self._lock:
@@ -1562,6 +2232,7 @@ class DefaultDryRunServices:
                 "task_record": record.model_dump(mode="json"),
                 "effect_grant": self._effect_grants.get(task_id),
                 "execution_mode": self._execution_modes[task_id],
+                "execution_approval_required": not self._approval_free.get(task_id, False),
             }
 
     def authenticate_scope(self, context: HandlerContext) -> PhaseResult:
@@ -2035,6 +2706,8 @@ class DefaultPrimaryApplication:
         parallel_dispatcher: (
             Callable[[ParallelReservation], ParallelDispatchOutcome] | None
         ) = None,
+        delegation_ledger: Any = None,
+        compact_view_lanes: Collection[str] = (),
     ) -> None:
         self.settings = settings
         self.coordinator = coordinator
@@ -2044,6 +2717,24 @@ class DefaultPrimaryApplication:
         # configuration and verified repository authority before any dispatch.
         self.effect_grant = build_typed_external_effect_grant(settings, authority)
         self._parallel_dispatcher = parallel_dispatcher
+        # A TaskStore carrying a separately protected DelegationAuditAnchor.
+        # None, the production default while no anchor exists, holds every
+        # standing-grant exercise, so the execution button is unchanged.
+        self._delegation_ledger = delegation_ledger
+        # (b): a pre-authorized task's failed terminal records its grant's trip
+        # when the coordinator persists it.
+        try:
+            coordinator.terminal_observer = self._trip_on_failed_terminal
+        except AttributeError:
+            pass
+        # Lanes whose configured transport shows the model only the compact
+        # provider view; empty, the default, admits no task to the small class.
+        self._compact_view_lanes = frozenset(compact_view_lanes)
+        # Set on an absent, unreadable or unwritable ledger. It holds for the
+        # life of this process only; trips on task outcomes are derived from
+        # durable state instead (_failed_prior_exercise).
+        self._delegation_tripped = False
+        self._delegation_lock = threading.Lock()
 
     def _parallel_policy(self) -> ParallelDispatchPolicy:
         """Return the bounded Default policy used for every durable wave."""
@@ -2146,7 +2837,427 @@ class DefaultPrimaryApplication:
             )
         return aggregate
 
-    def _request(self, record: TaskRecord) -> PrimaryRequest:
+    def _attested_owner_intake(self, record: TaskRecord) -> bool:
+        """A Slack-gateway-attested message from the configured owner and channel."""
+
+        settings = self.settings
+        return (
+            record.intake_authentication is IntakeAuthentication.SLACK_GATEWAY_ATTESTED
+            and bool(settings.slack_owner_user_id)
+            and record.intake.user_id == settings.slack_owner_user_id
+            and bool(settings.slack_channel_id)
+            and record.intake.channel_id == settings.slack_channel_id
+        )
+
+    def _standing_grant_terms(
+        self, record: TaskRecord, grant, *, attested: bool, tripped: bool,
+        exercised: int, now: datetime,
+    ) -> dict[str, bool]:
+        """Every pre-execution term but `audit`, evaluated before execution.
+
+        These are hotl_execution.PRE_EXECUTION_TERMS, not H(a): no candidate
+        and no verdict exists yet, so evidence-bar items 1-5 cannot be read
+        here and are never recorded as passing. They stay with the task's own
+        exact-SHA review and CI/security graph gates, which this class never
+        skips.
+        """
+
+        names = tuple(term for term in PRE_EXECUTION_TERMS if term != "audit")
+        plan = record.plan
+        if plan is None or len(plan.assignments) < 2:
+            return dict.fromkeys(names, False)
+        settings = self.settings
+        ordered = sorted(plan.assignments, key=lambda item: item.sequence)
+        producer, reviewer = ordered[0], ordered[-1]
+        lanes = [_assignment_provider_lane(item) for item in ordered]
+        prestage = plan.prestage
+        try:
+            # Several starting refs and no pin: no single ref to authorize.
+            covered = plan_starting_ref(settings) is not None and prestage is not None and grant.covers(
+                Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                repository=canonical_repository(prestage.repository),
+                branch=DirectorPacketTaskRouter._authority_base_ref(producer),
+            )
+        except ValueError:
+            covered = False
+        try:
+            independent = (
+                len(ordered) == 2
+                and reviewer.kind is AssignmentKind.INDEPENDENT_REVIEW
+                and lanes[0] != lanes[1]
+                and not share_provider_family(lanes[0], lanes[1])
+            )
+        except UnknownContactError:
+            independent = False
+        values = {
+            "authorization": (
+                grant.live_at(now)
+                and not tripped
+                and exercised < grant.max_exercises
+                and covered
+                and attested
+                and set(lanes) <= grant.providers
+            ),
+            "eligibility": small_read_only_eligible(
+                record, settings, compact_view_lanes=self._compact_view_lanes),
+            "bounds": plan_within_limits(plan, settings),
+            "verification": (
+                _SHA40.fullmatch(self.authority.starting_sha) is not None
+                and self.authority.authority_snapshot_digest.startswith("sha256:")
+            ),
+            "lane_independence": independent,
+            "safe_stopping": settings.provider_timeout_seconds >= 1,
+            "owned_paths_declared": (
+                prestage is not None
+                and bool(prestage.owned_paths)
+                and not any(item.allow_draft_pr for item in ordered)
+            ),
+        }
+        return {term: bool(values[term]) for term in names}
+
+    def _audit_small_class(
+        self, ledger, grant, task_id: str, outcome: RecordedOutcome,
+        terms: Mapping[str, bool], now: datetime, **conditions: Any,
+    ) -> None:
+        sha = self.authority.starting_sha
+        # The append re-verifies the whole chain: it is bounded like a read.
+        conditions.setdefault("deadline", monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+        ledger.append_delegation_audit_record(DelegationAuditRecord(
+            schema_version=AUDIT_SCHEMA_VERSION,
+            outcome=outcome,
+            grant_id=grant.grant_id,
+            grant_snapshot=self.settings.delegation_grant_json,
+            decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            candidate_sha=sha if _SHA40.fullmatch(sha) else None,
+            acting_agent=f"director-langgraph:{task_id}",
+            verdicts=(),
+            gate_results=tuple(
+                GateResult(term, GateStatus.PASS if passed else GateStatus.FAIL, now)
+                for term, passed in terms.items()
+            ),
+            recorded_at=now,
+        ), **conditions)
+
+    def _failed_prior_exercise(self, records) -> str | None:
+        """The first task this grant pre-authorized that must trip it, if any."""
+
+        return _failed_pre_authorized_task(
+            self.coordinator, records, deadline=monotonic() + _AUDIT_HISTORY_MAX_SECONDS)
+
+    def _trip_on_failed_terminal(self, task_id: str, classification: str, *,
+                                 deadline: float | None = None) -> None:
+        """Record the trip when a pre-authorized task reaches a failed terminal.
+
+        Called by the coordinator after it persists a terminal other than
+        SUCCEEDED. The trip names the grant that authorized the task, from its
+        own PRE_AUTHORIZED record. ``deadline`` is one absolute bound for the
+        aggregate read, the history read and the append together. Best
+        effort: a trip not written in time is still derived from durable
+        state, because the next exercise and every dispatch recheck count a
+        pre-authorized task's non-success terminal as a failure.
+        """
+
+        ledger = self._delegation_ledger
+        if classification == "SUCCEEDED" or ledger is None:
+            return
+        if deadline is None:
+            deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+        try:
+            proven_no_run = getattr(
+                self.coordinator.parallel_aggregate(task_id, deadline=deadline),
+                "proven_no_run", False) is True
+        except Exception:
+            proven_no_run = False
+        if proven_no_run:
+            # It stopped for the owner having sent nothing: no trip.
+            return
+        agent = f"director-langgraph:{task_id}"
+        try:
+            history = _bounded_audit_history(ledger, deadline=deadline)
+            if history is None:
+                return
+            if agent in _superseded_agents(history):
+                # The grant never started this task.
+                return
+            authorized = [item for item in history
+                          if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                          and item.acting_agent == agent and item.grant_id is not None]
+            if not authorized:
+                return
+            source = authorized[-1]
+            if any(item.grant_id == source.grant_id
+                   and item.outcome is RecordedOutcome.REFUSED
+                   and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+                   for item in history):
+                return
+            now = datetime.now(timezone.utc)
+            ledger.append_delegation_audit_record(DelegationAuditRecord(
+                schema_version=AUDIT_SCHEMA_VERSION,
+                outcome=RecordedOutcome.REFUSED,
+                grant_id=source.grant_id,
+                grant_snapshot=source.grant_snapshot,
+                decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                candidate_sha=source.candidate_sha,
+                acting_agent=agent,
+                verdicts=(),
+                gate_results=(GateResult("delegation_trip", GateStatus.FAIL, now),),
+                recorded_at=now,
+            ), expected_sequence=len(history), deadline=deadline)
+        except Exception:
+            return
+
+    def _supersede_orphaned_authorization(self, task_id: str) -> None:
+        """Retire a PRE_AUTHORIZED record whose intake never created its task.
+
+        A replay that finds the intake claim but no task creates the task
+        attended. The first attempt's pre-authorization is then not the grant
+        starting this task, so an append-only REFUSED record with the
+        ``pre_authorization_superseded`` gate retires it: the prior-task scan
+        and the terminal observer ignore it, and no dispatch recheck accepts
+        it. Its exercise stays spent. Best effort, bounded: if it cannot be
+        written, the old record stays and a later failure of this task trips
+        the grant, which is the safe direction.
+        """
+
+        ledger = self._delegation_ledger
+        if ledger is None:
+            return
+        agent = f"director-langgraph:{task_id}"
+        deadline = monotonic() + _AUDIT_HISTORY_MAX_SECONDS
+        with self._delegation_lock:
+            try:
+                history = _bounded_audit_history(ledger, deadline=deadline)
+                if history is None or agent in _superseded_agents(history):
+                    return
+                authorized = [item for item in history
+                              if item.outcome is RecordedOutcome.PRE_AUTHORIZED
+                              and item.acting_agent == agent and item.grant_id is not None]
+                if not authorized:
+                    return
+                source = authorized[-1]
+                now = datetime.now(timezone.utc)
+                ledger.append_delegation_audit_record(DelegationAuditRecord(
+                    schema_version=AUDIT_SCHEMA_VERSION,
+                    outcome=RecordedOutcome.REFUSED,
+                    grant_id=source.grant_id,
+                    grant_snapshot=source.grant_snapshot,
+                    decision_class=Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+                    candidate_sha=source.candidate_sha,
+                    acting_agent=agent,
+                    verdicts=(),
+                    gate_results=(GateResult(
+                        PRE_AUTHORIZATION_SUPERSEDED, GateStatus.FAIL, now),),
+                    recorded_at=now,
+                ), expected_sequence=len(history), deadline=deadline)
+            except Exception:
+                return
+
+    def _executes(self) -> bool:
+        """Mirrors resume_approval: a paid-off deployment cannot execute."""
+
+        settings = self.settings
+        return (self._parallel_dispatcher is not None
+                or settings.langgraph_primary_offline_simulation_enabled
+                or settings.langgraph_primary_live_provider_dispatch_enabled)
+
+    def pre_execution_capable(self) -> bool:
+        """Whether this process could pre-authorize any task, for /health.
+
+        A wired audit ledger not latched attended; a live grant naming the
+        class whose repository and branch cover the plan this deployment
+        builds; two compact-view lanes the grant names, from different
+        provider families (a small task needs a producer and an independent
+        reviewer) whose frozen costs pass small_task_costs_admissible, the
+        budget and token predicate eligibility applies; and a deployment that
+        executes. A per-grant delegation_trip
+        is not reflected: it is visible only in the audit ledger.
+        """
+
+        settings = self.settings
+        try:
+            grant = parse_grant(settings.delegation_grant_json)
+        except DelegationConfigurationError:
+            return False
+        if grant is None or not grant.live_at(datetime.now(timezone.utc)):
+            return False
+        # The repository and starting ref preview_plan gives every task, from
+        # the one helper it uses; several refs and no pin arm nothing.
+        ref = plan_starting_ref(settings)
+        if ref is None:
+            return False
+        branch = ref.removeprefix("refs/heads/").removeprefix("origin/")
+        in_scope = bool(settings.repository_allowlist) and grant.covers(
+            Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK,
+            repository=canonical_repository(settings.repository_allowlist[0]),
+            branch=branch,
+        )
+        live = bool(getattr(self.services, "_live_composition", False))
+
+        def admissible(producer: str, reviewer: str) -> bool:
+            # The costs the plan builder this deployment runs would freeze
+            # for this pair (the paid-off preview declares zero), judged by
+            # the same predicate eligibility applies.
+            try:
+                costs = (_live_assignment_budgets(settings, (producer, reviewer))
+                         if live else (0.0, 0.0))
+            except ValueError:
+                return False
+            return small_task_costs_admissible(costs, settings)
+
+        return (self._delegation_ledger is not None
+                and not self._delegation_tripped
+                and in_scope
+                and _independent_lane_pair(self._compact_view_lanes & grant.providers,
+                                           reviewer_excluded=SMALL_TASK_PRODUCER_ONLY_LANES,
+                                           admissible=admissible)
+                and self._executes())
+
+    def _named_contents_available(self, record: TaskRecord) -> bool:
+        """Every path the producer's request names can be shown to its models."""
+
+        from .packet_routing import small_task_named_contents
+
+        from .packet_routing import blob_read_deadline
+
+        router = getattr(self.services, "_packet_router", None)
+        if router is None or record.plan is None:
+            return False
+        try:
+            producer = min(record.plan.assignments, key=lambda item: item.sequence)
+            # One window for every file (and the packet build that measures
+            # the reviewer's view), not one per read.
+            with blob_read_deadline(monotonic() + _AUDIT_HISTORY_MAX_SECONDS):
+                return small_task_named_contents(
+                    router.planned_work_packet(record, producer)) is not None
+        except Exception:
+            return False
+
+    def _exercise_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
+        """Whether a live standing grant pre-authorizes executing this task.
+
+        Only the tier-1 class `execute_small_read_only_task` is considered, and
+        only for a task `policy.small_read_only_eligible()` admits. An audit
+        record is written before execution: `PRE_AUTHORIZED` when every
+        pre-execution term holds, `REFUSED` otherwise. Anything unexpected
+        stays attended.
+        """
+
+        try:
+            return self._decide_standing_grant(record, attested=attested)
+        except Exception:
+            return False
+
+    def _decide_standing_grant(self, record: TaskRecord, *, attested: bool) -> bool:
+        settings = self.settings
+        decision_class = Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+        if (not settings.delegation_enabled or settings.delegation_suspended
+                or record.workload_selection_hold_reasons):
+            return False
+        try:
+            grant = parse_grant(settings.delegation_grant_json)
+        except DelegationConfigurationError:
+            return False
+        if grant is None or decision_class not in grant.classes:
+            return False
+        if not self._executes():
+            return False
+        with self._delegation_lock:
+            ledger = self._delegation_ledger
+            if self._delegation_tripped or ledger is None:
+                self._delegation_tripped = True
+                return False
+            now = datetime.now(timezone.utc)
+            if (not small_read_only_eligible(
+                    record, settings, compact_view_lanes=self._compact_view_lanes)
+                    or not self._named_contents_available(record)):
+                # Not a member of the class: refused and audited without
+                # reading history, and no other term is claimed evaluated.
+                try:
+                    self._audit_small_class(ledger, grant, record.task_id,
+                                            RecordedOutcome.REFUSED, {"eligibility": False}, now)
+                except DelegationAuditDeadlineExceeded:
+                    # Too slow to record: refused, the button stays, no latch.
+                    pass
+                except Exception:
+                    self._delegation_tripped = True
+                return False
+            lanes = {_assignment_provider_lane(item) for item in record.plan.assignments}
+            if not attested or not lanes <= grant.providers:
+                # Not this owner's attested intake, or a lane the grant does not
+                # name: refused on authorization alone, without reading history.
+                try:
+                    self._audit_small_class(ledger, grant, record.task_id,
+                                            RecordedOutcome.REFUSED, {"authorization": False}, now)
+                except DelegationAuditDeadlineExceeded:
+                    # Too slow to record: refused, the button stays, no latch.
+                    pass
+                except Exception:
+                    self._delegation_tripped = True
+                return False
+            try:
+                history = _bounded_audit_history(ledger)
+                if history is None:
+                    # Too long or too slow to read within its bound: the
+                    # exercise is refused and the button stays.
+                    return False
+                mine = [item for item in history if item.grant_id == grant.grant_id]
+                tripped = any(
+                    item.outcome is RecordedOutcome.REFUSED
+                    and any(gate.gate == "delegation_trip" for gate in item.gate_results)
+                    for item in mine
+                )
+                sequence = len(history)
+                failed = None if tripped else self._failed_prior_exercise(mine)
+                if failed is not None:
+                    # The durable trip: it holds this grant_id in every process
+                    # until the owner writes a new one.
+                    self._audit_small_class(ledger, grant, failed, RecordedOutcome.REFUSED,
+                                            {"delegation_trip": False}, now,
+                                            expected_sequence=sequence)
+                    tripped, sequence = True, sequence + 1
+            except (DelegationAuditAdvanced, DelegationAuditDeadlineExceeded):
+                return False
+            except Exception:
+                self._delegation_tripped = True
+                return False
+            exercised = sum(item.outcome is RecordedOutcome.PRE_AUTHORIZED for item in mine)
+            # Re-read after the history scan: the decision, its gate results
+            # and the record all use the time the decision is actually made.
+            now = datetime.now(timezone.utc)
+            terms = self._standing_grant_terms(
+                record, grant, attested=attested, tripped=tripped,
+                exercised=exercised, now=now,
+            )
+            granted = all(terms.values())
+            try:
+                # Conditional on the history just counted, so a writer in
+                # another process cannot spend the same remaining exercise.
+                self._audit_small_class(
+                    ledger, grant, record.task_id,
+                    RecordedOutcome.PRE_AUTHORIZED if granted else RecordedOutcome.REFUSED,
+                    terms, now, expected_sequence=sequence,
+                )
+            except (DelegationAuditAdvanced, DelegationAuditDeadlineExceeded):
+                return False
+            except Exception:
+                self._delegation_tripped = True
+                return False
+        if not granted:
+            return False
+        action = ProposedAction(
+            decision_class.value,
+            canonical_repository(record.plan.prestage.repository),
+            settings.app_env,
+            self.authority.starting_sha,
+            "director-langgraph",
+        )
+        evidence = {term: TermEvidence(True) for term in terms}
+        evidence["audit"] = TermEvidence(True)
+        return decide_pre_execution(action, evidence, now=now).autonomous
+
+    def _request(
+        self, record: TaskRecord, *, execution_approval_required: bool = True
+    ) -> PrimaryRequest:
         task_id = record.task_id
         intake = record.intake
         if record.plan is None or not record.plan.assignments:
@@ -2211,7 +3322,7 @@ class DefaultPrimaryApplication:
             budget_limit_units=task_units,
             provider_cost_units=provider_units,
             effect_cost_units=effect_units,
-            execution_approval_required=True,
+            execution_approval_required=execution_approval_required,
             external_effect_required=effect_units > 0,
             effect_key_digest=(
                 _digest(
@@ -2269,6 +3380,7 @@ class DefaultPrimaryApplication:
         *,
         intake_authentication: IntakeAuthentication,
         authenticated_replay_identity: tuple[str, str] | None = None,
+        on_dispatch_ready: Callable[[str], None] | None = None,
     ) -> TaskRecord:
         task_id = "DIR-LG-" + secrets.token_hex(5).upper()
         record = TaskRecord(
@@ -2290,6 +3402,9 @@ class DefaultPrimaryApplication:
                 record.workload_selection_hold_reasons = ["primary_roster_" + str(hold)]
 
         request = self._request(record)
+        # Only an authenticated, non-replayed intake can reach a standing grant;
+        # a bearer intake never evaluates one.
+        granted = False
         if authenticated_replay_identity is not None:
             claimed_task_id, created = self.coordinator.claim_authenticated_intake(
                 nonce_digest="sha256:" + authenticated_replay_identity[0],
@@ -2308,13 +3423,33 @@ class DefaultPrimaryApplication:
                         raise RuntimeError("replayed primary intake disappeared")
                     return self._record_from_projection(repaired)
             record.task_id = task_id
-            request = self._request(record)
+            if not created:
+                # This task is about to be created attended: any
+                # pre-authorization its first attempt recorded is retired.
+                self._supersede_orphaned_authorization(task_id)
+            # Only the request that created the claim evaluates a grant. A
+            # retry that finds the claim but no projection yet (one in flight,
+            # or a first attempt that stopped) keeps the button.
+            granted = created and self._exercise_standing_grant(
+                record, attested=self._attested_owner_intake(record)
+            )
+            request = self._request(record, execution_approval_required=not granted)
         self.services.register(record, effect_grant=(
-            None if self.effect_grant is None else self.effect_grant.as_dict()))
+            None if self.effect_grant is None else self.effect_grant.as_dict()),
+            approval_free=granted)
         try:
             projection = self.coordinator.create_intake(request)
             planned = self._record_from_projection(projection)
             self._ensure_parallel_lifecycle(planned)
+            # Same guard as recover(): a terminal graph, or one that never
+            # claimed its provider dispatch, is never driven.
+            if (granted
+                    and projection.projection.get("terminal_classification") is None
+                    and projection.projection.get("provider_dispatch_status") != "NOT_STARTED"):
+                if on_dispatch_ready is not None:
+                    on_dispatch_ready(planned.task_id)
+                else:
+                    self._drive_parallel_lifecycle(planned)
             refreshed = self.coordinator.get_projection(planned.task_id)
             if refreshed is None:
                 raise RuntimeError("primary parallel registration lost its projection")
@@ -2570,6 +3705,7 @@ class DefaultPrimaryActivation:
         effect_mutation: EffectMutation | None = None,
         effect_readback: EffectReadback | None = None,
         effect_gateways: ExactEffectGatewayRegistry | None = None,
+        delegation_ledger: Any = None,
     ) -> None:
         self.settings = settings
         self.handle: PostgresCheckpointHandle | None = None
@@ -2668,6 +3804,10 @@ class DefaultPrimaryActivation:
                         settings, handle, services, team_routing=team_routing
                     )
                 self.live_dependencies = live_dependencies
+                # One reading for intake and dispatch alike: the small class
+                # admits only lanes whose transport sends the compact view.
+                compact_view_lanes = _compact_view_lanes(live_dependencies)
+                services.compact_view_lanes = compact_view_lanes
                 if settings.langgraph_primary_antigravity_team_enabled:
                     from .antigravity_team_routing import PrimaryTeamRouting
                     if not isinstance(getattr(live_dependencies,"team_routing",None),PrimaryTeamRouting):
@@ -2956,6 +4096,18 @@ class DefaultPrimaryActivation:
                 def dispatch_parallel_assignment(
                     reservation: ParallelReservation,
                 ) -> ParallelDispatchOutcome:
+                    """One assignment's dispatch, every blob read inside it
+                    bounded by its readiness selection's absolute deadline."""
+
+                    from .packet_routing import blob_read_deadline
+                    selected = _readiness_selections.get(
+                        (reservation.task_id, reservation.assignment_id))
+                    with blob_read_deadline(None if selected is None else selected.deadline):
+                        return _dispatch_parallel_assignment(reservation)
+
+                def _dispatch_parallel_assignment(
+                    reservation: ParallelReservation,
+                ) -> ParallelDispatchOutcome:
                     if not services.paid_dispatch_allowed(reservation.task_id):
                         # A proven pre-I/O hold (OWNER_DECISION_REQUIRED), never ambiguous.
                         from .primary_workload import WorkloadAdmissionHold
@@ -2988,11 +4140,90 @@ class DefaultPrimaryActivation:
                             None,
                             "provider_activation_not_ready",
                         )
+                    # The selection's absolute deadline, looked up before any
+                    # packet, ledger or blob work: every small-task check
+                    # below spends it. A small task with no selection has no
+                    # bound to spend, so it is held here before any read.
+                    early_selection = _readiness_selections.get((record.task_id, assignment_id))
+                    early_deadline = (None if early_selection is None
+                                      else early_selection.deadline)
+                    if early_selection is None and small_read_only_eligible(
+                            record, settings, compact_view_lanes=compact_view_lanes):
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold(
+                            "readiness_selection_unavailable_before_admission")
                     packet = validate_packet(
                         "work",
                         services._packet_router.planned_work_packet(record, assignment),
                     )
                     packet_digest = document_digest(packet)
+                    pre_authorization_refusal = small_pre_authorization_refusal(
+                        record, settings, delegation_ledger,
+                        approval_free=services.execution_approval_free(record.task_id),
+                        compact_view_lanes=compact_view_lanes, coordinator=coordinator,
+                        packet=packet, deadline=early_deadline)
+                    if (pre_authorization_refusal in _GRANT_STATE_REFUSALS
+                            and not assignment.depends_on
+                            and not record.assignment_outcomes):
+                        # The grant's own state changed before any provider
+                        # ran: an owner hold with no reservation, so the task
+                        # is a proven no-run. Once a predecessor ran, the
+                        # task is incomplete and fails below (and trips).
+                        from .primary_workload import WorkloadAdmissionHold
+                        raise WorkloadAdmissionHold(pre_authorization_refusal)
+                    if pre_authorization_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            pre_authorization_refusal)
+                    small_class = small_read_only_eligible(
+                        record, settings, compact_view_lanes=compact_view_lanes)
+                    if small_class and not small_task_packet_read_only(packet):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            "small_task_packet_not_read_only")
+                    if small_class:
+                        # The one view this assignment's model is shown, its
+                        # named files' text required, validated once and
+                        # kept by packet digest: the transport sends exactly
+                        # these bytes rather than rebuilding them.
+                        from .packet_contracts import PacketContractError
+                        from .packet_routing import (
+                            SmallTaskViewSensitive,
+                            SmallTaskViewUnavailable,
+                            prepare_small_task_view,
+                        )
+                        try:
+                            prepare_small_task_view(packet)
+                        except SmallTaskViewSensitive:
+                            # A class condition: it fails and trips, and
+                            # nothing is sent.
+                            return ParallelDispatchOutcome(
+                                ParallelAssignmentStatus.FAILED, None,
+                                "small_task_view_sensitive")
+                        except SmallTaskViewUnavailable as exc:
+                            # A read that may be transient, before any
+                            # reservation or provider request: an owner hold
+                            # that ran nothing, never a failed task.
+                            from .primary_workload import WorkloadAdmissionHold
+                            raise WorkloadAdmissionHold(
+                                "small_task_named_contents_unavailable") from exc
+                        except PacketContractError:
+                            return ParallelDispatchOutcome(
+                                ParallelAssignmentStatus.FAILED, None,
+                                "small_task_view_invalid")
+                    # Measured on the view just prepared: the exact bytes the
+                    # reviewer's transport sends.
+                    review_refusal, review_token_cap = small_review_bounds(
+                        record, settings, assignment, packet,
+                        compact_view_lanes=compact_view_lanes)
+                    if review_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None, review_refusal)
+                    if small_class and not _bridge_attestations_current(
+                            live_dependencies, provider, deadline=early_deadline):
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, None,
+                            "small_task_bridge_attestation_stale")
                     # A live lane needs a trusted positive per-lane and
                     # per-attempt limit bounded by the configured task budget
                     # before any attempt reservation or paid provider call.
@@ -3229,7 +4460,33 @@ class DefaultPrimaryActivation:
                     def dispatch_attempt(
                         attempt: ProviderAttemptReservation,
                     ) -> Mapping[str, Any]:
-                        selected = current_selection()
+                        from .primary_workload import ProvenNoRunHold, WorkloadAdmissionHold
+                        try:
+                            return _dispatch_attempt(attempt)
+                        except ProvenNoRunHold:
+                            raise
+                        except WorkloadAdmissionHold as hold:
+                            # Raised here, before adapter.dispatch was entered:
+                            # nothing was sent. For a small task that is a
+                            # proven no-run.
+                            if small_class and getattr(hold, "before_send", False):
+                                raise ProvenNoRunHold(hold.reason_code) from hold
+                            raise
+
+                    def _dispatch_attempt(
+                        attempt: ProviderAttemptReservation,
+                    ) -> Mapping[str, Any]:
+                        from .primary_workload import WorkloadAdmissionHold as _Hold
+
+                        def before_send(reason: str) -> Exception:
+                            hold = _Hold(reason)
+                            hold.before_send = True
+                            return hold
+
+                        try:
+                            selected = current_selection()
+                        except _Hold as hold:
+                            raise before_send(hold.reason_code) from hold
                         adapter = (team_routing.adapter(packet,attempt,deadline=selected.deadline)
                             if team_routing is not None and provider=="antigravity"
                             else live_dependencies.adapter_for_format(provider,(attempt.format_id,attempt.transport_id)))
@@ -3243,14 +4500,40 @@ class DefaultPrimaryActivation:
                         # provider call is prevented.
                         from .primary_workload import WorkloadAdmissionHold
                         if _wave_cancelled(record.task_id, deadline=selected.deadline):
-                            raise WorkloadAdmissionHold("wave_cancelled_before_dispatch")
+                            raise before_send("wave_cancelled_before_dispatch")
                         if selected.enrollment_digest is not None:
                             live_enrollment = _enrollment_digest_for(
                                 getattr(adapter, "_transport", None), attempt.attempt_digest)
                             if live_enrollment != selected.enrollment_digest:
-                                raise WorkloadAdmissionHold(
+                                raise before_send(
                                     "readiness_enrollment_changed_before_dispatch"
                                 )
+                        if small_class:
+                            # Immediately before this send, every attempt
+                            # and every retry: the bridge must still run the
+                            # pinned read-only argv. Checked before the grant,
+                            # so the grant is the last thing read before I/O.
+                            from .host_provider_bridge import HostBridgePacketTransport
+                            bridge = getattr(adapter, "_transport", None)
+                            if (isinstance(bridge, HostBridgePacketTransport)
+                                    and not bridge.read_only_attestation_current(
+                                        deadline=min(selected.deadline, monotonic() + 5))):
+                                raise before_send("small_task_bridge_attestation_stale")
+                        if services.execution_approval_free(record.task_id):
+                            # Immediately before this send, every attempt and
+                            # retry of a pre-authorized task: the grant is
+                            # re-read (live, not revoked or suspended, same
+                            # document), the verified ledger is scanned for a
+                            # trip and for failed tasks under the same bounded
+                            # deadline, and the commit is re-checked. A lapse
+                            # sends nothing.
+                            lapsed = small_pre_authorization_refusal(
+                                record, settings, delegation_ledger, approval_free=True,
+                                compact_view_lanes=compact_view_lanes,
+                                coordinator=coordinator, packet=packet,
+                                deadline=selected.deadline)
+                            if lapsed is not None:
+                                raise before_send(lapsed)
 
                         def authority_recheck(*, connection: Any = None,
                                               stage: str = "generation") -> None:
@@ -3290,35 +4573,68 @@ class DefaultPrimaryActivation:
                                 connection=connection,
                                 stage=stage,
                             )
-                        return adapter.dispatch(
-                            packet,
-                            context=ProviderAdapterContext(
-                                task_id=record.task_id,
-                                assignment_id=assignment_id,
-                                idempotency_key=attempt.attempt_digest,
-                                work_packet_digest=packet_digest,
-                                writer_token_digest=(
-                                    services._packet_router.writer_token(record).digest
+                            if (stage == "generation"
+                                    and services.execution_approval_free(record.task_id)):
+                                # Every provider request a transport makes,
+                                # not only the first: the standing grant is
+                                # re-checked right before it.
+                                lapsed = small_pre_authorization_refusal(
+                                    record, settings, delegation_ledger, approval_free=True,
+                                    compact_view_lanes=compact_view_lanes,
+                                    coordinator=coordinator, packet=packet,
+                                    deadline=selected.deadline)
+                                if lapsed is not None:
+                                    raise WorkloadAdmissionHold(lapsed)
+                        from .host_provider_bridge import HostBridgeAttestationStale
+                        from .packet_routing import SmallTaskViewUnavailable
+                        from .primary_workload import ProvenNoRunHold
+                        try:
+                            return adapter.dispatch(
+                                packet,
+                                context=ProviderAdapterContext(
+                                    task_id=record.task_id,
+                                    assignment_id=assignment_id,
+                                    idempotency_key=attempt.attempt_digest,
+                                    work_packet_digest=packet_digest,
+                                    writer_token_digest=(
+                                        services._packet_router.writer_token(record).digest
+                                    ),
+                                    timeout_seconds=attempt_timeout_seconds,
+                                    budget_usd=attempt_budget_usd,
+                                    # A small task's reviewer cap only narrows.
+                                    total_token_limit=(
+                                        attempt.total_token_limit
+                                        if review_token_cap is None
+                                        else min(attempt.total_token_limit or review_token_cap,
+                                                 review_token_cap)
+                                    ),
+                                    max_hops=int(limits["max_hops"]),
+                                    max_revisions=int(limits["max_revisions"]),
+                                    allowed_tools=tuple(packet["allowed_tools"]),
+                                    allowed_external_effects=tuple(
+                                        packet["allowed_external_effects"]
+                                    ),
+                                    fencing_generation=writer.fencing_generation,
+                                    deadline=selected.deadline,
+                                    # Carried so the transport can bind the meter
+                                    # it actually resolves to the enrollment this
+                                    # selection checked, rather than trusting a
+                                    # comparison made before it resolved one.
+                                    enrollment_digest=selected.enrollment_digest,
+                                    authority_recheck=authority_recheck,
                                 ),
-                                timeout_seconds=attempt_timeout_seconds,
-                                budget_usd=attempt_budget_usd,
-                                total_token_limit=attempt.total_token_limit,
-                                max_hops=int(limits["max_hops"]),
-                                max_revisions=int(limits["max_revisions"]),
-                                allowed_tools=tuple(packet["allowed_tools"]),
-                                allowed_external_effects=tuple(
-                                    packet["allowed_external_effects"]
-                                ),
-                                fencing_generation=writer.fencing_generation,
-                                deadline=selected.deadline,
-                                # Carried so the transport can bind the meter
-                                # it actually resolves to the enrollment this
-                                # selection checked, rather than trusting a
-                                # comparison made before it resolved one.
-                                enrollment_digest=selected.enrollment_digest,
-                                authority_recheck=authority_recheck,
-                            ),
-                        )
+                            )
+                        except HostBridgeAttestationStale as exc:
+                            # The host authenticated that it ran nothing: the same
+                            # proven no-run as a stale attestation before the send.
+                            raise ProvenNoRunHold(
+                                "small_task_bridge_attestation_stale") from exc
+                        except SmallTaskViewUnavailable as exc:
+                            # Raised by the transport while building its
+                            # payload, before any provider request: nothing
+                            # was sent.
+                            raise ProvenNoRunHold(
+                                "small_task_named_contents_unavailable") from exc
 
                     try:
                         attempt_status, result, result_digest, attempt_reason = (
@@ -3327,6 +4643,13 @@ class DefaultPrimaryActivation:
                                 reserve_attempt=reserve_attempt,
                                 record_attempt=record_attempt,
                                 dispatch_attempt=dispatch_attempt,
+                                # The reviewer's token cap is one allowance for
+                                # the whole review. Only a transport failure is
+                                # retried, and its usage is unmeasured, so it
+                                # spends the whole allowance: no retry.
+                                # ponytail: if a measured non-success is ever retried, pass the remaining allowance instead
+                                retry_allowed=(
+                                    None if review_token_cap is None else lambda: False),
                             )
                         )
                     finally:
@@ -3343,6 +4666,20 @@ class DefaultPrimaryActivation:
                         )
                     if result is None or result_digest is None:
                         raise RuntimeError("successful attempt lacks result evidence")
+                    usage_refusal = small_task_usage_refusal(
+                        result, provider, small_class=small_class)
+                    if usage_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, result_digest, usage_refusal)
+                    # A small task's producer result is bounded here, before it
+                    # is recorded and before any reviewer work, by the exact
+                    # review packet it would produce.
+                    producer_refusal = small_producer_result_refusal(
+                        record, settings, assignment, result, result_digest,
+                        services._packet_router, compact_view_lanes=compact_view_lanes)
+                    if producer_refusal is not None:
+                        return ParallelDispatchOutcome(
+                            ParallelAssignmentStatus.FAILED, result_digest, producer_refusal)
                     persisted = handle.claim_store.record_result_packet_artifact(
                         task_id=record.task_id,
                         assignment_id=assignment_id,
@@ -3362,16 +4699,7 @@ class DefaultPrimaryActivation:
                             for item in record.assignment_outcomes
                         ):
                             record.assignment_outcomes.append(
-                                AssignmentOutcome(
-                                    assignment_sequence=assignment.sequence,
-                                    provider=assignment.agent,
-                                    run_id=str(result["run_reference"]),
-                                    result=str(result["outcome"]),
-                                    review_summary=str(result["outcome"]),
-                                    provider_result_digest=(
-                                        result_digest.removeprefix("sha256:")
-                                    ),
-                                )
+                                _accepted_outcome(assignment, result, result_digest)
                             )
                     return ParallelDispatchOutcome(
                         ParallelAssignmentStatus.SUCCEEDED,
@@ -3381,6 +4709,17 @@ class DefaultPrimaryActivation:
 
                 def preflight_parallel_assignment(reservation, *, writer, connection, wave_budget_usage,
                                                   deadline=None):
+                    """Readiness for one assignment, every blob read inside it
+                    bounded by the caller's deadline."""
+
+                    from .packet_routing import blob_read_deadline
+                    with blob_read_deadline(deadline):
+                        return _preflight_parallel_assignment(
+                            reservation, writer=writer, connection=connection,
+                            wave_budget_usage=wave_budget_usage, deadline=deadline)
+
+                def _preflight_parallel_assignment(reservation, *, writer, connection,
+                                                   wave_budget_usage, deadline=None):
                     from .primary_paid_preflight import (
                         check_budget_setup, check_team_setup, PlannedProviderAttempt, ReadinessSelection,
                     )
@@ -3514,6 +4853,7 @@ class DefaultPrimaryActivation:
                 parallel_dispatcher = dispatch_parallel_assignment
                 self._live_dependencies_ready = True
             else:
+                compact_view_lanes = frozenset()
                 services = (
                     DefaultOfflineSimulationServices(settings)
                     if settings.langgraph_primary_offline_simulation_enabled
@@ -3557,6 +4897,8 @@ class DefaultPrimaryActivation:
             services,
             authority,
             parallel_dispatcher=parallel_dispatcher,
+            delegation_ledger=delegation_ledger,
+            compact_view_lanes=compact_view_lanes,
         )
 
     @property
@@ -3840,3 +5182,32 @@ class DefaultPrimaryActivation:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]

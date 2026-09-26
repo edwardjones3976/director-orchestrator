@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | BEGIN]]
@@ -291,6 +292,36 @@ class LocalGitAuthoritySnapshotTests(unittest.TestCase):
         self.assertEqual("file-0000.txt", snapshot[0]["path"])
         self.assertEqual("file-0710.txt", snapshot[-1]["path"])
         self.assertEqual(711, len({item["path"] for item in snapshot}))
+
+    def test_snapshot_git_calls_spend_the_callers_deadline(self) -> None:
+        import subprocess as subprocess_module
+        import time as time_module
+        from unittest.mock import patch
+        from director_orchestrator.packet_routing import PacketRoutingError, blob_read_deadline
+
+        timeouts = []
+
+        def run(*args, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            return subprocess_module.CompletedProcess((), 0, stdout="ok", stderr="")
+
+        with tempfile.TemporaryDirectory() as root:
+            resolver = LocalGitAuthoritySnapshotResolver("example/demo", root)
+            with patch("director_orchestrator.packet_transports.subprocess.run", side_effect=run):
+                self.assertEqual("ok", resolver._git("status"))
+                with blob_read_deadline(time_module.monotonic() + 0.3):
+                    resolver._git("status")
+            self.assertEqual(30.0, timeouts[0])
+            self.assertLessEqual(timeouts[1], 0.3)
+            with patch("director_orchestrator.packet_transports.subprocess.run",
+                       side_effect=AssertionError("spawned")), \
+                    blob_read_deadline(time_module.monotonic() - 1), \
+                    self.assertRaises(PacketRoutingError):
+                resolver._git("status")
+            with patch("director_orchestrator.packet_transports.subprocess.run",
+                       side_effect=subprocess_module.TimeoutExpired("git", 0.1)), \
+                    self.assertRaises(PacketRoutingError):
+                resolver._git("status")
 
     def test_snapshot_inventory_limit_rejects_values_outside_hard_bounds(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -1322,3 +1353,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 00:42 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:14 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-04 | 11:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]

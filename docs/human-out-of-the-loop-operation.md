@@ -1,3 +1,35 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-08 | 22:05 UTC | BEGIN]] -->
@@ -40,6 +72,17 @@ grant described here. A delegated decision must clear strictly more evidence
 than an attended one, because the owner's judgment is no longer present to
 catch what the gates do not model.
 
+The one pre-execution class, `execute_small_read_only_task`, is stated here as
+an explicit carve-out rather than left to be read as a relaxation. It resolves
+no decision about a candidate, because none exists yet. The attended act it
+replaces is the per-task execution button, which reads no evidence at all; the
+grant replaces that click with the pre-execution bar in
+[Standing grant for small read-only tasks](#standing-grant-for-small-read-only-tasks),
+and every gate the attended task passes afterwards still runs unchanged. That
+is how this class also clears strictly more evidence than the attended act. The
+carve-out is itself a tier-0 change and holds only with the owner's explicit
+sign-off.
+
 ## Operating states
 
 Exactly one state is in force per deployment profile at any time.
@@ -47,12 +90,22 @@ Exactly one state is in force per deployment profile at any time.
 | State | Meaning |
 | --- | --- |
 | `ATTENDED` | Default. Every `OWNER_DECISION_REQUIRED` waits for the owner. No delegation exists. |
-| `DELEGATED` | A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds. Everything else still waits. |
+| `DELEGATED` | A live grant may resolve an enumerated tier-1 decision class when the full evidence bar holds, or start the one pre-execution class when its pre-execution bar holds. Everything else still waits. |
 | `SUSPENDED` | Entered automatically on any trip condition. Behaves exactly as `ATTENDED` until the owner clears it explicitly. |
 
 A deployment starts in `ATTENDED` and returns to it whenever configuration is
 absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
-`DELEGATED` that does not pass through an explicit owner action.
+`DELEGATED` that does not pass through an explicit owner action, except the
+pre-execution class's process-level ledger hold described next, which is not
+recorded as `SUSPENDED`.
+
+For the pre-execution class, `SUSPENDED` is recorded per grant: a durable
+`delegation_trip` record holds that `grant_id` in every process until the owner
+writes a new one. An absent, unreadable, or unwritable audit ledger holds the
+process attended without such a record, because the ledger is what failed; a
+restart re-arms the grant only if the ledger then reads, verifies, and writes
+cleanly. Accepting that restart behaviour is part of the owner's sign-off on
+the class.
 
 ## Decision classes
 
@@ -61,6 +114,7 @@ absent, invalid, expired, or unreadable. There is no path from `SUSPENDED` to
 - Executing an eligible merge of a pull request into a non-protected branch.
 - Marking a pull request ready for review.
 - Posting to the project's own designated Slack channel.
+- Executing a small read-only task that `policy.small_read_only_eligible()` admits.
 
 Tier 1 is exhaustive and every entry names a specific act. There is no
 residual or catch-all delegable class, and none may be added by describing a
@@ -112,6 +166,17 @@ the decision to `OWNER_DECISION_REQUIRED`. **Absence of evidence is never
 consent.** A provider that is out of quota, unauthenticated, or silent has not
 approved anything, and its silence may not be counted, inferred, or waited out.
 
+**The pre-execution carve-out.** The one pre-execution class is not resolved
+against this bar at its decision point, because no candidate commit and no
+verdict exist yet, so items 1 to 5 cannot hold there. It is resolved against the
+pre-execution bar in
+[Standing grant for small read-only tasks](#standing-grant-for-small-read-only-tasks),
+which evaluates items 6 to 10 in their pre-execution form and never records
+items 1 to 5 as passing. Items 1 to 5 are not waived: the task's own exact-SHA
+review and CI/security gates must still hold, exactly as for an attended task,
+and the class authorizes no merge, publication, or other effect. This is the
+only carve-out.
+
 ## Why one independent verdict
 
 A single agent verdict is a single point of failure, and this repository's own
@@ -147,7 +212,11 @@ for another.
 ## Trip conditions
 
 Any of these moves the deployment to `SUSPENDED` immediately, before the
-decision in flight completes:
+decision in flight completes. For the pre-execution class two are narrower, as
+its carve-out: a failed pre-authorized task is recorded against that `grant_id`
+at the grant's next exercise attempt and suspends that grant only, and an audit
+ledger that cannot be written holds only the process attended, as described
+under operating states:
 
 - a gate result changes after a verdict was recorded;
 - a new commit appears on the candidate, which invalidates every prior review,
@@ -156,6 +225,8 @@ decision in flight completes:
 - the owner reverses two consecutive delegated decisions;
 - a provider authentication or quota failure occurs mid-decision;
 - a tier-0 class is implicated at any point;
+- a task a pre-execution grant started ends other than `SUCCEEDED`, is left
+  with an ambiguous slot, or cannot be read (recorded against that grant);
 - the audit ledger cannot be written.
 
 The last one is not a formality. A decision that cannot be recorded cannot be
@@ -168,7 +239,410 @@ Every delegated decision, and every refusal to make one, writes an immutable
 record containing the grant identifier, the decision class, the exact candidate
 commit, each verdict with its provider and run identifier, every gate result
 consulted, the merging identity (the accepting reviewer), and timestamps. The record is written
-before the action, not after it.
+before the action, not after it. For the pre-execution class, a refusal made
+before the ledger is consulted (no grant for the class, delegation off or
+suspended, a workload hold, a deployment that cannot execute, or a ledger that
+is absent or latched) and an exercise lost to a concurrent writer write no
+record; nothing runs without the button in either case. Neither does an
+exercise whose audit history is too long or too slow to read within its bound
+(more than 10,000 records, a history of exactly 10,000 being read whole, or
+five seconds, the deadline enforced inside the ledger's
+own verifying scan, and in the verification every audit append repeats; the
+wait for the store's lock and SQLite's busy wait spend the same deadline, which
+is checked again before the audit anchor advances, and every anchor read and
+advance is given only what is left of it; an anchor read that runs out refuses
+cleanly, while an advance that runs out is an anchor failure, since the
+checkpoint may have moved): it keeps the button.
+
+## Standing grant for small read-only tasks
+
+The tier-1 class `execute_small_read_only_task` lets a live grant start one
+small read-only task without the per-task execution button. It is the only
+pre-execution class: it authorizes starting that task and nothing else, never a
+merge, a publication, or any other effect.
+
+**Eligibility.** `policy.small_read_only_eligible()` alone decides membership,
+deterministically, from the owner's intake text, the frozen plan, and
+configuration. A task is eligible only when no deterministic approval reason
+matches the intake or any generated plan string; the plan is low risk and
+carries no approval requirement, approval reason, or debate; the intake carries
+no public research query or required capability; the plan has exactly one
+producer and one independent reviewer from another provider family; neither
+assignment requires approval, opens a draft pull request, carries a public
+query or a closed directive, or runs on the Perplexity, Firecrawl, or Gemini
+lane; both lanes' configured transports show the model only the compact
+provider view described below; the producer is not implementation work; the
+intake and the producer's task are each a read-shaped request, meaning every
+sentence opens with a read verb (summarize, explain, describe, review, list,
+compare, answer, analyse), every clause of it does too (a sentence is split at
+any character that is not part of a word or a path, such as a comma, colon,
+dash, bracket, quote or bullet, and at joining words such as and, then, so,
+but or or;
+a clause after a split may otherwise be only paths or identifiers, the second
+object of "compare A and B"), every "to ..." and "...ing it" names a read
+action (every term check below also reads identifiers split into words, so
+`openai_api_key`, `db-password`, `auth.token` or `authToken` count as their
+words), no raw identifier of the kinds listed under Bounded provider traffic
+appears, no verb that asks for a change (improve, revise, make, fix, update,
+rename, format, set, open, file, post and a long list more, in any
+inflection) appears anywhere in it, it names at least one path (a
+repository-wide request would reach the model with an empty inventory), and
+no shell syntax, dotfile, home, parent or
+absolute path, secret-like word or variable name, write-shaped word, or outward
+or mutating verb appears (the gateway's `DIRECTOR` command word and a leading
+`Project:` value are not sentences, while every `Outcome:` and `Constraints:`
+sentence is); nothing in the request names personal or sensitive data: the
+people a record describes (customers, clients, employees, users, patients and
+the like), an identifying attribute (a name, address, e-mail, phone, birth
+date, ID, or health, financial or genealogy data), or a tabular or database
+file or data-like directory, and wording that plainly names personal
+identifiers is also a deterministic `sensitive data` approval reason for every
+task; and the frozen plan total is at most $1 and within the task
+budget, with the reviewer inside its own cap, and the plan's frozen hop and
+revision limits are within the current `MAX_AGENT_HOPS` and `MAX_REVISIONS`.
+Model or plan output can only remove eligibility. Every plan, assignment, and
+intake model forbids extra fields, so nothing a model writes can assert it.
+"Read-only" means the packet grants only `READ_REPOSITORY`: no test
+execution, no write tool and no effect. The router grants the class only that
+tool, and a class packet carrying any other tool or effect is refused at
+dispatch (`small_task_packet_not_read_only`). It does not
+mean a sandboxed process: native and bridge CLIs still run in a host
+workspace. Membership is a lexical filter over the owner's words, not a
+semantic guarantee: a keyword scan cannot show that no tier-0 class is
+implicated, so evidence-bar item 7 is not evaluated before execution, and
+whether this filter is enough to replace the per-task button is part of the
+owner's sign-off on the class.
+
+**Exercise.** The execution button is skipped only when all of these hold at
+intake: `DELEGATION_ENABLED` is true and `DELEGATION_SUSPENDED` is false; a live
+grant, unexpired and unrevoked, names this class, the task's repository as a
+lowercase `owner/name`, its branch, and both of its provider lanes; the grant is
+not exhausted; no `delegation_trip` record exists for its `grant_id` and no task
+it pre-authorized must write one (see Trips); both lanes send the compact view;
+and the intake is a Slack-gateway-attested message from the configured owner in the
+configured channel that is not a replay. Only the request that created the
+intake claim evaluates a grant; a retry that finds the claim before its task
+exists keeps the button. A bearer intake never evaluates a
+grant. Any other case stops for the button exactly as before.
+
+**What is evaluated, and when.** At the decision point no candidate change and
+no verdict exists yet, so evidence-bar items 1-5 cannot hold. The decision is
+made by `hotl_execution.decide_pre_execution`, never by `H(a)`, over its own
+closed terms: `authorization` (item 9, including an attested owner intake and
+an untripped, unexhausted grant), `eligibility` (the lexical membership test
+above; not item 7, which is not evaluated before execution), `bounds` (item 8),
+`verification` (the exact starting commit and snapshot digest),
+`lane_independence` (two distinct lanes from different provider families),
+`safe_stopping`, `owned_paths_declared` (item 6 before any change), and `audit`
+(item 10). `H(a)` holds this class, and no record uses the `gates` or
+`independence` names for it, so nothing ever records items 1-5 as passing.
+Items 1-5 are carried by the task's own unchanged graph
+gates, `exact_sha_review` and `ci_security_completion`, which this class
+never skips or relaxes.
+
+**Audit.** A `PRE_AUTHORIZED` record is written before execution. It names the
+grant, carries its snapshot and the exact starting commit, lists every
+evaluated pre-execution term as `PASS`, and holds no verdict. A refusal writes a
+`REFUSED` record naming the failed terms; a task outside the class is refused on
+`eligibility` alone, without reading history, and claims no other term, and an
+eligible intake that is not an attested owner message, or that uses a lane the
+grant does not name, is refused on `authorization` alone, also without reading
+history. The refusals that write no record are listed under Audit record. The
+record that spends an exercise is appended only if the ledger still holds the
+history it was counted from, so concurrent writers cannot overspend a grant.
+`PRE_AUTHORIZED` is valid only for this class, and this class can never record
+`DELEGATED` or `WOULD_DELEGATE`.
+
+**Trips.** Trips are derived from durable state at every exercise, not from the
+path a task happened to finish on. Before a grant is exercised again, every task
+it pre-authorized is read: one that ended other than `SUCCEEDED`, one whose
+parallel aggregate ended failed before the graph classified it, one left with
+an ambiguous slot, or one that cannot be read writes a `delegation_trip` record,
+which suspends that grant. That covers a task settled through a provider
+callback and one whose process stopped after its terminal was persisted. A task
+whose intake failed after its `PRE_AUTHORIZED` record never started; it spends
+an exercise and trips nothing. Nor does a task that stopped for the owner
+having sent no provider request at all (a proven no-run): every assignment is
+held for the owner or blocked behind one, none succeeded, failed or is
+ambiguous, and every admitted attempt of every assignment was settled
+`FAILED` with reason `provider_refused_before_io`. A task in which any provider
+ran, such as a succeeded producer whose reviewer was then refused, is an
+incomplete task and trips. A small task's attempt is
+settled that way when a hold is raised after admission but before the
+transport is called (a lapsed grant, a stale bridge attestation, a cancelled
+wave, a changed selection or enrollment), when the host returns its signed
+attestation refusal, or when the transport cannot build the view (a named
+file that cannot be read before admission is an owner hold with no attempt at
+all); the reason
+is not transient, so it authorizes no retry and the ordinal cannot be replayed.
+A hold raised inside the transport, an attempt left `STARTED`, a transient
+failure, or any provider outcome is not proof, and trips as before. A task
+whose first intake recorded `PRE_AUTHORIZED` but stopped before creating it,
+and which a replay then created attended, never ran under the grant: before
+the attended task is created, an append-only `REFUSED` record with the gate
+`pre_authorization_superseded` retires that authorization, so neither the
+prior-task scan nor the terminal observer counts the task and no dispatch
+accepts it; its exercise stays spent. The trip is also recorded as soon as a
+pre-authorized task's failed terminal is persisted, without waiting for another
+intake. The coordinator skips that observer for a task whose graph kept the
+button, and gives it one absolute deadline (at most five seconds, never past
+its own) for its aggregate read, history read and append together. That write
+is best effort: a trip it could not record in time is still derived from the
+durable failed terminal at the next exercise and at every dispatch recheck,
+which stays the authority. An absent, unreadable, or unwritable audit ledger
+holds the process attended, as described under operating states. Clearing a
+trip takes an explicit owner action, a new grant_id.
+
+**Bounded provider traffic.** Providers on the native CLI work-packet lanes,
+the OpenAI Responses lane, and the Claude and Grok host-bridge lanes receive a
+compact view of the work packet: its commit, digest, and file count, plus only
+the snapshot entries under owned paths or named in the objective; an
+attended assignment that names no path keeps the first 64 entries outside
+prohibited paths, as the full packet gave it. The view is
+defined by `docs/schemas/director-compact-work-view-v1.schema.json`, and every
+view is validated against it before any transport sends it. For a small
+read-only task the view also carries the text of every path the request names
+(a path-shaped token, a conventional extensionless file such as `Makefile` or
+`Dockerfile`, or any token that is exactly a path in the snapshot, each of which
+must resolve to a snapshot entry). Every path match in this class, named,
+owned and prohibited alike, uses one normalizer: the workload policy's
+canonical repository-relative form (backslashes as separators, `./` segments
+and trailing slashes dropped) compared case-insensitively, since the bridge
+runs on Windows. A prohibited `Vendor` excludes `vendor/license.md`; a path or
+root that is not unambiguously repository-relative (absolute, a drive, `..`, a
+glob, a trailing dot) counts as prohibited and owns nothing; a name matching
+two snapshot entries that differ only in case keeps the task out. The text is
+read from the git blob its snapshot binds at the packet's commit (never a
+working tree; the blob's size is checked before it is read, and the read is
+streamed and stops at the cap) and bound by that blob hash, so a tool-less lane such as OpenAI
+Responses can read them; the reviewer's objective names the same paths, so
+both models see the same text. The OpenAI Responses lane may produce a small
+task but never review one: it reports every acceptance check NOT_RUN, which a
+review can never pass. With native lanes excluded and the Claude bridge lane
+not attestable, the one pair that could complete a small task is an OpenAI
+Responses producer with an attested Grok bridge reviewer, whose result must
+carry structured acceptance evidence with every check PASS; readiness reports
+armed only when the deployment has one starting ref (its project pin, or the
+sole `ALLOWED_STARTING_REFS` entry, from the same helper `preview_plan` uses
+for every task's ref and branch; several refs and no pin arm nothing and
+pre-authorize nothing), when such a pair exists and, by the same budget and token predicate
+eligibility applies, could be eligible: the costs the deployment's plan
+builder would freeze for that pair (each lane's configured attempt budget
+times three when live, so the default equal split of a $2 task budget never
+qualifies) are within $1 and the task budget, the reviewer's within its cap,
+and `SMALL_TASK_REVIEW_MAX_TOKENS` is at least 1. A review accepts only when its result
+disposes of exactly the review packet's `acceptance_checks`: each required
+check once, none missing, no extra and no duplicate, all PASS, and no risk,
+blocker or requested decision. Any other result is a rejection.
+
+**Post-hoc reviewer cap.** Owner ruling, 2026-09-24: "Accept post-hoc cap".
+The attested Grok host-bridge reviewer is admitted even though the Grok CLI
+cannot enforce a token or dollar cap before launch. The reviewer's dollar and
+token cap is checked after the call: the bridge result's reported usage is
+compared with the attempt's limits as soon as it returns, an overage fails the
+attempt and so the task, and that failure suspends the grant through the
+ordinary trip; a result that reports no usage fails as
+`small_task_usage_unmeasured`. In practice the spend is bounded by the attested
+configuration: one turn, no tools, read-only, and a bounded compact input. Each file is at most 4 KB, the total at most
+8 KB, and at most eight files. A named path missing from the snapshot,
+prohibited, binary, not UTF-8, over a cap, matching the sensitive-data or
+credential approval gate or the request text's personal-data exclusion (as
+written or with identifiers split into words), holding a secret-shaped value,
+or holding a credential-bearing value (a vendor-prefixed token: any prefix in
+the one `VENDOR_TOKEN_PREFIXES` table the public-research query block shares,
+modelled on GitHub secret scanning and gitleaks (OpenAI, Anthropic, xAI,
+GitHub, GitLab, npm, PyPI, Hugging Face, Slack, Shopify, DigitalOcean,
+SendGrid, Stripe, Square, Meta, Google, Linear, Notion, Databricks,
+Atlassian, AWS), followed by 8 or more token characters that are not
+lower-case words joined by separators; a generic prefixed token, 2-10 letters
+and a separator before 16 or more token characters, when the prefix ends in
+`pat`, `key`, `token`, `secret` or `api` (or is `sk`) or the suffix holds a
+12-character segment mixing cases and digits; URI user information, an Authorization
+or Bearer value, a JWT, an AWS access key, a connection-string password, a
+Slack, Discord or Office webhook URL, a URL whose query carries a `token`,
+`key`, `sig`, `signature`, `access_token`, `api_key` or `secret` parameter in
+any case, or a high-entropy value assigned in an env or config line), or
+holding an opaque high-entropy token of any format (the backstop: a run of 24
+or more token characters, split at `/`, `=` and `_`, with a segment of 12 or
+more that mixes lower case, upper case and digits, has no six-digit run, is
+not mostly lower-case words and carries at least 3.0 bits a character;
+lower-case hex digests and UUIDs never match, and it passes every tracked
+doc, prompt and source file of this repository), or holding a raw
+identifier with no label (an e-mail address, social security
+number, card, IBAN or routing number that passes its checksum, street
+address, a date next to a birth label, or a passport-like identifier; any
+token the standard library parses as an IP address, compressed IPv6 forms
+and zones included; and any phone-like run of 9 to 15 digits in groups
+joined by single spaces, dots, dashes or parentheses, with an optional
+leading "+", in any country's format, once ISO dates and times, dotted
+versions, UUIDs and hex digests are set aside) keeps the task out
+of the class: the grant is refused on `eligibility` at intake, and a dispatch
+fails with `small_task_named_contents_unavailable`. Dispatch builds and
+validates the view once, contents required, and keeps it by the packet's
+digest; every transport sends exactly those bytes. A transport that must
+rebuild it and cannot read the files refuses before any provider request, a
+hold that sends nothing and does not trip the grant, never a view carrying
+hashes only. Every blob read spends the caller's deadline: an assignment's
+reads spend its readiness selection's absolute deadline (a small task with no
+selection is held before any read), intake's check one bounded window for all
+files, and a read that reaches the deadline ends its process within what is
+left, never a fresh cleanup window. The cursor,
+github-copilot, native Codex, and Antigravity host-bridge lanes still post the
+full packet or a closed directive, so a task using any of them is outside the
+class and keeps the button. Every native CLI lane (Claude, Grok, Cursor, GitHub
+Copilot) is outside the class as well although it sends the compact view, by
+the owner's ruling of 2026-09-24 ("Exclude native lanes"): a native CLI runs in
+the host workspace with its own tools and web access this deployment does not
+control, and native Cursor and GitHub Copilot also never refuse a result whose
+reported usage exceeds the admitted attempt. Native lanes stay available for
+every other task; the small class runs only on the OpenAI Responses and
+host-bridge lanes, and `/health` counts only those toward readiness.
+
+**Attested bridge lanes.** Owner ruling, 2026-09-24: "Bridge with attested
+sandbox". A host-bridge lane joins the class only when the bridge's
+HMAC-authenticated challenge reports the exact argv it runs for that lane, the
+Director re-checks that argv against the lane's read-only restriction set in
+`bridge_attestation.py`, and its digest equals the owner's pin in
+`LANGGRAPH_PRIMARY_HOST_BRIDGE_ATTESTED_ARGV_JSON`. Every bridge HTTP body,
+the challenge, the dispatch response, its signed refusal and the host's
+request body, is read in small chunks against one absolute deadline, each
+chunk's socket wait clamped to what is left, so a peer that trickles bytes
+cannot keep a read open past it. The client's connect, TLS handshake, status
+line and headers are bounded by the same deadline: a watchdog shuts the
+request's socket down when it arrives, and the resulting failure is the
+deadline, never a success. A small task's dispatch
+re-challenges the bridge before admission, and again immediately before every
+bridge send, each producer retry and reviewer attempt included; if the
+attestation is gone, changed, or cannot be authenticated, nothing is sent
+(`small_task_bridge_attestation_stale`). The signed dispatch request itself
+carries the pinned argv digest, and the bridge compares it, in constant time,
+with the digest of the argv it is about to run, immediately before starting it;
+a mismatch runs nothing and returns a signed refusal the Director also treats as
+`small_task_bridge_attestation_stale`. The bridge settles that attempt's claim
+as `REFUSED`, never `AMBIGUOUS`, and a replay of the same request returns the
+same signed refusal without running anything, so recovery treats it as a
+no-run refusal. The one value screen (`holds_sensitive_value`: identifiers,
+credentials, opaque tokens) applies alike to the owner's request text and to
+every file shown. Eligibility also screens every assignment's task and
+acceptance checks, and the one function that builds a small task's view
+(the prepared view and every transport rebuild) screens every string the
+view carries besides the files' own text: objective, acceptance checks,
+constraints, paths and identifiers, and for a reviewer the producer's result
+and summary embedded in its constraints. A view that fails is never sent:
+at dispatch it fails as `small_task_view_sensitive`, and a producer result
+that fails when its reviewer view is prepared fails as
+`small_task_producer_result_sensitive` before it is recorded. Owner ruling
+"keep tripping": both are class-condition refusals and trip the grant, the
+second after a provider ran; a false positive on a producer's wording
+therefore trips and returns the task to the owner, which is the safe
+direction, where forwarding it would not be. UUIDs and lower-case hex digests
+are set aside before the unlabeled passport-shape and checksum checks, so a
+record identifier is never read as a personal one. A no-run the Director cannot record (the write fails twice
+within the dispatch deadline) is logged and leaves the attempt `STARTED`, so
+the task trips the grant: by the owner's ruling, missing evidence that
+nothing ran is not proof of it. Every transport runs its final authority
+recheck before it chooses the bytes it sends, and those bytes are the view
+prepared for that packet digest. A replay of any claimed attempt must carry the attested argv
+digest and attempt limits it was claimed under: otherwise a `SUCCEEDED`
+attempt's cached result is never returned (the replay is rejected as a binding
+conflict, which the Director treats as ambiguous, since that command did run),
+a `REFUSED` one is refused again, and an `AMBIGUOUS` one stays ambiguous. The same signed request carries the
+attempt's dollar budget and token limit; the bridge passes them to the host
+command as `DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD` and
+`DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT` and records them with the attempt, and
+refuses a small task's request that lacks them. The lane's attestation reports
+whether its command enforces them before inference (today only
+`scripts/xai-responses-command.py` does; the Grok CLI does not), and by the
+ruling above the Director admits an attested lane either way. The restriction sets use only flags this repository
+already passes to each CLI. Grok needs plan permission mode, `--max-turns 1`,
+`--disable-web-search`, `--no-subagents`, the canonical `--disallowed-tools`
+list and `--deny` for Bash, Edit, Write and MCPTool. Claude needs plan
+permission mode, an empty `--tools` value, `--strict-mcp-config` with an empty
+MCP configuration, and `--safe-mode`; the bridge refuses empty argv items, so
+the Claude bridge lane cannot currently be attested. An argv that carries the
+whole set is still refused if it also carries any argument in
+`FORBIDDEN_ARGS`, alone or as `--flag=value` and in any letter case:
+`--yolo`, `--dangerously-skip-permissions`,
+`--allow-dangerously-skip-permissions`, `--allowedTools`/`--allowed-tools`,
+`--add-dir`, `--enable-web-search`, `--resume`, `--continue`, `--api-key`,
+`--base-url`, `--api`, `--json-schema`, or the `acp` and `exec` subcommands.
+Any permission mode other than plan, such as `bypassPermissions` or
+`acceptEdits`, already fails the set. This attests the CLI's
+configured command line, not an operating-system sandbox: the CLI still runs as
+a host process in the bridge workspace, and the restrictions are the CLI's own
+flags. The argv is also bound into each lane's configuration digest, which the
+bridge's `/v1/provider/configuration-digest` endpoint reports with the per-lane
+verdicts. The Director keeps the full packet and rebinds
+every result to it by digest. The compact view a small task's reviewer is sent
+is at most 16 KB, measured on the exact canonical bytes of the view prepared
+for that packet (its files' text required), never on a view whose contents
+were dropped; its transport's fixed instructions are extra. The reviewer is
+also capped by `SMALL_TASK_REVIEW_MAX_USD` (default 0.50) and
+`SMALL_TASK_REVIEW_MAX_TOKENS` (default 40,000), one allowance for the whole
+review: only a transport failure is ever retried and its usage is unmeasured,
+so a small task's reviewer is never retried. Every producer and reviewer result
+of a small task must report complete usage, integer token counts and a cost;
+the OpenAI Responses lane, which refuses any reply over its token allowance
+before returning it and is priced by its meter, reports tokens only. A result
+without that usage fails, which trips the grant. The producer's packet states the
+outcome size that fits, and a producer result whose prepared review view would
+exceed 16 KB (or cannot carry its files' text) is refused when it is accepted, before it is recorded and before any reviewer
+work. A result refused there still spent the producer's attempt. A
+pre-authorized task, one whose persisted graph skips the execution button, is
+refused at dispatch unless delegation is still enabled and unsuspended under a
+live grant for the class whose canonical document is the snapshot recorded
+when the task was pre-authorized and which still covers the task's repository,
+branch and both lanes (`small_task_pre_authorization_revoked`), the verified
+audit chain holds this task's own `PRE_AUTHORIZED` record under that grant's
+grant_id, carrying every pre-execution term but `audit` exactly once and each
+`PASS` (`small_task_pre_authorization_unaudited`; a record with only some of
+the terms, an extra one or a repeat counts as none; an absent, unreadable or
+replaced ledger has none, and a history past its bound counts as unread),
+no `delegation_trip` for that grant_id exists anywhere in it and no task that
+grant pre-authorized has failed, stopped ambiguous, or become unreadable
+according to durable task state, whether or not a trip was written yet
+(`small_task_pre_authorization_tripped`; that scan of prior tasks is bounded
+by one deadline and, when it runs out, refuses as unaudited without tripping),
+the packet being dispatched works from the exact commit recorded as the
+pre-authorization's candidate (`small_task_pre_authorization_commit_changed`),
+and it still qualifies
+(`small_task_pre_authorization_lapsed`, for example after a restart under a
+lower reviewer cap, different lanes, or a `MAX_AGENT_HOPS` or `MAX_REVISIONS`
+below the plan's frozen hop or revision limit), rather than run without the class's
+bounds; a task whose graph keeps the button is never affected. That failure
+trips the grant, with one exception: when the refusal is about the grant's own
+state (`small_task_pre_authorization_revoked`,
+`small_task_pre_authorization_unaudited` or
+`small_task_pre_authorization_commit_changed`) and the assignment is the first,
+with no predecessor and nothing yet run, it is an owner hold with no
+reservation, so the task stops as a proven no-run. Once a predecessor has run
+the task is incomplete and the refusal fails and trips; the class-condition
+refusals (`small_task_pre_authorization_lapsed` and the other `small_task_*`
+checks, `live_lane_budget_unauthorized`, `provider_activation_not_ready`)
+always fail and trip. The same check runs again immediately before every provider
+send of a pre-authorized task, each retry included, and inside the transport
+before each provider request it makes (the OpenAI Responses token count and
+its generation alike); a lapse sends nothing. Those rechecks spend what is left
+of the dispatch's shared deadline, never a fresh window, and with nothing left
+refuse before any read; the first check at dispatch, and the bridge
+re-attestation before admission, spend it too. Each check re-reads the clock
+after its history and prior-task scans, so a grant that expires, or a deadline
+that runs out, during them authorizes nothing; and before a send the bridge
+re-attestation runs first, so the grant is the last thing read before I/O. Every identifier, personal-data and credential screen
+ignores letter case except where the format itself is case-sensitive (token
+prefixes such as `AKIA`, JWTs, upper-case variable names).
+
+**Prerequisites.** The frozen plan total must be at most $1, for example by
+setting `LANGGRAPH_PRIMARY_PROVIDER_ATTEMPT_BUDGETS_USD_JSON`; the default task
+budget splits above that. The ledger also needs a durable, separately protected
+audit anchor. With no production anchor, every exercise holds and the button is
+unchanged. Roster selection ranks lanes through the existing
+`TRUSTED_PROVIDER_COST_RANKS`; a small-task deployment is expected to rank
+grok < openai < claude, e.g. `{"grok":1,"openai":2,"claude":3}`; this change
+does not set it.
+
+Adding this class was a tier-0 act; it takes effect only with the owner's
+explicit sign-off on the pull request that adds it.
 
 ## Relationship to the existing rules
 
@@ -243,6 +717,7 @@ working, not failing. It is also the present condition of this repository.
 
 Each phase is separately built, reviewed, and accepted. No phase begins before
 its predecessor is accepted, and acceptance of one grants nothing to the next.
+Row 4S names its own predecessor below.
 
 | Phase | Content | Executes a decision? |
 | --- | --- | --- |
@@ -252,15 +727,26 @@ its predecessor is accepted, and acceptance of one grants nothing to the next.
 | 3 | Shadow mode: record `would_delegate` and `would_stop` over a bounded set of decisions, changing nothing. | No |
 | 4 | Enable tier-1 merge only, one repository, owner observing. | Yes |
 | 5 | Broaden tier-1 classes only after a clean shadow record and a clean live record. | Yes |
+| 4S | The pre-execution class `execute_small_read_only_task` only, one repository, live grant, owner-signed PR. | Yes |
+
+Row 4S is a separate track, not a step after phase 5. Its predecessor is
+phase 2, and it does not depend on phase 4. For this one class only, it waives
+phase 3's shadow record and phase 5's clean-shadow and clean-live
+preconditions. That waiver is part of the tier-0 act the owner's sign-off on
+its pull request accepts; without that sign-off, row 4S does not exist.
 
 ## The evaluated form
 
 Phase 0 now has an executable form in `src/director_orchestrator/hotl_execution.py`,
 described in [`hotl-execution-predicate.md`](hotl-execution-predicate.md). It
-implements the rules above and adds none. Where the two disagree, this document
-wins and the code is wrong.
+implements the rules above and adds none. The rules above include the
+pre-execution carve-out, so `decide_pre_execution`, which decides only
+`execute_small_read_only_task` over its own closed terms, is part of that form
+and not an addition. Where the two disagree, this document wins and the code
+is wrong.
 
-An action runs without returning to the owner only when every term holds:
+Every other action, which is candidate-bound, runs without returning to the
+owner only when every term holds:
 
 ```
 H(a) = A(a) and G(a) and B(a) and V(a) and I(a) and S(a) and P(a) and D(a)
@@ -333,8 +819,9 @@ These are stated plainly because a framework that hides them is worse than none.
   dispatches were abandoned on the misreading, and the delegation pool was
   reported to the owner as empty on the strength of it. Cursor's CLI is
   separately blocked by usage quota, which is a real availability failure.
-  Phases 3 and 4 still exist before any broadening; the reason is caution, not
-  this evidence.
+  Phases 3 and 4 still exist before any broadening of the candidate-bound
+  classes (row 4S is the stated exception); the reason is caution, not this
+  evidence.
 - This document was drafted by an agent. An agent writing the rules that govern
   agents is a conflict of interest, and the owner should read it as a proposal
   to be checked rather than as settled policy.
@@ -351,3 +838,35 @@ These are stated plainly because a framework that hides them is worse than none.
 
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:02 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
