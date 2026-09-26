@@ -1,10 +1,10 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
 """Build model task inputs from reference work packets (M1 eval).
 
-``manifest()`` matches plan D-M1-0; ``generate_candidates.py`` is not on this branch yet,
-so the helper lives here rather than being imported.
+``manifest()`` returns the SHA-256 of the sorted manifest lines (plan D-M1-0).
 
 Usage:
     python projects/homemade-llm/eval/build_inputs.py \\
@@ -40,7 +40,7 @@ def manifest(directory: Path) -> str:
     for name in sorted(p.name for p in directory.iterdir() if p.is_file() and p.suffix == ".json"):
         digest = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         lines.append(f"{base}/{name}\t{digest}\n")
-    return "".join(lines)
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
 def _normalize_text(text: str) -> str:
@@ -330,3 +330,4 @@ if __name__ == "__main__":
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | END]]

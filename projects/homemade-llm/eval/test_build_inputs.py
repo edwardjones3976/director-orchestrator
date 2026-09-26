@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
@@ -7,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import shutil
@@ -373,7 +375,7 @@ class BuildInputsTests(unittest.TestCase):
             self.assertEqual((run["n_references"], run["n_excluded"], run["n_inputs"]), (3, 2, 1))
             self.assertEqual(run["item_count"], run["n_inputs"])
             self.assertEqual(run["input_manifest"], build_inputs.manifest(out))
-            self.assertEqual(len(run["input_manifest"].splitlines()), 1)
+            self.assertRegex(run["input_manifest"], r"\A[0-9a-f]{64}\Z")
             self.assertEqual(run["reference_manifest"], full["reference_manifest"])
             self.assertEqual(run["reference_manifest"], build_inputs.manifest(refs))
 
@@ -439,6 +441,20 @@ class BuildInputsTests(unittest.TestCase):
             code = build_inputs.build(["--set", "b", "--refs", str(refs), "--out", str(out)])
             self.assertNotEqual(code, 0)
 
+    def test_manifest_matches_independent_sha256(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = Path(tmp) / "fixture-refs"
+            refs.mkdir()
+            (refs / "a.json").write_bytes(b"{}\n")
+            (refs / "b.json").write_bytes(b"[]\n")
+            expected = hashlib.sha256((
+                "fixture-refs/a.json\t" + hashlib.sha256(b"{}\n").hexdigest() + "\n"
+                + "fixture-refs/b.json\t" + hashlib.sha256(b"[]\n").hexdigest() + "\n"
+            ).encode("utf-8")).hexdigest()
+            actual = build_inputs.manifest(refs)
+            self.assertEqual(actual, expected)
+            self.assertRegex(actual, r"\A[0-9a-f]{64}\Z")
+
     def test_manifests_are_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, refs, out = self._layout(Path(tmp))
@@ -494,3 +510,4 @@ if __name__ == "__main__":
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:31 UTC | END]]
