@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
@@ -743,60 +744,86 @@ def _holds_ip_address(text: str) -> bool:
     return False
 
 
+# Tokens that are provably not personal identifiers. Every detector below
+# runs on the original text; one of these only discards a detector hit that
+# lies wholly inside it, and any overlap resolves toward the protected
+# format. Never deleted from the text before detection.
+_EXEMPT_TOKENS = re.compile(
+    # A valid ISO date, with an optional valid time and zone.
+    r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b"
+    # A UUID.
+    r"|\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
+    # A full SHA-1 or SHA-256 digest.
+    r"|\b(?:[0-9a-f]{64}|[0-9a-f]{40})\b"
+    # Lower-case hex with three or more letters (never the passport shape,
+    # which has at most two).
+    r"|\b(?=(?:[0-9]*[a-f]){3})[0-9a-f]{7,64}\b"
+)
+# A dotted version is exempt only while it has fewer than 9 digits.
+_DOTTED_VERSION = re.compile(r"\b\d+(?:\.\d+){2,}\b")
+
+
+def _exempt_spans(text: str) -> list[tuple[int, int]]:
+    spans = [match.span() for match in _EXEMPT_TOKENS.finditer(text)]
+    spans += [match.span() for match in _DOTTED_VERSION.finditer(text)
+              if sum(character.isdigit() for character in match.group(0)) < 9]
+    return spans
+
+
+def _counts(span: tuple[int, int], exempt: list[tuple[int, int]]) -> bool:
+    """A detector hit counts unless an exempt token wholly contains it."""
+
+    start, end = span
+    return not any(low <= start and end <= high for low, high in exempt)
+
+
 # Phone numbers, generically: a run of 9 to 15 digits in groups separated by
 # single spaces, dots, dashes or parentheses, with an optional leading "+".
-# No country format is listed; only shapes that are provably not phones are
-# removed first: ISO dates and times, dotted version strings, UUIDs and hex
-# digests or SHAs.
-_NOT_PHONE_SHAPES = re.compile(
-    r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
-    r"|\b\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?\b"
-    # A dotted version: groups of at most three digits, so a dotted phone
-    # number (a group of four or more) is not exempt.
-    r"|\b\d{1,3}(?:\.\d{1,3}){2,}\b"
-    r"|\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
-    r"|\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b"
-)
+# No country format is listed.
 # Digits joined by single separators: a space, dot or dash, or a
 # parenthesis with at most one of those beside it (a bracketed area code).
 _PHONE_CANDIDATE = re.compile(
     r"(?<![\w.+-])\+?\(?\d(?:\d|(?:\)[ .-]?|[ .-]?\(|[ .-])(?=\d))*\d\)?(?![\w-]|\.\d)")
 
 
-def _holds_phone_like(text: str) -> bool:
-    cleaned = _NOT_PHONE_SHAPES.sub(" ", text)
-    for match in _PHONE_CANDIDATE.finditer(cleaned):
+def _holds_phone_like(text: str, exempt: list[tuple[int, int]] | None = None) -> bool:
+    exempt = _exempt_spans(text) if exempt is None else exempt
+    for match in _PHONE_CANDIDATE.finditer(text):
         candidate = match.group(0)
-        digits = sum(character.isdigit() for character in candidate)
-        if 9 <= digits <= 15:
+        digits = [index for index, character in enumerate(candidate) if character.isdigit()]
+        # The hit is its digits: a bracket or "+" around them is not part of
+        # a date or any other exempt token.
+        span = (match.start() + digits[0], match.start() + digits[-1] + 1)
+        if 9 <= len(digits) <= 15 and _counts(span, exempt):
             return True
     return False
 
 
+# The passport shape counts wherever it stands on its own, a short SHA or
+# any other hex included; only a group inside a UUID is discarded.
 _BARE_PASSPORT = re.compile(r"(?i:\b[a-z]{1,2}\d{6,8}\b)")
-_HEX_IDENTIFIERS = re.compile(
-    r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
-    r"|\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b"
-)
 
 
 def holds_identifier_format(text: str) -> bool:
     """Whether text holds a raw personal or financial identifier, unlabeled."""
 
-    if _IDENTIFIER_FORMATS.search(text) or _holds_ip_address(text) or _holds_phone_like(text):
+    exempt = _exempt_spans(text)
+    if (_IDENTIFIER_FORMATS.search(text) or _holds_ip_address(text)
+            or _holds_phone_like(text, exempt)):
         return True
-    # The unlabeled shape checks (a bare passport-like value, a checksummed
-    # card, routing or IBAN run) read the text with UUIDs and lower-case hex
-    # digests set aside: those identify records, not people, and a UUID group
-    # such as "c0395302" or "de54b14240fa" can match a shape or a checksum.
-    cleaned = _HEX_IDENTIFIERS.sub(" ", text)
-    if _BARE_PASSPORT.search(cleaned):
+    # Every unlabeled shape and checksum hit counts unless an exempt token
+    # (a UUID group such as "c0395302", a digest, a dated time) wholly
+    # contains it.
+    if any(_counts(match.span(), exempt) for match in _BARE_PASSPORT.finditer(text)):
         return True
-    for match in _DIGIT_RUN.finditer(cleaned):
+    for match in _DIGIT_RUN.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))
-        if (13 <= len(digits) <= 19 and _luhn(digits)) or (len(digits) == 9 and _aba(digits)):
+        if (((13 <= len(digits) <= 19 and _luhn(digits)) or (len(digits) == 9 and _aba(digits)))
+                and _counts(match.span(), exempt)):
             return True
-    return any(_iban(match.group(0)) for match in _IBAN.finditer(cleaned))
+    return any(_iban(match.group(0)) and _counts(match.span(), exempt)
+               for match in _IBAN.finditer(text))
 
 
 # Credential-bearing formats: URI userinfo, Authorization and Bearer values,
@@ -2298,3 +2325,4 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

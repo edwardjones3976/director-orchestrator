@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
@@ -257,8 +258,17 @@ def path_key(path: object) -> tuple[str, ...] | None:
 
     from .workload_policy import WorkloadPolicyError, _canonical_repository_relative_path
 
+    raw = str(path)
+    # Validated as written, before anything is stripped: "secret.txt " and
+    # "secret.txt" are different files, so surrounding whitespace, and any
+    # component ending in a dot or a space or starting with a space, has no
+    # key.
+    if raw != raw.strip() or any(
+            part != part.strip() or part.endswith(".") and part not in {".", ".."}
+            for part in re.split(r"[\\/]", raw) if part):
+        return None
     try:
-        canonical = _canonical_repository_relative_path(str(path), field_name="path")
+        canonical = _canonical_repository_relative_path(raw, field_name="path")
     except WorkloadPolicyError:
         return None
     return tuple(part.casefold() for part in canonical.split("/"))
@@ -993,3 +1003,4 @@ class DirectorPacketTaskRouter:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

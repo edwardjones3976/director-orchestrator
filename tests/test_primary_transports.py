@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -383,8 +384,9 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertEqual(["recheck"], calls)
         self.assertEqual([], requests)
 
-    def test_responses_rechecks_before_it_chooses_the_input_bytes(self):
-        """The input is built only after the final recheck before a request."""
+    def test_responses_builds_its_input_then_rechecks_then_sends(self):
+        """Nothing slow (a cache-miss rebuild reads files) runs between the
+        final authority recheck and the request."""
 
         import director_orchestrator.primary_transports as module
 
@@ -419,7 +421,7 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                 patch("director_orchestrator.primary_transports.httpx.AsyncClient", Client), \
                 self.assertRaises(RuntimeError):
             transport.send(json.dumps(self._work()).encode(), context=context)
-        self.assertEqual(["recheck", "build", "send"], order)
+        self.assertEqual(["build", "recheck", "send"], order)
 
     def test_responses_refuses_a_generation_whose_input_changed_after_the_count(self):
         import director_orchestrator.primary_transports as module
@@ -1554,3 +1556,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
