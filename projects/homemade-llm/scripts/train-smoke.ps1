@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 # M0.3: run train/smoke_train.py inside the pinned Unsloth image.
@@ -91,35 +92,59 @@ try {
         '--entrypoint', 'python', $Image, '/code/smoke_train.py')
     # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
     # Stop-Smoke returns the container's final state.
+    # The container's actual state, from the daemon (bounded). Only 'stopped and removed' counts as gone; a docker
+    # that does not answer, or a container still listed, keeps the GPU lock.
+    function Get-SmokeState {
+        try {
+            $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
+            if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
+            elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
+            else { 'stopped and removed' }
+        } catch { "state UNKNOWN (check failed: $($_.Exception.Message)); check: docker ps -a" }
+    }
     function Stop-Smoke {
+      try {
         if (@(Invoke-Bounded 'docker' @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded 'docker' @('kill', $name) 20 | Out-Null }
         if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
         Remove-Job $job -Force
-        $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
-        if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
-        elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
-        else { 'stopped and removed' }
+        Get-SmokeState
+      } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
     $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
+    # Set only once a launch can have happened (a Start-Job failure above never started a container). From here
+    # until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
+    $containerGone = $false
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
             $done = $true   # set first: if cleanup itself throws, finally must not run it a second time
             $state = Stop-Smoke
+            $containerGone = $state -eq 'stopped and removed'
             Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
         }
         $done = $true
+        # The client job ending does not prove the daemon-side container is gone (a transport error can end the
+        # client while the container runs on), so confirm absence before the lock can be released.
+        $state = Get-SmokeState
+        $containerGone = $state -eq 'stopped and removed'
+        if (-not $containerGone) { Write-Warning "docker run returned but container $name is $state" }
     } finally {
         # Reached without $done only when the wait was interrupted (Ctrl+C or a stopped pipeline): disconnecting
         # the docker client does not stop the daemon-side container, so stop it here too.
-        if (-not $done) { Write-Warning "interrupted; container $name $(Stop-Smoke)" }
+        if (-not $done) { $state = Stop-Smoke; $containerGone = $state -eq 'stopped and removed'; Write-Warning "interrupted; container $name $state" }
     }
     $out = @(Receive-Job $job); Remove-Job $job
     $out | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host
     $exitLine = $out | Where-Object { $_ -match '^__EXIT__' } | Select-Object -Last 1
     exit $(if ($exitLine) { [int]($exitLine -replace '^__EXIT__', '') } else { 1 })
 } finally {
-    $gpuLock.ReleaseMutex(); $gpuLock.Dispose()
+    if ($containerGone -ne $false) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
+    else {
+        # Keep the lock (and its handle: disposing the last handle would delete the mutex) while a container may
+        # still hold the GPU. It is released when this PowerShell process exits.
+        Write-Warning "GPU lock kept: container $name was not confirmed stopped; it is released when this PowerShell process exits"
+    }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
