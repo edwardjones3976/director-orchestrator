@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]]
@@ -257,9 +258,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Ed disposes of D-018 (#280 merged before M0 closed) and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before both. Nothing is in flight: held-out sets A and B are accepted and the O-034 downloads are done and verified."
-  responsible_party: "owner (D-018 disposition; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan"
-  expected_evidence: "the recorded D-018 disposition and M1 plan approval; this PR's six required CI jobs green at its reviewed head"
+  action: "Ed disposes of D-018 (#280 merged before M0 closed) and D-019 (held-out sets A and B produced before pre-staging, quarantined for M1 scoring), and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before the plan is approved, and no M1 scoring on sets A or B before D-019 is disposed of. Set B also stays incomplete until its batch 1 review is authenticated. The pre-plan work has stopped; the O-034 downloads are done and verified."
+  responsible_party: "owner (D-018 and D-019 dispositions; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan"
+  expected_evidence: "the recorded D-018 and D-019 dispositions and M1 plan approval; this PR's six required CI jobs green at its reviewed head"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -268,3 +269,4 @@ next:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
