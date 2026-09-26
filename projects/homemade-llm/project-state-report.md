@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
@@ -82,8 +83,9 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
     - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`) `[verified 2026-09-26 19:32 UTC, receipt]`.
     - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence `[verified, receipts heldout/codex-20260926T190120Z, …190641Z, …191448Z]`.
   - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review (50 substantive findings) and are kept only as evidence `[verified 2026-09-26 19:36 UTC, receipt heldout/codex-20260926T193640Z.setb-review]`.
-    - A fresh Codex-authored replacement (`pr-reconstructed-v2\`) is in progress.
-    - It is not usable until independently accepted, and its xAI review needs a specific owner approval.
+    - Its replacement, `pr-reconstructed-v2\` (authored by OpenAI Codex), passed the owner-approved (O-035) Grok review with ACCEPT 25/25 on both batches `[verified 2026-09-26 20:37 UTC]`.
+    - Verdicts are saved at `C:\llm\datasets\heldout\REVIEW-SET-B-V2-GROK-BATCH1.md` and `…BATCH2.md`; batch 2's receipt is `xai/20260926T203729Z.json`.
+    - Batch 1's receipt was lost to a same-second receipt-name collision. Its output survives in the saved verdict, and a reconstruction receipt is pending.
   - The set A file counts and the 22 unchanged originals are `[verified 2026-09-26 18:16 UTC, file counts]`; each later fact carries its own grade above.
 - **Concurrency:** several Director sessions work this project. Deconfliction is in the decision log (D-011) `[verified]`. This record's authorship was reassigned by the owner (O-033) `[relayed]`.
 
@@ -139,7 +141,6 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 - Pre-gate M1 work (D-018): ratify #280, which merged before M0 closed, or have it reverted and redone under M1.
 - M1 plan: approve the M1 workstream plan and its pre-stage packets once written. No new M1 provider dispatch happens before that.
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
-- Held-out set B: approve the independent review of `pr-reconstructed-v2` once it is ready. That review sends the private PR bodies to xAI.
 - Merges: this reconciliation PR once reviewed and green; #281 has its own ready and merge decision (O-031).
 
 ### Next bounded action
@@ -150,7 +151,7 @@ M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. 
 
 **Nothing is in flight.** The pre-plan work has finished and stopped:
 - held-out set A (`set-a-json-v2`, Grok ACCEPT 19/19) and set B (`pr-reconstructed-v2`, owner-approved Grok ACCEPT 25/25 on both batches) are done;
-- the four O-034 downloads are done and hash-verified (`C:\llm\reports\m1-download-*.json`).
+- the four O-034 downloads are done and hash-verified `[verified 2026-09-26 20:52 UTC]`: receipts `C:\llm\reports\m1-download-Qwen3-8B-20260926T195311Z.json`, `…Qwen3-14B-20260926T195536Z.json`, `…phi-4-20260926T201502Z.json` and `…Mistral-Nemo-Base-2407-20260926T203319Z.json`. Afterwards C: had 274.3 GiB free and `C:\llm` was 104.07 GiB.
 
 No further work under those items runs before the plan is approved.
 
@@ -164,3 +165,4 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:05 UTC | END]] -->
