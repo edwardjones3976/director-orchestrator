@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:57 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Workstream plan — homemade-llm, phase M0 "Foundation"
@@ -11,12 +11,12 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 ## Phase frame
 
 - **Project:** `homemade-llm` — Homemade LLM
-- **Current state:** building; M0 gate report filed in PR #277; M0.9 and M0.11 in PR #276; #275 reviewed and awaiting the owner's merge
+- **Current state:** building; M0 gate report filed in PR #277; M0.9 and M0.11 in PR #276; #275 merged (f0a7752e, 23:31 UTC)
 - **Phase outcome:** storage laid out; the Unsloth container trains on the GPU; LM Studio serves a merged GGUF over `/v1`; Open WebUI reaches it over Tailscale; paid-spend metering on; gitleaks available for datasets
 - **Stopping point:** M0 gate — `project-state-report.md` with every number [verified]; target 2026-10-01
 - **Total phase budget/time:** USD 25; ~1 week; max 3 dispatches in flight
 - **Project channel/thread:** pending (no Slack surface; analysis-only)
-- **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b84`, worktree `.worktrees\homemade-llm`
+- **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b84` at PR-0, `f0a7752e` at the M0 gate, worktree `.worktrees\homemade-llm`
 - **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — analysis-only
 - **Deployment isolation:** no Slack app or channel; Open WebUI + SearXNG run under compose namespace `homemade-llm` with the ignored profile `C:\llm\secrets\open-webui.env` and state under `C:\llm` plus volume `homemade-llm_open-webui-data` (see rollout-packet.md); no orchestrator instance
 
@@ -90,7 +90,7 @@ With no Slack surface, events are recorded as PR comments and in the state repor
 | ID | State | Where |
 | --- | --- | --- |
 | HS-0, M0.1, M0.2, HS-1, M0.3, M0.4, M0.6, M0.7, M0.8, M0.10 | done | PRs #266-#273; numbers in `project-state-report.md` |
-| M0.3/M0.4 hardening (#275) | reviewed, ACCEPT at ed317a81 | owner merge |
+| M0.3/M0.4 hardening (#275) | merged at ed317a81 (f0a7752e, 23:31 UTC) | main |
 | M0.5 | containers up on 127.0.0.1:3000 and :8088; tailnet publish is an owner click | `compose/RUNBOOK.md` section 2 |
 | M0.9, M0.11 | in PR #276 (peer Director session), awaiting a non-author review | #276 |
 | M0.12 | this report | PR #277 |
@@ -99,4 +99,4 @@ Contribution tags record the author of the plan or artifact. They do not prove
 the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:57 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->

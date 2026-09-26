@@ -1,4 +1,4 @@
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
@@ -228,7 +228,7 @@ assumptions:
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
     - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
-    - "Paid spend is metered from the provider-dispatch receipts; homemade-llm M0 to date USD 0.20"
+    - "Paid spend is metered from the provider-dispatch receipts (run scripts/spend_meter.py for the live figure); homemade-llm M0 was USD 0.55 at 2026-09-26 00:01 UTC"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
@@ -248,9 +248,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Owner merges #275 and the M0 close-out PRs (this report; the peer PR with M0.9 and M0.11); then M1 held-out sets"
+  action: "Owner merges #277 (this report) when CI is green at its reviewed head; #276 after it is split into single-author candidates; then M1 held-out sets"
   responsible_party: "owner, then Director"
   expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
-# [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]]

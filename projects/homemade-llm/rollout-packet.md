@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
@@ -91,9 +91,9 @@ used as a fallback.
 
 - **Current state:** analysis_only
 - **Blocking fields:** none for the M0 gate; every Slack identity is pending by design until M3
-- **Next responsible party:** owner (merge #275, #276, #277; run `tailscale serve --bg 3000` per compose/RUNBOOK.md section 2)
+- **Next responsible party:** owner (merge #277; #276 after its authorship split; run `tailscale serve --bg 3000` per compose/RUNBOOK.md section 2)
 - **Next bounded action:** close the M0 gate, then build the M1 held-out sets
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->

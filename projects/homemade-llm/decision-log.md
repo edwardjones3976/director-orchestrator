@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Decision log — homemade-llm
@@ -51,7 +51,8 @@ something this project read or measured. Times are UTC.
 | 2026-09-25 ~23:16 | D-010 | Publishing Open WebUI with `tailscale serve --bg 3000` is an owner click: the auto-mode classifier denied it to the Director session (Expose Local Services). Tailscale is online as blackbox.taile9e808.ts.net with no cert domains yet, so HTTPS certificates may need enabling in the admin console first. | tailscale status [verified] |
 | 2026-09-25 ~23:18 | D-011 | Two Director sessions worked M0 on 09-25: this one and the Claude Desktop session "Local LLM setup Opus 5.5 Med" (worktrees hl-m0-close with the M0.9 script and M0.11 brief, opened as PR #276 at 23:22 UTC, and hl-pr275-review). Proposed split by cross-session message: the peer keeps M0.9 and M0.11; this session files M0.12 and the record updates. Exactly one verdict was posted on #275. Before any homemade-llm drive, check ListAgents, recent dispatch receipts and dirty hl-* worktrees for a peer. | ListAgents + git worktree list [verified] |
 | 2026-09-25 ~23:23 | D-012 | `unsloth/unsloth:latest` pinned at digest sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739 (image built 2026-09-20). LM Studio answers HTTP 200 at host.docker.internal:1234 from inside the running Open WebUI container. | docker [verified] |
-| 2026-09-25 ~23:19 | D-013 | The paid-spend ledger is the provider-dispatch receipts folder, read by scripts/spend_meter.py; no separate spend.jsonl exists or is needed. homemade-llm M0 paid spend: USD 0.20 of 25 (xAI review 0.1639, Perplexity brief 0.0398). | spend_meter.py [verified] |
+| 2026-09-25 ~23:19 | D-013 | The paid-spend ledger is the provider-dispatch receipts folder, read by scripts/spend_meter.py; no separate spend.jsonl exists or is needed. homemade-llm M0 paid spend at that time: USD 0.20 of 25 (xAI review 0.1639, Perplexity brief 0.0398); superseded by D-014. | spend_meter.py [verified] |
+| 2026-09-25 23:46 | D-014 | Ollama archive content-verified: all 48 blobs under E:/llm-archive/ollama-2026-09/models/blobs hash to their digest filenames (0 mismatched, 100.3 GB, 608 s; C:/llm/reports/m06-hash-verify-20260925-234625.txt). #275 merged by the owner at 23:31:37 UTC as f0a7752e. #276 has two material authors (Cursor scripts, Claude brief) and is not merge-eligible until split. M0 paid spend: USD 0.55 across seven metered calls, none uncosted, at 2026-09-26 00:01 UTC (Perplexity brief 0.0398; xAI fact-check 0.0253; xAI reviews 0.1639 for #275 and 0.097 + 0.0799 + 0.0323 + 0.1134 for #277). | hash report + gh + receipts [verified] |
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
-<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:35 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
