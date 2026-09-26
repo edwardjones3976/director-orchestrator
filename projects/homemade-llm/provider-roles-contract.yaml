@@ -331,7 +331,7 @@ supplemental_reviewers:
     unavailable_or_quota_failure: "record as waste and continue without an inferred verdict"
     finding_rule: "independently validate; a confirmed underlying defect follows normal gates, while a rejected finding is waste"
     candidate_change_rule: "invalidate the observation without an automatic rerun"
-    material_authorship_rule: "A substantive Copilot-authored fix makes Copilot a material author ineligible for independent review or acceptance of that candidate."
+    material_authorship_rule: "A substantive Copilot-authored fix makes Copilot a material author ineligible for independent review or acceptance of that candidate. Under the sole author rule (docs/contribution-attribution-policy.md#sole-author-rule), that applies when Copilot's share of the pull request is at least 52 %; a smaller fix makes Copilot a credited co-author that may review."
 
 # Requirement of this template, restated so a reader cannot infer more from it.
 this_template_does_not_change:
