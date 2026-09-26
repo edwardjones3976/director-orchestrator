@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | BEGIN]] -->
@@ -54,7 +55,7 @@
 | --- | --- |
 | Team | primary |
 | Lane class | director_control_plane |
-| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority. |
+| Summary | ChatGPT/Codex Director lane: priorities, decomposition, capability-based routing, workload and budget enforcement, evidence synthesis, review orchestration, completion reporting, and owner escalation. Coordination creates no production credit; material authorship removes review and merge independence for the exact candidate. Runtime compatibility paths remain separately tracked deployment facts. OpenAI/Director team members (ChatGPT and Codex) act as INVESTIGATOR: proactively identify and document issues while other providers work, including evidence, impact, uncertainty, and suggested solutions. Do not directly remediate an investigated issue unless separately assigned that fix, and do not take over another provider's assignment. Communicate findings through the acting Director's task thread or an existing PR/issue, when the assignment authorizes communication, and track disposition with the finding. The Director relays only sanitized summaries to Slack; detailed findings and disposition stay in the existing authorized PR/issue. If none exists, retain details locally and request an authorized destination; never post them to Slack. Investigation grants no paid dispatch, scope expansion, approval, merge, or deployment authority. Maintenance routing (owner ruling 2026-09-26, every Director): maintenance, meaning review-finding fixes, record and document inconsistencies, CI fixes, and provider connection or plumbing problems, goes to OpenAI Codex through the Codex CLI with one written packet per job, never through the ChatGPT operator chat; the Director still verifies, pushes, and replies on review threads. See the charter section Director maintenance routing. |
 | Charter workload lane | `chatgpt_codex_director_lane` |
 | Strategy key | `openai` |
 | Strategy priority | `director_control_plane_and_authorized_production` |
@@ -272,6 +273,7 @@ Separation of duties:
 - ChatGPT/Codex directs project coordination; packets, dependency outcomes, and review handoffs stay brokered and accurately attributed.
 - OpenAI production, when assigned, is a provider like any other: its candidate needs different-provider exact-candidate review and it cannot merge its own work.
 - The ChatGPT alias bridge reaches the owner only; it never delegates to or addresses another provider.
+- Codex maintenance edits make OpenAI a material author, so a PR Codex worked on needs a reviewer outside OpenAI/Codex/ChatGPT (Cursor by default, Grok when funded); the ChatGPT operator chat carries status updates and owner decisions only.
 
 | Route | Kind | Direction | Initiation | Status | Default state | Authority carried | Enforced by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -341,3 +343,4 @@ Separation of duties:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-22 | 21:08 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

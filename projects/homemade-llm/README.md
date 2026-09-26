@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
@@ -84,6 +85,11 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    (Grok CLI first, Codex fallback). The reviewer's exact-SHA `ACCEPT` is relayed
    to the PR; the owner runs the merge. Every candidate change invalidates prior
    review evidence.
+   Maintenance (review-finding fixes, record and document inconsistencies, CI
+   fixes, provider plumbing) goes to Codex through `dispatch.py codex` under the
+   charter's [Director maintenance routing](../../docs/team-operating-charter.md#director-maintenance-routing);
+   a PR Codex worked on cannot take the Codex fallback reviewer and goes to
+   Cursor, or Grok when funded.
 
 6. **Hard stops.** The Director halts and reports at every milestone gate,
    before any provider call that would exceed the milestone's USD 25 envelope,
@@ -123,3 +129,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

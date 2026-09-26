@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -106,6 +107,19 @@ and do not take over the ongoing assignment. Record disposition with the finding
 The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
 If none exists, retain details locally and request an authorized destination;
 never post them to Slack.
+
+## Director maintenance routing
+
+Every Director (the ChatGPT/Codex Director, Claude as second in command, and any
+project Director) sends maintenance, meaning review-finding fixes, record and
+document inconsistencies, CI fixes, and provider connection or plumbing
+problems, to OpenAI Codex through the Codex CLI with one written packet per job,
+never through the ChatGPT operator chat. The Director still verifies, pushes,
+and replies on the review threads. A PR Codex worked on needs a reviewer outside
+OpenAI/Codex/ChatGPT: Cursor by default, Grok when funded. This applies to all
+maintenance from 2026-09-26, including work in flight; it adds no authority and
+removes no gate. The canonical rule is the charter's
+[Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing) section.
 
 ## What I am built from
 
@@ -764,3 +778,4 @@ Gate 0 was accepted on 2026-08-16. Later phases remain individually gated and pr
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

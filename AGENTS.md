@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -184,6 +185,15 @@ merge.
   workload, budget, and safety enforcement, QA, independent-review
   orchestration, exact-SHA evidence reconciliation, and eligible merge
   execution.
+- Every Director routes maintenance (review-finding fixes, record and document
+  inconsistencies, CI fixes, provider connection or plumbing problems) to
+  OpenAI Codex through the Codex CLI, one written packet per job, never the
+  ChatGPT operator chat; it still verifies, pushes, and replies on review
+  threads. A PR Codex worked on needs a reviewer outside OpenAI/Codex/ChatGPT
+  (Cursor by default, Grok when funded). This applies to all maintenance from
+  2026-09-26, including work in flight, and changes neither rule 3 nor rule 4.
+  Canonical text: the charter's
+  [Director maintenance routing](docs/team-operating-charter.md#director-maintenance-routing).
 - Reviewing or merging a candidate never makes the Director one of its authors.
   The Director still may not independently accept or merge code it actually
   materially authored.
@@ -248,3 +258,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

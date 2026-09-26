@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -50,6 +51,19 @@ The Director relays sanitized summaries only to Slack; detailed findings and dis
 If none exists, retain details locally and request an authorized destination;
 never post them to Slack.
 
+## Director maintenance routing
+
+Every Director (the ChatGPT/Codex Director, Claude as second in command, and any
+project Director) sends maintenance, meaning review-finding fixes, record and
+document inconsistencies, CI fixes, and provider connection or plumbing
+problems, to OpenAI Codex through the Codex CLI with one written packet per job,
+never through the ChatGPT operator chat. The Director still verifies, pushes,
+and replies on the review threads. A PR Codex worked on needs a reviewer outside
+OpenAI/Codex/ChatGPT: Cursor by default, Grok when funded. This applies to all
+maintenance from 2026-09-26, including work in flight; it adds no authority and
+removes no gate. The canonical rule is the charter's
+[Director maintenance routing](team-operating-charter.md#director-maintenance-routing) section.
+
 ## Runtime coordination status and responsibilities
 
 | Responsibility | Current owner |
@@ -57,11 +71,12 @@ never post them to Slack.
 | Project priorities, scope, sequence, and design decisions | ChatGPT/Codex Director lane |
 | Work decomposition, allocation, bounded dispatch, and overlap prevention | ChatGPT/Codex Director lane |
 | Review orchestration, evidence reconciliation, and delivery reporting | ChatGPT/Codex Director lane |
-| Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority |
+| Bounded implementation, debugging, testing, and verification | Any capable assigned non-exempt lane under bounded authority; maintenance goes to OpenAI Codex (see Director maintenance routing) |
 | Independent review | An eligible provider that did not materially author the candidate |
 | Owner-reserved decisions | The owner, under the existing deterministic gates |
 
-The Director delegates substantial implementation work. OpenAI/Codex may also
+The Director delegates substantial implementation work and routes maintenance
+to OpenAI Codex as described above. OpenAI/Codex may also
 act within a separately assigned engineering scope, but coordination duties do
 not imply material authorship or independent acceptance authority.
 Other providers keep their identities and verified capabilities. Non-exempt
@@ -138,3 +153,4 @@ That status is observational only and does not create standing role authority.
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->

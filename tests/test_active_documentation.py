@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | BEGIN]]
 import importlib.util
@@ -61,8 +62,32 @@ class ActiveDocumentationTests(unittest.TestCase):
             self.assertEqual(6, len(errors))
             self.assertFalse(any("docs/archive/old.md" in error for error in errors))
 
+    def test_director_maintenance_routing_is_canonical_and_referenced(self):
+        charter = (ROOT / "docs/team-operating-charter.md").read_text(encoding="utf-8")
+        section = " ".join(charter.split("## Director maintenance routing", 1)[1].split("\n## ", 1)[0].split())
+        for clause in (
+            "Maintenance goes to OpenAI Codex.",
+            "Never route it through the ChatGPT operator chat",
+            "Cursor by default, Grok when funded",
+            "It applies to every Director:",
+            "all maintenance from 2026-09-26 onward, including work already in flight",
+            "It adds no authority and removes no gate.",
+            "Change this to all work and immediately",
+        ):
+            self.assertIn(clause, section)
+        self.assertNotIn("new work only", section.lower().replace('"new work only"', ""))
+        for relative in (
+            "AGENTS.md", "CLAUDE.md", "README.md", "docs/project-leadership.md",
+            "docs/director-user-guide.md", "docs/project-bootstrap-protocol.md",
+            "projects/homemade-llm/README.md",
+        ):
+            with self.subTest(surface=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("team-operating-charter.md#director-maintenance-routing", text)
+
 
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:08 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-12 | 09:13 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:37 UTC | END]]

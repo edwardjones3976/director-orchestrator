@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -685,7 +686,9 @@ merge execution; those control-plane activities create no code authorship.
 The Director delegates the substantial majority of coding to capable specialist
 providers. Its own responsibilities are decomposition, routing, workload,
 budget, and safety enforcement, QA, independent-review orchestration, exact-SHA
-evidence reconciliation, and eligible merge execution. Reviewing or merging a
+evidence reconciliation, and eligible merge execution. Maintenance is routed
+to OpenAI Codex under [Director maintenance routing](#director-maintenance-routing);
+other authoring is routed by capability. Reviewing or merging a
 candidate never converts the Director into one of its authors, and the Director
 still may not independently accept or merge code it actually materially
 authored.
@@ -698,6 +701,41 @@ work.
 This boundary is an attribution rule. It removes no deterministic gate and
 changes no owner authority: exact-SHA review, independent acceptance, security,
 CI, budget, allowlist, approval, and merge gates all apply unchanged.
+
+## Director maintenance routing
+
+Owner ruling, 2026-09-26. The owner's request, verbatim: "add this role to the
+Director in the Director-Orchestrator project; including in all md files and
+docs relevant." Scope answer, verbatim: "Every Director". Timing answer,
+verbatim: "New work only", later changed by the owner, verbatim: "Change this
+to all work and immediately".
+
+This section is the canonical statement of the rule; other documents point here.
+It refines the delegation duty in the authorship boundary above: maintenance
+goes to Codex, and other authoring is still routed by capability as before.
+
+- **Maintenance goes to OpenAI Codex.** Maintenance means fixing review
+  findings, record and document inconsistencies, CI fixes, and provider
+  connection or plumbing problems.
+- **Route it through the Codex CLI** (`codex exec`, or the provider-dispatch
+  `codex` route) with a written packet, one job per packet. Never route it
+  through the ChatGPT operator chat; that chat is for status updates and owner
+  decisions only.
+- **The Director still verifies and pushes.** It runs the contribution-tag
+  checker, the tests, and any YAML/JSON parse checks, pushes the result, and
+  replies on the review threads.
+- **Authorship limits still apply.** Codex's edits count as a co-author's share
+  of the PR, so a PR Codex worked on needs a reviewer outside the
+  OpenAI/Codex/ChatGPT family: Cursor by default, Grok when funded. OpenAI,
+  ChatGPT, and Codex are one identity for independence purposes. Claude may
+  review only PRs it did not author. The one-author,
+  one-non-author-reviewer-who-merges protocol is unchanged.
+- **It applies to every Director:** the ChatGPT/Codex Director, Claude when
+  acting as second in command, and any project Director such as
+  `homemade-llm`'s. It applies to all maintenance from 2026-09-26 onward,
+  including work already in flight.
+- **It adds no authority and removes no gate.** No self-merge (AGENTS.md rule 3),
+  and the deterministic policy gates are unchanged (rule 4).
 
 ## Contribution attribution
 
@@ -972,3 +1010,4 @@ establish participation, completion, readiness, or authorization.
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
