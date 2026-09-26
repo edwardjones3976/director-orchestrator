@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
@@ -941,20 +942,27 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         counts = self.report()["counts"]
         self.assertEqual((counts["slack_deliveries_in_flight"], counts["slack_deliveries_invalid"],
                           counts["projection_digest_mismatches"]), (0, 0, 0))
+        # Producer-shaped rows (PrimarySlackDelivery.enqueue): the identity is uuid5 over schema, task and key, and
+        # the projection digest is the task projection's (review 4110399590).
+        def identity(key):
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.schema}:{task_id}:{key}"))
+
+        current = (f"(SELECT projection_digest FROM {self.schema}.director_primary_task_projection"
+                   " WHERE task_id = %s)")
         with self.handle.pool.connection() as connection:
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
-                " projection_digest, payload, client_msg_id, state) VALUES (%s, 'terminal', %s, '{}'::jsonb,"
-                " 'fixture-terminal-client', 'PENDING')", (task_id, "sha256:" + "4" * 64))
+                f" projection_digest, payload, client_msg_id, state) VALUES (%s, 'terminal', {current}, '{{}}'::jsonb,"
+                " %s, 'PENDING')", (task_id, task_id, identity("terminal")))
         self.assertEqual(self.report()["counts"]["slack_deliveries_in_flight"], 1)
         with self.handle.pool.connection() as connection:
             # A second delivery no readback will ever settle again (two readbacks spent); the ledger refuses rewinding
             # a row, so it is its own row.
             connection.execute(
                 f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
-                " projection_digest, payload, client_msg_id, state, readback_attempts, claimed_at)"
-                " VALUES (%s, %s, %s, '{}'::jsonb, 'fixture-hold-client', 'AMBIGUOUS', 2, now())",
-                (task_id, "hold:sha256:" + "6" * 64, "sha256:" + "4" * 64))
+                f" projection_digest, payload, client_msg_id, state, readback_attempts, claimed_at)"
+                f" VALUES (%s, %s, {current}, '{{}}'::jsonb, %s, 'AMBIGUOUS', 2, now())",
+                (task_id, "hold:sha256:" + "6" * 64, task_id, identity("hold:sha256:" + "6" * 64)))
         counts = self.report()["counts"]
         self.assertEqual((counts["slack_deliveries_in_flight"], counts["slack_deliveries_invalid"]), (0, 1))
         with self.handle.pool.connection() as connection:
@@ -962,6 +970,16 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                 f"UPDATE {self.schema}.director_primary_task_projection SET projection_version = projection_version + 1,"
                 " projection = jsonb_set(projection, '{run_status}', '\"TAMPERED\"') WHERE task_id = %s", (task_id,))
         self.assertEqual(self.report()["counts"]["projection_digest_mismatches"], 1)
+        # The tampered projection's content changed, not its stored digest: the terminal row still names it. A
+        # terminal row naming a projection other than the task's is a conflict (4110399590).
+        other = self.intake_another()
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_slack_delivery(task_id, notification_key,"
+                " projection_digest, payload, client_msg_id, state) VALUES (%s, 'terminal', %s, '{}'::jsonb, %s,"
+                " 'PENDING')", (other, "sha256:" + "4" * 64,
+                                str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.schema}:{other}:terminal"))))
+        self.assertEqual(self.report()["counts"]["slack_deliveries_invalid"], 2)
 
     def test_budget_rows_are_verified_against_the_owner_signed_contract(self):
         import hmac
@@ -1111,3 +1129,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
@@ -43,6 +44,7 @@ from decimal import Decimal
 import json
 import os
 import re
+import uuid
 import time
 from types import SimpleNamespace
 
@@ -308,6 +310,32 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
         ordinals.setdefault(assignment_id, set()).add(ordinal)
     if any(values != set(range(1, len(values) + 1)) for values in ordinals.values()):
         return None, "an assignment's attempt ordinals do not run 1..n"
+    # Each later ordinal was admitted the way primary_parallel admits it: against the previous attempt's latest event
+    # when the new attempt started, which must be a FAILED transient transport failure that authorize_provider_retry
+    # (the producer's own rule) accepts for the new transport. _execute_three_attempt_roster stops on authenticated
+    # success, so any attempt after a SUCCEEDED one is a conflict.
+    from .primary_parallel import (PROVIDER_TRANSIENT_TRANSPORT_FAILURE, FailureKind, ParallelDispatchError,
+                                   authorize_provider_retry)
+    for (assignment_id, ordinal), events in grouped.items():
+        if ordinal == 1:
+            continue
+        started = min(_when(event["recorded_at"]) for event in events)
+        before = [event for event in grouped[(assignment_id, ordinal - 1)] if _when(event["recorded_at"]) <= started]
+        if not before:
+            return None, "a later attempt started before its predecessor"
+        held = max(before, key=lambda event: event["event_sequence"])
+        if any(event["status"] == "SUCCEEDED" for event in grouped[(assignment_id, ordinal - 1)]):
+            return None, "an attempt follows a SUCCEEDED attempt"
+        failure = (FailureKind.TRANSIENT if held["status"] == "FAILED"
+                   and held["reason_code"] == PROVIDER_TRANSIENT_TRANSPORT_FAILURE else FailureKind.TERMINAL)
+        try:
+            authorized, _ = authorize_provider_retry(attempt_number=ordinal, previous_failure=failure,
+                                                     transport_id=events[0]["transport_id"],
+                                                     previous_transport_id=held["transport_id"])
+        except ParallelDispatchError:
+            authorized = False
+        if not authorized:
+            return None, "a later attempt was not authorized as a retry of its predecessor"
     return latest, None
 
 
@@ -329,13 +357,17 @@ def validate_effects(effects):
         keys.add(row["reservation_key"])
         if (row.get("remote_identifier") is None) != (row.get("remote_system") is None):
             return "remote binding lacks its system or identifier"
+        # The effect executor (primary_effects) claims execution before any I/O and binds the remote object after it.
+        if row.get("remote_identifier") is not None and not row.get("execution_started_at"):
+            return "a remote binding without an execution claim"
         if row.get("remote_identifier") is not None and (not _is_id(row["remote_system"])
                                                           or not isinstance(row["remote_identifier"], str)
                                                           or not row["remote_identifier"].strip()
                                                           or _when(row.get("bound_at")) is None):
             return "malformed remote binding"
         if row.get("terminal_disposition") is not None and (
-                not _is_id(row["terminal_disposition"]) or not _DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
+                row["terminal_disposition"] not in ("COMPLETED", "FAILED")  # langgraph_postgres.FINAL_DISPOSITIONS
+                or not _DIGEST.fullmatch(str(row.get("terminal_evidence_digest", "")))
                 or _when(row.get("terminal_recorded_at")) is None):
             return "terminal evidence lacks its digest or time"
         for field in ("execution_started_at", "bound_at", "terminal_recorded_at"):
@@ -365,7 +397,7 @@ def notification_key_family(value):
     return None
 
 
-def validate_deliveries_and_receipts(deliveries, receipts):
+def validate_deliveries_and_receipts(deliveries, receipts, *, schema=None, task_id=None):
     if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
         return "duplicate Slack delivery identity"
     if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
@@ -377,8 +409,26 @@ def validate_deliveries_and_receipts(deliveries, receipts):
             return "malformed Slack delivery row"
         if row.get("owner_decision") not in (None, "approve", "reject"):
             return "malformed Slack delivery row"
+        # PrimarySlackDelivery.record_owner_decision writes decision, time and command together, on an approval row
+        # in whatever state it is (its UPDATE filters no state).
+        decision = [row.get(key) is None for key in ("owner_decision", "owner_decision_at", "owner_command_id")]
+        if any(decision) and not all(decision):
+            return "an owner decision lacks its time or command"
+        if row.get("owner_command_id") is not None and not _is_id(row["owner_command_id"]):
+            return "malformed owner command identity"
         if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
             return "owner decision recorded on a non-approval notification"
+        # PrimarySlackDelivery.enqueue stores the task projection's digest the notification was built from; an
+        # approval key names that same digest after its request digest.
+        if not _DIGEST.fullmatch(str(row.get("projection_digest", ""))):
+            return "malformed delivery projection digest"
+        if (notification_key_family(row["notification_key"]) == "approval"
+                and ":".join(row["notification_key"].split(":")[3:]) != row["projection_digest"]):
+            return "an approval delivery's key names another projection"
+        # Its identity is uuid5(URL, "<schema>:<task>:<key>") (enqueue); checked where the schema is known.
+        if schema is not None and row.get("client_msg_id") != str(uuid.uuid5(
+                uuid.NAMESPACE_URL, f"{schema}:{task_id}:{row['notification_key']}")):
+            return "a delivery's client_msg_id is not its producer identity"
         for field in ("claimed_at", "acknowledged_at", "delivered_at", "owner_decision_at"):
             if row.get(field) is not None and _when(row[field]) is None:
                 return "malformed Slack delivery timestamp"
@@ -430,7 +480,7 @@ def validate_usage(usage_rows, latest, *, absent=False):
     return None, state
 
 
-def delivery_state(deliveries):
+def delivery_state(deliveries, projection_digest=None):
     """Each Slack delivery's state, as PrimarySlackDelivery moves it. Returns None or (kind, reason), a conflict
     outranking in flight.
     DELIVERED (its lifecycle checked by lifecycle_error), REFUSED (Slack definitely did not post; never reposted),
@@ -440,6 +490,11 @@ def delivery_state(deliveries):
     found = None
     for row in deliveries:
         state, reads = row.get("state"), row.get("readback_attempts")
+        # The terminal notification is enqueued from the terminal projection: one naming another projection than
+        # the task record's current one is stale, and no readback ever makes it the record's.
+        if (row.get("notification_key") == "terminal" and projection_digest is not None
+                and row.get("projection_digest") != projection_digest):
+            return ("conflict", "the terminal delivery names another projection than the task record's")
         if state in ("DELIVERED", "REFUSED", "SUPPRESSED", "SUPERSEDED"):
             continue
         if state in ("PENDING", "POSTING") or (state in ("ACKNOWLEDGED", "AMBIGUOUS") and _is_count(reads) and reads < 2):
@@ -599,6 +654,8 @@ def reconciliation_error(sections):
         reserved, terminal = _when(effect.get("reserved_at")), _when(effect.get("terminal_recorded_at"))
         if reserved is None or recorded < reserved:
             return "a reconciliation event precedes its effect's reservation"
+        if not _DIGEST.fullmatch(str(event.get("evidence_digest", ""))) or event.get("state") not in ("AMBIGUOUS", "RECONCILIATION_REQUIRED"):
+            return "a reconciliation event is malformed"  # RECONCILIATION_STATES
         if terminal is not None and terminal < recorded:
             return "a reconciliation event was recorded after its claim's terminal evidence"
     return None
@@ -716,12 +773,15 @@ def task_evidence_errors(sections):
               "usage": attempts or usage,
               "effects": validate_effects(sections.get("effects") or []) or reconciliation_error(sections),
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
-                                                             sections.get("status_receipts") or []),
+                                                             sections.get("status_receipts") or [],
+                                                             schema=sections.get("schema"),
+                                                             task_id=sections.get("task_id")),
               "lifecycle": lifecycle_error(sections),
               "settlement": attempts or settlement_error(sections, latest),
               "work_packets": work_packet_error(sections)}
     states = {"usage": None if attempts else usage_state,
-              "deliveries": delivery_state(sections.get("slack_deliveries") or [])}
+              "deliveries": delivery_state(sections.get("slack_deliveries") or [],
+                                           sections.get("projection_digest"))}
     return latest, errors, states
 
 
@@ -907,6 +967,7 @@ def _global_task_evidence(connection, schema, usage_tables):
             if name == "execution_mode":
                 task(row["task_id"])["execution_mode"] = row["execution_mode"]
                 task(row["task_id"])["task_created_at"] = _plain(row["created_at"])
+                task(row["task_id"])["projection_digest"] = row["projection_digest"]
                 projections.append(row)
             else:
                 task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
@@ -925,7 +986,7 @@ def _global_task_evidence(connection, schema, usage_tables):
             canonical = None
         counts["projection_digest_mismatches"] += canonical != row["projection_digest"]
     for task_id, sections in tasks.items():
-        _, errors, states = task_evidence_errors({**sections, "task_id": task_id})
+        _, errors, states = task_evidence_errors({**sections, "task_id": task_id, "schema": schema})
         for category, key in EVIDENCE_COUNT_KEYS.items():
             state = states.get(category)
             counts[key] += errors[category] is not None or (state is not None and state[0] == "conflict")
@@ -1249,3 +1310,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]

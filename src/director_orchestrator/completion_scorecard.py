@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -1576,6 +1577,8 @@ def _final_correlated(snapshot: dict[str, Any] | None) -> bool:
             and isinstance(receipts, list) and len(finals) == 1 and len(terminal) == 1
             and _same(terminal[0].get("client_msg_id"), finals[0].get("client_msg_id"))
             and _same(terminal[0].get("slack_ts"), finals[0].get("ts"))
+            # 4110399590: the terminal delivery was enqueued from the projection of the task record being graded.
+            and _same(terminal[0].get("projection_digest"), readback.get("projection_digest"))
             and sorted(map(identity, receipts)) == sorted(map(identity, readback.get("slack_deliveries") or [])))
 
 
@@ -2027,7 +2030,10 @@ def _ambiguous_effects(row: dict[str, Any], readback: dict[str, Any] | None, lat
     # The shared lifecycle rule (the collector and the in-image consistency command apply it too): an impossible
     # order settles nothing.
     settled = (lifecycle_error(readback) is None and all(event.get("status") in ("SUCCEEDED", "FAILED") for event in attempts)
-               and all(effect.get("terminal_disposition") or not effect.get("execution_started_at")
+               # A bound remote object is external I/O: without terminal evidence it is unsettled, execution claim
+               # or not (4110399589).
+               and all(effect.get("terminal_disposition")
+                       or not (effect.get("execution_started_at") or effect.get("remote_identifier"))
                        for effect in readback.get("effects") or []))
     return 0 if settled else None
 
@@ -3477,3 +3483,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]

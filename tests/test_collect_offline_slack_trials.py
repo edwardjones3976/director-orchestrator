@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
@@ -788,8 +789,10 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual("EXTERNAL_EFFECT_MIXED_RESERVED_AND_TERMINAL:COMPLETED", evidence["external_effect_state"])
         # retry (second ordinal, same provider) is not reported as a fallback
         readback = readback_fixture()
-        # Attempt 1 failed; attempt 2 ran after it and succeeded, then the assignment settled (the product's order).
-        readback["provider_attempts"][1].update(status="FAILED", result_digest=None, reason_code="attempt_failed")
+        # Attempt 1 failed transiently (the only failure primary_parallel authorizes a retry after, 4110399582);
+        # attempt 2 ran after it and succeeded, then the assignment settled (the product's order).
+        readback["provider_attempts"][1].update(status="FAILED", result_digest=None,
+                                                reason_code="provider_transient_transport_failure")
         second = [{**e, "attempt_ordinal": 2, "attempt_digest": "sha256:" + "a" * 64,
                    "idempotency_key_digest": "sha256:" + "c" * 64,
                    "recorded_at": "2026-09-12T10:00:2%d+00:00" % (6 + index)}
@@ -894,6 +897,8 @@ class SummaryTests(unittest.TestCase):
                 self.assertIsNone(collector_module.notification_key_family(bad))
         readback = readback_fixture()
         readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": approval_key,
+                                             # enqueue stores the projection digest its approval key names
+                                             "projection_digest": projection_digest,
                                              "client_msg_id": "approval-message", "owner_decision": "approve",
                                              "owner_decision_at": "2026-09-12T10:00:22+00:00",
                                              "owner_command_id": "command-1"})
@@ -1659,3 +1664,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]

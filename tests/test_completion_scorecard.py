@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
@@ -2197,7 +2198,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         # the assignment settled (the shared lifecycle and settlement rules refuse any other order).
         first = json.loads(json.dumps(readback["provider_attempts"]))
         last = max(datetime.fromisoformat(event["recorded_at"]) for event in first)
-        readback["provider_attempts"][-1].update(status="FAILED", result_digest=None, reason_code="attempt_failed")
+        # A transient transport failure: the only failure primary_parallel authorizes a retry after (4110399582).
+        readback["provider_attempts"][-1].update(status="FAILED", result_digest=None,
+                                                 reason_code="provider_transient_transport_failure")
         for index, event in enumerate(first, 1):
             event.update(attempt_ordinal=2, attempt_digest="sha256:" + "3" * 64,
                          recorded_at=(last + timedelta(seconds=index)).isoformat())
@@ -2295,9 +2298,15 @@ class ScorecardCollectorTests(unittest.TestCase):
         edited_prompt.threads[ts(30000)][2]["edited"] = {"user": BOT, "ts": ts(30020)}
         self.assertEqual(edited_prompt.state("08"), "UNKNOWN")
         unscoped = self.world()
-        unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
-        # Review 4100880210: the control plane's receipt then belongs to no approved delivery, which fails.
+        # record_owner_decision writes decision, time and command together (4110399587): with none of them the
+        # control plane's receipt belongs to no approved delivery, which fails (review 4100880210) ...
+        unscoped.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1].update(
+            owner_decision=None, owner_decision_at=None, owner_command_id=None)
         self.assertEqual(unscoped.state("08"), "FAIL")
+        # ... and a decision missing only its command is not the producer's row: the readback is refused.
+        partial = self.world()
+        partial.tasks[APPROVAL_TASK]["qualification_evidence"]["slack_deliveries"][-1]["owner_command_id"] = None
+        self.assertEqual(partial.state("08"), "UNKNOWN")
         # The decision must match a control-plane approval_resume receipt, re-read, not only the delivery row.
         unreceipted = self.world()
         unreceipted.consistency["tasks"][APPROVAL_TASK]["approval_receipts"] = []
@@ -3497,6 +3506,84 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(recorded=recorded):
                 self.assertEqual("effects" in errors(readback), broken)
 
+    def test_retries_decisions_bindings_and_projection_digests_keep_their_producers_rules(self):
+        """4110399582: a later ordinal only after a retry-authorizing failure, never after SUCCEEDED. 4110399587:
+        decision, time and command all or none. 4110399589: a remote binding only after an execution claim, and a
+        bound effect without terminal evidence is unsettled. 4110399590: projection digests well formed, the approval
+        key's and the terminal row's joined; the producer identity where the schema is known."""
+        import copy
+        import uuid
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+
+        def result(readback):
+            _, errors, states = task_evidence_errors(tf.recount(readback) or readback)
+            return {key: value for key, value in errors.items() if value}, states
+
+        base = tf.readback_fixture()
+
+        def retried(status="FAILED", reason="provider_transient_transport_failure", start="2026-09-12T10:00:26+00:00"):
+            readback = copy.deepcopy(base)
+            readback["provider_attempts"][1].update(status=status, reason_code=reason,
+                                                    result_digest=None if status != "SUCCEEDED" else
+                                                    readback["provider_attempts"][1]["result_digest"])
+            second = [{**event, "attempt_ordinal": 2, "attempt_digest": "sha256:" + "a" * 64,
+                       "idempotency_key_digest": "sha256:" + "c" * 64,
+                       "recorded_at": start if index == 0 else "2026-09-12T10:00:27+00:00"}
+                      for index, event in enumerate(base["provider_attempts"])]
+            readback["provider_attempts"].extend(second)
+            readback["assignments"][0]["completed_at"] = "2026-09-12T10:00:28+00:00"
+            readback["provider_usage"].append({**readback["provider_usage"][0], "attempt_digest": "sha256:" + "a" * 64})
+            return result(readback)[0]
+
+        self.assertEqual(retried(), {})
+        for label, case in (("after SUCCEEDED", {"status": "SUCCEEDED", "reason": "attempt_succeeded"}),
+                            ("after a terminal failure", {"reason": "attempt_failed"}),
+                            ("after AMBIGUOUS", {"status": "AMBIGUOUS", "reason": "callback_timeout"}),
+                            ("before its predecessor settled", {"start": "2026-09-12T10:00:08+00:00"})):
+            with self.subTest(label):
+                self.assertIn("attempts", retried(**case))
+        delivered = base["slack_deliveries"][0]
+        projection = base["projection_digest"]
+        approval = {**delivered, "notification_key": "approval:sha256:" + "8" * 64 + ":" + projection,
+                    "projection_digest": projection, "client_msg_id": "approval-message", "owner_decision": "approve",
+                    "owner_decision_at": "2026-09-12T10:00:40+00:00", "owner_command_id": "command-1"}
+
+        def delivery(row, **sections):
+            readback = copy.deepcopy(base)
+            readback["slack_deliveries"].append(row)
+            readback.update(sections)
+            return result(readback)
+
+        self.assertEqual(delivery(approval)[0], {})
+        for field in ("owner_decision", "owner_decision_at", "owner_command_id"):
+            with self.subTest(missing=field):
+                self.assertIn("deliveries", delivery({**approval, field: None})[0])
+        self.assertIn("deliveries", delivery({**approval, "projection_digest": "not-a-digest"})[0])
+        self.assertIn("deliveries", delivery({**approval, "projection_digest": "sha256:" + "0" * 64})[0])
+        stale = copy.deepcopy(base)
+        stale["slack_deliveries"][0]["projection_digest"] = "sha256:" + "0" * 64
+        self.assertEqual(result(stale)[1]["deliveries"][0], "conflict")
+        # Where the schema is known (the global path), the identity is enqueue's uuid5.
+        schema = "director_primary_v1"
+        produced = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{schema}:{base['task_id']}:{approval['notification_key']}"))
+        # The fixture's terminal row carries the producer identity for this schema.
+        self.assertEqual(delivered["client_msg_id"],
+                         str(uuid.uuid5(uuid.NAMESPACE_URL, f"{schema}:{base['task_id']}:terminal")))
+        self.assertEqual(delivery({**approval, "client_msg_id": produced}, schema=schema)[0], {})
+        self.assertIn("deliveries", delivery(approval, schema=schema)[0])
+        unexecuted = copy.deepcopy(base)
+        unexecuted["effects"][0]["execution_started_at"] = None
+        self.assertIn("effects", result(unexecuted)[0])
+        bound = {"effects": [{**base["effects"][0], "execution_started_at": None, "terminal_disposition": None}]}
+        row_of = {"qualification_evidence": {"effect_state": "PROVIDER_EFFECT_RECORDED"}}
+        self.assertIsNone(sc._ambiguous_effects(row_of, {**base, **bound}, {"a": {"status": "SUCCEEDED"}}))
+        # The graded terminal delivery must name the record's projection (checks 09, 10 and 20 via _final_correlated).
+        world = self.world()
+        terminal_row = next(r for r in world.tasks["DIR-LG-A0"]["qualification_evidence"]["slack_deliveries"]
+                            if r.get("notification_key") == "terminal")
+        terminal_row["projection_digest"] = "sha256:" + "0" * 64
+        self.assertNotEqual(world.state("09"), "PASS")
+
     def test_work_packets_join_dispatch_and_results(self):
         """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
         attempt, under the result packet's authority snapshot; the same rule check 20 and the global count apply."""
@@ -4206,3 +4293,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]

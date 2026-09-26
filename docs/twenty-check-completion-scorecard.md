@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]] -->
@@ -975,6 +976,27 @@ its effect's reservation) is an effects conflict, and the global
 `unresolved_reconciliation` counts a claim whose terminal row predates any of
 its events.
 
+Retries, decisions, bindings and projection digests. A later attempt ordinal
+is valid only as `primary_parallel` admits it: the previous attempt's latest
+event when the new one started is a FAILED
+`provider_transient_transport_failure` that `authorize_provider_retry`
+accepts for the new transport; any attempt after a SUCCEEDED one is a
+conflict (`_execute_three_attempt_roster` stops on authenticated success).
+An owner decision, its time and its command are written together
+(`record_owner_decision`, on an approval row in any state), so all or none.
+A remote binding needs the execution claim before it (the effect executor,
+`primary_effects`, claims execution before any I/O and binds afterwards;
+only the uncalled `DefaultPrimaryApplication.bind_external_effect_remote`
+could bind without one), and `_ambiguous_effects` treats a bound effect
+without terminal evidence as unsettled. Every delivery's `projection_digest`
+is a sha256 digest; an approval key names its row's projection digest; the
+terminal delivery must name the task record's current projection (a stale
+one is a conflict, and `_final_correlated` requires it for 06, 09, 10 and
+20); and on the global path, where the schema is known, `client_msg_id` must
+be enqueue's `uuid5(URL, "<schema>:<task>:<key>")`. Effect terminal
+dispositions are COMPLETED or FAILED, and reconciliation events carry a
+digest and a `RECONCILIATION_STATES` state.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1170,3 +1192,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]] -->
