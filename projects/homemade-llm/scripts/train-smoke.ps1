@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
@@ -61,6 +62,18 @@ if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is r
 # Everything below holds the GPU lock; finally releases it on every exit (error, Ctrl+C, exit), which matters
 # when this script runs inside a longer-lived PowerShell session rather than its own process.
 try {
+    # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
+    # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
+    # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
+    $poison = $GpuMarker
+    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned: a previous job, container or command was not confirmed stopped ($((Get-Content -LiteralPath $poison -Raw).Trim())). Verify the recorded item is gone (containers: docker ps -a; LM Studio: lms ps and Get-Process lms; others: Get-Process by the recorded pid), then delete $poison" }
+    # Durable guard for the whole GPU job, written before any bounded or GPU-relevant command can launch. If this
+    # process dies at any point (a crash, a forced kill, or an unhandled throw that abandons the mutex), the marker
+    # survives and blocks later runs. It is cleared only when every command (and container) was confirmed stopped.
+    # If it cannot be written, nothing is launched.
+    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+    Set-Content -LiteralPath $GpuMarker -Value "train-smoke (pid $PID) GPU job in progress since $((Get-Date).ToUniversalTime().ToString('o'))"
+    $markerWritten = $true
 
     # Bounded, because the GPU lock is already held: a stalled docker or lms probe inside preflight must not keep it.
     $pf = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
@@ -110,10 +123,14 @@ try {
         Get-SmokeState
       } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
-    $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
-    # Set only once a launch can have happened (a Start-Job failure above never started a container). From here
-    # until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
+    # The job guard already exists; name the container in it before the launch attempt (best effort: the guard stays
+    # either way). It is removed only once the daemon confirms the container is gone.
+    try { Set-Content -LiteralPath $GpuMarker -Value "container $name launch in flight since $((Get-Date).ToUniversalTime().ToString('o'))" } catch { }
+    # Unsafe from before the launch attempt: a cancel can land after Start-Job created its process but before it
+    # returns, and a Start-Job that throws may still have left a worker that launches Docker later. A single daemon
+    # check cannot rule that out, so any Start-Job failure keeps the guard (fail closed) for the operator to check.
     $containerGone = $false
+    $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
@@ -138,13 +155,27 @@ try {
     $exitLine = $out | Where-Object { $_ -match '^__EXIT__' } | Select-Object -Last 1
     exit $(if ($exitLine) { [int]($exitLine -replace '^__EXIT__', '') } else { 1 })
 } finally {
-    if ($containerGone -ne $false) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
-    else {
-        # Keep the lock (and its handle: disposing the last handle would delete the mutex) while a container may
-        # still hold the GPU. It is released when this PowerShell process exits.
-        Write-Warning "GPU lock kept: container $name was not confirmed stopped; it is released when this PowerShell process exits"
+    if ($markerWritten) {
+        if ($containerGone -eq $false) {
+            # A container may still hold the GPU: the in-flight marker stays, re-labelled; both GPU scripts refuse on it,
+            # instead of relying on the (re-entrant) mutex.
+            try { Set-Content -LiteralPath $GpuMarker -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))" } catch { }
+            if (Test-Path -LiteralPath $GpuMarker) { Write-Warning "GPU poisoned: container $name was not confirmed stopped; see $GpuMarker" }
+            else {
+                # The marker is somehow gone: the mutex is the only guard left, so keep it (and its handle) until exit.
+                $keepLock = $true
+                Write-Warning "GPU NOT released: container $name unconfirmed and $GpuMarker is missing; the lock is held until this PowerShell process exits"
+            }
+        } elseif (-not $BoundedUnconfirmed) {
+            # No container was left unconfirmed (the daemon confirmed it gone, or none was launched) and no bounded
+            # command was left unconfirmed (Invoke-Bounded appends to the same marker): clear the job guard.
+            try { Remove-Item -LiteralPath $GpuMarker -Force } catch { Write-Warning "container $name is gone but $GpuMarker could not be removed; later GPU runs refuse until it is deleted" }
+        }
     }
+    if ($BoundedGuardMissing) { $keepLock = $true; Write-Warning "GPU NOT released: a bounded command could not be confirmed stopped and $GpuMarker could not be written; the lock is held until this PowerShell process exits" }
+    if (-not $keepLock) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
