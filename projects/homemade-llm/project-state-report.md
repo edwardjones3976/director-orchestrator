@@ -49,7 +49,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 - The M0 lower bound is well inside the USD 25 envelope. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), gives an **M0 charged total of USD 2.31480556**. That is still a lower bound (D-017).
 - Codex, Cursor and Claude subscription usage carries no per-call USD cost and is not in this ledger.
 
-### After the gate (not M0 spend)
+### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
 - **M1 before the gate:** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
@@ -71,12 +71,12 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 - **Held-out sets (local only, never committed):**
   - Set A: 22 real-history packets at `C:\llm\datasets\heldout\set-a`, unchanged.
     - The owner chose the 19 concise items for M1 (`set-a\M1-SELECTION.md`), excluding EW-20260912-0014, 0015 and 0016 for size.
-    - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`).
-    - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence.
-  - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review on 2026-09-26 (50 substantive findings) and are kept only as evidence.
+    - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`) `[verified 2026-09-26 19:32 UTC, receipt]`.
+    - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence `[verified, receipts heldout/codex-20260926T190120Z, …190641Z, …191448Z]`.
+  - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review (50 substantive findings) and are kept only as evidence `[verified 2026-09-26 19:36 UTC, receipt heldout/codex-20260926T193640Z.setb-review]`.
     - A fresh Codex-authored replacement (`pr-reconstructed-v2\`) is in progress.
     - It is not usable until independently accepted, and its xAI review needs a specific owner approval.
-  - `[verified 2026-09-26 18:16 UTC, file counts]`
+  - The set A file counts and the 22 unchanged originals are `[verified 2026-09-26 18:16 UTC, file counts]`; each later fact carries its own grade above.
 - **Concurrency:** several Director sessions work this project. Deconfliction is in the decision log (D-011) `[verified]`. This record's authorship was reassigned by the owner (O-033) `[relayed]`.
 
 ### Not done, and what remains unverified
