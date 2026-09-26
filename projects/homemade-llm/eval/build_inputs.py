@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
 """Build model task inputs from reference work packets (M1 eval).
@@ -183,7 +184,14 @@ def build(argv: list[str] | None = None) -> int:
         default=[],
         dest="allow_leak",
         metavar="ID",
-        help="Accept leak check failure for this reference id (repeatable).",
+        help="Record accepted leakage for this id (repeatable); owner policy for the M1 primary score is to use --exclude instead.",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="ID=REASON",
+        help="Drop this reference from inputs and record its non-empty reason (repeatable).",
     )
     args = parser.parse_args(argv)
 
@@ -213,11 +221,26 @@ def build(argv: list[str] | None = None) -> int:
     if not item_ids:
         return _fail(f"no reference packets under {refs_dir}")
 
+    exclusions: dict[str, str] = {}
+    for entry in args.exclude:
+        item_id, separator, reason = entry.partition("=")
+        if not separator or not item_id or not reason.strip():
+            return _fail("--exclude requires ID=REASON with a non-empty reason")
+        if item_id not in item_ids:
+            return _fail(f"unknown --exclude id: {item_id}")
+        if item_id in exclusions:
+            return _fail(f"duplicate --exclude id: {item_id}")
+        exclusions[item_id] = reason
+    if len(exclusions) == len(item_ids):
+        return _fail("cannot exclude every reference: at least one input is required")
+
     missing_titles: list[str] = []
     leak_errors: list[tuple[str, str]] = []
     built: dict[str, str] = {}
 
     for item_id in item_ids:
+        if item_id in exclusions:
+            continue
         ref_path = refs_dir / f"{item_id}.json"
         reference = _load_json(ref_path)
         objective = reference.get("objective")
@@ -275,6 +298,10 @@ def build(argv: list[str] | None = None) -> int:
             "reference_manifest": reference_manifest,
             "input_manifest": manifest(out_dir),
             "item_count": len(built),
+            "excluded": [{"id": item_id, "reason": exclusions[item_id]} for item_id in sorted(exclusions)],
+            "n_references": len(item_ids),
+            "n_excluded": len(exclusions),
+            "n_inputs": len(built),
             "override_ids": override_ids,
             "allow_leak_ids": allow_leak_ids,
             "utc_time": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -302,3 +329,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]

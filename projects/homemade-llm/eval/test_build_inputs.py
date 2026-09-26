@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
 """Unit tests for build_inputs.py (synthetic fixtures only).
@@ -344,6 +345,84 @@ class BuildInputsTests(unittest.TestCase):
             run = json.loads((out.parent / f"{out.name}.build.json").read_text(encoding="utf-8"))
             self.assertEqual(run["allow_leak_ids"], ["allowed"])
 
+    def test_exclusion_records_counts_and_preserves_reference_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out = self._layout(Path(tmp))
+            for item_id in ("p1", "p2", "p3"):
+                (refs / f"{item_id}.json").write_text(
+                    json.dumps(_minimal_ref(item_id)), encoding="utf-8"
+                )
+                (refs / "metadata" / f"{item_id}.meta.json").write_text(
+                    json.dumps({"source_title": "Safe Title"}), encoding="utf-8"
+                )
+            args = ["--set", "b", "--refs", str(refs)]
+            self.assertEqual(build_inputs.build(args + ["--out", str(root / "full")]), 0)
+            full = json.loads((root / "full.build.json").read_text(encoding="utf-8"))
+            self.assertEqual((full["n_references"], full["n_excluded"], full["n_inputs"]), (3, 0, 3))
+            self.assertEqual(full["excluded"], [])
+            self.assertEqual(build_inputs.build(args + [
+                "--out", str(out), "--exclude", "p2=answer = revealed",
+                "--exclude", "p3=another substantive answer",
+            ]), 0)
+            self.assertEqual([p.name for p in out.iterdir()], ["p1.json"])
+            run = json.loads((root / "inputs.build.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["excluded"], [
+                {"id": "p2", "reason": "answer = revealed"},
+                {"id": "p3", "reason": "another substantive answer"},
+            ])
+            self.assertEqual((run["n_references"], run["n_excluded"], run["n_inputs"]), (3, 2, 1))
+            self.assertEqual(run["item_count"], run["n_inputs"])
+            self.assertEqual(run["input_manifest"], build_inputs.manifest(out))
+            self.assertEqual(len(run["input_manifest"].splitlines()), 1)
+            self.assertEqual(run["reference_manifest"], full["reference_manifest"])
+            self.assertEqual(run["reference_manifest"], build_inputs.manifest(refs))
+
+    def test_excluded_item_skips_leak_and_missing_title_checks(self):
+        leaked = "keep scope narrow always"
+        for missing_title in (False, True):
+            with self.subTest(missing_title=missing_title), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out = self._layout(Path(tmp))
+                for item_id in ("safe", "leaking"):
+                    reference = _minimal_ref(item_id)
+                    if item_id == "leaking":
+                        reference = _minimal_ref(item_id, objective=leaked, constraints=[leaked])
+                    (refs / f"{item_id}.json").write_text(json.dumps(reference), encoding="utf-8")
+                    if item_id == "safe" or not missing_title:
+                        (refs / "metadata" / f"{item_id}.meta.json").write_text(
+                            json.dumps({"source_title": "Safe Title"}), encoding="utf-8"
+                        )
+                self.assertEqual(build_inputs.build([
+                    "--set", "b", "--refs", str(refs), "--out", str(out),
+                    "--exclude", "leaking=substantive answer in objective",
+                ]), 0)
+                self.assertEqual([p.name for p in out.iterdir()], ["safe.json"])
+
+    def test_invalid_exclusions_fail_without_output(self):
+        cases = (
+            (["unknown=reason"], "unknown --exclude id"),
+            (["p1=reason", "p2=reason"], "at least one input"),
+            (["p1"], "non-empty reason"),
+            (["p1="], "non-empty reason"),
+            (["p1=   "], "non-empty reason"),
+            (["=reason"], "non-empty reason"),
+            (["p1=reason", "p1=different reason"], "duplicate --exclude id"),
+        )
+        for entries, expected in cases:
+            with self.subTest(entries=entries), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out = self._layout(Path(tmp))
+                for item_id in ("p1", "p2"):
+                    (refs / f"{item_id}.json").write_text(
+                        json.dumps(_minimal_ref(item_id)), encoding="utf-8"
+                    )
+                args = ["--set", "b", "--refs", str(refs), "--out", str(out)]
+                for entry in entries:
+                    args.extend(["--exclude", entry])
+                errors = io.StringIO()
+                with redirect_stderr(errors):
+                    self.assertEqual(build_inputs.build(args), 1)
+                self.assertIn(expected, errors.getvalue())
+                self.assertEqual(list(root.iterdir()), [refs])
+
     def test_refuses_non_empty_out(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, refs, out = self._layout(Path(tmp))
@@ -414,3 +493,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:16 UTC | END]]
