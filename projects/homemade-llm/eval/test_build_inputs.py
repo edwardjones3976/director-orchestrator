@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
 """Unit tests for build_inputs.py (synthetic fixtures only).
 
@@ -5,12 +6,15 @@
 """
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_inputs  # noqa: E402
@@ -69,6 +73,121 @@ class BuildInputsTests(unittest.TestCase):
         refs.mkdir(parents=True)
         (refs / "metadata").mkdir()
         return root, refs, out
+
+    def test_source_file_rejects_absolute_and_parent_escape(self):
+        for source_kind in ("absolute_inside", "absolute_outside", "parent_escape"):
+            with self.subTest(source_kind=source_kind), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out = self._layout(Path(tmp))
+                source_file = {
+                    "absolute_inside": str(root / "packet.md"),
+                    "absolute_outside": str(Path(tmp) / "packet.md"),
+                    "parent_escape": "../packet.md",
+                }[source_kind]
+                (refs / "p1.json").write_text(json.dumps(_minimal_ref()), encoding="utf-8")
+                (refs / "metadata" / "p1.meta.json").write_text(
+                    json.dumps({"source_file": source_file}), encoding="utf-8"
+                )
+                errors = io.StringIO()
+                with patch.object(build_inputs, "_title_from_heading") as read_heading, redirect_stderr(errors):
+                    self.assertEqual(build_inputs.build(
+                        ["--set", "a", "--refs", str(refs), "--out", str(out)]
+                    ), 1)
+                read_heading.assert_not_called()
+                self.assertIn("p1", errors.getvalue())
+                self.assertFalse(out.exists())
+                self.assertFalse(out.with_name("inputs.build.json").exists())
+
+    def test_stale_run_record_refused_before_validation(self):
+        for empty_out in (False, True):
+            with self.subTest(empty_out=empty_out), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out = self._layout(Path(tmp))
+                if empty_out:
+                    out.mkdir()
+                run_path = root / "inputs.build.json"
+                run_path.write_text("stale record", encoding="utf-8")
+                errors = io.StringIO()
+                with patch.object(build_inputs, "_reference_ids") as validate, redirect_stderr(errors):
+                    self.assertEqual(build_inputs.build(
+                        ["--set", "b", "--refs", str(refs), "--out", str(out)]
+                    ), 1)
+                validate.assert_not_called()
+                self.assertIn(str(run_path), errors.getvalue())
+                self.assertEqual(run_path.read_text(encoding="utf-8"), "stale record")
+                self.assertEqual(out.exists(), empty_out)
+                if empty_out:
+                    self.assertEqual(list(out.iterdir()), [])
+
+    def test_publish_failure_removes_output_and_partial_record(self):
+        for stage in ("rename", "record_write", "record_replace"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                root, refs, out = self._layout(Path(tmp))
+                (refs / "p1.json").write_text(json.dumps(_minimal_ref()), encoding="utf-8")
+                (refs / "metadata" / "p1.meta.json").write_text(
+                    json.dumps({"source_title": "Safe Title"}), encoding="utf-8"
+                )
+                write_text = Path.write_text
+
+                def fail_write(path, text, **kwargs):
+                    if path.name.startswith("inputs.build.json."):
+                        self.assertTrue(out.is_dir())
+                        write_text(path, "partial", **kwargs)
+                        raise OSError("record write failed")
+                    return write_text(path, text, **kwargs)
+
+                def fail_replace(source, destination):
+                    self.assertTrue(out.is_dir())
+                    self.assertFalse(Path(destination).exists())
+                    record = json.loads(Path(source).read_text(encoding="utf-8"))
+                    self.assertEqual(record["input_manifest"], build_inputs.manifest(out))
+                    raise OSError("record replace failed")
+
+                failure = {
+                    "rename": patch.object(Path, "rename", side_effect=OSError("rename failed")),
+                    "record_write": patch.object(Path, "write_text", new=fail_write),
+                    "record_replace": patch.object(build_inputs.os, "replace", side_effect=fail_replace),
+                }[stage]
+                with failure, self.assertRaises(OSError):
+                    build_inputs.build(["--set", "b", "--refs", str(refs), "--out", str(out)])
+                self.assertEqual(list(root.iterdir()), [refs])
+
+    def _assert_leak_rejected(self, reference):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, refs, out = self._layout(Path(tmp))
+            (refs / "p1.json").write_text(json.dumps(reference), encoding="utf-8")
+            (refs / "metadata" / "p1.meta.json").write_text(
+                json.dumps({"source_title": "Safe Title"}), encoding="utf-8"
+            )
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                self.assertEqual(build_inputs.build(
+                    ["--set", "b", "--refs", str(refs), "--out", str(out)]
+                ), 1)
+            self.assertIn("leak p1:", errors.getvalue())
+            self.assertEqual(list(root.iterdir()), [refs])
+
+    def test_leak_in_repository(self):
+        self._assert_leak_rejected(_minimal_ref(
+            repository="org/keep-scope-narrow-always", constraints=["keep scope narrow always"]
+        ))
+
+    def test_leak_nfd_matches_nfc(self):
+        self._assert_leak_rejected(_minimal_ref(
+            objective="Keep the cafe\u0301 service running today.",
+            constraints=["caf\u00e9 service running today"],
+        ))
+
+    def test_normalization_nfkc_and_scalar_flattening(self):
+        self.assertEqual(build_inputs._normalize_text("\uff21\uff22\uff23"), "abc")
+        self.assertEqual(
+            build_inputs._flatten_strings({"nested": [42, True, None, {"value": 3.5}]}),
+            ["42", "True", "3.5"],
+        )
+
+    def test_leak_eight_word_shingle_without_whole_string(self):
+        scored = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
+        objective = "Plan gamma delta epsilon zeta eta theta iota kappa safely."
+        self.assertNotIn(scored, objective)
+        self._assert_leak_rejected(_minimal_ref(objective=objective, constraints=[scored]))
 
     def test_set_a_title_from_markdown_heading(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -294,3 +413,4 @@ class BuildInputsTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]

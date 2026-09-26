@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | BEGIN]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | BEGIN]]
 """Build model task inputs from reference work packets (M1 eval).
 
@@ -13,8 +14,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
+import tempfile
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,7 +43,7 @@ def manifest(directory: Path) -> str:
 
 
 def _normalize_text(text: str) -> str:
-    folded = text.casefold()
+    folded = unicodedata.normalize("NFKC", text).casefold()
     parts: list[str] = []
     for char in folded:
         if char.isalnum():
@@ -76,7 +80,7 @@ def _flatten_strings(value: Any) -> list[str]:
         for item in value.values():
             collected.extend(_flatten_strings(item))
         return collected
-    return []
+    return [] if value is None else [str(value)]
 
 
 def _scored_field_strings(reference: dict[str, Any]) -> list[str]:
@@ -87,8 +91,8 @@ def _scored_field_strings(reference: dict[str, Any]) -> list[str]:
     return strings
 
 
-def _leak_match(reference: dict[str, Any], objective: str, title: str) -> str | None:
-    combined = _normalize_text(f"{objective} {title}")
+def _leak_match(reference: dict[str, Any], objective: str, repository: str, title: str) -> str | None:
+    combined = _normalize_text(f"{objective} {repository} {title}")
     if not combined:
         return None
     for scored in _scored_field_strings(reference):
@@ -145,7 +149,10 @@ def _resolve_title(
     source_file = meta.get("source_file")
     if not isinstance(source_file, str) or not source_file.strip():
         return None
-    source_path = (refs_dir.parent / source_file).resolve()
+    source_root = refs_dir.parent.resolve()
+    source_path = (source_root / source_file).resolve()
+    if Path(source_file).is_absolute() or not source_path.is_relative_to(source_root):
+        raise ValueError(f"reference {item_id}: source_file escapes refs parent")
     return _title_from_heading(source_path)
 
 
@@ -182,12 +189,15 @@ def build(argv: list[str] | None = None) -> int:
 
     refs_dir = args.refs.resolve()
     out_dir = args.out.resolve()
-
-    if not refs_dir.is_dir():
-        return _fail(f"refs is not a directory: {refs_dir}")
+    run_path = out_dir.parent / f"{out_dir.name}.build.json"
 
     if out_dir.exists() and any(out_dir.iterdir()):
         return _fail(f"refusing non-empty --out: {out_dir}")
+    if run_path.exists():
+        return _fail(f"refusing existing run record: {run_path}")
+
+    if not refs_dir.is_dir():
+        return _fail(f"refs is not a directory: {refs_dir}")
 
     titles_override: dict[str, str] = {}
     if args.titles is not None:
@@ -217,12 +227,15 @@ def build(argv: list[str] | None = None) -> int:
         if not isinstance(repository, str) or not repository:
             return _fail(f"reference {item_id} missing non-empty repository")
 
-        title = _resolve_title(item_id, refs_dir, args.set_name, titles_override)
+        try:
+            title = _resolve_title(item_id, refs_dir, args.set_name, titles_override)
+        except ValueError as exc:
+            return _fail(str(exc))
         if not title:
             missing_titles.append(item_id)
             continue
 
-        leak = _leak_match(reference, objective, title)
+        leak = _leak_match(reference, objective, repository, title)
         if leak is not None and item_id not in allow_leak_ids:
             leak_errors.append((item_id, leak))
             continue
@@ -244,6 +257,8 @@ def build(argv: list[str] | None = None) -> int:
         shutil.rmtree(temp_dir)
     temp_dir.mkdir(parents=True)
 
+    published = False
+    run_temp: Path | None = None
     try:
         for item_id in sorted(built.keys()):
             (temp_dir / f"{item_id}.json").write_text(built[item_id], encoding="utf-8")
@@ -251,25 +266,31 @@ def build(argv: list[str] | None = None) -> int:
         if out_dir.exists():
             out_dir.rmdir()
         temp_dir.rename(out_dir)
+        published = True
+
+        run_record = {
+            "set": args.set_name,
+            "refs": str(refs_dir),
+            "out": str(out_dir),
+            "reference_manifest": reference_manifest,
+            "input_manifest": manifest(out_dir),
+            "item_count": len(built),
+            "override_ids": override_ids,
+            "allow_leak_ids": allow_leak_ids,
+            "utc_time": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        }
+        with tempfile.NamedTemporaryFile(dir=out_dir.parent, prefix=f"{run_path.name}.", delete=False) as handle:
+            run_temp = Path(handle.name)
+        run_temp.write_text(json.dumps(run_record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        os.replace(run_temp, run_path)
     except Exception:
+        if published:
+            shutil.rmtree(out_dir)
+        if run_temp is not None:
+            run_temp.unlink(missing_ok=True)
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
         raise
-
-    input_manifest = manifest(out_dir)
-    run_record = {
-        "set": args.set_name,
-        "refs": str(refs_dir),
-        "out": str(out_dir),
-        "reference_manifest": reference_manifest,
-        "input_manifest": input_manifest,
-        "item_count": len(built),
-        "override_ids": override_ids,
-        "allow_leak_ids": allow_leak_ids,
-        "utc_time": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    }
-    run_path = out_dir.parent / f"{out_dir.name}.build.json"
-    run_path.write_text(json.dumps(run_record, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return 0
 
 
@@ -280,3 +301,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:45 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:51 UTC | END]]
