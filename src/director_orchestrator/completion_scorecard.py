@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
@@ -1098,7 +1099,8 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
                 "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
-                "projection_digest_mismatches", "batches_without_assignments",
+                "projection_digest_mismatches", "batches_without_assignments", "effect_children_cross_task",
+                "registered_plan_mismatches",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -2288,6 +2290,12 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     work_packets = entry.get("work_packets")
     if not isinstance(work_packets, list):
         return None
+    # The registered plan recomputed from the durable assignment rows and task record (review 4110798537).
+    registered = entry.get("registered_plan")
+    if not isinstance(registered, dict):
+        return None
+    if registered.get("error") is not None:
+        return False
     if work_packet_error({"assignments": assignments, "provider_attempts": readback.get("provider_attempts") or [],
                           "result_artifacts": artifacts, "work_packets": work_packets}) is not None:
         return False
@@ -2453,18 +2461,20 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
             requests = value.get("request_count")
             # Spend, not request_count: for most providers request_count counts the monitor's own usage-check
             # probes (usage.py _daily_accounting); grok's paid requests carry reserved_cost_usd.
-            attempted = (value.get("reported_cost_usd") or 0) > 0 or (value.get("reserved_cost_usd") or 0) > 0
+            # A positive request count is an attempt before any cap or price test (review 4110798529): the usage
+            # check's own requests are provider requests too, and unknown cost is not zero.
+            attempted = ((value.get("reported_cost_usd") or 0) > 0 or (value.get("reserved_cost_usd") or 0) > 0
+                         or (type(requests) is int and requests > 0))
             if attempted and type(budget) not in (int, float):
                 uncapped.append(str(provider))  # an attempted provider with no numeric cap has no monetary control
             if type(budget) in (int, float):
                 used = max(value.get("reported_cost_usd") or 0, value.get("reserved_cost_usd") or 0)
-                requests = value.get("request_count")
                 if used > budget:
                     over.append("usage monitor " + str(provider))
-                elif (value.get("cost_visibility_complete") is not True and value.get("reserved_cost_usd") is None
-                      and not (type(requests) is int and requests == 0)):
-                    # reported_cost_usd sums known costs only; unknown cost is not zero.
-                    unpriced.append(str(provider))
+            if (attempted and value.get("cost_visibility_complete") is not True
+                    and value.get("reserved_cost_usd") is None and str(provider) not in over):
+                # reported_cost_usd sums known costs only; unknown cost is not zero.
+                unpriced.append(str(provider))
     budgets = None
     if paid is not None and consistency is not None:
         entry = (consistency.get("tasks") or {}).get(paid["task_id"])
@@ -3440,6 +3450,39 @@ def score(candidate_sha: str, observations: list[Observation] | None = None, *,
             "checks": rows, "reference_files": _file_references(evidence_dir)}
 
 
+TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the trusted main checkout"
+
+
+def untrusted_checkout(candidate_sha: str, runtime_sha: str | None = None, root: Path | None = None) -> str | None:
+    """The operating rule (added by the author, not an owner ruling) that makes the scorecard's own code a trusted
+    evaluator: its checkout has no tracked changes, its HEAD is a commit on github/main, and that commit is the
+    candidate (and, when one is observed, the runtime) it grades. None when it holds, else why not."""
+    root = root or Path(__file__).resolve().parents[2]
+
+    def git(*arguments: str) -> str:
+        return _run_bytes(["git", "-C", str(root), *arguments]).decode().strip()
+    try:
+        if git("status", "--porcelain", "--untracked-files=no"):
+            return "its checkout has uncommitted changes"
+        head = git("rev-parse", "HEAD")
+        git("merge-base", "--is-ancestor", head, "github/main")  # a nonzero exit raises: HEAD is not on main
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "its checkout could not be verified as a commit on github/main"
+    if head != candidate_sha:
+        return "its HEAD is not the graded candidate"
+    if runtime_sha is not None and head != runtime_sha:
+        return "its HEAD is not the graded runtime"
+    return None
+
+
+def refuse_untrusted(report: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Every check UNKNOWN: an evaluator the candidate could control grades nothing."""
+    for row in report["checks"]:
+        row.update(status="UNKNOWN", explanation=f"{TRUSTED_CHECKOUT_REFUSAL}: {reason}.", evidence=[])
+    report.update(passed=0, percent=0, all_checks_verified=False)
+    return report
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     def escape(value: Any) -> str:
         return str(value).replace("|", "\\|").replace("\n", " ").replace("<", "&lt;").replace(">", "&gt;")
@@ -3526,3 +3569,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

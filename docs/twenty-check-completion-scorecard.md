@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]] -->
@@ -1032,6 +1033,30 @@ triggered a task inside the thread is not a trial. The qualification readback
 fills `elapsed_seconds` (and every other served value) before its single size
 measurement; nothing served changes afterwards.
 
+Operating rule: the trusted main checkout (added by the author of this
+change). `scripts/director-scorecard.py` grades only when its own checkout
+has no tracked changes, its HEAD is a commit on `github/main`, and that commit
+is the candidate SHA it grades and, once observed, the runtime SHA
+(`completion_scorecard.untrusted_checkout`). Otherwise every check is
+UNKNOWN, "scorecard not run from the trusted main checkout". The scorecard,
+the offline collector it loads and the rubric requirements are then main's
+code, never a candidate's. The live collection is skipped when the checkout
+itself fails the rule.
+
+Durable plan and effect bindings. The registered plan digest is recomputed
+in-image from the batch's assignment rows (assignment_id, sequence,
+provider_id, deployment_id, dependencies, write_surfaces, retry_limit,
+allocation_profile) and the task record's DirectorPlan with register_plan's
+own hashing (`primary_parallel.registered_plan_digest`); it must equal the
+batch's plan digest and the projection's bound parallel plan digest
+(`registered_plan_mismatches` fails 07; the per-task entry fails 20). The
+collector's readback does not serve dependencies, write_surfaces,
+retry_limit or allocation_profile, so this recomputation runs only in-image.
+An effect's execution, remote binding and terminal rows join by reservation
+(or claim) alone and carry their own task id; another task's is an effects
+conflict, and `effect_children_cross_task` counts them globally. In check 15
+a positive request count is an attempt before the cap and price tests.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1230,3 +1255,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]] -->

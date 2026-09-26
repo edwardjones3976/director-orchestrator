@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | BEGIN]]
@@ -10,7 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
-from director_orchestrator.completion_scorecard import collect, render_markdown, score
+from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
+                                                       untrusted_checkout)
 
 _LIVE_ONLY = ("--deployment, --channel, --github, --ledger, --security-scan, --drill-thread, --approval-task, --trial, "
               "--rubric, --paid-thread, --paid-rubric, --ci-replica-receipt and --gateway require --live")
@@ -52,7 +54,9 @@ def main() -> int:
             if not separator or kind in drills:
                 parser.error("--drill-thread takes one KIND=THREAD_TS value per drill kind")
             drills[kind] = thread
-        observations = collect(args.candidate_sha, deployment=args.deployment, channel=args.channel, github=args.github,
+        # Operating rule: grade only from the trusted main checkout (completion_scorecard.untrusted_checkout).
+        refused = untrusted_checkout(args.candidate_sha)
+        observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel, github=args.github,
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
                                drill_threads=drills, approval_task=args.approval_task, trials=args.trial or None,
                                rubric_path=args.rubric, paid_thread=args.paid_thread, paid_rubric_path=args.paid_rubric,
@@ -60,6 +64,9 @@ def main() -> int:
         runtime = next((item for item in observations if item.runtime_sha and item.image_id), None)
         report = score(args.candidate_sha, observations, evidence_dir=args.evidence_dir,
                        runtime_sha=runtime.runtime_sha if runtime else None, image_id=runtime.image_id if runtime else None)
+        refused = refused or (untrusted_checkout(args.candidate_sha, runtime.runtime_sha) if runtime else None)
+        if refused:
+            report = refuse_untrusted(report, refused)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         json_path = args.output_dir / "completion-scorecard.json"
         md_path = args.output_dir / "completion-scorecard.md"
@@ -81,3 +88,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

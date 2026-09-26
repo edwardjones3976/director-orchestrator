@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | BEGIN]]
@@ -1191,6 +1192,10 @@ class QualificationEffectRow(BaseModel):
     terminal_disposition: str | None = None
     terminal_evidence_digest: str | None = None
     terminal_recorded_at: datetime | None = None
+    # Each child row's own task (joined by reservation or claim alone): another task's is a conflict.
+    execution_task_id: str | None = None
+    binding_task_id: str | None = None
+    terminal_task_id: str | None = None
 
 
 class QualificationReconciliationRow(BaseModel):
@@ -1521,3 +1526,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

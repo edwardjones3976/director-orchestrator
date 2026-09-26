@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
@@ -61,7 +62,7 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
                "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
-               "batches_without_assignments")
+               "batches_without_assignments", "effect_children_cross_task")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
@@ -131,7 +132,14 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  -- primary_parallel.register_plan writes a batch and its validated, non-empty DAG in one transaction: a batch with
  -- no assignment is inconsistent whatever its task's classification.
  (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
-    (SELECT 1 FROM {s}.director_primary_parallel_assignment x WHERE x.task_id=b.task_id)) AS batches_without_assignments"""
+    (SELECT 1 FROM {s}.director_primary_parallel_assignment x WHERE x.task_id=b.task_id)) AS batches_without_assignments,
+ -- An execution, remote binding or terminal row whose reservation (or claim) belongs to another task.
+ ((SELECT count(*) FROM {s}.director_primary_effect_execution e JOIN {s}.director_primary_effect_reservation r
+     USING (reservation_key) WHERE e.task_id<>r.task_id)
+  + (SELECT count(*) FROM {s}.director_primary_remote_binding b JOIN {s}.director_primary_effect_reservation r
+     USING (reservation_key) WHERE b.task_id<>r.task_id)
+  + (SELECT count(*) FROM {s}.director_primary_terminal_evidence t JOIN {s}.director_primary_effect_reservation r
+     ON r.claim_key=t.claim_key WHERE t.task_id<>r.task_id)) AS effect_children_cross_task"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
@@ -351,9 +359,13 @@ _SLACK_TS = re.compile(r"\d{10,}\.\d{1,6}\Z")
 DELIVERY_STATES = ("PENDING", "POSTING", "ACKNOWLEDGED", "DELIVERED", "AMBIGUOUS", "REFUSED", "SUPPRESSED", "SUPERSEDED")
 
 
-def validate_effects(effects):
+def validate_effects(effects, task_id=None):
     keys = set()
     for row in effects:
+        # Children join by reservation (or claim) alone and carry their own task (review 4110798521).
+        if task_id is not None and any(row.get(key) not in (None, task_id)
+                                       for key in ("execution_task_id", "binding_task_id", "terminal_task_id")):
+            return "an effect's execution, binding or terminal row belongs to another task"
         if (not _DIGEST.fullmatch(str(row.get("reservation_key", ""))) or not _DIGEST.fullmatch(str(row.get("claim_key", "")))
                 or not _DIGEST.fullmatch(str(row.get("effect_key_digest", "")))
                 or not _DIGEST.fullmatch(str(row.get("effect_attempt_digest", "")))
@@ -830,7 +842,8 @@ def task_evidence_errors(sections):
                                         absent="provider_usage" in (sections.get("absent") or []))
     errors = {"attempts": attempts,
               "usage": attempts or usage,
-              "effects": validate_effects(sections.get("effects") or []) or reconciliation_error(sections),
+              "effects": (validate_effects(sections.get("effects") or [], sections.get("task_id"))
+                          or reconciliation_error(sections)),
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
                                                              sections.get("status_receipts") or [],
                                                              schema=sections.get("schema"),
@@ -945,6 +958,55 @@ _PACKET_SQL = """SELECT task_id, assignment_id, authority_snapshot_digest, docum
  writer_fencing_generation, recorded_at FROM {s}.{table} {where} ORDER BY task_id, assignment_id LIMIT %(limit)s"""
 
 
+# Each batch with the columns register_plan hashed: its assignments' DAG identity and the task record's plan.
+_PLAN_ROWS = """SELECT b.task_id, b.plan_digest AS batch_plan_digest,
+ p.projection->>'parallel_plan_digest' AS projection_plan_digest,
+ p.projection->'application'->'task_record' AS task_record,
+ coalesce(jsonb_agg(jsonb_build_object('assignment_id', x.assignment_id, 'sequence', x.sequence,
+   'provider_id', x.provider_id, 'deployment_id', x.deployment_id, 'dependencies', x.dependencies,
+   'write_surfaces', x.write_surfaces, 'retry_limit', x.retry_limit, 'allocation_profile', x.allocation_profile))
+   FILTER (WHERE x.assignment_id IS NOT NULL), '[]'::jsonb) AS assignments
+ FROM {s}.director_primary_parallel_batch b
+ LEFT JOIN {s}.director_primary_task_projection p USING (task_id)
+ LEFT JOIN {s}.director_primary_parallel_assignment x USING (task_id) {where}
+ GROUP BY b.task_id, b.plan_digest, p.projection ORDER BY b.task_id LIMIT %(limit)s"""
+
+
+def plan_rows(connection, schema, *, tasks=None, limit=None):
+    where = "WHERE b.task_id = ANY(%(tasks)s)" if tasks is not None else ""
+    return [dict(row) for row in connection.execute(_PLAN_ROWS.format(s=schema, where=where),
+            {"tasks": list(tasks or []), "limit": limit or EVIDENCE_ROW_CAP + 1}).fetchall()]
+
+
+def registered_plan_error(row):
+    """Recompute the registered plan digest from durable rows with register_plan's own hashing
+    (primary_parallel.registered_plan_digest): the task record's DirectorPlan, digested as
+    primary_default._register_parallel_lifecycle digests it, and every assignment row's DAG identity. It must equal
+    the batch's plan_digest and, once bound, the projection's parallel_plan_digest. None, or the disagreement."""
+    from .models import TaskRecord
+    from .primary_default import _digest as plan_document_digest
+    from .primary_parallel import ParallelAssignment, registered_plan_digest
+    try:
+        record = TaskRecord.model_validate(row["task_record"])
+        if record.plan is None:
+            return "a registered plan's task record carries no plan"
+        assignments = [ParallelAssignment(
+            assignment_id=item["assignment_id"], sequence=item["sequence"], provider_id=item["provider_id"],
+            deployment_id=item["deployment_id"], dependencies=tuple(item["dependencies"] or ()),
+            write_surfaces=tuple(item["write_surfaces"] or ()), retry_limit=item["retry_limit"],
+            allocation_profile=item["allocation_profile"]) for item in row["assignments"]]
+        expected = registered_plan_digest(task_id=row["task_id"],
+                                          plan_digest=plan_document_digest(record.plan.model_dump(mode="json")),
+                                          assignments=assignments)
+    except Exception:  # noqa: BLE001 - rows that cannot be rebuilt into the registered plan prove no plan
+        return "the registered plan cannot be rebuilt from its assignment rows and task record"
+    if expected != row.get("batch_plan_digest"):
+        return "the batch's plan digest is not the plan its assignment rows and task record register"
+    if row.get("projection_plan_digest") is not None and row["projection_plan_digest"] != expected:
+        return "the projection's parallel plan digest is not the registered plan"
+    return None
+
+
 def packet_rows(connection, schema, kind, *, tasks=None, limit=None):
     """Stored result or work packets (``kind``), each revalidated against its digest and authority binding exactly
     as the Director reloads it (_result_packet_artifact_from_row, _work_packet_artifact_from_row): task and assignment
@@ -1001,7 +1063,7 @@ def _global_task_evidence(connection, schema, usage_tables):
     any read exceeds EVIDENCE_ROW_CAP rows, so a count never covers a subset."""
     from .langgraph_postgres import PostgresControlPlaneError, _projection_payload, qualification_section_sql
     keys = [*EVIDENCE_COUNT_KEYS.values(), *EVIDENCE_IN_FLIGHT_KEYS.values(), "result_artifacts_invalid",
-            "result_artifacts_in_flight", "projection_digest_mismatches"]
+            "result_artifacts_in_flight", "projection_digest_mismatches", "registered_plan_mismatches"]
     limit = {"limit": EVIDENCE_ROW_CAP + 1}
     names = ["assignments", "provider_attempts", "effects", "slack_deliveries", "status_receipts"]
     names += ["provider_usage"] if usage_tables else []
@@ -1037,6 +1099,10 @@ def _global_task_evidence(connection, schema, usage_tables):
         for row in rows:
             task(row["task_id"])[name].append(row)
     counts = dict.fromkeys(keys, 0)
+    plans = plan_rows(connection, schema)
+    if len(plans) > EVIDENCE_ROW_CAP:
+        return {key: None for key in keys}
+    counts["registered_plan_mismatches"] = sum(registered_plan_error(row) is not None for row in plans)
     for row in projections:
         try:
             canonical = _projection_payload(row["projection"] if isinstance(row["projection"], dict)
@@ -1128,6 +1194,8 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                 # Director reloads it; content that fails revalidation attests nothing and carries no outcome.
                 artifacts = packet_rows(connection, schema, "result", tasks=tasks)
                 work_packets = packet_rows(connection, schema, "work", tasks=tasks)
+                registered = {row["task_id"]: registered_plan_error(row)
+                              for row in plan_rows(connection, schema, tasks=tasks)}
                 # Which effect each external-effect approval authorized (the graph's effect approval binding).
                 approval_bindings = [_row(r) for r in connection.execute(
                     f"SELECT task_id, effect_key_digest, approval_request_digest FROM "
@@ -1143,6 +1211,9 @@ def consistency_report(settings, identity, *, tasks=()) -> dict:
                                              {k: v for k, v in b.items() if k != "task_id"}
                                              for b in approval_bindings if b["task_id"] == task_id],
                                          "application": applications.get(task_id),
+                                         # None when the plan recomputes, else the disagreement; absent: no batch.
+                                         "registered_plan": ({"error": registered[task_id]}
+                                                             if task_id in registered else None),
                                          "spend": [r for r in spend if r["task_id"] == task_id],
                                          "budgets": [r for r in budgets if r["task_id"] == task_id],
                                          "approval_receipts": [{k: v for k, v in r.items() if k != "task_id"}
@@ -1387,3 +1458,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

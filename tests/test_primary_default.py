@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
@@ -5661,6 +5662,20 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         base = store.read_primary_qualification_evidence(record.task_id)
         self.assertGreaterEqual(len(base["assignments"]), 1)
         assignment = base["assignments"][0]
+        # Review 4110798537: the plan the producer registered recomputes from its durable assignment rows and task
+        # record with register_plan's own hashing; any drift in a hashed column is a disagreement.
+        from director_orchestrator import primary_scorecard_evidence as scorecard_evidence
+        with self.handle.pool.connection() as connection:
+            [registered] = scorecard_evidence.plan_rows(connection, self.schema, tasks=[record.task_id])
+        self.assertIsNone(scorecard_evidence.registered_plan_error(registered))
+        for field, value in (("deployment_id", "another-deployment"), ("retry_limit", 2),
+                             ("dependencies", ["another-assignment"])):
+            drifted = {**registered, "assignments": [{**registered["assignments"][0], field: value},
+                                                     *registered["assignments"][1:]]}
+            with self.subTest(field=field):
+                self.assertIsNotNone(scorecard_evidence.registered_plan_error(drifted))
+        self.assertIsNotNone(scorecard_evidence.registered_plan_error(
+            {**registered, "projection_plan_digest": "sha256:" + "0" * 64}))
         from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
         digest = lambda label: "sha256:" + hashlib.sha256(label.encode()).hexdigest()
         with self.handle.pool.connection() as connection:
@@ -6257,3 +6272,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]

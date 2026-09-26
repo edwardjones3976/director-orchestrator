@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
@@ -295,7 +296,9 @@ def consistency_fixture():
                                   "work_packets": [{"assignment_id": PAID_TASK + "-A1",
                                                     "authority_snapshot_digest": "sha256:" + "b" * 64,
                                                     "document_digest": "sha256:" + "c" * 64, "verified": True,
-                                                    "recorded_at": iso(1789210000 + 20000 + 6.5)}]},
+                                                    "recorded_at": iso(1789210000 + 20000 + 6.5)}],
+                                  # registered_plan_error: the batch digest recomputed from the assignment rows.
+                                  "registered_plan": {"error": None}},
                       APPROVAL_TASK: {"usage_tables_present": True, "spend": [], "budgets": [],
                                       "approval_receipts": [approval_receipt()]}}}
 
@@ -1627,6 +1630,8 @@ class CompletionScorecardTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((Path(folder) / "completion-scorecard.json").read_text())
             self.assertEqual(report["passed"], 0)
+            # This checkout's HEAD is not the fixture candidate: the trusted-checkout rule refuses to grade.
+            self.assertTrue(all(sc.TRUSTED_CHECKOUT_REFUSAL in item["explanation"] for item in report["checks"]))
             self.assertTrue((Path(folder) / "completion-scorecard.md").is_file())
             self.assertFalse(json.loads(result.stdout)["activation_authorized"])
             rejected = subprocess.run([sys.executable, str(script), "--candidate-sha", SHA, "--output-dir", folder, "--gateway", GATEWAY],
@@ -2655,11 +2660,16 @@ class ScorecardCollectorTests(unittest.TestCase):
 
     def test_probed_providers_are_capped_by_their_signed_budget_15(self):
         self.assertEqual(self.world().state("15"), "PASS")
-        # Usage-check probes alone are not paid attempts, even with no monitor budget.
+        # Review 4110798529: a positive request count is an attempt before the cap and price tests; with no monitor
+        # budget, no signed enrolled budget and unknown cost the provider is uncapped and unpriced, never neither.
         probed = self.world()
         probed.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4)
         probed.payload["usage_monitor"]["providers"].append("openai")
-        self.assertEqual(probed.state("15"), "PASS")
+        self.assertEqual(probed.state("15"), "UNKNOWN")
+        idle = self.world()
+        idle.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=0)
+        idle.payload["usage_monitor"]["providers"].append("openai")
+        self.assertEqual(idle.state("15"), "PASS")
         # Real spend on a provider with neither a monitor budget nor a signed enrolled budget is uncapped.
         spent = self.world()
         spent.payload["usage_monitor"]["daily_accounting"]["openai"] = accounting(request_count=4,
@@ -3667,6 +3677,48 @@ class ScorecardCollectorTests(unittest.TestCase):
                                                        "reason_code": None}))  # a digest on an unreserved row
         self.assertFalse(evidence.assignment_contract({**assignment, "status": "ACTIVE", "completed_at": None}))
 
+    def test_effect_children_carry_their_own_task(self):
+        """4110798521: execution, binding and terminal rows join by reservation (or claim) alone; one that belongs
+        to another task is served and refused, never dropped."""
+        import copy
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+        base = tf.readback_fixture()
+        own = copy.deepcopy(base)
+        own["effects"][0].update(execution_task_id=base["task_id"], binding_task_id=base["task_id"],
+                                 terminal_task_id=base["task_id"])
+        self.assertIsNone(task_evidence_errors(own)[1]["effects"])
+        for key in ("execution_task_id", "binding_task_id", "terminal_task_id"):
+            foreign = copy.deepcopy(own)
+            foreign["effects"][0][key] = "DIR-LG-0THER0000"
+            with self.subTest(key=key):
+                self.assertIsNotNone(task_evidence_errors(foreign)[1]["effects"])
+
+    def test_scorecard_grades_only_from_the_trusted_main_checkout(self):
+        """Operating rule added by the author: a clean checkout whose HEAD is on github/main and is the graded
+        candidate (and runtime); otherwise every check is UNKNOWN."""
+        def git(results):
+            def run(arguments, timeout=15):
+                key = arguments[3]
+                value = results[key]
+                if isinstance(value, Exception):
+                    raise value
+                return value
+            return run
+        clean = {"status": b"", "rev-parse": SHA.encode() + b"\n", "merge-base": b""}
+        with patch.object(sc, "_run_bytes", side_effect=git(clean)):
+            self.assertIsNone(sc.untrusted_checkout(SHA))
+            self.assertIsNone(sc.untrusted_checkout(SHA, SHA))
+            self.assertIn("runtime", sc.untrusted_checkout(SHA, OTHER))
+            self.assertIn("candidate", sc.untrusted_checkout(OTHER))
+        with patch.object(sc, "_run_bytes", side_effect=git({**clean, "status": b" M src/x.py\n"})):
+            self.assertIn("uncommitted", sc.untrusted_checkout(SHA))
+        with patch.object(sc, "_run_bytes", side_effect=git({**clean, "merge-base": ValueError("not an ancestor")})):
+            self.assertIn("github/main", sc.untrusted_checkout(SHA))
+        report = sc.refuse_untrusted(sc.score(SHA, [], now=NOW), "its HEAD is not the graded candidate")
+        self.assertEqual(report["passed"], 0)
+        self.assertTrue(all(item["status"] == "UNKNOWN" and item["explanation"].startswith(sc.TRUSTED_CHECKOUT_REFUSAL)
+                            for item in report["checks"]))
+
     def test_work_packets_join_dispatch_and_results(self):
         """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
         attempt, under the result packet's authority snapshot; the same rule check 20 and the global count apply."""
@@ -4402,3 +4454,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
