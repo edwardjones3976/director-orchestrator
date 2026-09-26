@@ -61,6 +61,12 @@ try {
     Assert-Equal (Invoke-Scan $hot $scan).exit 1 'alternate-name dataset config cannot suppress findings'
     Remove-Item (Join-Path $scan '.gitleaks.toml'), (Join-Path $scan '.gitleaks.json') -Recurse -Force
 
+    # A link inside the dataset would be skipped by gitleaks, so it is refused (a junction needs no admin rights).
+    $outside = Join-Path $work 'outside'; New-Item -ItemType Directory $outside | Out-Null
+    $j = New-Item -ItemType Junction (Join-Path $scan 'linked') -Target $outside
+    Assert-Equal (Invoke-Scan $hot $scan).exit 2 'link inside the dataset is refused (exit 2)'
+    $j.Delete()
+
     # A .gitleaksignore in the caller's working directory, holding the real finding's fingerprint, must not hide it.
     $cwd = Join-Path $work 'caller-cwd'; New-Item -ItemType Directory $cwd | Out-Null
     @($findings) | ForEach-Object { $_.Fingerprint } | Set-Content (Join-Path $cwd '.gitleaksignore') -Encoding utf8

@@ -32,6 +32,10 @@ if ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::R
 # The data under scan must not be able to configure its own scan. gitleaks auto-loads .gitleaks.toml from the
 # scanned directory, honours .gitleaksignore, and skips lines marked gitleaks:allow; any of these in a dataset
 # could silence real findings, so refuse the scan instead of trusting it. The config env vars are cleared too.
+# gitleaks skips symlinks silently, so anything behind a link inside the tree would scan "clean". Refuse any link
+# (file or directory) rather than follow it, since following could also leave the tree.
+$link = Get-ChildItem -LiteralPath $Path -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop | Select-Object -First 1
+if ($link) { Exit-Scan 2 "scan-dataset: refusing: link inside the dataset (would not be scanned): $($link.FullName)" }
 $suppress = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File -Include '.gitleaks.toml', '.gitleaksignore' -ErrorAction Stop)
 if ($suppress) { Exit-Scan 2 "scan-dataset: refusing: scanner config inside the dataset: $($suppress[0].FullName)" }
 $marked = Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction Stop | Select-String -SimpleMatch 'gitleaks:allow' -List | Select-Object -First 1
