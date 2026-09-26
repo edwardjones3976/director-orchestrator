@@ -1,3 +1,8 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 22:30 UTC | BEGIN]]
@@ -40,14 +45,23 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from director_orchestrator.langgraph_runtime import ProviderAdapterContext
+from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter, ProviderAdapterContext
+from director_orchestrator.packet_contracts import (
+    build_replay_run,
+    canonical_json_bytes,
+    document_digest,
+)
 from director_orchestrator.host_provider_bridge import (
     HostBridgeChallengeEvidence,
     HostBridgePacketTransport,
 )
 from director_orchestrator.primary_default import build_automatic_primary_live_dependencies
 from director_orchestrator.models import AntigravityDirective, AntigravityFixtureLane
-from director_orchestrator.packet_routing import antigravity_directive_objective
+from director_orchestrator.packet_routing import (
+    antigravity_directive_objective,
+    compact_provider_view,
+    validated_compact_view,
+)
 from director_orchestrator.primary_transports import (
     ANTIGRAVITY_CLOSED_PAYLOAD_SCHEMA,
     BoundedJsonCommandTransport,
@@ -191,7 +205,10 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
 
 
     def _work(self, *, objective: str = "Find official public evidence"):
+        # A complete v1 work packet: compact views are schema-validated
+        # before any transport sends them.
         return {
+            **json.loads((SCHEMAS / "model-work-packet-v1.example.json").read_text(encoding="utf-8")),
             "task_id": "DIR-EXAMPLE",
             "assignment_id": "DIR-EXAMPLE-1",
             "idempotency_key": "DIR-EXAMPLE:1:review",
@@ -332,8 +349,94 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
                     transport.send(b"{}", context=context)
         self.assertEqual([], launch.calls)
 
+    def test_responses_rechecks_before_the_token_count_and_the_generation(self):
+        """Both provider requests are preceded by the authority (and grant) recheck."""
+
+        work = self._work()
+        calls = []
+
+        def recheck(**_):
+            calls.append("recheck")
+            if len(calls) == 1:
+                raise RuntimeError("grant lapsed before the token count")
+
+        transport = OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test")
+        context = replace(self._context(), total_token_limit=40000, authority_recheck=recheck)
+        requests = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                requests.append(args)
+                raise AssertionError("a provider request was sent")
+
+        with patch("director_orchestrator.primary_transports.httpx.AsyncClient", Client), \
+                self.assertRaisesRegex(RuntimeError, "grant lapsed before the token count"):
+            transport.send(json.dumps(work).encode(), context=context)
+        self.assertEqual(["recheck"], calls)
+        self.assertEqual([], requests)
+
+    def test_responses_builds_its_input_then_rechecks_then_sends(self):
+        """Nothing slow (a cache-miss rebuild reads files) runs between the
+        final authority recheck and the request."""
+
+        import director_orchestrator.primary_transports as module
+
+        order = []
+        real = module.validated_compact_view
+
+        def build(work):
+            order.append("build")
+            return real(work)
+
+        def recheck(**_):
+            order.append("recheck")
+
+        transport = OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test")
+        context = replace(self._context(), total_token_limit=40000, authority_recheck=recheck)
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                order.append("send")
+                raise httpx.ConnectError("stop here")
+
+        with patch.object(module, "validated_compact_view", side_effect=build), \
+                patch("director_orchestrator.primary_transports.httpx.AsyncClient", Client), \
+                self.assertRaises(RuntimeError):
+            transport.send(json.dumps(self._work()).encode(), context=context)
+        self.assertEqual(["build", "recheck", "send"], order)
+
+    def test_responses_refuses_a_generation_whose_input_changed_after_the_count(self):
+        import director_orchestrator.primary_transports as module
+
+        views = iter([{"schema_version": "a"}, {"schema_version": "b"}])
+        requests = []
+        with patch.object(module, "validated_compact_view", side_effect=lambda work: next(views)), \
+                self.assertRaisesRegex(RuntimeError, "input changed after its token count"):
+            self._openai_send([{"object": "response.input_tokens", "input_tokens": 10},
+                               self._openai_response()], requests=requests)
+        self.assertEqual(["/v1/responses/input_tokens"], [r.url.path for r in requests])
+
     def test_native_envelope_is_rebound_to_packet_and_exact_lane(self):
         work = {
+            **json.loads((SCHEMAS / "model-work-packet-v1.example.json").read_text(encoding="utf-8")),
             "task_id": "DIR-EXAMPLE",
             "assignment_id": "DIR-EXAMPLE-1",
             "idempotency_key": "DIR-EXAMPLE:1:review",
@@ -516,7 +619,8 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertEqual({key: value for key, value in body.items() if key not in {"store", "max_output_tokens"}}, count)
         self.assertEqual({"effort": "medium"}, count["reasoning"])
         self.assertEqual("configured-model", body["model"])
-        self.assertEqual(json.dumps(work), body["input"])
+        # The model reads the compact view of the packet, never the inventory.
+        self.assertEqual(compact_provider_view(work), json.loads(body["input"]))
         self.assertEqual(750, body["max_output_tokens"])
         self.assertEqual([], body["tools"])
         self.assertFalse(body["store"])
@@ -953,17 +1057,22 @@ class GraphNativeProviderFactoryTests(unittest.TestCase):
         self.assertNotIn("microsoft-365-copilot", transports)
 
         # Replacing the native Antigravity lane must not reopen the packet: the
-        # bridge lane carries the same closed-directive contract, and no other
-        # bridge lane is redacted.
+        # bridge lane carries the same closed-directive contract. Claude and
+        # Grok post the compact provider view; github-copilot stays unredacted.
         antigravity = transports["antigravity"]
         self.assertIs(antigravity.outbound_payload_builder, antigravity_closed_payload)
         self.assertIsNotNone(antigravity.result_normalizer)
         for provider in ("claude", "grok", "github-copilot"):
             with self.subTest(provider=provider):
-                self.assertIsNone(transports[provider].outbound_payload_builder)
                 if provider in {"claude", "grok"}:
+                    # The compact view, validated against its v1 schema.
+                    self.assertIs(
+                        transports[provider].outbound_payload_builder,
+                        validated_compact_view,
+                    )
                     self.assertIsNotNone(transports[provider].result_normalizer)
                 else:
+                    self.assertIsNone(transports[provider].outbound_payload_builder)
                     self.assertIsNone(transports[provider].result_normalizer)
 
     def test_bridge_configuration_without_signed_challenge_is_not_callable(self):
@@ -1109,8 +1218,14 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
                         self.assertNotIn(packet, launch.inputs[0])
                     elif route in self.STDIN_ROUTES:
                         self.assertIsInstance(launch.inputs[0], bytes)
-                        self.assertTrue(launch.inputs[0].endswith(packet),
-                                        "the prepared bytes end with the exact packet")
+                        # A native lane ends with the exact compact view of
+                        # the packet; the generic route forwards the packet.
+                        expected = (
+                            packet if route == "generic-json"
+                            else canonical_json_bytes(compact_provider_view(json.loads(packet)))
+                        )
+                        self.assertTrue(launch.inputs[0].endswith(expected),
+                                        "the prepared bytes end with the exact provider document")
                     else:
                         self.assertEqual([None], launch.inputs)
                     self.assertEqual(["terminate", ("wait", 5.0), "close"], launch.stopped)
@@ -1193,7 +1308,8 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
             with patch(LAUNCH_SEAM, recording):
                 native.send(work, context=self._context())
             [prepared] = recording.inputs
-            self.assertTrue(prepared.endswith(work))
+            self.assertTrue(prepared.endswith(
+                canonical_json_bytes(compact_provider_view(json.loads(work)))))
             from jsonschema import Draft202012Validator
             contract = json.loads(prepared.split(b"\n", 2)[1])
             validator = Draft202012Validator(contract)
@@ -1341,6 +1457,74 @@ class CommandBoundaryDeadlineTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "the descendant did not outlive the tree")
 
 
+SCHEMAS = Path(__file__).resolve().parents[1] / "docs" / "schemas"
+
+
+def _inventory_work_packet(entries: int = 1_500) -> dict:
+    """The schema example packet with a realistic repository inventory."""
+
+    work = json.loads((SCHEMAS / "model-work-packet-v1.example.json").read_text(encoding="utf-8"))
+    commit = work["authority_snapshot"][0]["commit_sha"]
+    blob = work["authority_snapshot"][0]["blob_sha"]
+    work["authority_snapshot"] = [
+        {"path": f"src/module_{index:04d}.py", "commit_sha": commit, "blob_sha": blob}
+        for index in range(entries)
+    ]
+    work["authority_snapshot_digest"] = document_digest(
+        {"authority_snapshot": work["authority_snapshot"]}
+    )
+    return work
+
+
+class CompactProviderViewTransportTests(unittest.TestCase):
+    _context = GraphNativeProviderFactoryTests._context
+
+    def test_native_work_packet_mode_sends_only_the_compact_view(self):
+        work = _inventory_work_packet()
+        sent = []
+
+        def run(argv, **kwargs):
+            sent.append(kwargs["input_bytes"])
+            return subprocess.CompletedProcess(argv, 0, stdout=NATIVE_ENVELOPE, stderr=b"")
+
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._run_bounded_command", side_effect=run
+        ):
+            transport = NativeCommandPacketTransport("claude", ("claude.exe", "--print"), cwd=directory)
+            transport.send(canonical_json_bytes(work), context=self._context())
+
+        [prompt] = sent
+        self.assertNotIn(b'"authority_snapshot":', prompt)
+        self.assertIn(b'"authority_snapshot_digest":', prompt)
+        self.assertTrue(prompt.endswith(canonical_json_bytes(compact_provider_view(work))))
+        self.assertLess(len(prompt), len(canonical_json_bytes(work)) // 10)
+
+    def test_compact_native_result_rebinds_to_the_full_packet(self):
+        work = _inventory_work_packet()
+        context = replace(
+            self._context(),
+            task_id=work["task_id"],
+            assignment_id=work["assignment_id"],
+            idempotency_key=work["idempotency_key"],
+            work_packet_digest=document_digest(work),
+        )
+        with TemporaryDirectory() as directory:
+            adapter = PacketBoundaryAdapter(
+                "claude",
+                NativeCommandPacketTransport("claude", ("claude.exe", "--print"), cwd=directory),
+            )
+            launch = _FakeLaunch(stdout=NATIVE_ENVELOPE)
+            with patch(LAUNCH_SEAM, launch):
+                result = adapter.dispatch(work, context=context)
+
+        self.assertNotIn(b'"authority_snapshot":', launch.inputs[0])
+        replay = build_replay_run(work, result)
+        self.assertEqual(document_digest(work), replay["work_packet_digest"])
+        self.assertEqual(work["authority_snapshot_digest"], result["authority_snapshot_digest"])
+        self.assertEqual(work["task_id"], result["task_id"])
+        self.assertEqual("claude", result["provider"])
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]
@@ -1368,3 +1552,8 @@ if __name__ == "__main__":
 
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 19:31 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

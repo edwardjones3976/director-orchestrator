@@ -1,3 +1,20 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | BEGIN]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | BEGIN]]
@@ -10,6 +27,8 @@ from __future__ import annotations
 
 import copy
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -35,21 +54,28 @@ from director_orchestrator.models import (
     TaskRecord,
     TaskStatus,
 )
-from director_orchestrator.packet_contracts import document_digest, load_json_document
+from director_orchestrator.packet_contracts import (
+    canonical_json_bytes,
+    document_digest,
+    load_json_document,
+)
 from director_orchestrator.packet_results import (
     DirectorPacketResultConsumer,
     PacketResultConsumptionError,
 )
 from director_orchestrator.packet_routing import (
+    COMPACT_PROVIDER_VIEW_SCHEMA,
     DirectorPacketTaskRouter,
     PacketRoutingError,
     antigravity_directive_objective,
+    compact_provider_view,
 )
 from director_orchestrator.policy import preview_plan
 
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "docs" / "schemas"
 COMMIT_SHA = "a" * 40
+ROOT = Path(__file__).resolve().parents[1]
 BLOB_SHA = "b" * 40
 
 
@@ -728,6 +754,915 @@ class PacketResultConsumerTests(unittest.TestCase):
             )
 
 
+def _entry(path: str) -> dict[str, str]:
+    return {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": BLOB_SHA}
+
+
+class RepositoryInventorySnapshots:
+    """The shape of the one real run: 1,505 blob entries for a README task."""
+
+    def resolve(self, record, assignment):
+        return [_entry("README.md")] + [
+            _entry(f"src/director_orchestrator/module_{index:04d}.py")
+            for index in range(1_504)
+        ]
+
+
+class CompactProviderViewTests(unittest.TestCase):
+    TEXT = "Project: demo\nSummarize README.md for the owner."
+
+    def setUp(self) -> None:
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        self.record = TaskRecord(
+            task_id="DIR-COMPACT",
+            status=TaskStatus.QUEUED,
+            intake=SlackIntake(
+                source_event_id="evt-compact",
+                channel_id="C123",
+                thread_ts="123.45",
+                user_id="U123",
+                text=self.TEXT,
+            ),
+        )
+        self.record.plan = preview_plan(self.TEXT, settings)
+        router = DirectorPacketTaskRouter(
+            authority_snapshots=RepositoryInventorySnapshots(),
+            boundary_adapters={},
+            writer_owner_id="langgraph-packet-runtime",
+            writer_secret="local-test-secret",
+            timeout_seconds=120,
+        )
+        producer = min(self.record.plan.assignments, key=lambda item: item.sequence)
+        self.packet = router.planned_work_packet(self.record, producer)
+        self.view = compact_provider_view(self.packet)
+
+    def test_named_contents_are_bounded_blob_bound_and_screened(self) -> None:
+        """A small task's models are shown its named files' text, or it keeps the button."""
+
+        from director_orchestrator.packet_routing import (
+            git_blob_sha,
+            small_task_named_contents,
+        )
+
+        text = b"# Readme\n\nPlain text.\n"
+        files = {"README.md": text, "docs/guide.md": b"Guide.\n"}
+
+        def work(objective, blobs=None, **changes):
+            blobs = blobs if blobs is not None else files
+            return {
+                "objective": objective,
+                "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [],
+                "prohibited_paths": ["docs/private"],
+                "authority_snapshot": [
+                    {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": git_blob_sha(data)}
+                    for path, data in blobs.items()],
+                **changes,
+            }
+
+        def read_from(blobs):
+            by_sha = {git_blob_sha(data): data for data in blobs.values()}
+            return lambda sha: by_sha.get(sha)
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", read_from(files)):
+            contents = small_task_named_contents(work("Compare README.md and docs/guide.md."))
+            self.assertEqual(["README.md", "docs/guide.md"], [item["path"] for item in contents])
+            self.assertEqual(text.decode(), contents[0]["text"])
+            self.assertEqual(git_blob_sha(text), contents[0]["blob_sha"])
+            view = compact_provider_view(work("Summarize README.md."))
+            self.assertEqual(contents[:1], view["contents"])
+            # Only a read-only packet carries contents.
+            self.assertNotIn("contents", compact_provider_view(
+                work("Summarize README.md.", allowed_tools=["READ_REPOSITORY", "RUN_TESTS"])))
+            for name, objective in {
+                "no_named_path": "Summarize the repository.",
+                "missing": "Summarize docs/missing.md.",
+                "too_many": " ".join(f"f{index}.md" for index in range(9)),
+            }.items():
+                with self.subTest(case=name):
+                    self.assertIsNone(small_task_named_contents(work(objective)))
+        cases = {
+            "binary": {"README.md": b"\0binary"},
+            "not_utf8": {"README.md": b"\xff\xfe"},
+            "over_file_cap": {"README.md": b"x" * 4097},
+            "over_total_cap": {"README.md": b"x" * 4096, "a.md": b"y" * 4096, "b.md": b"z"},
+            "secret": {"README.md": b"token: ghp_" + b"a" * 30 + b"\n"},
+            "credential_gate": {"README.md": b"Rotate the api key here.\n"},
+            "personal_gate": {"README.md": b"Their date of birth is listed.\n"},
+            # Built at runtime: no committed file holds a credential shape.
+            "private_key": {"README.md": b"-" * 5 + b"BEGIN RSA " + b"PRIVATE KEY" + b"-" * 5 + b"\n"},
+            "customer_record": {"README.md": b"Customer: Alice Smith\nAddress: 123 Main St\n"},
+            "employee_list": {"README.md": b"Employees on the rota this week.\n"},
+            "user_email": {"README.md": b"Contact user_email for access.\n"},
+            "patient_note": {"README.md": b"patientName was recorded.\n"},
+            "phone_field": {"README.md": b"phoneNumber: listed\n"},
+            "tabular_file": {"README.md": b"Load export.csv into the sheet.\n"},
+            "genealogy": {"README.md": b"The ancestry chart goes back four generations.\n"},
+        }
+        for name, blobs in cases.items():
+            with self.subTest(case=name), patch(
+                    "director_orchestrator.packet_routing._BLOB_READER", read_from(blobs)):
+                self.assertIsNone(small_task_named_contents(
+                    work(" ".join(["Summarize", *blobs]) + ".", blobs)))
+        # A prohibited path, a reader that returns other bytes than the hash
+        # names, and no reader at all.
+        blobs = {"docs/private/x.md": b"x\n"}
+        with patch("director_orchestrator.packet_routing._BLOB_READER", read_from(blobs)):
+            self.assertIsNone(small_task_named_contents(work("Summarize docs/private/x.md.", blobs)))
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: b"other"):
+            self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
+        with patch("director_orchestrator.packet_routing._BLOB_READER", None):
+            self.assertIsNone(small_task_named_contents(work("Summarize README.md.")))
+
+    def test_blob_reads_check_the_size_first_and_stream_a_bounded_read(self) -> None:
+        """A large blob is refused on its size, never read into memory."""
+
+        import subprocess as subprocess_module
+        import tempfile as tempfile_module
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        with tempfile_module.TemporaryDirectory() as root:
+            def git(*args, data=None):
+                return subprocess_module.run(
+                    ("git", "-c", f"safe.directory={root}", *args), cwd=root, check=True,
+                    input=data, capture_output=True).stdout.strip().decode()
+
+            git("init", "-q")
+            small = git("hash-object", "-w", "--stdin", data=b"small file\n")
+            large = git("hash-object", "-w", "--stdin", data=b"x" * 5_000_000)
+            reader = git_blob_reader(root)
+            self.assertEqual(b"small file\n", reader(small))
+            real_popen = subprocess_module.Popen
+
+            def refuse_blob_reads(args, *rest, **kwargs):
+                # subprocess.run uses Popen too: only the blob read is refused.
+                if "blob" in args:
+                    raise AssertionError("large blob was read")
+                return real_popen(args, *rest, **kwargs)
+
+            with patch("director_orchestrator.packet_routing.subprocess.Popen",
+                       side_effect=refuse_blob_reads):
+                self.assertIsNone(reader(large))
+            # A size that lies still cannot fill memory: the stream stops at
+            # the cap plus one byte and the blob is refused.
+            reads = []
+
+            class Recording:
+                def __init__(self, *args, **kwargs):
+                    self._process = real_popen(*args, **kwargs)
+                    original = self._process.stdout.read
+                    self._process.stdout.read = lambda size=-1: (
+                        reads.append(size) or original(size))
+                    self.stdout = self._process.stdout
+
+                def poll(self):
+                    return self._process.poll()
+
+                def kill(self):
+                    self._process.kill()
+
+                def wait(self, timeout=None):
+                    return self._process.wait(timeout)
+
+                @property
+                def returncode(self):
+                    return self._process.returncode
+
+            lying = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+            with patch("director_orchestrator.packet_routing.subprocess.run",
+                       return_value=lying), \
+                    patch("director_orchestrator.packet_routing.subprocess.Popen", Recording):
+                self.assertIsNone(reader(large))
+            self.assertEqual([4097], reads)
+
+    def test_screens_ignore_case_where_the_format_does(self) -> None:
+        """Lower, upper and mixed case of the same identifier or credential."""
+
+        from director_orchestrator.policy import (
+            _read_only_request, holds_credential, holds_identifier_format,
+            small_task_content_screened)
+
+        dash, colon = "-", ":"
+        identifiers = (
+            "meet at 123 main st today", "meet at 123 MAIN ST today",
+            "meet at 123 Main Street today", "meet at 12 elm ave today",
+            "BORN on 04/12/1987", "Dob" + colon + " 1987" + dash + "04" + dash + "12",
+            "PASSPORT ab1234567", "passport AB1234567", "id x12345678", "id X12345678",
+            "pay gb82 west 1234 5698 7654 32 now", "pay GB82WEST12345698765432 now",
+        )
+        for text in identifiers:
+            with self.subTest(identifier=text):
+                self.assertTrue(holds_identifier_format(text))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{text}.\n"))
+        pem = dash * 5 + "begin rsa " + "private key" + dash * 5
+        credentials = (
+            "BEARER " + "abcDEF123" * 3, "bearer " + "abcDEF123" * 3,
+            "AUTHORIZATION" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "authorization" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "PASSWORD=" + "s3cr3t", "Pwd=" + "s3cr3t", "PassWd = " + "s3cr3t", pem,
+        )
+        for text in credentials:
+            with self.subTest(credential=text):
+                self.assertTrue(holds_credential(text))
+                self.assertTrue(small_task_content_screened(f"# Config\n\n{text}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md with {text}."))
+
+    def test_credential_bearing_formats_keep_the_button(self) -> None:
+        """Built at runtime: no committed file holds a credential shape."""
+
+        from director_orchestrator.policy import (
+            _read_only_request, holds_credential, small_task_content_screened)
+
+        dot, colon, at = ".", ":", "@"
+        values = {
+            "uri_userinfo": "postgres" + colon + "//admin" + colon + "hunter2" + at + "db.internal/app",
+            "authorization": "Authorization" + colon + " Basic YWRtaW46aHVudGVyMg==",
+            "bearer": "curl with Bearer " + "abcDEF123" * 3,
+            "jwt": dot.join(("eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjMifQ", "c2lnbmF0dXJlLXZhbHVl")),
+            "aws_key": "key " + "AKIA" + "IOSFODNN7EXAMPLE",
+            "aws_session": "key " + "ASIA" + "IOSFODNN7EXAMPLE",
+            "connection_string": "Server=db;User Id=app;Pwd=" + "s3cr3t" + ";",
+            "env_line": "API_THING=" + "q8Zr2mXv7Lp4Tn9Wk3Hs6Fd1",
+            "yaml_line": "token_value: " + "Zk3pQ9vL2mN8xR4tW7yB5cJ1",
+        }
+        for name, text in values.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_credential(text))
+                self.assertTrue(small_task_content_screened(f"# Config\n\n{text}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md with {text}."))
+        for text in ("Version 1.2.3 of the package.", "timeout_seconds = 120",
+                     "Commit 0b3cdbba19bc650c01687da9d402f01dfb06ce1e was merged."):
+            with self.subTest(ordinary=text):
+                self.assertFalse(holds_credential(text))
+
+    def test_every_token_format_is_screened_in_files_and_research_queries(self) -> None:
+        """Bare tokens, built at runtime: the file-content screen and the public
+        research block share one list, so neither misses a prefix."""
+
+        from director_orchestrator.policy import (
+            _PUBLIC_RESEARCH_QUERY_BLOCKS, holds_credential, small_task_content_screened)
+
+        body = "Zk3pQ9vL2mN8xR4tW7yB5cJ1aB"
+        underscore, dash = "_", "-"
+        tokens = {
+            "github_fine_grained": "github" + underscore + "pat" + underscore
+                                   + "11ABCDEFG0" + underscore + body,
+            "github_classic": "gh" + "p" + underscore + body,
+            "github_oauth": "gh" + "o" + underscore + body,
+            "github_server": "gh" + "s" + underscore + body,
+            "openai": "sk" + dash + body,
+            "publishable": "pk" + dash + body,
+            "restricted": "rk" + dash + body,
+            "slack_bot": "xox" + "b" + dash + "1234567890" + dash + body,
+            "aws": "AKIA" + "IOSFODNN7EXAMPLE",
+            "private_key": dash * 5 + "BEGIN EC " + "PRIVATE KEY" + dash * 5,
+        }
+        research = dict(_PUBLIC_RESEARCH_QUERY_BLOCKS)["secret-like value"]
+        for name, token in tokens.items():
+            with self.subTest(token=name):
+                self.assertTrue(holds_credential(token))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\nuse {token} here\n"))
+                self.assertIsNotNone(research.search(f"what is {token} used for"))
+
+    def test_credential_bearing_urls_are_screened_as_a_class(self) -> None:
+        """Webhook URLs whose path is the secret, and any URL whose query
+        carries a credential parameter, in any case. Built at runtime."""
+
+        import secrets
+        from director_orchestrator.policy import holds_credential, small_task_content_screened
+
+        scheme, slash = "https" + ":" + "//", "/"
+        secret = secrets.token_urlsafe(18)
+        urls = {
+            "slack": scheme + "hooks.slack.com" + slash + "services" + slash + "T0" + "AAAA"
+                     + slash + "B0" + "BBBB" + slash + secret,
+            "discord": scheme + "discord.com" + slash + "api" + slash + "webhooks" + slash
+                       + "123" + slash + secret,
+            "office": scheme + "contoso.webhook.office.com" + slash + "webhookb2" + slash + secret,
+        }
+        for name in ("token", "key", "sig", "signature", "access_token", "api_key", "secret",
+                     "TOKEN", "Api_Key"):
+            urls["query_" + name] = (scheme + "example.org" + slash + "hook?x=1&" + name
+                                     + "=" + secret)
+        for name, url in urls.items():
+            with self.subTest(url=name):
+                self.assertTrue(holds_credential(url))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\nSee {url} here.\n"))
+        for ordinary in (scheme + "example.org" + slash + "docs?page=2",
+                         scheme + "hooks.slack.com" + slash + "docs"):
+            with self.subTest(ordinary=ordinary):
+                self.assertFalse(holds_credential(ordinary))
+
+    def test_an_opaque_high_entropy_token_is_refused_in_file_text(self) -> None:
+        """The backstop for credential formats no pattern names."""
+
+        import base64
+        import secrets
+        import string
+        import uuid
+        from director_orchestrator.policy import holds_opaque_token, small_task_content_screened
+
+        alphabet = string.ascii_letters + string.digits
+        refused = 0
+        samples = 0
+        for _ in range(200):
+            for token in (base64.b64encode(secrets.token_bytes(32)).decode(),
+                          base64.urlsafe_b64encode(secrets.token_bytes(24)).decode().rstrip("="),
+                          "".join(secrets.choice(alphabet) for _ in range(40))):
+                samples += 1
+                refused += holds_opaque_token(f"value: {token}")
+        # Random 24-, 32- and 40-character tokens: nearly all are caught.
+        self.assertGreaterEqual(refused / samples, 0.97)
+        token = "".join(secrets.choice(alphabet) for _ in range(40))
+        while not holds_opaque_token(token):
+            token = "".join(secrets.choice(alphabet) for _ in range(40))
+        self.assertTrue(small_task_content_screened(f"# Notes\n\nuse {token} here\n"))
+        # Lower-case hex digests, UUIDs, identifiers and prose never match.
+        ordinary = [
+            secrets.token_hex(20), secrets.token_hex(32), str(uuid.uuid4()),
+            "sha256:" + secrets.token_hex(32), "test_a_blob_read_spends_the_shared_deadline",
+            "EntitlementOwnerActionV1", "backup-stageA-20260907T062414Z",
+            "com/example/project/blob/" + secrets.token_hex(20) + "/README",
+            "DIRECTOR_OPERATING_DIRECTIVE_SHA256=" + secrets.token_hex(32),
+        ]
+        for text in ordinary:
+            with self.subTest(ordinary=text[:40]):
+                self.assertFalse(holds_opaque_token(text))
+
+    def test_the_opaque_token_backstop_passes_every_tracked_doc_and_source_file(self) -> None:
+        """The negative corpus: this repository's own docs, prompts and source."""
+
+        import subprocess
+        from director_orchestrator.policy import holds_opaque_token
+
+        listed = subprocess.run(
+            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            cwd=ROOT, capture_output=True, text=True, check=False)
+        if listed.returncode != 0:
+            self.skipTest("git is unavailable")
+        checked = []
+        for name in listed.stdout.split():
+            try:
+                text = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            checked.append(name)
+            with self.subTest(file=name):
+                self.assertFalse(holds_opaque_token(text))
+        self.assertGreater(len(checked), 200)
+
+    def test_ip_addresses_are_found_by_parsing_not_by_shape(self) -> None:
+        """Any token the standard library parses as an address, compressed
+        IPv6 forms and zones included."""
+
+        from director_orchestrator.policy import holds_identifier_format
+
+        colon, dot = ":", "."
+        addresses = {
+            "ipv6_compressed_many_groups": colon.join(("2001", "db8", "85a3", "", "8a2e", "370", "7334")),
+            "ipv6_full": colon.join(["fd00"] + ["1"] * 7),
+            "ipv6_zone": colon.join(("fe80", "", "1")) + "%eth0",
+            "ipv6_leading": colon.join(("", "", "ffff", "10.0.0.1")),
+            "ipv4": dot.join(("10", "20", "30", "40")),
+        }
+        for name, value in addresses.items():
+            with self.subTest(address=name):
+                self.assertTrue(holds_identifier_format(f"reach it at {value} today"))
+        for ordinary in ("items[::2]", "std::io::Result", "at 12:30:45 UTC", "x = a[::-1]",
+                         "version 1.2.3", "a ratio of 3:4"):
+            with self.subTest(ordinary=ordinary):
+                self.assertFalse(holds_identifier_format(ordinary))
+
+    def test_phone_numbers_are_a_generic_digit_rule_not_country_formats(self) -> None:
+        """9 to 15 digits in single-separated groups, any country; only
+        shapes that cannot be phones are exempt."""
+
+        import secrets
+        import uuid
+        from director_orchestrator.policy import holds_identifier_format
+
+        space, dash = " ", "-"
+        phones = {
+            "uk_mobile_local": "07700" + space + "900123",
+            "uk_international": "+44" + space + "7700" + space + "900123",
+            "double_zero_prefix": "0044" + space + "20" + space + "7946" + space + "0958",
+            "us_bracketed": "(415)" + space + "555" + dash + "2671",
+            "dotted": "030.1234.5678",
+            "bare_run": "4915112345678",
+        }
+        for name, value in phones.items():
+            with self.subTest(phone=name):
+                self.assertTrue(holds_identifier_format(f"call {value} tonight"))
+        ordinary = {
+            "iso_datetime": "2026-09-25 17:48:03",
+            "iso_date_time_zone": "2026-09-25T17:48:03+00:00",
+            "version": "release 10.24.117",
+            "uuid": str(uuid.uuid4()),
+            "sha": secrets.token_hex(20),
+            "short_number": "port 47263 and 8080",
+            "test_summary": "Ran 3524 tests in 1484.041s",
+            "thread_ts": "1720000000.000001",
+        }
+        for name, value in ordinary.items():
+            with self.subTest(ordinary=name):
+                self.assertFalse(holds_identifier_format(value))
+
+    def test_exemptions_only_discard_hits_they_wholly_contain(self) -> None:
+        """Every detector reads the original text; an exempt token never
+        swallows an overlapping protected format."""
+
+        import uuid
+        from director_orchestrator.policy import holds_identifier_format
+
+        for value in ("a12345678", "ab1234567", "a052377", "01.23.45.67.89",
+                      "1234.5678.90", "(415) 555-2671"):
+            with self.subTest(hit=value):
+                self.assertTrue(holds_identifier_format(f"see {value} now"))
+        for value in ("1.2.3", "10.24.117", "(2026-09-17 01:02)", "2026-09-25T17:48:03Z",
+                      str(uuid.uuid4()), "Ran 3524 tests in 1484.041s"):
+            with self.subTest(exempt=value):
+                self.assertFalse(holds_identifier_format(value))
+
+    def test_paths_are_validated_as_written_before_canonicalizing(self) -> None:
+        from director_orchestrator.packet_routing import path_key, small_task_named_contents
+
+        for bad in ("secret.txt ", " secret.txt", "docs /a.md", "docs/ a.md", "docs./a.md",
+                    "a.md.", "a\\b."):
+            with self.subTest(path=bad):
+                self.assertIsNone(path_key(bad))
+        self.assertEqual(("docs", "a.md"), path_key("./docs\\a.md"))
+        self.assertEqual(("docs",), path_key("docs/"))
+        # A tracked "secret.txt " never answers for "secret.txt".
+        work = {"objective": "Summarize secret.txt.", "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [],
+                "authority_snapshot": [{"path": "secret.txt ", "commit_sha": "a" * 40,
+                                        "blob_sha": "b" * 40}]}
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: b"x"):
+            self.assertIsNone(small_task_named_contents(work))
+
+    def test_record_identifiers_never_read_as_personal_identifiers(self) -> None:
+        """UUIDs and lower-case hex digests: a group such as "c0395302" is not
+        a passport number and "de54b14240fa" is not an IBAN."""
+
+        import secrets
+        import uuid
+        from director_orchestrator.policy import holds_sensitive_value
+
+        for _ in range(5_000):
+            value = str(uuid.uuid4())
+            self.assertFalse(holds_sensitive_value(value), value)
+        for size in (20, 32):
+            for _ in range(2_000):
+                value = secrets.token_hex(size)
+                self.assertFalse(holds_sensitive_value(value), value)
+        # A short hex value in the passport shape is a hit (owner ruling:
+        # fail closed); one with three or more letters is not that shape.
+        self.assertTrue(holds_sensitive_value("commit a052377"))
+        self.assertFalse(holds_sensitive_value("commit 5ab3cdf"))
+
+    def test_request_text_and_file_text_share_one_value_screen(self) -> None:
+        """An unlabeled mixed-case token, an address or a phone in the request
+        keeps it out of the class, exactly as in a file."""
+
+        import secrets
+        import string
+        from director_orchestrator.policy import (
+            _read_only_request, holds_sensitive_value, small_task_content_screened)
+
+        alphabet = string.ascii_letters + string.digits
+        token = "".join(secrets.choice(alphabet) for _ in range(40))
+        from director_orchestrator.policy import holds_opaque_token
+        while not holds_opaque_token(token):
+            token = "".join(secrets.choice(alphabet) for _ in range(40))
+        colon = ":"
+        for name, value in {
+            "opaque_token": token,
+            "ipv6": colon.join(("2001", "db8", "", "7334")),
+            "phone": "07700 900123",
+        }.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_sensitive_value(value))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{value}\n"))
+                self.assertFalse(_read_only_request(f"Summarize README.md for {value}."))
+        self.assertTrue(_read_only_request("Summarize README.md for the owner."))
+
+    def test_every_vendor_prefix_needs_only_eight_characters(self) -> None:
+        """One table; any known prefix plus 8 or more token characters is a
+        credential in file text, request text and a research query."""
+
+        import secrets
+        import string
+        from director_orchestrator.policy import (
+            _PUBLIC_RESEARCH_QUERY_BLOCKS, VENDOR_TOKEN_PREFIXES, holds_credential)
+
+        research = dict(_PUBLIC_RESEARCH_QUERY_BLOCKS)["secret-like value"]
+        for prefix in ("glpat-", "glptt-", "gldt-", "glrt-", "npm_", "pypi-", "hf_", "xapp-",
+                       "xoxe-", "shpat_", "shpss_", "dop_v1_", "doo_v1_", "SG.", "sk_live_",
+                       "sk_test_", "rk_live_", "whsec_", "pk_live_", "AIza", "ya29.", "ghr_",
+                       "github_pat_", "sq0atp-", "EAAC", "xai-", "sk-ant-", "sk-proj-",
+                       "lin_api_", "ntn_", "secret_", "dapi", "ATTA"):
+            self.assertIn(prefix, VENDOR_TOKEN_PREFIXES)
+        for prefix in VENDOR_TOKEN_PREFIXES:
+            for suffix in ("".join(secrets.choice(string.ascii_lowercase) for _ in range(20)),
+                           secrets.token_hex(4),
+                           "".join(secrets.choice(string.ascii_letters + string.digits)
+                                   for _ in range(8))):
+                token = prefix + suffix
+                with self.subTest(prefix=prefix, suffix=len(suffix)):
+                    self.assertTrue(holds_credential(f"use {token} here"))
+                    self.assertIsNotNone(research.search(f"what is {token}"))
+        # A known prefix before lower-case words is an identifier, not a token.
+        for identifier in ("secret_scan_passed", "xai-responses-command.py", "sk-learn-pipeline",
+                           "hf_hub_download"):
+            with self.subTest(identifier=identifier):
+                self.assertFalse(holds_credential(identifier))
+
+    def test_a_generic_prefixed_token_is_a_credential(self) -> None:
+        import secrets
+        import string
+        from director_orchestrator.policy import holds_credential
+
+        alphabet = string.ascii_letters + string.digits
+
+        def mixed(length):
+            while True:
+                value = "".join(secrets.choice(alphabet) for _ in range(length))
+                if (any(c.islower() for c in value) and any(c.isupper() for c in value)
+                        and any(c.isdigit() for c in value)):
+                    return value
+
+        for token in ("mypat-" + "q" * 16, "deploykey_" + mixed(18), "apitoken-" + "z" * 20,
+                      "sk_" + "a" * 16, "acme-" + mixed(20), "vendor_" + mixed(14) + "_x"):
+            with self.subTest(token=token[:12]):
+                self.assertTrue(holds_credential(f"value {token} end"))
+        for identifier in ("task_cancelled_before_dispatch", "token_budget_remaining",
+                           "owner_Pro20x_Max5x_not_API_entitlements",
+                           "backup-stageA-20260907T062414Z", "gate-ledger-DIR-COMPLETION-EXAMPLE-1-r2",
+                           "exact-40-character-PR-head", "task_api_gateway_attested"):
+            with self.subTest(identifier=identifier):
+                self.assertFalse(holds_credential(identifier))
+
+    def test_the_prefixed_token_rules_pass_every_tracked_doc_and_source_file(self) -> None:
+        """The negative corpus. policy.py itself holds the prefix table."""
+
+        import subprocess
+        from director_orchestrator.policy import _holds_prefixed_token
+
+        listed = subprocess.run(
+            ("git", "ls-files", "docs", "src", "prompts", "README.md", "AGENTS.md"),
+            cwd=ROOT, capture_output=True, text=True, check=False)
+        if listed.returncode != 0:
+            self.skipTest("git is unavailable")
+        for name in listed.stdout.split():
+            if name == "src/director_orchestrator/policy.py":
+                continue
+            try:
+                text = (ROOT / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            with self.subTest(file=name):
+                self.assertFalse(_holds_prefixed_token(text))
+
+    def test_a_slow_blob_read_is_ended_at_its_deadline(self) -> None:
+        import subprocess as subprocess_module
+        import time as time_module
+        from director_orchestrator.packet_routing import git_blob_reader
+
+        killed = []
+
+        class Slow:
+            def __init__(self, *args, **kwargs):
+                self.returncode = None
+                self.stdout = SimpleNamespace(
+                    read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                killed.append(True)
+                self.returncode = -9
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+        reader = git_blob_reader(".", timeout_seconds=0.3)
+        started = time_module.monotonic()
+        with patch("director_orchestrator.packet_routing.subprocess.run", return_value=sized), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", Slow):
+            self.assertIsNone(reader("a" * 40))
+        self.assertLess(time_module.monotonic() - started, 2.5)
+        self.assertEqual([True], killed)
+
+    def test_a_blob_read_spends_the_shared_deadline_and_opens_no_cleanup_window(self) -> None:
+        """Every wait, the reap included, is clamped to what is left of the
+        caller's deadline; a process not yet exited is reaped by a daemon."""
+
+        import subprocess as subprocess_module
+        import time as time_module
+        from director_orchestrator.packet_routing import blob_read_deadline, git_blob_reader
+
+        waits, reaped = [], []
+
+        class Stuck:
+            def __init__(self, *args, **kwargs):
+                self.returncode = None
+                self.stdout = SimpleNamespace(
+                    read=lambda size=-1: time_module.sleep(3) or b"late", close=lambda: None)
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout=None):
+                if timeout is None:
+                    reaped.append(True)
+                    return -9
+                waits.append(timeout)
+                raise subprocess_module.TimeoutExpired("git", timeout)
+
+        sized = subprocess_module.CompletedProcess((), 0, stdout=b"10\n", stderr=b"")
+        runs = []
+
+        def run(*args, **kwargs):
+            runs.append(kwargs["timeout"])
+            return sized
+
+        # A 10 s reader inside a 0.3 s caller deadline.
+        reader = git_blob_reader(".", timeout_seconds=10)
+        started = time_module.monotonic()
+        with patch("director_orchestrator.packet_routing.subprocess.run", side_effect=run), \
+                patch("director_orchestrator.packet_routing.subprocess.Popen", Stuck), \
+                blob_read_deadline(time_module.monotonic() + 0.3):
+            self.assertIsNone(reader("a" * 40))
+        self.assertLess(time_module.monotonic() - started, 1.5)
+        self.assertLessEqual(runs[0], 0.3)
+        self.assertEqual(1, len(waits))
+        self.assertLessEqual(waits[0], 0.3)
+        time_module.sleep(0.05)
+        self.assertEqual([True], reaped)
+        # A deadline already spent reads nothing at all.
+        with patch("director_orchestrator.packet_routing.subprocess.run",
+                   side_effect=AssertionError("spawned")), \
+                blob_read_deadline(time_module.monotonic() - 1):
+            self.assertIsNone(reader("a" * 40))
+
+    def test_a_small_task_view_is_prepared_once_and_sent_as_prepared(self) -> None:
+        """The transport sends the prepared bytes; without them it rebuilds with
+        contents required and refuses rather than ship hashes only."""
+
+        from director_orchestrator.packet_contracts import document_digest
+        from director_orchestrator.packet_routing import (
+            SmallTaskViewUnavailable, _PREPARED_VIEWS, git_blob_sha,
+            prepare_small_task_view, validated_compact_view)
+
+        text = b"# Notes\n"
+        work = {"objective": "Summarize NOTES.md.", "allowed_tools": ["READ_REPOSITORY"],
+                "allowed_external_effects": [], "starting_ref": "a" * 40,
+                "authority_snapshot_digest": "sha256:" + "b" * 64,
+                "authority_snapshot": [{"path": "NOTES.md", "commit_sha": "a" * 40,
+                                        "blob_sha": git_blob_sha(text)}]}
+        with patch("director_orchestrator.packet_routing.validate_compact_view",
+                   side_effect=lambda view: view):
+            with patch("director_orchestrator.packet_routing._BLOB_READER", None), \
+                    self.assertRaises(SmallTaskViewUnavailable):
+                validated_compact_view(work)
+            with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: text):
+                prepared = prepare_small_task_view(work)
+            self.assertEqual("# Notes\n", prepared["contents"][0]["text"])
+            # A read that now fails still sends the prepared view.
+            with patch("director_orchestrator.packet_routing._BLOB_READER",
+                       side_effect=AssertionError("rebuilt")):
+                self.assertEqual(prepared, validated_compact_view(work))
+            _PREPARED_VIEWS.pop(document_digest(work))
+
+    def test_every_small_class_path_match_uses_one_case_insensitive_normalizer(self) -> None:
+        """Prohibited, owned and named paths compare by path_key: case,
+        separators, ./ and trailing slashes do not matter; ambiguity refuses."""
+
+        from director_orchestrator.packet_routing import (
+            compact_provider_view, git_blob_sha, path_key, small_task_named_contents)
+
+        self.assertEqual(("vendor", "license.md"), path_key("Vendor\\License.md"))
+        self.assertEqual(path_key("./docs/"), path_key("DOCS"))
+        for ambiguous in ("../x", "/etc", "C:/x", "a/*", "", "a/b.", "a /b"):
+            with self.subTest(ambiguous=ambiguous):
+                self.assertIsNone(path_key(ambiguous))
+
+        text = b"# Vendored\n"
+        blob = git_blob_sha(text)
+
+        def work(objective, prohibited, owned=(), inventory=("vendor/license.md",)):
+            return {"objective": objective, "allowed_tools": ["READ_REPOSITORY"],
+                    "allowed_external_effects": [], "starting_ref": "a" * 40,
+                    "authority_snapshot_digest": "sha256:" + "b" * 64,
+                    "owned_paths": list(owned), "prohibited_paths": list(prohibited),
+                    "authority_snapshot": [{"path": path, "commit_sha": "a" * 40,
+                                            "blob_sha": blob} for path in inventory]}
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", lambda sha: text):
+            # Shown when nothing prohibits it.
+            self.assertIsNotNone(small_task_named_contents(
+                work("Summarize vendor/license.md.", ["docs"])))
+            for spelling in ("Vendor", "VENDOR/", "./vendor", ".\\Vendor\\",
+                             "vendor/LICENSE.md", "../elsewhere", "C:/abs", "*"):
+                with self.subTest(prohibited=spelling):
+                    packet = work("Summarize vendor/license.md.", [spelling])
+                    self.assertIsNone(small_task_named_contents(packet))
+                    self.assertEqual([], compact_provider_view(packet)["authority"]["entries"])
+            # A name spelled in another case resolves to the one entry.
+            [shown] = small_task_named_contents(work("Summarize Vendor/License.md.", []))
+            self.assertEqual("vendor/license.md", shown["path"])
+            # Two entries differing only in case: ambiguous, refused.
+            self.assertIsNone(small_task_named_contents(work(
+                "Summarize vendor/license.md.", [],
+                inventory=("vendor/license.md", "Vendor/License.md"))))
+            # An owned root matches in any case; an ambiguous one owns nothing.
+            owned = work("Summarize the notes.", [], owned=["VENDOR"])
+            self.assertEqual(["vendor/license.md"],
+                             [e["path"] for e in compact_provider_view(owned)["authority"]["entries"]])
+
+    def test_named_paths_resolve_against_the_snapshot_inventory(self) -> None:
+        """Extensionless files count: conventional names and any exact snapshot path."""
+
+        from director_orchestrator.packet_routing import git_blob_sha, small_task_named_contents
+        from director_orchestrator.policy import _read_only_request
+
+        files = {"Makefile": b"all:\n\techo ok\n", "Dockerfile": b"FROM scratch\n",
+                 "VERSION": b"1.2\n"}
+        by_sha = {git_blob_sha(data): data for data in files.values()}
+
+        def work(objective, blobs=files):
+            return {"objective": objective, "allowed_tools": ["READ_REPOSITORY"],
+                    "allowed_external_effects": [],
+                    "authority_snapshot": [
+                        {"path": path, "commit_sha": COMMIT_SHA, "blob_sha": git_blob_sha(data)}
+                        for path, data in blobs.items()]}
+
+        with patch("director_orchestrator.packet_routing._BLOB_READER", by_sha.get):
+            contents = small_task_named_contents(work("Explain the Makefile and VERSION."))
+            self.assertEqual(["Makefile", "VERSION"], [item["path"] for item in contents])
+            self.assertEqual(["Dockerfile"], [item["path"] for item in small_task_named_contents(
+                work("Describe the Dockerfile targets."))])
+            # A conventional name the snapshot lacks is a missing file.
+            self.assertIsNone(small_task_named_contents(
+                work("Explain the Makefile.", {"Dockerfile": files["Dockerfile"]})))
+        # The request text names a conventional extensionless file.
+        self.assertTrue(_read_only_request("Explain the Makefile."))
+        self.assertTrue(_read_only_request("Describe the Dockerfile targets."))
+
+    def test_unlabeled_identifier_formats_in_a_file_keep_the_button(self) -> None:
+        """Raw values with no label, in otherwise innocuous files."""
+
+        from director_orchestrator.policy import holds_identifier_format, small_task_content_screened
+
+        # Built at runtime, like any credential- or identity-shaped fixture.
+        dash = "-"
+        values = {
+            "email": "reach " + "jane.doe" + "@" + "example.org" + " for notes",
+            "ssn": "ref " + dash.join(("123", "45", "6789")),
+            "us_phone": "call (555) 867" + dash + "5309 after lunch",
+            "intl_phone": "dial +44 20 7946 0958 today",
+            "card_spaced": "code 4111 1111 1111 1111 on file",
+            "card_plain": "entry 5555555555554444 recorded",
+            "iban": "pay GB82 WEST 1234 5698 7654 32 next",
+            "routing": "bank 021000021 listed",
+            "ipv4": "host 192.168.10.44 responded",
+            "ipv6": "host 2001:0db8:85a3:0000:0000:8a2e:0370:7334 responded",
+            "ipv6_short": "host fe80::1 responded",
+            "street": "meet at 221 Baker Street at noon",
+            "dob": "born on 04/12/1987 in spring",
+            "passport": "passport AB1234567 stamped",
+            "passport_bare": "id X12345678 stamped",
+        }
+        for name, text in values.items():
+            with self.subTest(value=name):
+                self.assertTrue(holds_identifier_format(text))
+                self.assertTrue(small_task_content_screened(f"# Notes\n\n{text}.\n"))
+        # Ordinary code and docs: versions, commit SHAs, dates, counts, PR
+        # numbers and durations do not trip it.
+        for text in (
+            "Version 1.2.3 of the package.",
+            "Commit 0b3cdbba19bc650c01687da9d402f01dfb06ce1e was merged on 2026-09-24.",
+            "Ran 3457 tests in 1113.536s.",
+            "See pull request 263 and issue 48.",
+            "timeout_seconds = 120; retries = 3",
+            "Python 3.12, port 8080.",
+        ):
+            with self.subTest(ordinary=text):
+                self.assertFalse(holds_identifier_format(text))
+
+    def test_the_compact_view_has_a_v1_schema_every_view_is_validated_against(self) -> None:
+        from director_orchestrator.packet_contracts import (
+            PacketContractError,
+            validate_compact_view,
+        )
+        from director_orchestrator.packet_routing import validated_compact_view
+
+        example = json.loads((ROOT / "docs/schemas/director-compact-work-view-v1.example.json")
+                             .read_text(encoding="utf-8"))
+        validate_compact_view(example)
+        self.assertEqual(validate_compact_view(self.view), validated_compact_view(self.packet))
+        for name, change in {
+            "extra_field": {"unexpected": True},
+            "wrong_schema": {"schema_version": "director-compact-work-view/v2"},
+            "entries_over_cap": {"authority": {**example["authority"],
+                                               "entries": example["authority"]["entries"] * 65}},
+            "bad_blob": {"contents": [{**example["contents"][0], "blob_sha": "x"}]},
+            "text_over_cap": {"contents": [{**example["contents"][0], "text": "x" * 4097}]},
+            "unbound": {"work_packet_digest": "sha256:short"},
+        }.items():
+            with self.subTest(invalid=name), self.assertRaises(PacketContractError):
+                validate_compact_view({**example, **change})
+        for field in ("objective", "task_id", "authority", "work_packet_digest"):
+            with self.subTest(missing=field), self.assertRaises(PacketContractError):
+                validate_compact_view({key: value for key, value in example.items() if key != field})
+
+    def test_small_task_view_is_bounded_and_omits_the_inventory(self) -> None:
+        self.assertGreater(len(canonical_json_bytes(self.packet)), 200_000)
+        self.assertLess(len(canonical_json_bytes(self.view)), 20_000)
+        self.assertNotIn("authority_snapshot", self.view)
+        self.assertEqual(
+            {
+                "commit": self.packet["starting_ref"],
+                "digest": self.packet["authority_snapshot_digest"],
+                "file_count": 1_505,
+                "entries": [_entry("README.md")],
+            },
+            self.view["authority"],
+        )
+
+    def test_view_is_bound_to_the_full_packet_by_digest_and_identity(self) -> None:
+        self.assertEqual(COMPACT_PROVIDER_VIEW_SCHEMA, self.view["schema_version"])
+        self.assertEqual(document_digest(self.packet), self.view["work_packet_digest"])
+        for field in (
+            "task_id",
+            "assignment_id",
+            "idempotency_key",
+            "starting_ref",
+            "authority_snapshot_digest",
+            "correlation",
+            "limits",
+            "owned_paths",
+            "prohibited_paths",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(self.packet[field], self.view[field])
+
+    def test_entries_follow_owned_paths_and_never_prohibited_paths(self) -> None:
+        view = compact_provider_view(
+            {
+                "objective": "Review the package.",
+                "owned_paths": ["src/pkg"],
+                "prohibited_paths": ["src/pkg/secret.py"],
+                "authority_snapshot": [
+                    _entry("src/pkg/a.py"),
+                    _entry("src/pkg/secret.py"),
+                    _entry("src/pkgx/b.py"),
+                ],
+            }
+        )
+        self.assertEqual([_entry("src/pkg/a.py")], view["authority"]["entries"])
+        self.assertEqual(3, view["authority"]["file_count"])
+
+    def test_an_attended_repository_wide_view_keeps_a_bounded_inventory(self) -> None:
+        """Outside the small class a view that names no path is not left empty."""
+
+        snapshot = [_entry(f"src/m{index}.py") for index in range(100)] + [
+            _entry("docs/private/secret.md")]
+        view = compact_provider_view({
+            "objective": "List repository files.",
+            "allowed_tools": ["READ_REPOSITORY", "RUN_TESTS"],
+            "allowed_external_effects": [],
+            "prohibited_paths": ["docs/private"],
+            "authority_snapshot": snapshot,
+        })
+        self.assertEqual(64, len(view["authority"]["entries"]))
+        self.assertEqual(snapshot[:64], view["authority"]["entries"])
+        self.assertNotIn(_entry("docs/private/secret.md"), view["authority"]["entries"])
+        # A small read-only packet stays on its named paths only.
+        small = compact_provider_view({
+            "objective": "List repository files.",
+            "allowed_tools": ["READ_REPOSITORY"],
+            "allowed_external_effects": [],
+            "authority_snapshot": snapshot,
+        })
+        self.assertEqual([], small["authority"]["entries"])
+
+    def test_entries_are_capped(self) -> None:
+        view = compact_provider_view(
+            {
+                "owned_paths": ["src/"],
+                "authority_snapshot": [_entry(f"src/m{index}.py") for index in range(100)],
+            }
+        )
+        self.assertEqual(64, len(view["authority"]["entries"]))
+        self.assertEqual(100, view["authority"]["file_count"])
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 04:18 UTC | END]]
@@ -738,3 +1673,20 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:31 UTC | END]]
 # [[Claude | Claude Opus 5 | 2026-09-02 | 04:15 UTC | END]]
 # [[xAI Grok; Codex QA fixture correction | grok-4.6; GPT-6 Astra | 2026-09-22 | 22:42 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:03 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

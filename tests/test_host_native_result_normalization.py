@@ -1,3 +1,15 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | BEGIN]]
@@ -6,6 +18,7 @@
 from copy import deepcopy
 from decimal import Decimal
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -15,6 +28,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from director_orchestrator.host_provider_bridge import (
+    HostProviderBridgeError,
     HostBridgeChallengeEvidence,
     bridge_response_signature,
 )
@@ -25,13 +39,17 @@ from director_orchestrator.packet_contracts import (
     canonical_json_bytes,
     document_digest,
 )
-from director_orchestrator.packet_routing import antigravity_directive_objective
+from director_orchestrator.packet_routing import (
+    antigravity_directive_objective,
+    compact_provider_view,
+)
 from director_orchestrator.primary_transports import (
     NativeCommandPacketTransport,
     antigravity_closed_payload,
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
     normalize_native_provider_envelope,
+    sends_compact_provider_view,
 )
 from director_orchestrator.provider_validation import normalize_capture
 from tests.test_grok_responses_envelope import response as grok_response
@@ -39,6 +57,8 @@ from tests.test_provider_validation import work_packet
 
 
 SECRET = "fixture-bridge-secret-" + "x" * 32
+# Pinned argv digests for attested bridge lanes (values are opaque here).
+ATTESTED_PINS = {"claude": "sha256:" + "1" * 64, "grok": "sha256:" + "2" * 64}
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -95,6 +115,8 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
             digest = hashlib.sha256(body).hexdigest()
             response = MagicMock()
             response.read.return_value = body
+            # Read in bounded chunks, as a real HTTPResponse is.
+            response.read1 = io.BytesIO(body).read1
             response.headers = {
                 "X-Director-Response-Digest": digest,
                 "X-Director-Response-Proof": bridge_response_signature(
@@ -151,8 +173,13 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                     # The 40 output tokens already include 25 reasoning tokens.
                     self.assertEqual(140, result["usage"]["total_tokens"])
                     self.assertEqual(0.0005, result["usage"]["cost_usd"])
-                self.assertEqual(canonical_json_bytes(work_packet()), sent["data"])
-                self.assertNotIn("X-director-work-packet-digest", sent["headers"])
+                # The bridge posts the compact view, signed with the full
+                # packet's digest; the result above still binds to the packet.
+                self.assertEqual(
+                    canonical_json_bytes(compact_provider_view(work_packet())), sent["data"])
+                self.assertEqual(
+                    hashlib.sha256(canonical_json_bytes(work_packet())).hexdigest(),
+                    sent["headers"]["X-director-work-packet-digest"])
 
     def test_existing_canonical_packets_are_preserved_without_rebinding(self):
         work = work_packet()
@@ -169,6 +196,373 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
                 for changes in ({"task_id": "wrong-task"}, {"schema_version": "2.0"}):
                     with self.subTest(changes=changes), self.assertRaises(PacketContractError):
                         self.dispatch(provider, {**packet, **changes})
+
+    def test_outbound_bytes_per_bridge_lane_match_the_small_class_predicate(self):
+        """What each bridge lane actually posts, and what eligibility believes."""
+
+        work = work_packet()
+        example = json.loads((ROOT / "docs/schemas/model-result-packet-v1.example.json").read_text())
+        example.update({key: work[key] for key in (
+            "task_id", "assignment_id", "idempotency_key",
+            "authority_snapshot_digest", "correlation",
+        )})
+        lanes = ("claude", "grok", "cursor", "github-copilot")
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                # Both lanes attested and pinned: the owner's 2026-09-24 ruling.
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset(lanes), "sha256:" + "c" * 64, 1,
+                    read_only_attested=ATTESTED_PINS),
+                host_bridge_attested_argv=ATTESTED_PINS,
+            )
+        for provider in lanes:
+            with self.subTest(provider=provider):
+                _, sent = self.dispatch(provider, {**example, "provider": provider})
+                compact = provider in {"claude", "grok"}
+                self.assertEqual(
+                    canonical_json_bytes(compact_provider_view(work) if compact else work),
+                    sent["data"])
+                # A lane that posts the full packet can never join the small
+                # class, so its reviewer is never measured on a view it was not sent.
+                self.assertIs(compact, sends_compact_provider_view(transports[provider]))
+
+    def test_a_bridge_lane_needs_a_fresh_attestation_matching_its_pin(self):
+        """Owner ruling 2026-09-24, "Bridge with attested sandbox"."""
+
+        from director_orchestrator.primary_default import _independent_lane_pair
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+
+        def discover(attested, pins):
+            with TemporaryDirectory() as directory, patch(
+                "director_orchestrator.primary_transports._which", return_value=None
+            ):
+                transports, _ = discover_local_primary_command_transports(
+                    cwd=directory, authenticated={},
+                    host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                    host_bridge_secret=SECRET,
+                    host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                    host_bridge_challenge=HostBridgeChallengeEvidence(
+                        frozenset({"claude", "grok"}), "sha256:" + "c" * 64, 1,
+                        read_only_attested=attested),
+                    host_bridge_attested_argv=pins,
+                )
+            return transports
+
+        grok_pin = {"grok": ATTESTED_PINS["grok"]}
+        cases = {
+            "attested_and_pinned": (grok_pin, grok_pin, True),
+            "no_attestation": (None, grok_pin, False),
+            "not_attested": ({}, grok_pin, False),
+            "no_pin": (grok_pin, {}, False),
+            "pin_mismatch": (grok_pin, {"grok": "sha256:" + "3" * 64}, False),
+        }
+        for name, (attested, pins, admitted) in cases.items():
+            with self.subTest(case=name):
+                transports = discover(attested, pins)
+                self.assertIs(admitted, sends_compact_provider_view(transports["grok"]))
+                # Readiness: OpenAI plus an attested Grok bridge is an
+                # independent pair; without the attestation there is none.
+                lanes = frozenset(
+                    lane for lane, transport in {
+                        **transports,
+                        "openai": OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"),
+                    }.items() if sends_compact_provider_view(transport))
+                self.assertIs(admitted, _independent_lane_pair(lanes))
+
+        # Each small-task attempt re-challenges: a lost, changed or
+        # unauthenticated attestation stops it.
+        transport = discover(grok_pin, grok_pin)["grok"]
+        evidence = lambda attested: HostBridgeChallengeEvidence(
+            frozenset({"grok"}), "sha256:" + "c" * 64, 2, read_only_attested=attested)
+        for name, outcome, current in (
+            ("unchanged", evidence(grok_pin), True),
+            ("argv_changed", evidence({"grok": "sha256:" + "3" * 64}), False),
+            ("attestation_lost", evidence({}), False),
+            ("bad_hmac", HostProviderBridgeError("host bridge challenge authentication failed"), False),
+        ):
+            with self.subTest(recheck=name), patch(
+                "director_orchestrator.host_provider_bridge.challenge_host_provider_bridge",
+                side_effect=[outcome]):
+                self.assertIs(current, transport.read_only_attestation_current())
+
+    def test_bridge_challenges_spend_one_shared_deadline(self):
+        from time import monotonic
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.primary_default import _bridge_attestations_current
+
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset({"grok"}), "sha256:" + "c" * 64, 1,
+                    read_only_attested={"grok": ATTESTED_PINS["grok"]}),
+                host_bridge_attested_argv={"grok": ATTESTED_PINS["grok"]},
+            )
+        bridge = transports["grok"]
+        evidence = HostBridgeChallengeEvidence(
+            frozenset({"grok"}), "sha256:" + "c" * 64, 2,
+            read_only_attested={"grok": ATTESTED_PINS["grok"]})
+        target = "director_orchestrator.host_provider_bridge.challenge_host_provider_bridge"
+        # Nothing left: refused without a request.
+        with patch(target, side_effect=AssertionError("challenged")):
+            self.assertFalse(bridge.read_only_attestation_current(deadline=monotonic() - 1))
+        # The HTTP timeout is the remainder, never a fresh five seconds.
+        with patch(target, return_value=evidence) as challenge:
+            self.assertTrue(bridge.read_only_attestation_current(deadline=monotonic() + 1.5))
+        self.assertLessEqual(challenge.call_args.kwargs["timeout_seconds"], 1.5)
+        # Every transport of a lane shares one window.
+        seen = []
+        attempt = PacketBoundaryAdapter("grok", bridge)
+        dependencies = SimpleNamespace(
+            adapters={"grok": PacketBoundaryAdapter("grok", bridge)},
+            attempt_adapters={"grok": {("json", "a"): attempt, ("text", "b"): attempt}})
+        with patch.object(type(bridge), "read_only_attestation_current",
+                          lambda self, *, deadline=None: seen.append(deadline) or True):
+            self.assertTrue(_bridge_attestations_current(dependencies, "grok"))
+        self.assertEqual(3, len(seen))
+        self.assertEqual(1, len(set(seen)))
+
+    def test_the_one_viable_pair_openai_producer_and_attested_grok_reviewer(self):
+        """End to end on the parts that decide it: eligibility, readiness,
+        usage, and the acceptance evidence the review must carry."""
+
+        from dataclasses import replace
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import (
+            Assignment, AssignmentKind, ProviderName, SlackIntake, TaskRecord, TaskStatus)
+        from director_orchestrator.policy import preview_plan, small_read_only_eligible
+        from director_orchestrator.primary_default import (
+            _independent_lane_pair, result_acceptance_passes, small_task_usage_refusal)
+        from director_orchestrator.policy import SMALL_TASK_PRODUCER_ONLY_LANES
+        from director_orchestrator.primary_transports import _normalize_host_native_result
+        from director_orchestrator.primary_transports import _bound_research_result
+
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        text = "Project: demo\nSummarize README.md for the owner."
+        record = TaskRecord(task_id="DIR-PAIR", status=TaskStatus.QUEUED, intake=SlackIntake(
+            source_event_id="evt-pair", channel_id="C1", thread_ts="1.1", user_id="U1", text=text))
+        plan = preview_plan(text, settings)
+        producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+
+        def with_agents(first, second):
+            return plan.model_copy(update={"assignments": [
+                producer.model_copy(update={"agent": first}),
+                reviewer.model_copy(update={"agent": second})]})
+
+        lanes = frozenset({"openai", "grok"})
+        record.plan = with_agents(ProviderName.OPENAI, ProviderName.GROK)
+        self.assertTrue(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
+        # Responses can produce, never review.
+        record.plan = with_agents(ProviderName.GROK, ProviderName.OPENAI)
+        self.assertFalse(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
+        self.assertIn("openai", SMALL_TASK_PRODUCER_ONLY_LANES)
+        # Readiness: that pair arms it; Responses alone, or with only another
+        # producer-only reviewer, does not.
+        self.assertTrue(_independent_lane_pair(lanes, reviewer_excluded={"openai"}))
+        self.assertFalse(_independent_lane_pair({"openai"}, reviewer_excluded={"openai"}))
+        self.assertFalse(_independent_lane_pair({"openai", "grok"},
+                                                reviewer_excluded={"openai", "grok"}))
+        # The Grok bridge reviewer can return acceptance evidence the review
+        # accepts, with complete usage; without it, the review rejects.
+        work = work_packet()
+        passing = grok_response()
+        passing["output"][1]["content"][0]["text"] = json.dumps({
+            "status": "SUCCEEDED", "outcome": "The summary is accurate.",
+            "acceptance": [{"check": check, "status": "PASS", "evidence": "Checked against README.md."}
+                           for check in work["acceptance_checks"]]})
+        result = _normalize_host_native_result("grok", work, passing)
+        self.assertTrue(result_acceptance_passes(result, work["acceptance_checks"]))
+        self.assertIsNone(small_task_usage_refusal(result, "grok", small_class=True))
+        self.assertFalse(result_acceptance_passes(
+            _normalize_host_native_result("grok", work, grok_response()), work["acceptance_checks"]))
+        # Responses results always report NOT_RUN: never an accepted review.
+        self.assertFalse(result_acceptance_passes(
+            _bound_research_result("openai", work, run_reference="resp-1", outcome="done"),
+            work["acceptance_checks"]))
+
+    def test_an_accepted_review_disposes_of_exactly_the_packet_checks(self):
+        """Every required check exactly once, no extra, no duplicate, all PASS."""
+
+        from director_orchestrator.primary_default import result_acceptance_passes
+
+        checks = ["First check", "Second check"]
+
+        def review(*names, status="PASS"):
+            return {"status": "SUCCEEDED", "risks": [], "blockers": [],
+                    "requested_decisions": [],
+                    "acceptance": [{"check": name, "status": status} for name in names]}
+
+        self.assertTrue(result_acceptance_passes(review(*checks), checks))
+        self.assertTrue(result_acceptance_passes(review(*reversed(checks)), checks))
+        for name, (result, expected) in {
+            "missing": (review("First check"), checks),
+            "extra": (review(*checks, "Invented check"), checks),
+            "duplicate": (review("First check", "First check", "Second check"), checks),
+            "duplicate_hides_missing": (review("First check", "First check"), checks),
+            "renamed": (review("First check", "Second check."), checks),
+            "unrelated": (review("Anything"), checks),
+            "not_pass": (review(*checks, status="NOT_RUN"), checks),
+            "no_expected": (review(*checks), []),
+            "unknown_expected": (review(*checks), None),
+            "duplicate_expected": (review(*checks), [*checks, "First check"]),
+            "not_a_mapping": ({**review(), "acceptance": ["First check", "Second check"]},
+                              checks),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(result_acceptance_passes(result, expected))
+
+    def test_usage_is_taken_from_the_native_envelope_never_the_model(self):
+        """A model can write any "usage" into its structured output; the
+        caps read only the native envelope's."""
+
+        from director_orchestrator.primary_default import small_task_usage_refusal
+        from director_orchestrator.primary_transports import _normalize_host_native_result
+
+        work = work_packet()
+        claimed = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "cost_usd": 0.0}
+        native = {
+            "type": "result", "subtype": "success", "is_error": False, "session_id": "session",
+            "result": json.dumps({
+                "status": "SUCCEEDED", "outcome": "Checked.", "usage": claimed,
+                "acceptance": [{"check": check, "status": "PASS"}
+                               for check in work["acceptance_checks"]]}),
+        }
+        result = _normalize_host_native_result("claude", work, native)
+        self.assertIsNone(result["usage"])
+        self.assertEqual("small_task_usage_unmeasured",
+                         small_task_usage_refusal(result, "claude", small_class=True))
+        # The native envelope's own usage is used when present.
+        native["usage"] = {"input_tokens": 100, "output_tokens": 40}
+        native["total_cost_usd"] = 0.01
+        result = _normalize_host_native_result("claude", work, native)
+        self.assertEqual(140, result["usage"]["total_tokens"])
+
+    def test_the_grok_reviewer_cap_is_enforced_on_the_result(self):
+        """Owner ruling 2026-09-24, "Accept post-hoc cap": over-cap reported
+        usage fails the attempt; within the cap it is accepted; missing
+        usage is unmeasured."""
+
+        from director_orchestrator.primary_default import (
+            result_acceptance_passes, small_task_usage_refusal)
+
+        work = work_packet()
+        review = grok_response()
+        review["output"][1]["content"][0]["text"] = json.dumps({
+            "status": "SUCCEEDED", "outcome": "The summary is accurate.",
+            "acceptance": [{"check": check, "status": "PASS", "evidence": "Checked."}
+                           for check in work["acceptance_checks"]]})
+        # 140 tokens reported (input 100 + output 40) and $0.0005.
+        within, _ = self.dispatch("grok", review, tokens=140, budget=Decimal("0.0005"))
+        self.assertEqual("SUCCEEDED", within["status"])
+        self.assertTrue(result_acceptance_passes(within, work["acceptance_checks"]))
+        self.assertIsNone(small_task_usage_refusal(within, "grok", small_class=True))
+        for limits in ({"tokens": 139}, {"budget": Decimal("0.00049")}):
+            with self.subTest(limits=limits):
+                over, _ = self.dispatch("grok", review, **limits)
+                # A failed result: the roster reports the attempt FAILED, the
+                # task's terminal is not SUCCEEDED, and its grant trips.
+                self.assertEqual("FAILED", over["status"])
+                self.assertIn("admitted attempt limit", over["blockers"][-1])
+                self.assertFalse(result_acceptance_passes(over, work["acceptance_checks"]))
+        # A Responses-shaped Grok reply without usage is refused outright; a
+        # result that reaches dispatch without usage is unmeasured.
+        unmeasured = dict(review)
+        unmeasured.pop("usage")
+        with self.assertRaisesRegex(RuntimeError, "usage is missing"):
+            self.dispatch("grok", unmeasured)
+        self.assertEqual("small_task_usage_unmeasured", small_task_usage_refusal(
+            {**within, "usage": None}, "grok", small_class=True))
+
+    def test_no_native_lane_joins_the_small_class(self):
+        """Owner ruling 2026-09-24: native lanes send the compact view but are
+        never small-class capable; readiness and eligibility never count them."""
+
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.policy import preview_plan, small_read_only_eligible
+        from director_orchestrator.primary_default import _compact_view_lanes, _independent_lane_pair
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+        from director_orchestrator.config import Settings
+        from director_orchestrator.models import SlackIntake, TaskRecord, TaskStatus
+        from dataclasses import replace
+
+        with TemporaryDirectory() as directory:
+            natives = {
+                provider: NativeCommandPacketTransport(
+                    provider, (f"{provider}.exe", "--print"), cwd=directory)
+                for provider in ("claude", "grok", "cursor", "github-copilot")
+            }
+        for provider, transport in natives.items():
+            with self.subTest(provider=provider):
+                self.assertEqual("work-packet", transport.payload_mode)
+                self.assertFalse(sends_compact_provider_view(transport))
+        adapters = {lane: PacketBoundaryAdapter(lane, transport)
+                    for lane, transport in natives.items()}
+        adapters["openai"] = PacketBoundaryAdapter(
+            "openai", OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"))
+        lanes = _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters={}))
+        self.assertEqual(frozenset({"openai"}), lanes)
+        # Readiness needs an independent pair among these: native lanes add none.
+        self.assertFalse(_independent_lane_pair(lanes))
+        # A native-Claude producer or a native-Cursor reviewer leaves the task
+        # outside the class under this deployment's lanes.
+        settings = replace(Settings(), repository_allowlist=("example/demo",))
+        text = "Project: demo\nSummarize README.md for the owner."
+        record = TaskRecord(task_id="DIR-NATIVE", status=TaskStatus.QUEUED, intake=SlackIntake(
+            source_event_id="evt-native", channel_id="C1", thread_ts="1.1", user_id="U1", text=text))
+        record.plan = preview_plan(text, settings)
+        self.assertEqual({"claude", "cursor"}, {item.agent.value for item in record.plan.assignments})
+        self.assertTrue(small_read_only_eligible(
+            record, settings, compact_view_lanes=frozenset({"claude", "cursor"})))
+        self.assertFalse(small_read_only_eligible(record, settings, compact_view_lanes=lanes))
+
+    def test_compact_view_lanes_admits_only_lanes_whose_every_adapter_is_compact(self):
+        """The production composition used at intake and at dispatch alike."""
+
+        from director_orchestrator.langgraph_runtime import PacketBoundaryAdapter
+        from director_orchestrator.primary_default import _compact_view_lanes
+        from director_orchestrator.primary_transports import OpenAIResponsesPacketTransport
+
+        lanes = ("claude", "grok", "cursor", "github-copilot")
+        with TemporaryDirectory() as directory, patch(
+            "director_orchestrator.primary_transports._which", return_value=None
+        ):
+            transports, _ = discover_local_primary_command_transports(
+                cwd=directory, authenticated={},
+                host_bridge_endpoint="https://host.docker.internal:18765/v1/provider/dispatch",
+                host_bridge_secret=SECRET,
+                host_bridge_writer_owner_token_digest="sha256:" + "b" * 64,
+                # Both lanes attested and pinned: the owner's 2026-09-24 ruling.
+                host_bridge_challenge=HostBridgeChallengeEvidence(
+                    frozenset(lanes), "sha256:" + "c" * 64, 1,
+                    read_only_attested=ATTESTED_PINS),
+                host_bridge_attested_argv=ATTESTED_PINS,
+            )
+        adapters = {lane: PacketBoundaryAdapter(lane, transports[lane]) for lane in lanes}
+        adapters["openai"] = PacketBoundaryAdapter(
+            "openai", OpenAIResponsesPacketTransport(api_key="sk-test", model="gpt-test"))
+        self.assertEqual(
+            frozenset({"claude", "grok", "openai"}),
+            _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters={})))
+        # These are the host-bridge Claude and Grok lanes; native ones never count.
+        # One attempt adapter that posts the full packet takes its lane out.
+        attempts = {
+            "claude": {("json", "full"): PacketBoundaryAdapter("claude", transports["cursor"])},
+            "grok": {("json", "compact"): PacketBoundaryAdapter("grok", transports["grok"])},
+        }
+        self.assertEqual(
+            frozenset({"grok", "openai"}),
+            _compact_view_lanes(SimpleNamespace(adapters=adapters, attempt_adapters=attempts)))
 
     def test_native_failure_is_not_promoted_to_success(self):
         native = grok_response()
@@ -328,3 +722,15 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 03:56 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:26 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:01 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

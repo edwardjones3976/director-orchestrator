@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | BEGIN]]
 """Genuine Responses captures cross the same boundaries as native Grok replies."""
@@ -12,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from director_orchestrator.packet_contracts import canonical_json_bytes, validate_packet
+from director_orchestrator.packet_routing import compact_provider_view
 from director_orchestrator.primary_transports import (
     NativeCommandPacketTransport,
     grok_terminal_success,
@@ -53,7 +55,7 @@ class GrokResponsesEnvelopeTests(unittest.TestCase):
 
             def run(argv, **kwargs):
                 prompt = Path(argv[argv.index("--prompt-file") + 1]).read_bytes()
-                self.assertTrue(prompt.endswith(canonical_json_bytes(work)))
+                self.assertTrue(prompt.endswith(canonical_json_bytes(compact_provider_view(work))))
                 self.assertIsNone(kwargs["input_bytes"])
                 for name, value in (("DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD", budget),
                                     ("DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT", tokens)):
@@ -196,3 +198,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 01:39 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-23 | 02:04 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]

@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
@@ -103,6 +106,8 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
                 "Executing an eligible merge of a pull request into a non-protected branch.",
                 "Marking a pull request ready for review.",
                 "Posting to the project's own designated Slack channel.",
+                "Executing a small read-only task that "
+                "`policy.small_read_only_eligible()` admits.",
             ],
         )
         # Scope the remaining checks to the delegable acts themselves. The prose
@@ -124,6 +129,61 @@ class HumanOutOfTheLoopAuthorityTests(unittest.TestCase):
             "into a protected branch",
         ):
             self.assertNotIn(forbidden, delegable)
+
+    def test_small_read_only_class_is_bounded_and_owner_signed(self) -> None:
+        standing = self.section("Standing grant for small read-only tasks")
+        for required in (
+            "PRE_AUTHORIZED",
+            "explicit sign-off",
+            "never skips or relaxes",
+            "new grant_id",
+            "TRUSTED_PROVIDER_COST_RANKS",
+            "`policy.small_read_only_eligible()`",
+            "can only remove eligibility",
+            "not a replay",
+        ):
+            self.assertIn(required, standing)
+
+    def test_the_pre_execution_class_is_an_explicit_carve_out_everywhere(self) -> None:
+        """Each rule the class departs from says so where the rule is stated."""
+
+        def flat(text: str) -> str:
+            return " ".join(text.split())
+
+        self.assertIn("explicit carve-out", flat(self.section("Purpose")))
+        states = flat(self.section("Operating states"))
+        self.assertIn("start the one pre-execution class when its pre-execution bar holds", states)
+        self.assertIn("recorded per grant", states)
+        self.assertIn("a restart re-arms the grant only if the ledger", states)
+        bar = flat(self.section("The evidence bar"))
+        self.assertIn("The pre-execution carve-out.", bar)
+        self.assertIn("never records items 1 to 5 as passing", bar)
+        self.assertIn("Items 1 to 5 are not waived", bar)
+        phases = flat(self.section("Implementation phases"))
+        self.assertIn("Its predecessor is phase 2", phases)
+        self.assertIn("waives phase 3's shadow record and phase 5's", phases)
+        standing = flat(self.section("Standing grant for small read-only tasks"))
+        for required in ("decide_pre_execution", "never by `H(a)`", "derived from durable state",
+                         "provider callback", "ambiguous slot", "outside the class and keeps the button",
+                         "before any reviewer work"):
+            self.assertIn(required, standing)
+        # Every section stating a rule the class departs from says so, and no
+        # section claims the lexical membership test is evidence-bar item 7.
+        self.assertIn("except the pre-execution class's process-level ledger hold", states)
+        self.assertIn("not item 7", standing)
+        self.assertIn("lexical filter", standing)
+        self.assertNotIn("(item 7)", standing)
+        self.assertNotIn("write-shaped requests are kept out", standing)
+        self.assertIn("parallel aggregate ended failed", standing)
+        trips = flat(self.section("Trip conditions"))
+        self.assertIn("suspends that grant only", trips)
+        self.assertIn("holds only the process attended", trips)
+        audit = flat(self.section("Audit record"))
+        self.assertIn("an exercise lost to a concurrent writer write no record", audit)
+        evaluated = flat(self.section("The evaluated form"))
+        self.assertIn("decide_pre_execution", evaluated)
+        self.assertIn("Every other action, which is candidate-bound, runs without", evaluated)
+        self.assertIn("row 4S is the stated exception", flat(self.section("Known limitations")))
 
     def test_evidence_bar_is_conjunctive_and_complete(self) -> None:
         bar = self.section("The evidence bar")
@@ -447,3 +507,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:27 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]

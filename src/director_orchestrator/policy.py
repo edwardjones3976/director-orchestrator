@@ -1,3 +1,26 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | BEGIN]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -36,9 +59,13 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:02 UTC | BEGIN]]
 from __future__ import annotations
 
+import ipaddress
+import math
 import re
+from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from .antigravity import (
@@ -58,6 +85,7 @@ from .models import (
     PlanPrestageRecord,
     ProviderName,
     RiskLevel,
+    TaskRecord,
     WorkloadEnforcementRecord,
 )
 from .workload_policy import (
@@ -80,7 +108,15 @@ _GATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("destructive action", re.compile(r"\b(delete|destroy|drop database|truncate|purge|wipe|remove account|rewrite history|force push)\b", re.I)),
     ("purchase or paid upgrade", re.compile(r"\b(buy|purchase|subscribe|upgrade plan|charge|payment|spend)\b", re.I)),
     ("external representation", re.compile(r"\b(send|email|message|post|reply|submit)\b.{0,50}\b(customer|client|public|vendor|agency|employer|recipient)\b", re.I | re.S)),
-    ("sensitive data", re.compile(r"\b(ssn|social security|passport|medical|health|financial|bank|credit card|identity|genealogy evidence|dna|authentication data)\b", re.I)),
+    ("sensitive data", re.compile(
+        r"\b(ssns?|social security|passport|medical|health|financial|bank|credit card|identity"
+        r"|genealogy evidence|dna|authentication data"
+        # Personal identifiers: every task that names them stops for the owner.
+        r"|personal data|personally identifiable|pii|date of birth|dates of birth|birth ?dates?"
+        r"|dob|phone numbers?|e-?mail addresses|home address(?:es)?|mailing address(?:es)?"
+        r"|street address(?:es)?|salar(?:y|ies)|payroll|patients?|diagnos(?:is|es)"
+        r"|account numbers?|card numbers?|routing numbers?|iban|genealogy|family tree"
+        r"|driver'?s licen[cs]e|tax id|national id)\b", re.I)),
     ("credential or permission change", re.compile(r"\b(api key|token|password|secret|credential|oauth|permission|access scope|administrator|admin access)\b", re.I)),
 )
 
@@ -206,11 +242,39 @@ _PERPLEXITY_PROHIBITED_AUTHORITY: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("operational decision", re.compile(r"\b(?:assess|decide|determine|recommend|judge)\b.{0,60}\b(?:patch|pull request|pr|ship|merge|deploy|release|acceptance)\b", re.I | re.S)),
 )
 
+# Vendor token prefixes, in the one table the public-research query block and
+# the credential screens both use, modelled on the well-known secret-scanning
+# sets (GitHub secret scanning, gitleaks). After a known prefix, 8 or more
+# token characters of any class count. Longer prefixes come first so the
+# alternation prefers them.
+VENDOR_TOKEN_PREFIXES: tuple[str, ...] = tuple(sorted({
+    # OpenAI, Anthropic, xAI and generic sk-/pk-/rk- keys
+    "sk-", "sk-proj-", "sk-ant-", "pk-", "rk-", "xai-",
+    # GitHub
+    "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+    # GitLab
+    "glpat-", "glptt-", "gldt-", "glrt-",
+    # Package registries and model hubs
+    "npm_", "pypi-", "hf_",
+    # Slack
+    "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-", "xoxe-", "xapp-",
+    # Shopify, DigitalOcean, SendGrid, Stripe, Square, Meta
+    "shpat_", "shpss_", "dop_v1_", "doo_v1_", "SG.",
+    "sk_live_", "sk_test_", "rk_live_", "pk_live_", "whsec_", "sq0atp-", "EAAC",
+    # Google, Linear, Notion, Databricks, Atlassian, AWS
+    "AIza", "ya29.", "lin_api_", "ntn_", "secret_", "dapi", "ATTA", "AKIA", "ASIA",
+}, key=lambda prefix: (-len(prefix), prefix)))
+_TOKEN_FORMATS = (
+    "(?:" + "|".join(re.escape(prefix) for prefix in VENDOR_TOKEN_PREFIXES) + ")"
+    r"[A-Za-z0-9_.+/-]{8,}"
+)
+
 _PUBLIC_RESEARCH_QUERY_BLOCKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("repository path", re.compile(r"(?:[a-z]:\\|/(?:home|users|workspace)/|\b(?:src|tests|oracle|docs)/[\w./-]+)", re.I)),
     ("repository URL", re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+", re.I)),
     ("commit SHA", re.compile(r"\b[0-9a-f]{40}\b", re.I)),
-    ("secret-like value", re.compile(r"\b(?:sk-[a-z0-9_-]{12,}|ghp_[a-z0-9]{12,}|github_pat_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,})\b", re.I)),
+    ("secret-like value", re.compile(
+        rf"-----BEGIN [A-Z ]*PRIVATE KEY|(?<![A-Za-z0-9_.-])(?:{_TOKEN_FORMATS})", re.I)),
     ("diff or source excerpt", re.compile(r"(?:diff --git|@@ -\d|```(?:python|javascript|typescript|diff|json)?\s)", re.I)),
     ("private-context language", re.compile(r"\b(?:private|internal|unpublished|our repository|our code|attached patch)\b", re.I)),
     ("email address", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
@@ -391,6 +455,662 @@ def trusted_work_kind(assignment: Assignment) -> WorkKind:
     """Return the single deterministic workload classification used at every gate."""
 
     return _work_kind(assignment)
+
+
+#: Ceiling on a small read-only task's whole frozen plan, producer plus reviewer.
+SMALL_READ_ONLY_TASK_MAX_USD = 1.0
+#: Ceiling on the compact provider view a small task's reviewer is sent.
+SMALL_TASK_REVIEW_MAX_PACKET_BYTES = 16_384
+_SMALL_TASK_EXCLUDED_AGENTS = frozenset(
+    {ProviderName.PERPLEXITY, ProviderName.FIRECRAWL, ProviderName.GEMINI}
+)
+# Write-shaped wording in the intake or the producer's task. "Read-only" means
+# no write tool or effect in the packet; native and bridge CLIs still run in a
+# host workspace, so write-shaped wording is one of several lexical filters.
+_WRITE_SCOPE = re.compile(
+    r"\b(?:(?:updat|writ|rewrit|creat|renam|delet|remov|chang|replac|mov|upgrad|migrat|"
+    r"overwrit|sav)(?:e|es|ed|ing|ion|ions)"
+    r"|(?:edit|add|insert|append|install|push|commit)(?:s|es|ed|ted|ing|ting)?"
+    r"|(?:modif|appl)(?:y|ies|ied|ying)"
+    r"|wrote|written)\b",
+    re.I,
+)
+# The class is an allow-list, not a deny-list: every sentence of the request
+# must open with one of these read verbs. A keyword scan cannot prove that no
+# tier-0 class is implicated, so this narrows membership to plainly read-shaped
+# wording; it is still lexical, and the packet's missing write surface is the
+# effect boundary.
+_READ_VERB = re.compile(
+    r"(?:summari[sz]e|explain|describe|review|list|compare|answer|analy[sz]e)\b",
+    re.I,
+)
+# The Slack gateway prefixes every work order with its command word, and the
+# slash command's work order uses Project:, Outcome: and Constraints: labels.
+_GATEWAY_COMMAND = re.compile(r"\A\s*/?director\b", re.I)
+_WORK_ORDER_LABEL = re.compile(r"\b(project|outcome|constraints)\s*:", re.I)
+# Terms that keep an otherwise read-shaped request out of the class: shell
+# syntax and commands, dotfiles, home, parent and absolute paths, secret-like words and
+# environment-variable names, and any outward, mutating or tier-0-adjacent verb.
+_OUTSIDE_READ_ONLY = re.compile(
+    r"[|&;$`<>~@#\\]|://|--|\.\.|(?:^|[\s/\"'(])\.\w|(?:^|[\s\"'(])/|\b[A-Za-z]:/"
+    r"|(?-i:\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b)"
+    r"|\b(?:(?:api[\s_-]?)?keys?|tokens?|passwords?|passphrases?|secrets?|credentials?"
+    r"|certificates?|cookies?|ssh|id_rsa|id_ed25519|env|environment|private"
+    r"|run|runs|execute|exec|eval|rm|git|curl|wget|sh|bash|zsh|pwsh|powershell|cmd"
+    r"|sudo|chmod|chown|pip|npm|docker|kubectl|python"
+    r"|e-?mail|mail|tweet|post|share|upload|send|forward|publish|notify|dm|message"
+    r"|slack|wiki|channel|twitter|public|publicly|external|webhook|http|https|www"
+    r"|reset|rebase|revert|bump|drop|erase|clear|close|reopen|disable|enable"
+    r"|raise|lower|set|increase|decrease|grant|revoke|force|format|generate"
+    r"|translate|store|put|uninstall|fix|patch|implement|deploy|merge|approve"
+    r"|pay|buy|order|book|schedule|cancel|restore|rollback|kill|stop|start"
+    r"|restart|trigger|dispatch|assign|budget|billing|protection)\b",
+    re.I,
+)
+
+
+# Wording and paths that may reach personal or sensitive data keep a task out
+# of the small class even where the approval gate above does not stop it: the
+# people a record describes, the attributes that identify them, and tabular
+# or database files and data-like directories. Over-inclusive by design.
+_PERSONAL_DATA = re.compile(
+    r"\b(?:customers?|clients?|employees?|users?|patients?|members?|subscribers?|contacts?"
+    r"|people|persons?|personnel|staff|applicants?|students?|tenants?|donors?|citizens?"
+    r"|residents?|names?|address(?:es)?|e-?mails?|phones?|birth\w*|dob|ages?|gender"
+    r"|salar(?:y|ies)|wages?|payroll|ssns?|passports?|licen[cs]es?|ids?|identit(?:y|ies)"
+    r"|identifiers?|medical|health|diagnos\w*|bank\w*|cards?|iban|accounts?|financial"
+    r"|genealog\w*|ancestr\w*|dna|pii|personal|biometric\w*)\b"
+    r"|\.(?:csv|tsv|xlsx?|db|sqlite3?|parquet|sql|dump|bak)\b"
+    r"|\b(?:data|datasets?|exports?|backups?|dumps?|records)/",
+    re.I,
+)
+
+
+# Inside a sentence, punctuation and the conjunctions that can join a second
+# requested action split it into clauses. Every clause must open with a read
+# verb or, after a split, be only paths or identifiers (the second object of
+# "Compare A and B"). "to <verb>" and "<verb>ing it" name an action too and
+# must be read verbs. Anything else is a second action and leaves the class.
+_CLAUSE_BREAK = re.compile(
+    # Any character that is not part of a word or a path (dashes, brackets,
+    # quotes, bullets, commas, colons...), a spaced dash or slash, or a joining word.
+    r"[^\w\s./'-]|\s[-/]\s|\s--?\s|\b(?:and|then|also|plus|but|so|or|while|after"
+    r"|before|afterwards|once|with|without|by|via|instead)\b", re.I)
+# A verb that asks for a change, in any inflection, anywhere in the request,
+# however its clauses are punctuated. Over-inclusive by design: a request
+# using any of these words as a noun leaves the class too.
+_MUTATION_BASES = (
+    "improve revise make fix change update edit rewrite refactor rename format "
+    "clean tidy polish adjust tweak bump upgrade downgrade migrate convert generate "
+    "create add remove delete move set configure enable disable deploy publish post "
+    "send reply open file comment commit push merge apply patch write save draft "
+    "compose correct shorten expand reorganize reorganise restructure fill resolve "
+    "sort insert append replace install uninstall implement build run execute "
+    "trigger schedule assign close reopen approve reject translate turn prepare "
+    "produce fork clone copy paste modify alter amend annotate reword rephrase "
+    "simplify optimize optimise extend trim cut strip split combine tag label mark "
+    "flag archive restore revert reset rebase squash cherry-pick release ship "
+    "submit upload download import export sync seed migrate reformat lint "
+    "scaffold bootstrap initialize initialise provision rebuild regenerate recompile "
+    "compile refresh wire connect disconnect grant revoke rotate raise lower "
+    "increase decrease clear erase drop purge wipe destroy kill stop start restart "
+    "cancel pay buy order book enroll register subscribe invite notify email "
+    "message tweet share forward"
+).split()
+
+
+def _inflections(base: str) -> set[str]:
+    stem = base[:-1] if base.endswith("e") else base
+    forms = {base, base + "s", base + "es", base + "ed", base + "d", stem + "ing",
+             stem + "ed", base + base[-1] + "ed", base + base[-1] + "ing"}
+    if base.endswith("y"):
+        forms |= {base[:-1] + "ies", base[:-1] + "ied"}
+    return forms
+
+
+_MUTATION_VERB = re.compile(
+    r"\b(?:" + "|".join(sorted(
+        {re.escape(form) for base in _MUTATION_BASES for form in _inflections(base)}
+        | {"made", "sent", "wrote", "written", "built", "ran", "set up", "cut"},
+        key=len, reverse=True)) + r")\b",
+    re.I,
+)
+# The request must name at least one path: the compact view keeps only
+# snapshot entries named in the objective or under owned paths, so a
+# repository-wide request would be answered from an empty inventory.
+# Conventional files with no extension; any other extensionless name counts
+# only when it is exactly a path in the task's snapshot (packet_routing).
+KNOWN_EXTENSIONLESS_FILES = frozenset({
+    "LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "CHANGELOG",
+    "CONTRIBUTING", "CODEOWNERS", "README", "Makefile", "Dockerfile",
+    "Containerfile", "Procfile", "Gemfile", "Rakefile", "Vagrantfile",
+    "Jenkinsfile", "Pipfile", "Brewfile", "Justfile",
+})
+_NAMED_PATH = re.compile(
+    r"\w[\w-]*\.\w+|\w[\w.-]*/[\w./-]*\w"
+    r"|(?<![\w.-])(?:" + "|".join(sorted(KNOWN_EXTENSIONLESS_FILES)) + r")(?![\w-]|\.\w)")
+_DETERMINER = r"(?:the|a|an|its|their|this|that|these|those|each|every|both|all)"
+_OBJECT_LIST = re.compile(rf"(?:{_DETERMINER}\s+)*[\w./-]*[./_][\w./-]*", re.I)
+_TO_ACTION = re.compile(rf"\bto\s+(?!{_DETERMINER}\b)([\w./-]+)", re.I)
+_GERUND_ACTION = re.compile(rf"\b(\w+ing)\s+(?:it|them|{_DETERMINER})\b", re.I)
+_READ_GERUND = re.compile(
+    r"(?:summari[sz]|explain|describ|review|list|compar|answer|analy[sz])ing"
+    r"|including|regarding|concerning|following|using|containing|matching",
+    re.I,
+)
+# Lanes that may produce a small read-only task but never review one.
+SMALL_TASK_PRODUCER_ONLY_LANES = frozenset({"openai"})
+# The only tool a small read-only task's packets may carry.
+SMALL_TASK_ALLOWED_TOOLS = frozenset({"READ_REPOSITORY"})
+
+
+def small_task_packet_read_only(packet: Mapping[str, Any]) -> bool:
+    """Whether a work packet grants only the small class's read-only tool and no effect."""
+
+    tools = packet.get("allowed_tools")
+    effects = packet.get("allowed_external_effects")
+    return (
+        isinstance(tools, list) and bool(tools)
+        and set(tools) <= SMALL_TASK_ALLOWED_TOOLS
+        and effects == []
+    )
+
+
+def _identifier_words(text: str) -> str:
+    """The text with identifier joins made word boundaries.
+
+    ``\b`` never separates ``openai_api_key``, ``db-password``, ``auth.token``
+    or ``authToken`` into words, so every sensitive-term, write and
+    change-verb check also reads this form: underscores, hyphens and dots
+    between word characters, and camelCase humps, become spaces.
+    """
+
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", text)
+    return re.sub(r"(?<=[A-Za-z0-9])[_.-]+(?=[A-Za-z0-9])|_+", " ", text)
+
+
+# Secret-shaped values: private keys and upper-case credential variable
+# names. Vendor tokens are matched by _holds_prefixed_token below. Variable
+# names keep their case; the key header does not need to.
+_SECRET_SHAPED = re.compile(
+    r"(?i:-----BEGIN [A-Z ]*PRIVATE KEY)"
+    r"|(?-i:\b[A-Z][A-Z0-9]*_(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)\b)"
+)
+_VENDOR_TOKEN = re.compile(r"(?<![A-Za-z0-9_.-])(" + "|".join(
+    re.escape(prefix) for prefix in VENDOR_TOKEN_PREFIXES) + r")([A-Za-z0-9_.+/-]{8,})")
+# A generic prefixed token: a short alphabetic prefix, one separator, then 16
+# or more token characters.
+_GENERIC_PREFIXED = re.compile(r"\b([A-Za-z]{2,10})[-_]([A-Za-z0-9_\-]{16,})\b")
+_CREDENTIAL_ENDINGS = ("pat", "key", "token", "secret", "api")
+# Lower-case words joined by separators: an identifier or a path, not a token
+# (``secret_scan_passed``, ``xai-responses-api``).
+_WORDS = re.compile(r"[a-z]+(?:[-_.][a-z0-9]+)+")
+
+
+def _mixed_classes(value: str) -> bool:
+    return bool(re.search(r"[a-z]", value) and re.search(r"[A-Z]", value)
+                and re.search(r"[0-9]", value))
+
+
+def _holds_prefixed_token(text: str) -> bool:
+    """A vendor-prefixed token, or a generic prefixed one.
+
+    Vendor: a known prefix and 8 or more token characters, unless they are
+    lower-case words joined by separators. Generic: a prefix of 2-10 letters
+    ending in pat, key, token, secret or api (or exactly sk) whose suffix is
+    not such a word list, or any prefix whose suffix holds a segment of 12 or
+    more characters mixing lower case, upper case and digits.
+    """
+
+    for match in _VENDOR_TOKEN.finditer(text):
+        if not _WORDS.fullmatch(match.group(2).rstrip(".")):
+            return True
+    for match in _GENERIC_PREFIXED.finditer(text):
+        prefix, suffix = match.group(1).lower(), match.group(2)
+        named = prefix == "sk" or prefix.endswith(_CREDENTIAL_ENDINGS)
+        if named and not _WORDS.fullmatch(suffix):
+            return True
+        if any(len(segment) >= 12 and _mixed_classes(segment)
+               for segment in re.split(r"[-_]+", suffix)):
+            return True
+    return False
+
+
+# Raw identifier formats, recognised without any label: e-mail addresses, US
+# social security numbers, phone numbers, IPv4 and IPv6 addresses, street
+# addresses, dates next to a birth label, and passport-like identifiers. Card,
+# IBAN and routing numbers are matched as digit runs and then checksummed.
+# Over-inclusive by design: a four-part version number reads as an IPv4
+# address and some long numeric identifiers pass a checksum by chance; such a
+# task keeps the button.
+# Phone numbers and IP addresses are not enumerated here: they are validated
+# structurally below (_holds_phone_like, _holds_ip_address).
+_IDENTIFIER_FORMATS = re.compile(
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
+    r"|\b\d{3}-\d{2}-\d{4}\b"
+    r"|(?i:\b\d{1,6}\s+(?:[a-z]+\s+){1,3}(?:street|st|avenue|ave|road|rd|boulevard"
+    r"|blvd|lane|ln|drive|dr|court|ct|way|place|pl|terrace|parkway|pkwy|highway|hwy)\b)"
+    r"|(?i:\b(?:born|dob|date\s+of\s+birth|birth\s*date)\b[^\n]{0,24}?"
+    r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b)"
+    r"|(?i:\bpassport\b[^\n]{0,24}?\b[A-Z0-9]{6,9}\b)"
+)
+_DIGIT_RUN = re.compile(r"(?<![\w.-])\d(?:[ -]?\d){8,18}(?![\w-]|\.\d)")
+# IBANs are checked case-insensitively (mod 97 reads letters in base 36).
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b", re.I)
+
+
+def _luhn(digits: str) -> bool:
+    total = 0
+    for index, character in enumerate(reversed(digits)):
+        value = int(character) * (2 if index % 2 else 1)
+        total += value - 9 if value > 9 else value
+    return total % 10 == 0
+
+
+def _aba(digits: str) -> bool:
+    d = [int(character) for character in digits]
+    return (3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + d[2] + d[5] + d[8]) % 10 == 0
+
+
+def _iban(candidate: str) -> bool:
+    value = candidate.replace(" ", "")
+    rearranged = value[4:] + value[:4]
+    try:
+        return int("".join(str(int(character, 36)) for character in rearranged)) % 97 == 1
+    except ValueError:
+        return False
+
+
+# IP addresses: any token of hex digits, colons and dots (with an optional
+# IPv6 %zone) that the standard library parses as an address. An IPv6
+# candidate needs two non-empty groups, so slices such as "[::2]" do not
+# count; every IPv4 dotted quad does, version numbers included.
+_IP_CANDIDATE = re.compile(r"(?<![\w:.%])[0-9A-Fa-f:.]*[:.][0-9A-Fa-f:.]*(?:%[\w.-]+)?(?![\w:.])")
+
+
+def _holds_ip_address(text: str) -> bool:
+    for match in _IP_CANDIDATE.finditer(text):
+        token = match.group(0).rstrip(".")
+        address = token.split("%", 1)[0]
+        if ":" in address and len([group for group in address.split(":") if group]) < 2:
+            continue
+        if ":" not in address and address.count(".") != 3:
+            continue
+        try:
+            ipaddress.ip_address(token)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+# Tokens that are provably not personal identifiers. Every detector below
+# runs on the original text; one of these only discards a detector hit that
+# lies wholly inside it, and any overlap resolves toward the protected
+# format. Never deleted from the text before detection.
+_EXEMPT_TOKENS = re.compile(
+    # A valid ISO date, with an optional valid time and zone.
+    r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b"
+    # A UUID.
+    r"|\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
+    # A full SHA-1 or SHA-256 digest.
+    r"|\b(?:[0-9a-f]{64}|[0-9a-f]{40})\b"
+    # Lower-case hex with three or more letters (never the passport shape,
+    # which has at most two).
+    r"|\b(?=(?:[0-9]*[a-f]){3})[0-9a-f]{7,64}\b"
+)
+# A dotted version is exempt only while it has fewer than 9 digits.
+_DOTTED_VERSION = re.compile(r"\b\d+(?:\.\d+){2,}\b")
+
+
+def _exempt_spans(text: str) -> list[tuple[int, int]]:
+    spans = [match.span() for match in _EXEMPT_TOKENS.finditer(text)]
+    spans += [match.span() for match in _DOTTED_VERSION.finditer(text)
+              if sum(character.isdigit() for character in match.group(0)) < 9]
+    return spans
+
+
+def _counts(span: tuple[int, int], exempt: list[tuple[int, int]]) -> bool:
+    """A detector hit counts unless an exempt token wholly contains it."""
+
+    start, end = span
+    return not any(low <= start and end <= high for low, high in exempt)
+
+
+# Phone numbers, generically: a run of 9 to 15 digits in groups separated by
+# single spaces, dots, dashes or parentheses, with an optional leading "+".
+# No country format is listed.
+# Digits joined by single separators: a space, dot or dash, or a
+# parenthesis with at most one of those beside it (a bracketed area code).
+_PHONE_CANDIDATE = re.compile(
+    r"(?<![\w.+-])\+?\(?\d(?:\d|(?:\)[ .-]?|[ .-]?\(|[ .-])(?=\d))*\d\)?(?![\w-]|\.\d)")
+
+
+def _holds_phone_like(text: str, exempt: list[tuple[int, int]] | None = None) -> bool:
+    exempt = _exempt_spans(text) if exempt is None else exempt
+    for match in _PHONE_CANDIDATE.finditer(text):
+        candidate = match.group(0)
+        digits = [index for index, character in enumerate(candidate) if character.isdigit()]
+        # The hit is its digits: a bracket or "+" around them is not part of
+        # a date or any other exempt token.
+        span = (match.start() + digits[0], match.start() + digits[-1] + 1)
+        if 9 <= len(digits) <= 15 and _counts(span, exempt):
+            return True
+    return False
+
+
+# The passport shape counts wherever it stands on its own, a short SHA or
+# any other hex included; only a group inside a UUID is discarded.
+_BARE_PASSPORT = re.compile(r"(?i:\b[a-z]{1,2}\d{6,8}\b)")
+
+
+def holds_identifier_format(text: str) -> bool:
+    """Whether text holds a raw personal or financial identifier, unlabeled."""
+
+    exempt = _exempt_spans(text)
+    if (_IDENTIFIER_FORMATS.search(text) or _holds_ip_address(text)
+            or _holds_phone_like(text, exempt)):
+        return True
+    # Every unlabeled shape and checksum hit counts unless an exempt token
+    # (a UUID group such as "c0395302", a digest, a dated time) wholly
+    # contains it.
+    if any(_counts(match.span(), exempt) for match in _BARE_PASSPORT.finditer(text)):
+        return True
+    for match in _DIGIT_RUN.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if (((13 <= len(digits) <= 19 and _luhn(digits)) or (len(digits) == 9 and _aba(digits)))
+                and _counts(match.span(), exempt)):
+            return True
+    return any(_iban(match.group(0)) and _counts(match.span(), exempt)
+               for match in _IBAN.finditer(text))
+
+
+# Credential-bearing formats: URI userinfo, Authorization and Bearer values,
+# JWTs, AWS access keys, and connection-string passwords. High-entropy
+# values assigned in env or config lines are checked separately.
+_CREDENTIAL_FORMATS = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@"
+    r"|(?i:\bauthorization\s*[:=]\s*\S+)"
+    r"|(?i:\bbearer\s+[A-Za-z0-9._~+/=-]{8,})"
+    r"|\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"
+    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"
+    r"|(?i:\b(?:password|passwd|pwd)\s*=\s*[^;\s]+)"
+    # Webhook URLs whose path is itself the credential.
+    r"|(?i:\bhttps?://(?:hooks\.slack\.com/(?:services|workflows|triggers)/"
+    r"|(?:[a-z0-9-]+\.)*discord(?:app)?\.com/api/webhooks/"
+    r"|(?:[a-z0-9-]+\.)*webhook\.office\.com/)\S+)"
+    # Any URL whose query carries a credential-bearing parameter.
+    r"|(?i:\bhttps?://[^\s?#]*\?[^\s#]*?(?<=[?&])"
+    r"(?:token|key|sig|signature|access_token|api_key|apikey|secret|client_secret)=[^&\s#]+)"
+)
+_ASSIGNED_VALUE = re.compile(r"[:=]\s*[\"']?([A-Za-z0-9+/_\-]{20,}={0,2})[\"']?")
+
+
+def _high_entropy(value: str) -> bool:
+    """Whether an assigned value is secret-shaped, structurally.
+
+    Hex of any length but a git SHA's or a SHA-256 digest's (40 or 64
+    lower-case characters, which this repository's documents assign
+    everywhere), or any segment the opaque-token backstop flags. Identifiers
+    such as ``edge_oracle_exact_sha_review/v1`` are words, not secrets.
+    """
+
+    if re.fullmatch(r"[0-9a-fA-F]{20,}", value):
+        return not (len(value) in (40, 64) and value == value.lower())
+    return any(_opaque_segment(segment) for segment in re.split(r"[/=_]+", value))
+
+
+# The fail-closed backstop for credential formats no named pattern lists: a
+# run of 24 or more token characters, split at "/", "=" and "_", any segment
+# of 12 or more characters that mixes lower case, upper case and digits, has
+# no run of six digits (timestamps, account numbers), is not mostly
+# lower-case words, and carries at least 3.0 bits a character. Lower-case hex
+# (git SHAs, digests) and UUIDs never mix cases, so never match. Tuned against
+# every tracked file of this repository (see the policy tests); a false
+# positive refuses the task back to the owner, the safe direction.
+_OPAQUE_RUN = re.compile(r"(?<![A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{24,}(?![A-Za-z0-9_+/=-])")
+
+
+def _opaque_segment(segment: str) -> bool:
+    if (len(segment) < 12 or not re.search(r"[a-z]", segment)
+            or not re.search(r"[A-Z]", segment) or not re.search(r"[0-9]", segment)
+            or re.search(r"[0-9]{6,}", segment)):
+        return False
+    words = sum(len(run) for run in re.findall(r"[a-z]{3,}|[A-Z]{4,}", segment))
+    counts = {character: segment.count(character) for character in set(segment)}
+    entropy = -sum(count / len(segment) * math.log2(count / len(segment))
+                   for count in counts.values())
+    return words <= 0.6 * len(segment) and entropy >= 3.0
+
+
+def holds_opaque_token(text: str) -> bool:
+    """Whether text carries a high-entropy opaque token of any format."""
+
+    return any(_opaque_segment(segment)
+               for match in _OPAQUE_RUN.finditer(text)
+               for segment in re.split(r"[/=_]+", match.group(0)))
+
+
+def holds_sensitive_value(text: str) -> bool:
+    """The one value screen every small-task text path uses: owner request
+    text and every file shown to a model. A raw identifier (structurally
+    validated where possible), a credential in any named format, or an
+    opaque high-entropy token."""
+
+    return holds_identifier_format(text) or holds_credential(text) or holds_opaque_token(text)
+
+
+def holds_credential(text: str) -> bool:
+    """Whether text carries a credential-bearing value in any common format."""
+
+    return (_CREDENTIAL_FORMATS.search(text) is not None
+            or _SECRET_SHAPED.search(text) is not None
+            or _holds_prefixed_token(text)
+            or any(_high_entropy(match.group(1)) for match in _ASSIGNED_VALUE.finditer(text)))
+
+
+def small_task_content_screened(text: str) -> bool:
+    """Whether a file's text may not be shown to a small task's models.
+
+    Refused when the sensitive-data or credential approval gate matches it,
+    when the request text's personal-data exclusion matches it (people a
+    record describes, identifying attributes, tabular files), each as written
+    and with identifiers split into words, or when it holds a secret-shaped
+    value.
+    """
+
+    forms = (text, _identifier_words(text))
+    reasons = {reason for form in forms for reason in deterministic_approval_reasons(form)}
+    return (bool(reasons & {"sensitive data", "credential or permission change"})
+            or any(_PERSONAL_DATA.search(form) for form in forms)
+            or holds_sensitive_value(text))
+
+
+def _read_only_sentence(sentence: str) -> bool:
+    clauses = [clause.strip() for clause in _CLAUSE_BREAK.split(sentence)]
+    if not _READ_VERB.match(clauses[0]):
+        return False
+    if any(clause and not (_READ_VERB.match(clause) or _OBJECT_LIST.fullmatch(clause))
+           for clause in clauses[1:]):
+        return False
+    if any(not (_READ_VERB.fullmatch(match.group(1)) or re.search(r"[./_]", match.group(1)))
+           for match in _TO_ACTION.finditer(sentence)):
+        return False
+    return all(_READ_GERUND.fullmatch(match.group(1))
+               for match in _GERUND_ACTION.finditer(sentence))
+
+
+def _read_only_request(text: str) -> bool:
+    """Whether every sentence opens with a read verb and no outside term appears.
+
+    The gateway's command word and the work-order labels are envelope, not
+    request. Only a leading Project value, to the end of its line, is left out
+    of the sentence test; every Outcome and Constraints sentence, and any later
+    Project value, must open with a read verb like any other. The outside-term
+    and write-scope scans read everything after the command word.
+    """
+
+    body = _GATEWAY_COMMAND.sub("", text, count=1)
+    parts = _WORK_ORDER_LABEL.split(body)
+    request = [parts[0]]
+    for index, (label, value) in enumerate(zip(parts[1::2], parts[2::2])):
+        leading = index == 0 and label.lower() == "project" and not parts[0].strip()
+        request.append(value.partition("\n")[2] if leading else value)
+    sentences = [part.strip() for chunk in request
+                 for part in re.split(r"[.!?]+(?:\s+|\Z)|\n+", chunk) if part.strip()]
+    return (
+        bool(sentences)
+        and all(_read_only_sentence(part) for part in sentences)
+        and not any(
+            pattern.search(form)
+            for pattern in (_OUTSIDE_READ_ONLY, _WRITE_SCOPE, _PERSONAL_DATA, _MUTATION_VERB)
+            for form in (body, _identifier_words(body)))
+        and any(_NAMED_PATH.search(chunk) for chunk in request)
+        and not holds_sensitive_value(body)
+    )
+
+
+def plan_starting_ref(settings: Settings) -> str | None:
+    """The ref every unpinned plan and readiness bind, from one place.
+
+    The project's pinned commit when pinned; otherwise the sole configured
+    starting ref, the one the repository authority binds its starting commit
+    to. None when several refs are configured and nothing is pinned: nothing
+    guesses between them.
+    """
+
+    commit, tree = settings.project_execution_authority_pins()
+    if commit and tree:
+        return commit
+    refs = [ref for ref in settings.allowed_starting_refs if ref]
+    return refs[0] if len(refs) == 1 else None
+
+
+def plan_within_limits(plan: DirectorPlan, settings: Settings) -> bool:
+    """Whether a frozen plan's hop and revision limits fit the current settings."""
+
+    return (plan.max_hops <= settings.max_agent_hops
+            and plan.max_revisions <= settings.max_revisions)
+
+
+def small_read_only_eligible(
+    record: TaskRecord,
+    settings: Settings,
+    *,
+    compact_view_lanes: Collection[str] | None,
+) -> bool:
+    """Whether a task is a member of the tier-1 class ``execute_small_read_only_task``.
+
+    This is the only authority for that membership, and it is deterministic. It
+    reads the owner's intake text, the frozen plan, deployment settings and the
+    set of provider lanes whose configured transport shows the model only the
+    compact provider view, and nothing a provider returned. Fields a model or
+    planner writes can only make a task ineligible: every condition below is
+    one a plan can fail, never one it can assert, and every model involved
+    (``DirectorPlan``, ``Assignment``, ``SlackIntake``) is ``extra="forbid"``,
+    so no field can carry eligibility.
+
+    Eligible means: no deterministic approval reason in the intake or in any
+    generated plan string; an intake and a producer task that are read-shaped
+    requests (every sentence opens with a read verb such as summarize, explain,
+    describe, review, list, compare, answer or analyse, with no shell syntax,
+    dotfile, home, parent or absolute path, secret-like word, or outward or
+    mutating verb); no external effect
+    or draft pull request, exactly one
+    non-implementation producer and one independent reviewer from another
+    provider family, both on lanes that send the compact view, a frozen
+    plan total within the small-task ceiling, and frozen hop and revision
+    limits within the current ``MAX_AGENT_HOPS`` and ``MAX_REVISIONS``.
+
+    ``compact_view_lanes`` is required. ``None`` evaluates the plan alone and
+    is only for advisory text; a membership decision always passes the lanes.
+
+    This is a lexical filter over the owner's words. It is not evidence that no
+    tier-0 class is implicated (evidence-bar item 7), and nothing records it
+    as such.
+    """
+
+    plan = record.plan
+    if (
+        plan is None
+        or plan.prestage is None
+        or not plan.prestage.owned_paths
+        or plan.approval_required
+        or plan.approval_reasons
+        or plan.risk_level is not RiskLevel.LOW
+        or plan.debate is not None
+        or deterministic_approval_reasons(record.intake.text)
+        or deterministic_approval_reasons(_identifier_words(record.intake.text))
+        or any(
+            deterministic_approval_reasons(form)
+            for part in _generated_plan_gate_strings(plan)
+            for form in (part, _identifier_words(part))
+        )
+        or record.intake.primary_public_research_query is not None
+        or record.intake.primary_required_capabilities
+        or len(plan.assignments) != 2
+        or not plan_within_limits(plan, settings)
+        or not _read_only_request(record.intake.text)
+    ):
+        return False
+    producer, reviewer = sorted(plan.assignments, key=lambda item: item.sequence)
+    if (
+        not _read_only_request(producer.task)
+        # Every assignment string a compact view carries (objective and
+        # acceptance checks) passes the one value screen here too; the view
+        # screens them again, with the router's constraints, when prepared.
+        or any(holds_sensitive_value(text)
+               for item in (producer, reviewer)
+               for text in (item.task, *item.acceptance))
+        or producer.depends_on != []
+        or reviewer.kind is not AssignmentKind.INDEPENDENT_REVIEW
+        or reviewer.depends_on != [producer.sequence]
+        or producer.kind is not AssignmentKind.GENERAL
+        or trusted_work_kind(producer) is WorkKind.IMPLEMENTATION
+        or trusted_work_kind(reviewer) is not WorkKind.REVIEW
+        or producer.agent == reviewer.agent
+    ):
+        return False
+    # The OpenAI Responses transport reports every acceptance check NOT_RUN,
+    # which a review can never pass: it may produce a small task, never review it.
+    if (reviewer.primary_provider_lane or reviewer.agent.value) in SMALL_TASK_PRODUCER_ONLY_LANES:
+        return False
+    for item in (producer, reviewer):
+        if (
+            item.requires_approval
+            or item.allow_draft_pr
+            or item.public_research_query is not None
+            or item.antigravity_directive is not None
+            or item.agent in _SMALL_TASK_EXCLUDED_AGENTS
+            or (
+                compact_view_lanes is not None
+                and (item.primary_provider_lane or item.agent.value)
+                not in compact_view_lanes
+            )
+        ):
+            return False
+    try:
+        if share_provider_family(producer.agent, reviewer.agent):
+            return False
+    except UnknownContactError:
+        return False
+    return small_task_costs_admissible(
+        [float(item.estimated_cost_usd) for item in (producer, reviewer)], settings)
+
+
+def small_task_costs_admissible(costs: Sequence[float], settings: Settings) -> bool:
+    """The class's deterministic budget and token terms for a (producer,
+    reviewer) cost pair: the one predicate eligibility and /health share."""
+
+    if len(costs) != 2 or any(not math.isfinite(cost) or cost < 0 for cost in costs):
+        return False
+    return (
+        math.fsum(costs)
+        <= min(SMALL_READ_ONLY_TASK_MAX_USD, settings.max_task_budget_usd)
+        and costs[1] <= settings.small_task_review_max_usd
+        and settings.small_task_review_max_tokens >= 1
+    )
 
 
 _WORK_SIZE_RANK = {
@@ -1428,7 +2148,9 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     )
     pinned_commit, pinned_tree = settings.project_execution_authority_pins()
     pinned_mode = bool(pinned_commit and pinned_tree)
-    plan_starting_ref = pinned_commit if pinned_mode else "main"
+    # With several refs and no pin there is no single ref: the preview keeps
+    # "main", and nothing pre-authorizes (plan_starting_ref is None there).
+    plan_ref = plan_starting_ref(settings) or "main"
     plan_worktree = (
         str(Path(settings.repository_snapshot_root).resolve())
         if pinned_mode
@@ -1451,7 +2173,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         acceptance=["Owner-defined outcome is demonstrably satisfied", "Evidence and unresolved risks are reported"],
         public_research_query=public_research_query,
         repository=assignment_repository,
-        starting_ref=plan_starting_ref,
+        starting_ref=plan_ref,
         requires_approval=provider == ProviderName.PERPLEXITY,
         estimated_cost_usd=0,
     )
@@ -1467,7 +2189,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
                 task=ANTIGRAVITY_CONSUMER_TASK,
                 acceptance=list(ANTIGRAVITY_CONSUMER_ACCEPTANCE),
                 repository=preview_repository,
-                starting_ref=plan_starting_ref,
+                starting_ref=plan_ref,
                 depends_on=[1],
                 estimated_cost_usd=0,
             )
@@ -1489,7 +2211,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             task="Independently review the bounded dry-run plan and required evidence",
             acceptance=["Report contradictions, missing evidence, and unresolved risk"],
             repository=preview_repository,
-            starting_ref=plan_starting_ref,
+            starting_ref=plan_ref,
             depends_on=[reviewed_sequence],
             estimated_cost_usd=0,
         )
@@ -1519,7 +2241,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
             terminal_condition="\n".join(final_acceptance),
             repository=preview_repository,
             worktree=plan_worktree,
-            branch=plan_starting_ref,
+            branch=plan_ref,
             base_sha=pinned_commit if pinned_mode else "0" * 40,
             candidate_sha=None,
             producer=producer,
@@ -1581,3 +2303,26 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 17:22 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 06:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 23:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:30 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 09:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:45 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:50 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 01:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:35 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:07 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

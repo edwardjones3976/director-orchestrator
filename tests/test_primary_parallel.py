@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 23:19 UTC | BEGIN]]
@@ -321,6 +324,93 @@ class ProviderRetryAuthorizationTests(unittest.TestCase):
         )
 
 
+
+class ProvenNoRunTests(unittest.TestCase):
+    """What proves a terminal task stopped having sent nothing."""
+
+    def test_only_refused_before_io_attempts_prove_a_no_run(self):
+        from director_orchestrator.primary_parallel import _proven_no_run
+
+        def event(assignment, digest, status, reason):
+            return {"assignment_id": assignment, "attempt_digest": digest,
+                    "status": status, "reason_code": reason}
+
+        started = event("b", "d2", "STARTED", "provider_attempt_started")
+        refused = event("b", "d2", "FAILED", "provider_refused_before_io")
+        held = {"a": "OWNER_DECISION_REQUIRED", "b": "BLOCKED"}
+        reviewer_held = {"a": "BLOCKED", "b": "OWNER_DECISION_REQUIRED"}
+        # Nothing reserved, or every attempt refused before any request.
+        self.assertTrue(_proven_no_run(held, []))
+        self.assertTrue(_proven_no_run(reviewer_held, [started, refused]))
+        for name, (statuses, events) in {
+            # A provider ran anywhere in the task: an incomplete task, not a
+            # no-run, whatever happened to the rest.
+            "producer_succeeded": ({"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"},
+                                   [started, refused]),
+            "producer_succeeded_nothing_reserved": (
+                {"a": "SUCCEEDED", "b": "OWNER_DECISION_REQUIRED"}, []),
+            "producer_transient_then_held": (held, [event(
+                "a", "d1", "FAILED", "provider_transient_transport_failure")]),
+            "left_started": (reviewer_held, [started]),
+            "transient_failure": (reviewer_held, [started, event(
+                "b", "d2", "FAILED", "provider_transient_transport_failure")]),
+            "ambiguous_attempt": (reviewer_held, [started, event("b", "d2", "AMBIGUOUS", "x")]),
+            "failed_assignment": ({"a": "FAILED", "b": "BLOCKED"}, []),
+            "ambiguous_assignment": ({"a": "AMBIGUOUS", "b": "BLOCKED"}, []),
+            "all_succeeded": ({"a": "SUCCEEDED", "b": "SUCCEEDED"}, []),
+            "only_blocked": ({"a": "BLOCKED", "b": "BLOCKED"}, []),
+            "second_attempt_started": (reviewer_held, [started, refused, event(
+                "b", "d3", "STARTED", "provider_attempt_started")]),
+        }.items():
+            with self.subTest(case=name):
+                self.assertFalse(_proven_no_run(statuses, events))
+
+
+
+class RefusedBeforeIoRecordingTests(unittest.TestCase):
+    """Owner ruling: an unrecorded no-run trips; the write is retried once."""
+
+    def run_roster(self, failures):
+        from director_orchestrator.primary_default import _execute_three_attempt_roster
+        from director_orchestrator.primary_workload import ProvenNoRunHold
+
+        writes = []
+
+        def record_attempt(attempt, status, digest, reason):
+            writes.append(reason)
+            if len(writes) <= failures:
+                raise OSError("store unavailable")
+
+        def dispatch(attempt):
+            raise ProvenNoRunHold("small_task_bridge_attestation_stale")
+
+        attempt = SimpleNamespace(format_id="api", transport_id="api")
+        with self.assertLogs("director_orchestrator.primary_default", level="WARNING") as logs, \
+                self.assertRaises(ProvenNoRunHold):
+            import logging
+            logging.getLogger("director_orchestrator.primary_default").warning("marker")
+            _execute_three_attempt_roster(
+                format_roster=(("api", "api"),), reserve_attempt=lambda ordinal: attempt,
+                record_attempt=record_attempt, dispatch_attempt=dispatch)
+        return writes, [line for line in logs.output if "marker" not in line]
+
+    def test_a_retry_that_succeeds_records_the_no_run(self):
+        writes, warnings = self.run_roster(failures=1)
+        self.assertEqual(["provider_refused_before_io"] * 2, writes)
+        self.assertEqual([], warnings)
+
+    def test_a_no_run_that_cannot_be_recorded_is_logged_and_left_started(self):
+        writes, warnings = self.run_roster(failures=2)
+        self.assertEqual(["provider_refused_before_io"] * 2, writes)
+        self.assertEqual(1, len(warnings))
+        self.assertIn("trip the grant", warnings[0])
+        # Left STARTED, so the task is not a proven no-run and it trips.
+        from director_orchestrator.primary_parallel import _proven_no_run
+        self.assertFalse(_proven_no_run(
+            {"a": "OWNER_DECISION_REQUIRED"},
+            [{"assignment_id": "a", "attempt_digest": "d", "status": "STARTED",
+              "reason_code": "provider_attempt_started"}]))
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -334,3 +424,6 @@ if __name__ == "__main__":
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 02:22 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

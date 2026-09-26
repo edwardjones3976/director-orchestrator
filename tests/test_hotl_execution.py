@@ -1,3 +1,6 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | BEGIN]]
@@ -14,6 +17,8 @@ from pathlib import Path
 
 from director_orchestrator.hotl_execution import (
     NON_RECOVERABLE_TERMS,
+    PRE_EXECUTION_CLASSES,
+    PRE_EXECUTION_TERMS,
     TERMS,
     TIER_ONE_CLASSES,
     CompletionRate,
@@ -23,6 +28,7 @@ from director_orchestrator.hotl_execution import (
     TermEvidence,
     classify,
     decide,
+    decide_pre_execution,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +73,7 @@ class TierTests(unittest.TestCase):
             "eligible_merge_non_protected_branch": ("eligible merge", "non-protected branch"),
             "mark_pull_request_ready_for_review": ("marking a pull request ready for review",),
             "post_to_own_designated_slack_channel": ("designated slack channel",),
+            "execute_small_read_only_task": ("executing a small read-only task",),
         }
         self.assertEqual(set(encodes), set(TIER_ONE_CLASSES))
 
@@ -141,7 +148,11 @@ class GoverningDocumentTests(unittest.TestCase):
             for entry in was:
                 self.assertIn(entry, now, f'{heading} lost: {entry}')
             if heading == "### Tier 1":
-                self.assertEqual(len(now), len(was), 'tier 1 must stay closed')
+                # Closed at exactly the owner-signed addition, and nothing else.
+                self.assertEqual(now, was + [
+                    "- Executing a small read-only task that "
+                    "`policy.small_read_only_eligible()` admits."
+                ])
 
     def test_the_predicate_document_defers_to_the_governing_one(self):
         text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
@@ -158,10 +169,71 @@ class GoverningDocumentTests(unittest.TestCase):
         authority = DOC.read_text(encoding="utf-8")
         self.assertIn("That `ACCEPT` is the whole verdict requirement", authority)
 
+    def test_the_predicate_document_scopes_h_to_candidate_bound_classes(self):
+        text = " ".join(
+            (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8").split())
+        self.assertIn("A proposed candidate-bound action runs without returning", text)
+        self.assertIn("the pre-execution class uses `decide_pre_execution`", text)
+        self.assertNotIn("without changing the closed tier lists", text)
+        row = next(line for line in (ROOT / "docs" / "hotl-execution-predicate.md").read_text(
+            encoding="utf-8").splitlines() if line.startswith("| `eligibility` "))
+        # A keyword scan is not item 7, and the row must not claim it is.
+        self.assertTrue(row.rstrip().endswith("| — |"), row)
+        self.assertIn("item 7 is not evaluated before execution", row)
+
     def test_the_governing_document_names_the_executable_form(self):
         text = DOC.read_text(encoding="utf-8")
         self.assertIn("hotl_execution.py", text)
         self.assertIn("implements the rules above and adds none", text)
+
+
+SMALL = ProposedAction(
+    action_class="execute_small_read_only_task",
+    repository="edwardjones3976/director-orchestrator",
+    environment="local",
+    candidate_sha="0" * 40,
+    acting_identity="director-langgraph",
+)
+
+
+class PreExecutionTests(unittest.TestCase):
+    """The pre-execution class never borrows H(a)'s candidate-bound terms."""
+
+    @staticmethod
+    def evidence(**overrides: TermEvidence) -> dict[str, TermEvidence]:
+        return {**{term: TermEvidence(True) for term in PRE_EXECUTION_TERMS}, **overrides}
+
+    def test_it_owns_its_term_names_and_never_claims_gates_or_independence(self):
+        self.assertEqual({"execute_small_read_only_task"}, set(PRE_EXECUTION_CLASSES))
+        self.assertLessEqual(PRE_EXECUTION_CLASSES, TIER_ONE_CLASSES)
+        self.assertNotIn("gates", PRE_EXECUTION_TERMS)
+        self.assertNotIn("independence", PRE_EXECUTION_TERMS)
+        self.assertIn("audit", PRE_EXECUTION_TERMS)
+        text = (ROOT / "docs" / "hotl-execution-predicate.md").read_text(encoding="utf-8")
+        section = text.split("## The pre-execution class", 1)[1].split("\n## ", 1)[0]
+        for term in PRE_EXECUTION_TERMS:
+            self.assertIn(f"| `{term}` |", section, term)
+
+    def test_h_of_a_holds_the_class_even_with_every_term_met(self):
+        decision = decide(SMALL, _all(True))
+        self.assertIs(decision.outcome, Outcome.HOLD)
+        self.assertFalse(decision.autonomous)
+
+    def test_every_pre_execution_term_is_required(self):
+        self.assertTrue(decide_pre_execution(SMALL, self.evidence()).autonomous)
+        for term in PRE_EXECUTION_TERMS:
+            with self.subTest(term=term):
+                decision = decide_pre_execution(
+                    SMALL, self.evidence(**{term: TermEvidence(False, f"{term} unmet")}))
+                self.assertIs(decision.outcome, Outcome.HOLD)
+                self.assertIn(f"{term} unmet", " ".join(decision.blockers))
+
+    def test_it_decides_only_its_class_and_exactly_its_terms(self):
+        self.assertFalse(decide_pre_execution(MERGE, self.evidence()).autonomous)
+        with self.assertRaises(ValueError):
+            decide_pre_execution(SMALL, _all(True))
+        with self.assertRaises(ValueError):
+            decide_pre_execution(SMALL, {**self.evidence(), "gates": TermEvidence(True)})
 
 
 class ConjunctionTests(unittest.TestCase):
@@ -417,3 +489,6 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 16:52 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-09 | 18:40 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]]
