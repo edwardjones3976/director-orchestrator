@@ -1,3 +1,5 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | BEGIN]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]]
@@ -104,7 +106,7 @@ surfaces:
     mode: "explicitly_scoped" # analysis_only | explicitly_scoped
     allowed:
       - "Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)"
-      - "Independent reviews through the owner-approved provider routes, including the owner-approved xAI review of the set B v2 packets with private values redacted (done)"
+      - "Independent reviews through the owner-approved provider routes, including the set B v2 review with private values redacted and one bounded batch 1 Grok rerun (O-040; completed ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json; owner authentication and fix decisions pending; Set B excluded from M1 scoring) [verified 2026-09-26 21:56 UTC, receipt]"
     # Any new external effect requires a profile revision first (fallbacks.changed_scope: reshape_profile_before_dependent_work).
     prohibited:
       - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
@@ -127,7 +129,7 @@ modules:
     purpose: "gitleaks on datasets; hard-line suite from M4"
   review_to_merge:
     state: "enabled"
-    purpose: "Non-author review of every Director PR; owner merges"
+    purpose: "Non-author review; for #293 the final accepting reviewer merges after all gates (O-040)"
   operations:
     state: "disabled"
     purpose: "Enabled at L1 (always-on serving)"
@@ -147,16 +149,15 @@ team:
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Non-author review of Director PRs (plan mode, read-only)"
+        - "Non-author review of Director PRs; for #293, one final exact-head/base full-diff review and merge after ACCEPT and all six CI checks (O-040)"
       forbidden_authority:
-        - "merge"
         - "training-data generation (xAI terms: grading only)"
     - id: "review-codex"
       provider: "other"
       role: "reviewer"
       workflow_skill: "none"
       responsibilities:
-        - "Fallback non-author reviewer (OpenAI Codex, read-only sandbox)"
+        - "Fallback non-author reviewer only for candidates without Codex contributions; ineligible to review #293 as a material author"
       forbidden_authority:
         - "merge"
     - id: "research-perplexity"
@@ -208,7 +209,7 @@ controls:
     - "Any paid call that would breach the milestone envelope"
     - "Any fan-out over 3 concurrent agents or dispatches"
     - "Downloads, deletions, config/ACL/Scheduled Task changes, messages to other Directors"
-    - "Every merge (owner, --merge --match-head-commit)"
+    - "Every merge requires thorough non-author review and all deterministic gates; #293 final accepting reviewer merges, never Claude or Codex (--merge --match-head-commit; O-040)"
   acceptance_checks:
     - "L1 and L2 checklists in PLAN.md"
   serious_safety_stop: true
@@ -216,7 +217,7 @@ controls:
 review_chain:
   producer: "claude"
   material_authors: ["claude", "openai codex"]
-  eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
+  eligible_reviewer: "Grok (xAI) only for #293; if unavailable, review waits. No contributor, including Claude or OpenAI Codex, may review."
   candidate:
     repository: "edwardjones3976/director-orchestrator"
     # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
@@ -247,7 +248,7 @@ assumptions:
   not_applicable: []
 
 fallbacks:
-  unavailable_provider: "Rotate reviewer Grok -> Codex; research falls back to Claude web research"
+  unavailable_provider: "For #293, wait if Grok (xAI) is unavailable; no contributor may review. Research falls back to Claude web research."
   incomplete_evidence: "Pause at the gate and report; the owner decides"
   ambiguous_paid_dispatch: "reconcile_existing_run_before_retry"
   slack_delivery:
@@ -259,9 +260,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Ed disposes of D-018 (#280 merged before M0 closed), D-019 (held-out sets A and B produced before pre-staging, quarantined for M1 scoring), D-020 (two material authors), D-021 (M0 dispatch without pre-staging or writer leases) and D-022 (revision-limit crossing), and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before the plan is approved, and no M1 scoring on sets A or B before D-019 is disposed of. Set B also stays incomplete until its batch 1 review is authenticated. The pre-plan work has stopped; the O-034 downloads are done and verified. The #293 autonomous loop stops at MX-005; no further revision or review until Ed disposes of D-022. M1 authorization is separate (#294, O-038); this record does not rely on it."
-  responsible_party: "owner (D-018, D-019, D-020, D-021 and D-022 dispositions; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan"
-  expected_evidence: "the recorded D-018, D-019, D-020, D-021 and D-022 dispositions and separate M1 plan approval (#294, O-038); this PR's non-author exact-head review, six required CI jobs green at that head, and owner merge"
+  action: "D-019 to D-022 are ratified documented exceptions (O-040/O-041), retaining crossings and spend. Open gates: owner disposition of the completed Set B batch 1 rerun (ACCEPT, 24 OK and pr-45 MINOR; receipt xai/20260926T215607Z-666045-34b3.json omits the provider response ID; file SHA-256 is only in purpose) [verified 2026-09-26 21:56 UTC, receipt], including receipt authentication and whether to fix pr-45; Set B remains excluded from M1 scoring; one final independent full-diff review of #293 at exact head and base; all six CI checks green at that head. The owner-approved Set B batch 1 rerun completed: ACCEPT batch 1 (25 items), 24 OK and one MINOR (pr-45: constraints omit eligibility and evaluation from the body's Claude-default routing exclusion list). Receipt xai/20260926T215607Z-666045-34b3.json has a unique filename, grok-4.6, HTTP 200, status completed, and USD 0.1406. Its purpose carries frozen packet SHA-256 101c5f2d59b4b94ad0d9f581fc51793af0a07a35123a265cba1394c16d53c663; before the call the Director confirmed all 25 embedded packets byte-identical to the pinned pr-reconstructed-v2 files (manifest 38a93d79…69bc). The wrapper omits the owner-required provider response ID; packet_sha256 is a 16-hex digest of the full sent payload including the preamble, and the owner-required file SHA-256 appears only in purpose. These facts were read by the Director [verified 2026-09-26 21:56 UTC, receipt]. Set B stays out of M1 scoring until the owner accepts this receipt as batch 1 authentication or requires a rerun after the wrapper records provider response IDs. The owner also decides whether pr-45 needs a fix, which would change the pinned manifest. If the final review requires changes, stop for a new owner disposition. Set A ACCEPT remains valid under O-040 scoring rules. Future M1 dispatches need approved packets, leases, allocation and gates; M1 authorization is separate (#294, O-038). D-018 remains a separate unresolved historical item."
+  responsible_party: "Director records the owner decisions on Set B receipt authentication and pr-45 and coordinates review/CI; Grok (xAI), the only eligible non-author reviewer, gives the final verdict and merges after ACCEPT and gates. If unavailable, review waits; neither Claude nor Codex may review or merge."
+  expected_evidence: "Owner disposition accepting the batch 1 receipt as authentication or requiring a rerun with provider response IDs, plus disposition of pr-45 MINOR; one final independent full-diff review at exact head and base; all six CI checks green at that head. Owner law (2026-09-26 ~21:53 UTC, O-040): Any provider that has reviewed the work thoroughly can merge it. The owner/sole-author (other ME), can never merge their own work."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -272,3 +273,5 @@ next:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:11 UTC | END]]
