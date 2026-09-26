@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
@@ -95,7 +96,8 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    delivery_settled as _delivery_settled, lifecycle_error, ordered as _ordered,
+    decision_follows_prompt, delivery_settled as _delivery_settled, lifecycle_error, missing_result_packets,
+    ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
 
@@ -1094,7 +1096,7 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 # Every task's evidence through the same per-task rules (primary_scorecard_evidence).
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
                 "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
-                "projection_digest_mismatches",
+                "projection_digest_mismatches", "batches_without_assignments",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -1909,7 +1911,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
         prompt = [m for m in messages if slack_ts and m.get("ts") == slack_ts]
         if delivery.get("owner_decision") == "approve" and delivery.get("state") != "DELIVERED":
             failures.append("decision recorded on an undelivered prompt")
-        if decided is not None and slack_ts and Decimal(str(decided.timestamp())) < Decimal(slack_ts):
+        if not decision_follows_prompt(delivery):
             failures.append("decision precedes its prompt")
         if complete and prompt and any(m.get("user") != t.bot for m in prompt):
             failures.append("prompt message is from another user")
@@ -1969,7 +1971,7 @@ def _approval_observations(at: datetime, runtime: _Runtime, t: _SlackThreads, ta
             joined += matches
         if not (_delivery_settled(delivery) and slack_ts and delivery.get("owner_decision") == "approve"
                 and delivery.get("owner_command_id") and decided is not None
-                and Decimal(slack_ts) <= Decimal(str(decided.timestamp()))
+                and decision_follows_prompt(delivery)
                 and str(delivery.get("notification_key", "")).endswith(":" + str(delivery.get("projection_digest")))
                 and complete and len(native) == 1 and scoped and receipted):
             gaps += 1
@@ -2291,6 +2293,9 @@ def _artifacts_match(facts: dict[str, Any], consistency: dict | None) -> bool | 
     durable = {assignment.get("assignment_id") for assignment in assignments}
     if persisted - durable:
         return False  # a packet for no durable assignment of this task
+    # A live roster success must have its packet (missing_result_packets, the rule the global count applies).
+    if missing_result_packets({**readback, "result_artifacts": artifacts}, facts.get("latest")):
+        return False
     if durable - persisted:
         return None  # a settled assignment whose packet was not read
     for assignment in assignments:
@@ -3484,3 +3489,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]

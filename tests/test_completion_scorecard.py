@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
@@ -2215,7 +2216,9 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(redispatched.state("06"), "FAIL")
         early = self.world()
         early.add(approval_entry(decided=iso(1789210000 + 30002)))
-        self.assertEqual(early.state("08"), "FAIL")
+        # A decision before its prompt breaks the shared delivery rule (decision_follows_prompt, 4110553569): the
+        # readback carrying it is refused, so 08 cannot be graded on it, and the global count fails 07.
+        self.assertEqual(early.state("08"), "UNKNOWN")
         impostor = self.world()
         impostor.threads[ts(30000)][2]["user"] = OWNER
         self.assertEqual(impostor.state("08"), "FAIL")
@@ -2746,7 +2749,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(edited.state("20"), "FAIL")
         missing = self.world()
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
-        self.assertEqual(missing.state("20"), "UNKNOWN")
+        # A live roster success always persists its packet (missing_result_packets, 4110553565): its absence fails.
+        self.assertEqual(missing.state("20"), "FAIL")
 
     def test_offline_outcomes_are_fixed_by_the_ledger_row_10(self):
         self.assertEqual(self.world().state("10"), "PASS")
@@ -3014,6 +3018,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         # The lane-to-agent mapping: an antigravity ledger row carries a gemini outcome.
         facts = {"readback": {"task_created_at": "2026-09-12T09:59:00+00:00",
                               "assignments": [{"assignment_id": "a", "sequence": 1, "provider_id": "antigravity",
+                                               "deployment_id": "dep-1", "reason_code": "completed",
+                                               "reservation_digest": "sha256:" + "b" * 64,
                                                "status": "SUCCEEDED", "result_digest": "sha256:" + "a" * 64,
                                                "reserved_at": "2026-09-12T10:00:00+00:00",
                                                "completed_at": "2026-09-12T10:00:01+00:00"}]},
@@ -3046,7 +3052,8 @@ class ScorecardCollectorTests(unittest.TestCase):
         self.assertEqual(counted.state("07"), "FAIL")
         missing = self.world()
         missing.consistency["tasks"][PAID_TASK]["result_artifacts"] = []
-        self.assertEqual(missing.state("20"), "UNKNOWN")
+        # A live roster success always persists its packet (missing_result_packets, 4110553565): its absence fails.
+        self.assertEqual(missing.state("20"), "FAIL")
 
     def test_gateway_attestation_joins_the_append_only_intake_claim_03_08_09_10_20(self):
         """4100381682: the mutable projection label alone attests nothing; each task needs its one
@@ -3583,6 +3590,61 @@ class ScorecardCollectorTests(unittest.TestCase):
                             if r.get("notification_key") == "terminal")
         terminal_row["projection_digest"] = "sha256:" + "0" * 64
         self.assertNotEqual(world.state("09"), "PASS")
+
+    def test_companion_rows_and_producer_fields_are_required_in_every_state(self):
+        """4110553559: a reconciliation event names a reservation. 4110553565: a live roster success has its result
+        packet. 4110553569: a decision follows its prompt. 4110553571: the reservation digest exactly where the
+        state is reserved, reason codes per state, the deployment id."""
+        import copy
+        from director_orchestrator import primary_scorecard_evidence as evidence
+
+        def errors(readback):
+            return {key: value for key, value in evidence.task_evidence_errors(readback)[1].items() if value}
+
+        base = tf.readback_fixture()
+        orphan = copy.deepcopy(base)
+        orphan["reconciliation_events"] = [{"event_id": 1, "claim_key": "sha256:" + "9" * 64, "state": "AMBIGUOUS",
+                                            "evidence_digest": "sha256:" + "9" * 64,
+                                            "recorded_at": "2026-09-12T10:00:28+00:00"}]
+        self.assertIn("effects", errors(orphan))
+        # The inverse packet join: live roster successes only (an event-3 callback or an offline double persists none).
+        live = {**copy.deepcopy(base), "execution_mode": "paid"}
+        latest = evidence.task_evidence_errors(live)[0]
+        self.assertEqual(evidence.missing_result_packets(live, latest), [live["assignments"][0]["assignment_id"]])
+        self.assertEqual(evidence.missing_result_packets(
+            {**live, "result_artifacts": [{"assignment_id": live["assignments"][0]["assignment_id"]}]}, latest), [])
+        self.assertEqual(evidence.missing_result_packets(base, latest), [])  # offline_simulation
+        called_back = {key: {**event, "event_sequence": 3} for key, event in latest.items()}
+        self.assertEqual(evidence.missing_result_packets(live, called_back), [])
+        # A decision recorded before Slack's ts for its prompt.
+        delivered = base["slack_deliveries"][0]
+        self.assertTrue(evidence.decision_follows_prompt({**delivered, "owner_decision_at": None}))
+        early = {**delivered, "notification_key": "approval:sha256:" + "8" * 64 + ":" + base["projection_digest"],
+                 "client_msg_id": "approval-message", "owner_decision": "approve", "owner_command_id": "command-1",
+                 "owner_decision_at": "2026-09-12T10:00:21+00:00"}
+        self.assertFalse(evidence.decision_follows_prompt(early))
+        prompted = copy.deepcopy(base)
+        prompted["slack_deliveries"].append(early)
+        self.assertIn("deliveries", errors(prompted))
+        self.assertTrue(evidence.decision_follows_prompt({**early, "owner_decision_at": "2026-09-12T10:00:45+00:00"}))
+        # Assignment columns per state.
+        assignment = base["assignments"][0]
+        for label, change in (("reserved without its digest", {"reservation_digest": None}),
+                              ("settled without a reason", {"reason_code": None}),
+                              ("no deployment", {"deployment_id": None})):
+            broken = copy.deepcopy(base)
+            broken["assignments"][0].update(change)
+            with self.subTest(label):
+                self.assertNotEqual(errors(broken), {})
+        cancelled = {**assignment, "status": "FAILED", "reason_code": "task_cancelled_before_dispatch",
+                     "reserved_at": None, "reservation_digest": None, "result_digest": None}
+        self.assertTrue(evidence.assignment_contract(cancelled))
+        self.assertFalse(evidence.assignment_contract({**cancelled, "reservation_digest": "sha256:" + "a" * 64}))
+        self.assertTrue(evidence.assignment_contract({**assignment, "status": "PENDING", "reserved_at": None,
+                                                      "reservation_digest": None, "reason_code": "paid_setup_required"}))
+        self.assertFalse(evidence.assignment_contract({**assignment, "status": "PENDING", "reserved_at": None,
+                                                       "reason_code": None}))  # a digest on an unreserved row
+        self.assertFalse(evidence.assignment_contract({**assignment, "status": "ACTIVE", "completed_at": None}))
 
     def test_work_packets_join_dispatch_and_results(self):
         """4107814584: every dispatched assignment has exactly one revalidated work packet, recorded before its first
@@ -4294,3 +4356,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]

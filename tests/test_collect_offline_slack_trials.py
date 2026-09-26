@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
@@ -144,7 +145,8 @@ def sample():
 
 def unsettled(readback):
     """The fixture's assignment still reserved (ACTIVE): not yet settled, so no completion or result digest."""
-    readback["assignments"][0].update(status="ACTIVE", completed_at=None, result_digest=None, reason_code="reserved")
+    # primary_parallel's reserve clears reason_code (4110553571's assignment contract).
+    readback["assignments"][0].update(status="ACTIVE", completed_at=None, result_digest=None, reason_code=None)
     return readback
 
 
@@ -900,7 +902,8 @@ class SummaryTests(unittest.TestCase):
                                              # enqueue stores the projection digest its approval key names
                                              "projection_digest": projection_digest,
                                              "client_msg_id": "approval-message", "owner_decision": "approve",
-                                             "owner_decision_at": "2026-09-12T10:00:22+00:00",
+                                             # after the prompt's Slack ts (decision_follows_prompt, 4110553569)
+                                             "owner_decision_at": "2026-09-12T10:00:45+00:00",
                                              "owner_command_id": "command-1"})
         readback["slack_deliveries"].append({**readback["slack_deliveries"][0], "notification_key": "hold:sha256:" + "7" * 64,
                                              "client_msg_id": "hold-message", "state": "SUPPRESSED",
@@ -1665,3 +1668,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]

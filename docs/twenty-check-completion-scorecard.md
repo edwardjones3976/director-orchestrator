@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]] -->
@@ -997,6 +998,25 @@ be enqueue's `uuid5(URL, "<schema>:<task>:<key>")`. Effect terminal
 dispositions are COMPLETED or FAILED, and reconciliation events carry a
 digest and a `RECONCILIATION_STATES` state.
 
+Companion rows and per-state columns. A reconciliation event must name an
+external-effect reservation of its task (both producers record one only for a
+reservation they hold). A live SUCCEEDED assignment settled by the roster
+(final event 2) must have its result packet (`missing_result_packets`,
+counted in `result_artifacts_invalid` and failing 20); callback-settled
+(event 3) and offline successes persist none. An owner decision on a posted
+prompt is recorded no earlier than the prompt's Slack ts
+(`decision_follows_prompt`, shared by check 08 and the delivery rule). An
+assignment carries a reservation digest exactly in the states that require
+`reserved_at` (never PENDING or cancelled before dispatch), no reason code
+while ACTIVE, none or `paid_setup_required` while PENDING, and one in every
+settled state; OWNER_DECISION_REQUIRED carries both `reserved_at` and
+`completed_at`; `deployment_id` is required. A batch with no assignment is
+counted (`batches_without_assignments`) for every classification. An
+OWNER_DECISION_REQUIRED assignment on a settled task is not counted open:
+the workload hold is a terminal aggregate state that
+`record_parallel_workload_hold` classifies OWNER_DECISION_REQUIRED without a
+pending approval (settled), and cancellation leaves held rows as they are.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1193,3 +1213,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]] -->

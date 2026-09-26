@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
@@ -58,7 +59,8 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "tasks_requiring_reconciliation", "terminal_tasks_open_assignments", "terminal_tasks_open_effects",
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
-               "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections")
+               "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
+               "batches_without_assignments")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
@@ -124,7 +126,11 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  (SELECT count(*) FROM p WHERE p.pd IS NOT NULL AND NOT EXISTS
     (SELECT 1 FROM {s}.director_primary_parallel_batch b WHERE b.task_id=p.task_id)) AS projections_missing_batch,
  (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
-    (SELECT 1 FROM p WHERE p.task_id=b.task_id)) AS batches_without_projection"""
+    (SELECT 1 FROM p WHERE p.task_id=b.task_id)) AS batches_without_projection,
+ -- primary_parallel.register_plan writes a batch and its validated, non-empty DAG in one transaction: a batch with
+ -- no assignment is inconsistent whatever its task's classification.
+ (SELECT count(*) FROM {s}.director_primary_parallel_batch b WHERE NOT EXISTS
+    (SELECT 1 FROM {s}.director_primary_parallel_assignment x WHERE x.task_id=b.task_id)) AS batches_without_assignments"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
@@ -231,7 +237,8 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
     by_assignment = {}
     for row in assignments:
         if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
-                or not _is_id(row.get("provider_id")) or row["assignment_id"] in by_assignment
+                or not _is_id(row.get("provider_id")) or not _is_id(row.get("deployment_id"))
+                or row["assignment_id"] in by_assignment
                 or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
                                              "OWNER_DECISION_REQUIRED")):
             return None, "malformed or duplicate assignment row"
@@ -418,6 +425,8 @@ def validate_deliveries_and_receipts(deliveries, receipts, *, schema=None, task_
             return "malformed owner command identity"
         if (row.get("owner_decision") is not None) and notification_key_family(row["notification_key"]) != "approval":
             return "owner decision recorded on a non-approval notification"
+        if row.get("slack_ts") is not None and _SLACK_TS.fullmatch(str(row["slack_ts"])) and not decision_follows_prompt(row):
+            return "an owner decision precedes its prompt"
         # PrimarySlackDelivery.enqueue stores the task projection's digest the notification was built from; an
         # approval key names that same digest after its request digest.
         if not _DIGEST.fullmatch(str(row.get("projection_digest", ""))):
@@ -480,6 +489,15 @@ def validate_usage(usage_rows, latest, *, absent=False):
     return None, state
 
 
+def decision_follows_prompt(row):
+    """The one prompt-before-decision rule (check 08 and every delivery row): an owner decision recorded on a posted
+    prompt is recorded no earlier than Slack's ts for that prompt. A row never posted has no ts to order against."""
+    if row.get("owner_decision_at") is None or not row.get("slack_ts"):
+        return True
+    decided = _when(row["owner_decision_at"])
+    return decided is not None and Decimal(str(decided.timestamp())) >= Decimal(str(row["slack_ts"]))
+
+
 def delivery_state(deliveries, projection_digest=None):
     """Each Slack delivery's state, as PrimarySlackDelivery moves it. Returns None or (kind, reason), a conflict
     outranking in flight.
@@ -540,7 +558,24 @@ def required_moments(kind, row):
         # A PENDING assignment cancelled before dispatch is FAILED with completed_at but never reserved.
         cancelled = status == "FAILED" and row.get("reason_code") == "task_cancelled_before_dispatch"
         return ("completed_at",) if cancelled else ("reserved_at", "completed_at")
-    return ("reserved_at",) if status in ("ACTIVE", "AMBIGUOUS", "OWNER_DECISION_REQUIRED") else ()
+    if status == "OWNER_DECISION_REQUIRED":  # settled only from a reservation, completed_at set with it
+        return ("reserved_at", "completed_at")
+    return ("reserved_at",) if status in ("ACTIVE", "AMBIGUOUS") else ()
+
+
+def assignment_contract(row):
+    """The assignment columns primary_parallel writes per state: reserve sets the reservation digest with reserved_at
+    (so exactly the states that require reserved_at carry one; a PENDING row, and one cancelled before dispatch,
+    never do) and clears reason_code; PENDING carries none or paid_setup_required; every settlement names one."""
+    required = required_moments("assignment", row)
+    if ("reserved_at" in required) != (row.get("reservation_digest") is not None):
+        return False
+    status, reason = row.get("status"), row.get("reason_code")
+    if status == "ACTIVE":
+        return reason is None
+    if status == "PENDING":
+        return reason in (None, "paid_setup_required")
+    return _is_id(reason)
 
 
 def delivery_settled(row):
@@ -578,7 +613,7 @@ DELIVERY_CONTRACT = {
 # Assignment moments primary_parallel never writes in a state: nothing before its reservation, no completion while
 # reserved (settling to AMBIGUOUS clears completed_at; OWNER_DECISION_REQUIRED may or may not carry one).
 _ASSIGNMENT_UNSET = {"PENDING": ("reserved_at", "completed_at"), "ACTIVE": ("completed_at",),
-                     "AMBIGUOUS": ("completed_at",)}
+                     "AMBIGUOUS": ("completed_at",)}  # OWNER_DECISION_REQUIRED always has both (required_moments)
 
 
 def delivery_contract(row):
@@ -630,6 +665,7 @@ def lifecycle_error(sections):
         return "attempt events are out of order or outside their assignment's reservation and completion"
     if not all(ordered(row, ASSIGNMENT_FIELDS, required_moments("assignment", row))
                and all(row.get(key) is None for key in _ASSIGNMENT_UNSET.get(row.get("status"), ()))
+               and assignment_contract(row)
                for row in sections.get("assignments") or []):
         return "an assignment lacks a moment its state requires, or its moments are out of order"
     if not all(ordered(row, EFFECT_FIELDS, required_moments("effect", row)) for row in sections.get("effects") or []):
@@ -650,7 +686,9 @@ def reconciliation_error(sections):
             return "a reconciliation event has no valid time"
         effect = effects.get(event.get("claim_key"))
         if effect is None:
-            continue  # a claim reconciled before any reservation: the global unresolved count still sees it
+            # Every producer (primary_effects._ambiguous, PrimaryCoordinator.reconcile_effect) records an event for a
+            # reservation it holds: an event naming none is a conflict.
+            return "a reconciliation event names no external-effect reservation of its task"
         reserved, terminal = _when(effect.get("reserved_at")), _when(effect.get("terminal_recorded_at"))
         if reserved is None or recorded < reserved:
             return "a reconciliation event precedes its effect's reservation"
@@ -747,6 +785,26 @@ def work_packet_error(sections):
         if packet is None or packet.get("authority_snapshot_digest") != result.get("authority_snapshot_digest"):
             return "a result packet has no work packet under the same authority snapshot"
     return None
+
+
+def missing_result_packets(sections, latest):
+    """Live SUCCEEDED assignments with no result packet. primary_default persists the authenticated result packet
+    (record_result_packet_artifact) before the roster settles an attempt SUCCEEDED (event 2); an assignment settled
+    by an authenticated callback (event 3, record_provider_callback) persists none, and offline doubles
+    (offline_simulation, paid_off) record none. Returns the assignment IDs, for the global count and check 20."""
+    if sections.get("execution_mode") in ("offline_simulation", "paid_off"):
+        return []
+    packets = {row.get("assignment_id") for row in sections.get("result_artifacts") or []}
+    missing = []
+    for assignment in sections.get("assignments") or []:
+        if assignment.get("status") != "SUCCEEDED" or assignment.get("assignment_id") in packets:
+            continue
+        own = [event for (assignment_id, _), event in (latest or {}).items()
+               if assignment_id == assignment.get("assignment_id")]
+        final = max(own, key=lambda event: event.get("attempt_ordinal") or 0) if own else None
+        if final is None or final.get("event_sequence") != 3:
+            missing.append(assignment.get("assignment_id"))
+    return missing
 
 
 EVIDENCE_CATEGORIES = ("attempts", "usage", "effects", "deliveries", "lifecycle", "settlement", "work_packets")
@@ -986,7 +1044,7 @@ def _global_task_evidence(connection, schema, usage_tables):
             canonical = None
         counts["projection_digest_mismatches"] += canonical != row["projection_digest"]
     for task_id, sections in tasks.items():
-        _, errors, states = task_evidence_errors({**sections, "task_id": task_id, "schema": schema})
+        latest, errors, states = task_evidence_errors({**sections, "task_id": task_id, "schema": schema})
         for category, key in EVIDENCE_COUNT_KEYS.items():
             state = states.get(category)
             counts[key] += errors[category] is not None or (state is not None and state[0] == "conflict")
@@ -1002,6 +1060,8 @@ def _global_task_evidence(connection, schema, usage_tables):
             conflict = artifact_assignment_conflict(row, assignment)
             counts["result_artifacts_in_flight"] += conflict == "in_flight"
             counts["result_artifacts_invalid"] += conflict not in (None, "in_flight")
+        # The inverse join (4110553565): a live roster success whose packet is missing.
+        counts["result_artifacts_invalid"] += len(missing_result_packets(sections, latest))
     return counts
 
 
@@ -1311,3 +1371,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
@@ -616,6 +617,9 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
              "terminal_tasks_open_assignments": 2, "terminal_tasks_open_effects": 1, "terminal_batches_unbound": 1,
              "projections_ahead_of_fence": 1, "open_effect_reservations": 0, "batches_pending_projection_binding": 0})
         self.assertEqual(counts["live_writer_claims"], live["live_writer_claims"])
+        # Review 4110553572: register_plan writes a batch with its non-empty DAG; the batch inserted for `other`
+        # above has no assignment, whatever its task's classification.
+        self.assertEqual(counts["batches_without_assignments"], 1)
         # Review 4110241982: terminal evidence recorded before a claim's reconciliation event does not resolve that
         # later event; terminal evidence at or after every event does.
         with self.handle.pool.connection() as connection:
@@ -1130,3 +1134,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:39 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
