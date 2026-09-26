@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
@@ -94,11 +95,13 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
    provider families as reviewers, so it still rejects an assisting contributor
    until a separate reviewed runtime change aligns it. The reviewer's exact-SHA
    `ACCEPT` is relayed to the PR. The accepting reviewer performs the merge,
-   except that an assisting contributor's acceptance requires a non-contributing
-   reviewer that has thoroughly reviewed the work to perform the merge.
+   except that any reviewer with counted lines, whether an assisting contributor
+   or the exactly-48 % co-author, hands the merge to a non-contributing reviewer
+   that has thoroughly reviewed the work.
    Any contributor with counted lines, whether sole author or assisting, may never
    merge that PR, and this bar never lifts. Every candidate change invalidates
-   prior review evidence.
+   prior review evidence. This is the owner merge law as policy.
+   Until the separately authorized framework alignment lands, protected-branch merges (including `main`) remain tier 0 under `docs/human-out-of-the-loop-operation.md`, so an accepting reviewer records the `ACCEPT` and the framework blocker instead of merging; non-protected merges still require a live grant.
 
 6. **Hard stops.** The Director halts and reports at every milestone gate,
    before any provider call that would exceed the milestone's USD 25 envelope,
@@ -140,3 +143,4 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->

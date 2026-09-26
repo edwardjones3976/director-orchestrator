@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
@@ -59,14 +60,15 @@ Base SHA: <exact 40-hex SHA>
 Head SHA: <exact 40-hex SHA or artifact digest>
 Producer/material authors: <names>
 PR URL: <pull-request URL>
-Sole author: <identity at 52 % or more>
+Sole author: <identity at 52 % or more, or for a zero-count PR the one identity named by its authenticated production record>
 Contributor shares: <each contributor's identity and percentage>
 Share evidence: <receipt or authenticated PR-record reference for each share>
 Scope: <changed files or artifact scope>
 Acceptance evidence: <concise exact evidence>
 Known limitations/security context: <concise details>
-Return no verdict if the sole author has under 52 % or the authenticated
-authorship record is missing.
+Return no verdict if the sole author has under 52 %, unless this is a zero-count
+PR with exactly one authenticated producing identity. Missing or conflicting
+authorship attribution always stops review.
 Otherwise return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
 Do not review a candidate whose sole author is you or shares your provider
@@ -95,3 +97,4 @@ CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:27 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]] -->
