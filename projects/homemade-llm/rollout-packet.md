@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:33 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
@@ -30,7 +31,7 @@ are borrowed from another deployment. No secret values appear here.
 - **External effects:** explicitly_scoped
   - **Allowed:** Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)
   - **Allowed:** Independent reviews through the owner-approved provider routes, including the owner-approved xAI review of the set B v2 packets with private values redacted (done)
-  - **Allowed:** Any further external effect only after its own owner approval, recorded in decision-log.md
+  - Any new external effect requires a profile revision first (`fallbacks.changed_scope: reshape_profile_before_dependent_work`).
   - **Prohibited:** Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)
 - **Paid execution:** owner-authorized and gated — USD 25 per milestone ledger; a call that would breach it stops
 - **Automerge/deployment/publication:** disabled; merge is the owner's gate
@@ -95,14 +96,15 @@ used as a fallback.
 
 ## Disposition
 
-- **Current state:** explicitly_scoped
-- **Blocking fields:** none for the M0 gate; every Slack identity is pending by design until M3
-- **Next responsible party:** owner (D-018 and D-019 dispositions; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan
-- **Next bounded action:** Ed disposes of D-018 (#280 merged before M0 closed) and D-019 (held-out sets A and B produced before pre-staging, quarantined for M1 scoring), and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before the plan is approved, and no M1 scoring on sets A or B before D-019 is disposed of. Set B also stays incomplete until its batch 1 review is authenticated. The pre-plan work has stopped; the O-034 downloads are done and verified.
-- **Expected evidence:** the recorded D-018 and D-019 dispositions and M1 plan approval; this PR's six required CI jobs green at its reviewed head
+- **Current state:** analysis_only
+- **Blocking fields:** M0 closure pending non-author exact-head review, six required CI jobs green, owner merge and disposition of D-020, D-021 and D-022; D-018 and D-019 also await owner disposition. Every Slack identity is pending by design until M3; no runtime lane is deployed.
+- **Next responsible party:** owner (D-018, D-019, D-020, D-021 and D-022 dispositions; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan
+- **Next bounded action:** Ed disposes of D-018 (#280 merged before M0 closed), D-019 (held-out sets A and B produced before pre-staging, quarantined for M1 scoring), D-020 (two material authors), D-021 (M0 dispatch without pre-staging or writer leases) and D-022 (revision-limit crossing), and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before the plan is approved, and no M1 scoring on sets A or B before D-019 is disposed of. Set B also stays incomplete until its batch 1 review is authenticated. The pre-plan work has stopped; the O-034 downloads are done and verified. The #293 autonomous loop stops at MX-005; no further revision or review until Ed disposes of D-022. M1 authorization is separate (#294, O-038); this record does not rely on it.
+- **Expected evidence:** the recorded D-018, D-019, D-020, D-021 and D-022 dispositions and separate M1 plan approval (#294, O-038); this PR's non-author exact-head review, six required CI jobs green at that head, and owner merge
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 18:31 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:33 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | END]] -->

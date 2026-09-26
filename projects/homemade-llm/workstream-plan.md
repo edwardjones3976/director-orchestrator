@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | BEGIN]] -->
@@ -21,7 +22,7 @@ Project-local boundaries: [`provider-roles-contract.yaml`](provider-roles-contra
 - **Total phase budget/time:** USD 25; ~1 week; max 3 dispatches in flight
 - **Project channel/thread:** pending (no Slack surface; analysis-only)
 - **Repository/ref/worktree:** `edwardjones3976/director-orchestrator` @ `1892b84` at PR-0, `58fb485` at the M0 gate (main when O-031 was given; `f0a7752e` was main when the gate report was first filed), worktree `.worktrees\homemade-llm`
-- **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — analysis-only
+- **Rollout packet:** [`rollout-packet.md`](rollout-packet.md) — explicitly_scoped
 - **Deployment isolation:** no Slack app or channel; Open WebUI + SearXNG run under compose namespace `homemade-llm` with the ignored profile `C:\llm\secrets\open-webui.env` and state under `C:\llm` plus volume `homemade-llm_open-webui-data` (see rollout-packet.md); no orchestrator instance
 
 ## Selected modules
@@ -106,3 +107,4 @@ the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:03 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | END]] -->

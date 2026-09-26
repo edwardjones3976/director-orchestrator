@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | BEGIN]] -->
@@ -11,18 +13,18 @@
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | BEGIN]] -->
-# Project state report — homemade-llm, M0 "Foundation" gate (closed)
+# Project state report — homemade-llm, M0 "Foundation" gate (closure pending)
 
 Evidence-first. `[verified]` = read or measured by the Director session that wrote this line on the date given; `[relayed]` = a provider's or a person's claim; `[owner-reported]` = the owner's own account; `[stale]` = true at the stated time. No draft, simulation, or predicted-position label applies: every provider result below has a receipt.
 
 ## EVIDENCE
 
-**Homemade LLM** has closed its M0 gate and entered M1. Ed approved closing M0 and entering M1 once this record was reconciled ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. This report and decision-log rows O-031 to O-036 and D-015 to D-019 are that reconciliation. Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
+**Homemade LLM:** Ed approved closing M0 (O-031), conditional on this reconciliation ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. **M0 closure is pending** until this PR has a non-author exact-head review, all six required CI jobs green at that head, an owner merge, and owner dispositions of D-020, D-021 and D-022. This report and decision-log rows O-031 to O-036 and D-015 to D-022 record the reconciliation and its unresolved crossings. This record does not authorize M1 dispatch or rely on the separate M1 plan PR (#294, O-038). Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
 
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
 - **Report label:** delivered state (authenticated receipts and merged PRs; no prediction)
-- **Categorized status:** M0 closed; M1 in progress. This reconciliation PR still needs one non-author exact-head review and current CI.
+- **Categorized status:** M0 closure pending review, six required CI jobs green, owner merge and dispositions of D-020 to D-022. The #293 autonomous revision/review loop is stopped at MX-005 pending D-022 disposition. M1 authorization belongs to #294 (O-038), independently of this record.
 
 ### What M0 set out to prove, and what the evidence says
 
@@ -57,9 +59,36 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 - The first 13 M0 receipts reproduce the independent audit's USD 1.22778956 exactly ([#277 comment 5842706191](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842706191)). The three #279 reviews add USD 0.20493.
 - This supersedes the USD 0.55 stamped at 2026-09-26 00:01 UTC, which missed the PR #266 review, the post-merge #275 review and the #279 reviews.
-- The M0 lower bound is USD 1.43271956 before the gate charges below. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), and the shared #279/#280 check (USD 0.020078), charged conservatively to M0, gives an **M0 charged total of USD 2.33488356**. That is still a lower bound (D-017).
-- **Conservative upper bound for M0: USD 3.55593956.** That is the charged USD 2.33488356, plus all 13 untagged receipts (USD 0.221056, counted against M0 as if they were M0), plus USD 1.00 reserved for the 3 uncosted HTTP-0 attempts (about three times the largest single M0 call, USD 0.33195356). A timed-out request may still have been billed. **This upper bound, not the lower bound, is what establishes that M0 stayed within USD 25.**
+- The M0 lower bound was USD 1.43271956 before post-gate #283 and #291 hardening (USD 0.882086) and the shared #279/#280 check (USD 0.020078), charged conservatively to M0: USD 2.33488356 (D-017). Adding the 19 reconciliation reviews of #293 (USD 2.610416, listed below) gives an **M0 charged total of USD 4.94529956** (2.33488356 + 2.610416), still a lower bound `[verified, receipt]`.
+- **Conservative upper bound for M0: USD 6.16635556** (3.55593956 + 2.610416). That is the charged USD 4.94529956, plus all 13 untagged receipts (USD 0.221056, counted against M0 as if they were M0), plus USD 1.00 reserved for the 3 uncosted HTTP-0 attempts (about three times the largest single M0 call, USD 0.33195356). A timed-out request may still have been billed. Both the charged lower bound and this conservative upper bound are within USD 25 `[verified, receipt; arithmetic]`.
 - Codex, Cursor and Claude subscription usage carries no per-call USD cost and is not in this ledger.
+
+#### PR #293 reconciliation review receipts (charged to M0)
+
+All 19 figures are provider-reported and were read by the Director `[verified, receipt]`. These 19 paid Grok review rounds cost **USD 2.610416**; the revision-limit crossing and waste are recorded in D-022.
+
+| Receipt | USD |
+|---|---|
+| `xai/20260926T182039Z` | 0.151142 |
+| `xai/20260926T182614Z` | 0.056312 |
+| `xai/20260926T194926Z` | 0.133996 |
+| `xai/20260926T195558Z` | 0.209396 |
+| `xai/20260926T200007Z` | 0.10526 |
+| `xai/20260926T200413Z` | 0.173092 |
+| `xai/20260926T200715Z` | 0.08386 |
+| `xai/20260926T201713Z` | 0.113296 |
+| `xai/20260926T201908Z` | 0.108614 |
+| `xai/20260926T202808Z` | 0.18455 |
+| `xai/20260926T203228Z` | 0.12039 |
+| `xai/20260926T204713Z-408344-c160` | 0.128454 |
+| `xai/20260926T205016Z-022280-dfa8` | 0.092564 |
+| `xai/20260926T210107Z-839547-de35` | 0.214136 |
+| `xai/20260926T210821Z-626102-d77a` | 0.148402 |
+| `xai/20260926T211017Z-216318-09a3` | 0.180646 |
+| `xai/20260926T211812Z-514568-78c5` | 0.119866 |
+| `xai/20260926T212214Z-473705-2b06` | 0.1052 |
+| `xai/20260926T213433Z-666070-7d76` | 0.18124 |
+| **Total (19 receipts)** | **2.610416** |
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
@@ -67,7 +96,8 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
   - Set A v2 Grok review: USD 0.1881 (`xai/20260926T193234Z.json`, 19:32 UTC) `[verified, receipt]`.
   - Set B v2 Grok review, batch 2: USD 0.141568 (`xai/20260926T203729Z.json`) `[verified, receipt]`.
   - Set B v2 Grok review, batch 1: USD 0.1494, charged as spent. Its original receipt was overwritten. The figure comes from the wrapper's captured output, and `xai/20260926T203729Z-reconstructed-batch1.json` was written by Claude Code from that output, so it is `[unverified, not provider-authenticated]`.
-  - With the pre-gate USD 0.280142 below, **M1 has charged USD 0.75921 so far**, before any further paid call. Later M1 spend will be summed from receipts once an M1 workstream plan is approved; none is approved in this record.
+  - Additional M1 spend: **USD 0.458358 over 5 receipts**, all provider-reported and read by the Director `[verified, receipt]`: PR #294 reviews `xai/20260926T204108Z` USD 0.064784, `xai/20260926T204325Z` USD 0.061782 and `xai/20260926T210107Z-866062-b62b` USD 0.07165; PR #295 review `xai/20260926T212912Z-130232-1ac3` USD 0.228682; M1 quantization research brief `perplexity/20260926T200001Z` USD 0.03146.
+  - With the prior USD 0.75921 (including the pre-gate USD 0.280142 below), **M1 has charged USD 1.217568 so far** (0.75921 + 0.458358), within the USD 25 M1 envelope. The PR #296 review, started at about 21:39 UTC, is in flight and not yet charged. M1 authorization lives in the separate M1 plan PR (#294, O-038); this record does not rely on it.
 - **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
@@ -107,7 +137,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 |---|---|---|
 | 1 | Project and assignment IDs | Top of this report |
 | 2 | Objective, scope, categorized status | Top of this report and the M0 table |
-| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; current `main` `052553f`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
+| 3 | Starting and current refs, SHAs, digests | Start: PR-0 base `1892b841` (D-008). Gate: `main` at `58fb485` when O-031 was given; this branch's base `052553f`; current `main` `c432722` (PR #288, merged 2026-09-26 21:20 UTC) `[verified, git]`. Digests: `unsloth/unsloth` image `sha256:1644d635…` (D-012), restore drill `474CA9FA…335A` (M0.7). No committed dataset artifacts. |
 | 4 | Provider participation, unavailable providers, drafts or simulations | Every paid call has a receipt (M0 paid spend table). Unavailable during M0: Grok Build CLI (HTTP 402, D-009) and GitHub Copilot (out of quota, D-005). No draft, simulation or predicted-position content. |
 | 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
 | 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
@@ -115,18 +145,18 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | 8 | Tests, CI, security scan, independent review | "Per-PR validation evidence" below: CI state for every M0 PR, and review receipts, with verdicts marked unverified where this reconciliation did not re-read them. **Security scan not applicable:** no Codex Security scan is configured for this project. |
 | 9 | Risks, limitations, blockers, confidence | "Not done, and what remains unverified" below |
 | 10 | Cost, tokens, elapsed time | Cost: M0 paid spend (a lower bound). Tokens are per receipt and not aggregated. Elapsed: 2026-09-24 06:05 (O-001) to 2026-09-26 03:15 (O-031), about 45 hours. |
-| 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Unavailable:** M0 ran analysis-only (`rollout-packet.md`) without pre-stage packets or writer leases. Reviewers are named per PR. |
+| 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Hard-stop crossing, awaiting owner disposition (D-021):** M0 dispatched Perplexity, xAI/Grok, Codex and Cursor without pre-stage packets or writer leases, violating the blocking pre-dispatch gate also cited in D-019. Reviewers are named per PR. |
 | 12 | Status-check, duplicate-validation, action and wave counts | **Unavailable:** not measured in M0. |
 | 13 | Avoidable-commit baseline | **Unavailable:** not measured in M0. |
 | 14 | Scope or authority changes, owner authorization | No authority change. Owner authorizations: O-029 to O-036. |
 | 15 | Recovery state and rollback | Nightly mirror and restore drill (M0.7). Repository rollback is a revert of the merged PRs. **Host rollback: documentation only, not executed.** Stop Open WebUI + SearXNG from `projects/homemade-llm/compose/` with `docker compose -p homemade-llm -f open-webui.yml --env-file C:\llm\secrets\open-webui.env down`, never `-v` (`compose/RUNBOOK.md` §4 "Diagnostics"). Owner stops Tailscale Serve with the documented `tailscale serve --https=443 off`, then confirms nothing is served using `tailscale serve status` (`compose/RUNBOOK.md` §2 "Phone access with Tailscale Serve (never Funnel)", step 5). Remove Scheduled Task `homemade-llm-mirror` (name recorded in M0.7 above): **no documented procedure; owner action** (`scripts/mirror.ps1`, opening usage comments; `workstream-plan.md`, "Workstreams", M0.7, and "Owner and deterministic gates"). Restore the removed live Ollama blobs from the content-verified `E:\llm-archive\ollama-2026-09\models\blobs` to `xo-fleet\ollama\models\blobs`: **no documented procedure; owner action** (`decision-log.md` D-014; `workstream-plan.md`, "Workstreams", M0.6). Receipts and reports are on disk under `C:\llm\reports` and the provider-dispatch receipts. |
 | 16 | Next gate and responsible party | "Next bounded action" below |
-| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036; open crossings awaiting disposition: D-018, D-019 |
+| 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-036; open crossings awaiting disposition: D-018, D-019, D-020, D-021, D-022 |
 | 18 | Not done and unverified | "Not done, and what remains unverified" below |
 
 ### Per-PR validation evidence (charter item 8)
 
-CI is the six required jobs at each PR's merged head, read with `gh pr view` on 2026-09-26 `[verified]`. Review receipts are located in the provider-dispatch receipt folders. Their verdict text was **not** re-read for this reconciliation, so it is marked unverified here, except where a verdict is cited elsewhere in this record.
+CI is the six required jobs at each PR's merged or pending head, read with `gh pr view` on 2026-09-26 `[verified]`. Review receipts are located in the provider-dispatch receipt folders. Their verdict text was **not** re-read for this reconciliation, so it is marked unverified here, except where a verdict is cited elsewhere in this record.
 
 | PR | Merged or pending head | CI at head | Independent review evidence |
 |---|---|---|---|
@@ -140,8 +170,8 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 | #276 | `b0a4f59` | 6/6 success | Reviews in `hl-m0-close/`; merged by the owner under the one-time exception (D-015) |
 | #277 | `45a144f` | **3 success, 3 cancelled**: merged without a full green run. Disposition: the reconciled tree, which contains #277's content, is validated by this reconciliation PR's own six required CI jobs at its reviewed head. Until those are green, M0's CI evidence is incomplete (owner gate below). | Eight xAI reviews of the report (receipts in the M0 paid spend table; final one `xai/20260926T000816Z.json`) |
 | #279 | `224b4f0` | 6/6 success | xAI reviews `xai/20260926T001634Z.json`, `…003909Z.json`, `…013141Z.json` |
-| #283 | MERGED 2026-09-26 16:40:15 UTC as `052553f4bc900ccb587bcb3bfc60f7b5088aa298`, at head `d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88` `[relayed, Director verification in MX-002]` | 6/6 SUCCESS: Contribution attribution, Python 3.12 ubuntu, Python 3.12 windows, Compose and container build, Secret hygiene, Cross-process recovery probe `[relayed]` | OpenAI Codex source re-review ACCEPT at `d6a6d55` against base `58fb485` (#283 PR comment, 2026-09-26 04:58:59 UTC). Earlier Grok ACCEPTs at `cf0623d` and `7b9ea60`, receipts `xai/20260926T040053Z.json` and `xai/20260926T044605Z.json` `[relayed, Director verification in MX-002]` |
-| #291 | OPEN at `409d9bb`; **pending, outside the completed M0 milestone** `[relayed, Director verification in MX-002]` | Not yet complete at the time of writing; pending `[relayed]` | Independent ACCEPT at `409d9bb` `[relayed, Director verification in MX-002]` |
+| #283 | MERGED 2026-09-26 16:40:15 UTC as `052553f4bc900ccb587bcb3bfc60f7b5088aa298`, at head `d6a6d5576d7ba8de653c30ba3c3a37bb4784ce88` `[verified 2026-09-26 ~21:31 UTC, gh pr view]` | 6/6 SUCCESS: Contribution attribution, Python 3.12 ubuntu, Python 3.12 windows, Compose and container build, Secret hygiene, Cross-process recovery probe `[verified 2026-09-26 ~21:31 UTC, gh pr view]` | OpenAI Codex source re-review ACCEPT at `d6a6d55` against base `58fb485` (#283 PR comment, 2026-09-26 04:58:59 UTC). Earlier Grok ACCEPTs at `cf0623d` and `7b9ea60`, receipts `xai/20260926T040053Z.json` and `xai/20260926T044605Z.json` `[verified 2026-09-26 ~21:31 UTC, gh pr view]` |
+| #291 | OPEN at `409d9bb`; **pending, outside the completed M0 milestone** `[verified 2026-09-26 ~21:31 UTC, gh pr view]` | Contribution attribution, Python ubuntu, Secret hygiene and Cross-process recovery probe SUCCESS; Python windows plus Compose and container build not yet concluded `[verified 2026-09-26 ~21:31 UTC, gh pr view]` | Independent ACCEPT at `409d9bb` `[verified 2026-09-26 ~21:31 UTC, gh pr view]` |
 
 ### Not done, and what remains unverified
 
@@ -154,6 +184,9 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 - M0 CI evidence: #277 merged with 3 of 6 required jobs cancelled. This PR's six jobs at its reviewed head must be green before M0's closure evidence is complete, and the owner merges only then.
 - Pre-gate M1 work (D-018): ratify #280, which merged before M0 closed, or have it reverted and redone under M1.
 - Pre-staging crossing (D-019): ratify the quarantined held-out sets A and B, or have them redone under approved packets.
+- Authorship crossing (D-020): split #293 or grant an explicit owner exception for Claude Code's majority authorship plus owner-directed OpenAI Codex maintenance; O-032 remains proposed until #284 merges.
+- M0 pre-staging crossing (D-021): explicitly ratify the M0 exception or require affected work to be redone under approved packets and writer leases.
+- Revision-limit crossing (D-022): dispose of the 19 paid Grok review rounds plus connector rounds against the 3-per-PR limit, including USD 2.610416 of review waste. The autonomous loop is stopped at MX-005; no further revision or review of #293 before that disposition.
 - M1 plan: approve the M1 workstream plan and its pre-stage packets once written. No new M1 provider dispatch happens before that.
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
 - Merges: this reconciliation PR once reviewed and green; #281 has its own ready and merge decision (O-031).
@@ -163,6 +196,9 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. The draft is proposed separately, and this record does not rely on it.
 0. Ed disposes of D-018 (#280, merged before M0 closed): ratify, or revert and redo. Work that depends on the scorer waits for it.
 0. Ed disposes of D-019 (held-out sets produced before pre-staging): ratify as a documented exception, or redo under approved packets. M1 scoring waits for it.
+0. Ed disposes of D-020 (two material authors on #293): split the PR or grant an explicit owner exception.
+0. Ed disposes of D-021 (M0 provider dispatch without pre-staging or writer leases): ratify the exception or require affected work to be redone under approved packets and leases.
+0. Ed disposes of D-022 (revision-limit crossing and USD 2.610416 of review waste). The #293 autonomous loop is stopped at MX-005; no further revision or review until that disposition.
 1. Ed approves the M1 plan (packet bounds, methodology, dataset pinning). **No M1 provider dispatch happens before that.**
 
 **The pre-plan work has finished and stopped.** Later M1 work is recorded under the M1 plan, not here.
@@ -171,8 +207,8 @@ M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. 
 
 No further work under those items runs before the plan is approved.
 
-- **Responsible:** Ed for the D-018 and D-019 dispositions and the M1 plan approval; then the Director under that plan.
-- **Expected evidence:** Ed's recorded D-018 and D-019 dispositions and M1 plan approval, and this PR's six required CI jobs green at its reviewed head.
+- **Responsible:** Ed for the D-018, D-019, D-020, D-021 and D-022 dispositions and the M1 plan approval; then the Director under that plan.
+- **Expected evidence:** Ed's recorded D-018, D-019, D-020, D-021 and D-022 dispositions and separate M1 plan approval (#294, O-038), plus this PR's non-author exact-head review, six required CI jobs green at that head, and owner merge.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
@@ -186,3 +222,5 @@ No further work under those items runs before the plan is approved.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:17 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:32 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:41 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:44 UTC | END]] -->
