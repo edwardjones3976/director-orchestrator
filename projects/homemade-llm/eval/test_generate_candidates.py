@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | BEGIN]]
 """Fixture-only tests: python -m unittest discover -s projects/homemade-llm/eval -p test_generate_candidates.py -v"""
@@ -56,10 +57,16 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.args = argparse.Namespace(
             refs=self.refs, inputs=self.inputs, out=self.out, schema=gen.DEFAULT_SCHEMA,
             refs_manifest=gen.manifest(self.refs), inputs_manifest=gen.manifest(self.inputs),
-            model="fixture-model", label="fixture-base", base_url="http://fixture.invalid/v1",
-            model_gguf=self.gguf,
+            model="fixture-model", label="fixture-base", base_url="http://127.0.0.1:1234/v1",
+            model_gguf=self.gguf, lms_models_dir=self.root,
             qwen3=False, control_prompt=None, item_timeout=180,
         )
+        self.loaded = [{"identifier": "fixture-model", "path": "fixture.gguf"}]
+        self.catalog = [{"modelKey": "fixture-key", "path": "fixture.gguf"}]
+        probe = mock.patch.object(gen.subprocess, "run", side_effect=lambda command, **kw:
+                                  argparse.Namespace(stdout=json.dumps(self.loaded if command[1] == "ps" else self.catalog)))
+        probe.start()
+        self.addCleanup(probe.stop)
         self.response = self.completion(json.dumps(_minimal_ref()))
         self.transport = mock.Mock(side_effect=self.respond)
         # Every test injects a transport or connection; accidental sockets fail.
@@ -132,6 +139,7 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertTrue(required <= record.keys())
         self.assertEqual(record["label"], "fixture-base")
         self.assertEqual(record["model"], "fixture-model")
+        self.assertEqual(record["loaded_model_binding"]["sha256"], record["model_gguf_sha256"])
         self.assertEqual(record["base_url"], self.args.base_url)
         self.assertEqual(record["lm_studio_version"], "unknown")
         self.assertEqual(record["schema_sha256"], gen.sha256(self.args.schema.read_bytes()))
@@ -152,6 +160,31 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertEqual(body["messages"][0]["content"], record["prompt_template"])
         self.assertEqual(record["prompt_template_sha256"], gen.sha256(record["prompt_template"].encode()))
         self.assertNotIn("chat_template_kwargs", body)
+
+    def test_loaded_alias_catalog_and_bytes_must_match_before_generation(self):
+        other = self.root / "other.gguf"
+        other.write_bytes(gguf_fixture("different template"))
+        cases = [([], self.catalog), (self.loaded * 2, self.catalog),
+                 (self.loaded, []), (self.loaded, self.catalog * 2),
+                 ([{"identifier": "fixture-model", "path": "other.gguf"}],
+                  [{"modelKey": "other-key", "path": "other.gguf"}])]
+        for loaded, catalog in cases:
+            with self.subTest(loaded=loaded, catalog=catalog):
+                self.loaded, self.catalog = loaded, catalog
+                with self.assertRaisesRegex(ValueError, "model binding"):
+                    gen.run(self.args, self.transport)
+                self.transport.assert_not_called()
+                self.assertFalse(self.out.exists())
+
+    def test_binding_probe_failure_and_remote_endpoint_send_no_requests(self):
+        with mock.patch.object(gen.subprocess, "run", side_effect=gen.subprocess.TimeoutExpired("lms", 1)):
+            with self.assertRaisesRegex(ValueError, "probe failed"):
+                gen.run(self.args, self.transport)
+        self.args.base_url = "http://remote.invalid:1234/v1"
+        with self.assertRaisesRegex(ValueError, "local LM Studio endpoint"):
+            gen.run(self.args, self.transport)
+        self.transport.assert_not_called()
+        self.assertFalse(self.out.exists())
 
     def test_gguf_template_and_hashes_are_recorded(self):
         gen.run(self.args, self.transport)
@@ -323,7 +356,7 @@ class GenerateCandidatesTests(unittest.TestCase):
             gen.main(args, transport=self.transport)
         self.assertEqual(error.exception.code, 2)
         self.transport.assert_not_called()
-        args.extend(["--model-gguf", str(self.gguf)])
+        args.extend(["--model-gguf", str(self.gguf), "--lms-models-dir", str(self.root)])
         self.assertEqual(gen.main(args, transport=self.transport), 0)
 
     def test_http_transport_uses_single_connection_and_rejects_redirect(self):
@@ -347,3 +380,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]

@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | BEGIN]]
 """Generate pinned packet candidates; no retries, repairs, or reference prompting.
@@ -5,6 +6,8 @@
 Manifest paths use the directory basename and top-level JSON filenames, sorted
 lexicographically. The candidate manifest excludes run.json (the run record).
 An existing output directory must be empty. A transport can be injected for tests.
+The local port-1234 server alias is checked against lms ps/ls and the catalog
+GGUF under --lms-models-dir before generation; remote endpoints fail closed.
 --model-gguf must name the GGUF served for --model; its hash pins the embedded
 tokenizer and template. Metadata traversal is capped at 256 MiB, template text
 at 16 MiB, and array nesting at 16 levels.
@@ -21,6 +24,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -258,6 +262,40 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def loaded_model_binding(args, expected):
+    """Bind the local loaded alias to catalog bytes, as serve-smoke.ps1 does."""
+    url = urlsplit(args.base_url)
+    if (url.scheme != "http" or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or url.port != 1234 or url.path.rstrip("/") != "/v1"):
+        raise ValueError("model binding requires the local LM Studio endpoint on port 1234")
+    def query(command):
+        try:
+            result = subprocess.run(["lms", command, "--json"], capture_output=True,
+                                    text=True, encoding="utf-8", timeout=args.item_timeout, check=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("model binding: LM Studio probe failed") from exc
+        rows = strict_json(result.stdout)
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError("model binding: malformed LM Studio inventory")
+        return rows
+    loaded = [row for row in query("ps") if row.get("identifier") == args.model]
+    if len(loaded) != 1 or not isinstance(loaded[0].get("path"), str) or not loaded[0]["path"]:
+        raise ValueError("model binding: alias must identify exactly one loaded model")
+    catalog = [row for row in query("ls") if row.get("path") == loaded[0]["path"]]
+    if len(catalog) != 1 or not catalog[0].get("modelKey"):
+        raise ValueError("model binding: loaded alias has no unique catalog model")
+    root = args.lms_models_dir.resolve(strict=True)
+    imported = (root / catalog[0]["path"]).resolve(strict=True)
+    if not imported.is_relative_to(root) or not imported.is_file():
+        raise ValueError("model binding: catalog path must be a file within the model directory")
+    with imported.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != expected["model_gguf_sha256"]:
+        raise ValueError("model binding: catalog GGUF differs from pinned GGUF")
+    return {"identifier": args.model, "model_key": catalog[0]["modelKey"],
+            "catalog_path": str(imported), "sha256": digest}
+
+
 def run(args, transport=http_json):
     started = utc_now()
     if not math.isfinite(args.item_timeout) or args.item_timeout <= 0:
@@ -312,10 +350,11 @@ def run(args, transport=http_json):
     if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
         raise ValueError("out must be a new or empty directory")
     gguf_record = model_gguf_record(args.model_gguf)
+    binding = loaded_model_binding(args, gguf_record)
     args.out.mkdir(parents=True, exist_ok=True)
     kwargs = {"enable_thinking": False} if args.qwen3 else {}
     record = {
-        **gguf_record,
+        **gguf_record, "loaded_model_binding": binding,
         "label": args.label, "model": args.model, "base_url": base_url,
         "lm_studio_version": studio_version(base_url, transport, args.item_timeout),
         "prompt_template": prompt, "prompt_template_sha256": sha256(prompt.encode("utf-8")),
@@ -376,6 +415,7 @@ def main(argv=None, *, transport=http_json):
         parser.add_argument("--" + flag, type=Path, required=True)
     for flag in ("model", "label", "refs-manifest", "inputs-manifest"):
         parser.add_argument("--" + flag, required=True)
+    parser.add_argument("--lms-models-dir", type=Path, default=Path.home() / ".lmstudio" / "models")
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA)
     parser.add_argument("--base-url", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--item-timeout", type=float, default=180)
@@ -393,3 +433,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:21 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:26 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 23:08 UTC | END]]
