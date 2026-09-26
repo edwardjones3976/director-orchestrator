@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]] -->
@@ -121,14 +122,20 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 ### Next bounded action
 
 M1, base shootout on the held-out sets:
-0. The Director writes the M1 workstream plan with immutable pre-stage packets: per-packet budget, timeout, retry limit, owned paths, tests, reviewer reservation and stop conditions. No new M1 provider dispatch happens until it exists. Work already in flight under its own recorded bounds continues: the owner-approved downloads (O-034) and the set A and set B data preparation the owner delegated to Codex.
+0. Ed disposes of D-018 (#280, merged before M0 closed): ratify, or revert and redo. Work that depends on the scorer (#281's merge, candidate generation, scoring) waits for that decision.
+0a. The Director writes the M1 workstream plan with immutable pre-stage packets: per-packet budget, timeout, retry limit, owned paths, tests, reviewer reservation and stop conditions. No new M1 provider dispatch happens until it exists **and Ed approves it**. Work already in flight under its own recorded bounds continues: the owner-approved downloads (O-034) and the set A and set B data preparation the owner delegated to Codex.
 1. Set B's replacement passes an independent review (set A's references are already accepted).
 2. The scorer's fail-closed fix (#281) lands through its own review.
-3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B (the control) are then scored with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
+3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo Base 12B are then scored. Nemo Base is the control and excluded from winner selection (O-034); swapping in Nemo Instruct needs a new owner approval. with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
 
 - **Responsible:** the Director for all three steps, with providers authoring data, code and runs per O-003. The owner approves the set B review route.
-- **Expected evidence:** per-base scorer output on both held-out sets, and a decision-log row naming the winner.
+- **Expected evidence:**
+  - per-base scorer output on both held-out sets;
+  - a persisted license check of the winner at its pinned revision;
+  - Ed's recorded sign-off on the M1 gate;
+  - a decision-log row naming the winner.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]] -->
