@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -220,12 +221,19 @@ COLLECTION_SECONDS = 600
 _DEADLINE: list[float | None] = [None]
 
 
+def _left(end: float) -> float:
+    """What remains before a monotonic ``end``, rounded down to the microsecond: ``(t + cap) - t`` in floating point
+    can exceed ``cap`` by a few ulps (seen on Windows as 0.40000000002 for a 0.4 s deadline), and a timeout handed to
+    a blocking call must never exceed the configured cap or the time actually left."""
+    return math.floor((end - time.monotonic()) * 1_000_000) / 1_000_000
+
+
 def _remaining(cap: float) -> float:
     """One blocking call's wall-clock allowance: its own cap, clamped to what remains of the collection. A spent
     collection raises, so the source reads as unavailable."""
     if _DEADLINE[0] is None:
         return cap
-    left = _DEADLINE[0] - time.monotonic()
+    left = _left(_DEADLINE[0])
     if left <= 0:
         raise ValueError("collection deadline reached")
     return min(cap, left)
@@ -317,7 +325,7 @@ def bounded_get(client: httpx.Client, url: str, *, end: float, params: dict | No
     def fetch() -> None:
         try:
             with client.stream("GET", url, params=params, headers=headers or {},
-                               timeout=max(0.001, end - time.monotonic())) as response:
+                               timeout=max(0.001, _left(end))) as response:
                 body = bytearray()
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
@@ -2853,18 +2861,27 @@ def _workflow_blob(ref: str) -> bytes:
     return content
 
 
+def _first_parent(sha: str) -> str:
+    """The commit's first parent (GitHub, GET only): for a candidate on main, main before it landed."""
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/commits/{sha}", "--jq", "{parent: .parents[0].sha}"])
+    parent = value.get("parent") if isinstance(value, dict) else None
+    return _sha(parent)
+
+
 def _ci_workflow_trust(candidate_sha: str) -> tuple[bool, dict[str, Any]]:
     """Check 16's jobs prove anything only if the workflow that ran them is trusted: the ci.yml at the candidate
     (runs are listed at that exact head_sha) must equal the ci.yml on current main, or match the owner's pin
     (release descriptor ``ci_workflow_sha256``). A candidate that rewrote ci.yml into no-op jobs with the required
     names would otherwise pass."""
+    # Under the trusted-checkout rule the candidate IS main, so comparing with current main proves nothing (review
+    # 4111357780): the trusted definition is the one before the candidate, at its first parent on main.
     ran = _workflow_blob(candidate_sha)
     digest = hashlib.sha256(ran).hexdigest()
     pin = ci_workflow_pin(cli_release_descriptor())
-    matches_main = ran == _workflow_blob("main")
     pinned = pin is not None and hmac.compare_digest(pin, digest)
-    return matches_main or pinned, {"ci_workflow_sha256": digest, "matches_main": matches_main,
-                                    "owner_pin_matches": pinned}
+    unchanged = ran == _workflow_blob(_first_parent(candidate_sha))
+    return unchanged or pinned, {"ci_workflow_sha256": digest, "matches_first_parent": unchanged,
+                                 "owner_pin_matches": pinned}
 
 
 def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | None = None) -> Observation:
@@ -3583,3 +3600,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

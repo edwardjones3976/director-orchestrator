@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -273,12 +274,12 @@ class UsageMonitor:
             name = ProviderName(provider)
         except ValueError:
             name = None
-        reserved = (self.provider_spend.reservations(name, now=now)
-                    if name in ProviderDailySpendLedger._SUPPORTED else [])
-        keys = {key for key, _ in reserved}
-        total = sum(max(actual.get(key, 0.0), cost) for key, cost in reserved)
-        total += sum(cost for key, cost in actual.items() if key not in keys)
-        return round(total, 8)
+        if name not in ProviderDailySpendLedger._SUPPORTED:
+            return round(sum(actual.values()), 8)
+        # The ledger's own reconciliation (the admission gate's), plus any probe charge not yet in it.
+        keys = {key for key, _ in self.provider_spend.reservations(name, now=now)}
+        _, exposure = self.provider_spend.exposure(name, now=now)
+        return round(exposure + sum(cost for key, cost in actual.items() if key not in keys), 8)
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
@@ -288,11 +289,8 @@ class UsageMonitor:
         if isinstance(request_limit, int) and accounting["request_count"] >= request_limit:
             return "Provider daily request limit reached"
         budget = accounting["daily_budget_usd"]
-        accounted_cost = (
-            accounting["reserved_cost_usd"]
-            if accounting["reserved_cost_usd"] is not None
-            else accounting["reported_cost_usd"]
-        )
+        # The reconciled exposure (each reservation at the larger of its charge and its reservation).
+        accounted_cost = accounting["exposure_usd"]
         if isinstance(budget, (int, float)) and accounted_cost >= budget:
             return "Provider daily cost limit reached"
         return None
@@ -647,6 +645,16 @@ class UsageMonitor:
                                 error=f"{type(exc).__name__}: {exc}"[:2_000],
                             )
                     self.store.add_usage_check(record)
+                    # The probe's actual charge joins the ledger its admission gate reads (review 4111357778):
+                    # against the grok probe's floor reservation, or as its own row for gemini and perplexity.
+                    if (provider in {"gemini", "grok", "perplexity"}
+                            and record.reported_cost_usd is not None and record.reported_cost_usd > 0):
+                        self.provider_spend.record_charge(
+                            provider=ProviderName(provider),
+                            effect_key=_probe_key(cycle_id, provider),
+                            actual_cost_usd=record.reported_cost_usd,
+                            now=now,
+                        )
                     records.append(record)
                     if index < len(providers) - 1:
                         await asyncio.sleep(
@@ -746,3 +754,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

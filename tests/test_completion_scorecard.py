@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -854,6 +855,7 @@ def ledger_fixture(path, first_bounds=None):
 
 
 TRUSTED_CI = b"name: CI\njobs: {}\n"
+PARENT = "e" * 40  # the candidate's first parent on main
 
 
 def workflow_contents(content):
@@ -872,6 +874,8 @@ def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None, workflo
         if "/contents/" in args[2]:
             ref = args[2].split("?ref=")[1]
             return workflow_contents((workflows or {}).get(ref, TRUSTED_CI))
+        if "/commits/" in args[2]:  # the candidate's first parent on main: main before it landed
+            return {"parent": PARENT}
         if "/compare/" in args[2]:
             return {"status": (compare or {}).get(args[2].split("/compare/")[1], "ahead")}
         if "/jobs?" in args[-1]:
@@ -1474,6 +1478,8 @@ class CompletionScorecardTests(unittest.TestCase):
                 raise ValueError("offline")
             if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
                 return workflow_contents(TRUSTED_CI)
+            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
+                return {"parent": PARENT}
             if "/jobs?" in args[-1]:
                 return {"total_count": len(jobs), "jobs": jobs}
             self.assertIn("head_sha=" + SHA, args[-1])
@@ -1494,6 +1500,8 @@ class CompletionScorecardTests(unittest.TestCase):
                 raise ValueError("offline")
             if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
                 return workflow_contents(TRUSTED_CI)
+            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
+                return {"parent": PARENT}
             if "/jobs?" in args[-1]:
                 return {"total_count": len(skipped), "jobs": skipped}
             return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
@@ -1506,6 +1514,8 @@ class CompletionScorecardTests(unittest.TestCase):
                 raise ValueError("offline")
             if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
                 return workflow_contents(TRUSTED_CI)
+            if len(args) > 2 and "/commits/" in args[2]:  # the candidate's first parent on main
+                return {"parent": PARENT}
             return ({"total_count": 0, "jobs": []} if "/jobs?" in args[-1]
                     else {"total_count": 1, "workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]})
         with patch.object(sc, "_run_json", side_effect=external_query):
@@ -3842,6 +3852,19 @@ class ScorecardCollectorTests(unittest.TestCase):
             with self.subTest(rows=rows):
                 self.assertNotEqual(case.state("15"), "PASS")
 
+    def test_allowances_never_exceed_their_cap_under_float_error(self):
+        """CI on a9ce209 (Windows): (t + 0.4) - t came out as 0.40000000002. Allowances round down to the
+        microsecond, so a timeout never exceeds the cap or the time left."""
+        with patch.object(sc.time, "monotonic", return_value=1789210000.1):
+            end = 1789210000.1 + 0.4
+            self.assertGreater(end - 1789210000.1, 0.4)  # the raw subtraction overshoots
+            self.assertLessEqual(sc._left(end), 0.4)
+            sc._DEADLINE[0] = end
+            try:
+                self.assertLessEqual(sc._remaining(5), 0.4)
+            finally:
+                sc._DEADLINE[0] = None
+
     def test_http_read_is_bounded_by_wall_clock_while_headers_trickle(self):
         """4109777101: httpx's timeouts bound only each read's inactivity, so headers trickled byte by byte could hold
         client.stream() open past the deadline; the whole request now runs under the absolute end."""
@@ -4215,6 +4238,12 @@ class ScorecardCollectorTests(unittest.TestCase):
         rewritten = b"name: CI\njobs: {noop: {runs-on: ubuntu-latest, steps: [{run: 'true'}]}}\n"
         report = self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten})
         self.assertEqual(row(report, "16")["status"], "UNKNOWN")
+        # 4111357780: the trusted definition is the pre-candidate one (its first parent on main), never current main,
+        # which under the trusted-checkout rule is the candidate itself.
+        landed = self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, "main": rewritten})
+        self.assertEqual(row(landed, "16")["status"], "UNKNOWN")
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten, PARENT: rewritten}), "16")["status"],
+                         "PASS")
         self.assertIn("workflow changed by candidate; owner pin required", row(report, "16")["explanation"])
         failed = self.ci_report({1: ci_jobs(failed=("Secret hygiene",))}, workflows={SHA: rewritten})
         self.assertEqual(row(failed, "16")["status"], "UNKNOWN")  # an untrusted workflow's failure proves nothing either
@@ -4529,3 +4558,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

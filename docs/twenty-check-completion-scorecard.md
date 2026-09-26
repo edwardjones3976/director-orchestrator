@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]] -->
@@ -1072,6 +1073,18 @@ monitor cannot see). `request_count` keeps its old meaning for the monitor's
 own limits. An accounting entry without `provider_request_count` is not
 monitored accounting.
 
+The runtime admission gates use the same reconciliation
+(`ProviderDailySpendLedger._exposure`, inside `reserve()`'s `BEGIN IMMEDIATE`
+write lock, and the monitor's own probe gate): each reservation counts at the
+larger of its recorded actual charge (`record_charge`, never lowered; a probe
+the ledger did not reserve is recorded as its own row at a zero reservation)
+and its reservation, so a probe that cost more than its floor leaves no room
+for more work under the cap. Check 16's trusted workflow is the one before the
+candidate: the `ci.yml` at the candidate's first parent on `main`, or the
+owner's `ci_workflow_sha256`. Review actors compare as
+`unicodedata.normalize("NFKC", s).casefold()`, and an actor that is not
+already NFC is rejected.
+
 Check 15 compares each monitor cap with `exposure_usd`, which `usage.py`
 reconciles per reservation: each spend-ledger reservation at the larger of
 its actual charge (a probe's reported cost) and its reservation, work
@@ -1293,3 +1306,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]] -->

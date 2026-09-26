@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | BEGIN]]
@@ -92,14 +93,18 @@ _OWNER_LOCAL_FACT_NAMES = _ACCEPTANCE_FACT_NAMES | _OWNER_LOCAL_EXTRA_FACT_NAMES
 def canonical_actor(value):
     """An attributable actor's comparison key, or None when the string is not canonical.
 
-    The one identity rule for review actors (adoption, acceptance evidence and check 17): a non-empty string with
-    no surrounding whitespace and no control or format characters; compared case-insensitively (casefold). A
-    non-canonical actor is rejected, never normalized, so ``" alice "`` can never pose as a second identity.
+    The one identity rule for review actors (adoption, acceptance evidence and check 17): a non-empty NFC string
+    with no surrounding whitespace and no control or format characters; compared as NFKC, casefolded. A
+    non-canonical actor is rejected, never normalized, so ``" alice "`` or a decomposed spelling can never pose as a
+    second identity, and a compatibility form (``Ａlice``) compares as ``alice``.
     """
     if (not isinstance(value, str) or not value or value != value.strip()
-            or any(unicodedata.category(character).startswith("C") for character in value)):
+            or any(unicodedata.category(character).startswith("C") for character in value)
+            # Review 4111357781: one spelling per identity. Input that is not already NFC is rejected (a decomposed
+            # "José" is not a second actor), and compatibility forms (full-width letters) collapse under NFKC.
+            or not unicodedata.is_normalized("NFC", value)):
         return None
-    return value.casefold()
+    return unicodedata.normalize("NFKC", value).casefold()
 
 
 def actors_distinct(*actors):
@@ -1329,3 +1334,4 @@ if __name__ == "__main__":
 # [[Codex Director | GPT-6 Astra | 2026-09-22 | 08:26 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

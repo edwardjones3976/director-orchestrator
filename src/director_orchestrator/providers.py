@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | BEGIN]]
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import hmac
 import json
 import os
@@ -106,6 +108,81 @@ class ProviderDailySpendLedger:
                 """CREATE INDEX IF NOT EXISTS idx_provider_daily_spend_day
                 ON provider_daily_spend_reservations(provider, utc_day)"""
             )
+            # The actual charge a reservation incurred, once known (a usage-check probe's reported cost). Added in
+            # place: an existing ledger keeps every reservation, and a NULL charge counts at its reservation.
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(provider_daily_spend_reservations)"
+                )
+            }
+            if "actual_cost_usd" not in columns:
+                connection.execute(
+                    """ALTER TABLE provider_daily_spend_reservations
+                    ADD COLUMN actual_cost_usd REAL
+                    CHECK(actual_cost_usd IS NULL OR actual_cost_usd >= 0)"""
+                )
+
+    @staticmethod
+    def _exposure(connection: sqlite3.Connection, provider: ProviderName, utc_day: str) -> tuple[int, float]:
+        """The one reconciliation of the day's spend (review 4111357778), for the admission gate and every report:
+        each reservation counts at the larger of its actual charge and its reservation. Called inside the caller's
+        transaction, so reserve() compares and inserts under one BEGIN IMMEDIATE write lock."""
+
+        count, exposure = connection.execute(
+            """SELECT COUNT(*),
+                      COALESCE(SUM(MAX(estimated_cost_usd, COALESCE(actual_cost_usd, 0))), 0)
+            FROM provider_daily_spend_reservations
+            WHERE provider = ? AND utc_day = ?""",
+            (provider.value, utc_day),
+        ).fetchone()
+        return int(count), float(exposure)
+
+    def exposure(self, provider: ProviderName, *, now: datetime | None = None) -> tuple[int, float]:
+        """(reservations, reconciled exposure in USD) for the day."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend exposure applies only to supplemental providers")
+        utc_day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        with self._connect() as connection:
+            return self._exposure(connection, provider, utc_day)
+
+    def record_charge(
+        self,
+        *,
+        provider: ProviderName,
+        effect_key: str,
+        actual_cost_usd: float,
+        now: datetime | None = None,
+    ) -> None:
+        """Record a provider request's actual charge against its reservation, never lowering one already recorded.
+        A charge with no reservation (a probe the ledger did not reserve) is recorded as its own row at a zero
+        reservation: the charge was incurred, so it is never refused and always counts."""
+
+        if provider not in self._SUPPORTED:
+            raise ValueError("daily spend charges apply only to supplemental providers")
+        if not self._EFFECT_KEY.fullmatch(effect_key):
+            raise ValueError("provider spend charge requires a canonical effect key")
+        if not isinstance(actual_cost_usd, (int, float)) or isinstance(actual_cost_usd, bool) \
+                or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0:
+            raise ValueError("provider spend charge must be a finite non-negative amount")
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                """UPDATE provider_daily_spend_reservations
+                SET actual_cost_usd = MAX(COALESCE(actual_cost_usd, 0), ?)
+                WHERE provider = ? AND effect_key = ?""",
+                (float(actual_cost_usd), provider.value, effect_key),
+            ).rowcount
+            if not updated:
+                connection.execute(
+                    """INSERT INTO provider_daily_spend_reservations(
+                        provider, effect_key, utc_day, estimated_cost_usd, recorded_at, actual_cost_usd
+                    ) VALUES (?, ?, ?, 0, ?, ?)""",
+                    (provider.value, effect_key, observed_at.date().isoformat(),
+                     observed_at.isoformat(), float(actual_cost_usd)),
+                )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -151,12 +228,9 @@ class ProviderDailySpendLedger:
                         "provider daily reservation identity was reused with different accounting"
                     )
             else:
-                count, reserved = connection.execute(
-                    """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-                    FROM provider_daily_spend_reservations
-                    WHERE provider = ? AND utc_day = ?""",
-                    (provider.value, utc_day),
-                ).fetchone()
+                # The reconciled exposure, not the sum of reservation estimates: a probe that cost more than its
+                # floor must not leave room for more work under the cap (review 4111357778).
+                count, reserved = self._exposure(connection, provider, utc_day)
                 if int(count) + 1 > request_limit:
                     raise ProviderDailyLimitExceeded(
                         f"{provider.value} daily assignment request limit reached"
@@ -177,13 +251,7 @@ class ProviderDailySpendLedger:
                         observed_at.isoformat(),
                     ),
                 )
-            count, reserved = connection.execute(
-                """SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-                FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ?""",
-                (provider.value, utc_day),
-            ).fetchone()
-            return int(count), float(reserved)
+            return self._exposure(connection, provider, utc_day)
 
     def totals(
         self,
@@ -1578,3 +1646,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 07:02 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]

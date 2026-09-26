@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | BEGIN]]
@@ -28,6 +29,7 @@ from director_orchestrator.models import (
 )
 from director_orchestrator.store import TaskStore
 from director_orchestrator.providers import (
+    ProviderDailyLimitExceeded,
     GeminiAdapter,
     ProviderDailySpendLedger,
     ProviderError,
@@ -499,15 +501,22 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
                 sqlite_path=database,
                 slack_bot_token="",
             )
+            ledger = ProviderDailySpendLedger(database)
+            ledger.reserve(provider=ProviderName.GROK, effect_key="c" * 64, estimated_cost_usd=0.75,
+                           request_limit=10, budget_usd=1.0)
             monitor = UsageMonitor(settings, store, adapters={ProviderName.GROK: CostlyGrokProbe()})
-            await monitor.run_once(force=True)
-            ProviderDailySpendLedger(database).reserve(
-                provider=ProviderName.GROK, effect_key="c" * 64, estimated_cost_usd=0.75,
-                request_limit=10, budget_usd=1.0)
+            await monitor.run_once(force=True)  # reserves its $0.01 floor, then records its $0.50 charge
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["reported_cost_usd"], accounting["reserved_cost_usd"]), (0.5, 0.76))
             self.assertEqual(accounting["exposure_usd"], 1.25)
-            self.assertGreater(accounting["exposure_usd"], accounting["daily_budget_usd"])
+            # Review 4111357778: the runtime gates use the same reconciled exposure. The ledger refuses the next
+            # reservation, and the monitor's own gate refuses the next probe.
+            self.assertEqual(ledger.exposure(ProviderName.GROK), (2, 1.25))
+            with self.assertRaises(ProviderDailyLimitExceeded):
+                ledger.reserve(provider=ProviderName.GROK, effect_key="d" * 64, estimated_cost_usd=0.0,
+                               request_limit=10, budget_usd=1.0)
+            self.assertEqual(monitor._supplemental_limit_error("grok", datetime.now(timezone.utc)),
+                             "Provider daily cost limit reached")
 
     async def test_grok_probe_and_assignment_share_one_atomic_daily_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1183,3 +1192,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
