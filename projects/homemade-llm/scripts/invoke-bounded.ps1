@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
@@ -138,7 +139,9 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
             [HomemadeLlm.JobTree]::Kill($h)
         }
         $gone = ($h -eq [IntPtr]::Zero) -or [HomemadeLlm.JobTree]::Wait($h, 5000)
-        # No kill-on-close: after a normal exit, a process the command deliberately left running keeps running.
+        # No kill-on-close: a deliberately detached child survives normal completion only after closing
+        # inherited output pipes. A pipe holder remains part of the bounded command: at the deadline
+        # the job is terminated and verified above, even when the root has already exited.
         [HomemadeLlm.JobTree]::Close($h); [HomemadeLlm.JobTree]::Close($job)
         foreach ($pipe in $pipes) { $pipe.Dispose() }
         if (-not $gone -or $unverified) {
@@ -165,3 +168,4 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]

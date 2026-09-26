@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
@@ -79,6 +80,25 @@ try {
     $orphanLeft = @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" | Where-Object CommandLine -match '-n 600 127\.0\.0\.2')
     if ($r[-1] -ne '__EXIT__timeout') { $fail += "orphaned grandchild: expected __EXIT__timeout, got '$($r[-1])'" }
     if ($orphanLeft.Count) { $fail += 'orphaned grandchild: still running after the timeout'; $orphanLeft | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+    # Root exits normally; its child retains stdout/stderr and remains subject to the deadline.
+    $holderPidFile = Join-Path $shim 'pipe-holder.pid'
+    $rootDone = Join-Path $shim 'pipe-root-done.txt'
+    $holderScript = Join-Path $shim 'pipe-holder.ps1'
+    Set-Content $holderScript ('$PID | Set-Content -LiteralPath ''' + $holderPidFile + '''; Start-Sleep 600')
+    Set-Content (Join-Path $shim 'pipe-root.cmd') ("@start `"`" /b pwsh -NoProfile -File `"$holderScript`"`r`n@echo exited>`"$rootDone`"`r`n@exit /b 0")
+    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'pipe-holder-marker.txt'
+    try {
+        $r = @('__EXIT__threw'); try { $r = @(Invoke-Bounded 'pipe-root' @() 8) } catch { }
+        if (-not (Test-Path $rootDone) -or -not (Test-Path $holderPidFile)) { $fail += 'pipe holder: root/child fixture did not start' }
+        if ($r[-1] -ne '__EXIT__timeout') { $fail += "pipe holder: expected timeout after root exit, got '$($r[-1])'" }
+        if (Test-Path $holderPidFile) {
+            $holderProcess = Get-Process -Id ([int](Get-Content $holderPidFile)) -ErrorAction SilentlyContinue
+            if ($holderProcess) { $fail += 'pipe holder: child survived the verified job termination'; $holderProcess | Stop-Process -Force }
+        }
+        if ((Test-Path $GpuMarker) -or $BoundedUnconfirmed -or $BoundedGuardMissing) { $fail += 'pipe holder: confirmed kill must not poison the GPU guard' }
+    } finally {
+        $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    }
     # A failed join leaves the suspended root outside the job: it must still be killed and confirmed gone, and the
     # call must throw (no command ran, so no marker is needed).
     $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'join-marker.txt'
@@ -238,6 +258,7 @@ Write-Output 'ok  a tree the job still counts after the kill fails closed and pe
 Write-Output 'ok  marker-write failure: guard missing keeps the lock; failed append with a guard present is harmless'
 Write-Output 'ok  durable job guard written before the first bounded command; a Start-Job failure keeps it'
 Write-Output 'ok  suspended start joins the job first; a failed join still kills the root; an orphaned grandchild is killed on timeout; no job means no launch; marker keeps the root pid'
+Write-Output 'ok  root-exited pipe holder times out, is killed, and leaves no poison marker'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code; arguments reach argv exactly'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
@@ -247,3 +268,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:52 UTC | END]]
