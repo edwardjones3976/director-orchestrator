@@ -48,10 +48,14 @@ $reportPath = Join-Path $reports ("scan-dataset-{0}.json" -f (Get-Date).ToUniver
 # folder could suppress findings. Point that lookup at a fresh empty directory, and scan gitleaks:allow lines too.
 $noIgnore = Join-Path ([IO.Path]::GetTempPath()) ("scan-dataset-noignore-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $noIgnore | Out-Null
+# Never let gitleaks discover a config: --config comes first in its lookup, so the dataset's own .gitleaks.*
+# (any name or extension its config library would try) is never read. The trusted config is the built-in rules only.
+$trustedConfig = Join-Path $noIgnore 'trusted.toml'
+Set-Content -LiteralPath $trustedConfig -Value "[extend]`nuseDefault = true" -Encoding utf8
 try {
     $global:LASTEXITCODE = 0
     & $Gitleaks dir $Path --no-banner --redact --report-format json --report-path $reportPath --exit-code 3 `
-        --gitleaks-ignore-path $noIgnore --ignore-gitleaks-allow 2>&1 | Out-Host   # 3 = leaks; gitleaks itself exits 1 on errors
+        --gitleaks-ignore-path $noIgnore --ignore-gitleaks-allow --config $trustedConfig 2>&1 | Out-Host   # 3 = leaks; gitleaks itself exits 1 on errors
     $glCode = $LASTEXITCODE
 } finally { [IO.Directory]::Delete($noIgnore, $true) }
 

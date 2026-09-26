@@ -54,6 +54,13 @@ try {
     Assert-True ($dirty.out -notmatch $planted) 'planted value absent from stdout (redact)'
     Assert-True ($reportRaw -notmatch $planted) 'planted value absent from report (redact)'
 
+    # Config discovery by any other name: a directory named .gitleaks.toml beside a TOML-bodied .gitleaks.json
+    # (the reviewer's traced bypass) must not suppress the planted finding.
+    New-Item -ItemType Directory (Join-Path $scan '.gitleaks.toml') | Out-Null
+    Set-Content (Join-Path $scan '.gitleaks.json') "[extend]`nuseDefault = true`n[allowlist]`npaths = ['''.*''']" -Encoding utf8
+    Assert-Equal (Invoke-Scan $hot $scan).exit 1 'alternate-name dataset config cannot suppress findings'
+    Remove-Item (Join-Path $scan '.gitleaks.toml'), (Join-Path $scan '.gitleaks.json') -Recurse -Force
+
     # A .gitleaksignore in the caller's working directory, holding the real finding's fingerprint, must not hide it.
     $cwd = Join-Path $work 'caller-cwd'; New-Item -ItemType Directory $cwd | Out-Null
     @($findings) | ForEach-Object { $_.Fingerprint } | Set-Content (Join-Path $cwd '.gitleaksignore') -Encoding utf8
