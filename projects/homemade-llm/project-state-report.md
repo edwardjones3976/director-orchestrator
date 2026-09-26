@@ -9,7 +9,7 @@ Evidence-first. `[verified]` = read or measured by the Director session that wro
 
 ## EVIDENCE
 
-**Homemade LLM** has closed its M0 gate and entered M1. Ed approved closing M0 and entering M1 once this record was reconciled ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. This report and decision-log rows O-031 to O-033 and D-015 to D-017 are that reconciliation. Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
+**Homemade LLM** has closed its M0 gate and entered M1. Ed approved closing M0 and entering M1 once this record was reconciled ([#277 comment 5842683418](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842683418), 2026-09-26 03:15 UTC) `[relayed]`. This report and decision-log rows O-031 to O-034 and D-015 to D-018 are that reconciliation. Canonical record: this file, `decision-log.md`, `project-profile.yaml`, `PLAN.md` §3 row "M0", `workstream-plan.md`, and PRs #266, #267, #268, #269, #271, #272, #273, #275, #276, #277 and #279 (all merged).
 
 - **Project ID:** `homemade-llm`
 - **Assignment IDs:** HS-0, M0.1 to M0.12, RV-275
@@ -126,9 +126,9 @@ M1, base shootout on the held-out sets:
 0a. The Director writes the M1 workstream plan with immutable pre-stage packets: per-packet budget, timeout, retry limit, owned paths, tests, reviewer reservation and stop conditions. No new M1 provider dispatch happens until it exists **and Ed approves it**. Work already in flight under its own recorded bounds continues: the owner-approved downloads (O-034) and the set A and set B data preparation the owner delegated to Codex.
 1. Set B's replacement passes an independent review (set A's references are already accepted).
 2. The scorer's fail-closed fix (#281) lands through its own review.
-3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo Base 12B are then scored. Nemo Base is the control and excluded from winner selection (O-034); swapping in Nemo Instruct needs a new owner approval. with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
+3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo Base 12B are then scored. Nemo Base is the control and excluded from winner selection (O-034); swapping in Nemo Instruct needs a new owner approval. with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated per the download audit (`C:\llmeports\m1-base-download-audit-20260926-1850UTC.md`) `[relayed]`.
 
-- **Responsible:** the Director for all three steps, with providers authoring data, code and runs per O-003. The owner approves the set B review route.
+- **Responsible:** Ed for step 0 (the D-018 disposition) and for approving the M1 plan and the set B review route; then the Director, with providers authoring data, code and runs per O-003.
 - **Expected evidence:**
   - per-base scorer output on both held-out sets;
   - a persisted license check of the winner at its pinned revision;
