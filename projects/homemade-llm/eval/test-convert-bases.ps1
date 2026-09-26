@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:27 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
@@ -6,19 +7,22 @@
 #   pwsh -File projects\homemade-llm\eval\test-convert-bases.ps1
 $ErrorActionPreference = 'Stop'
 $script = Join-Path $PSScriptRoot 'convert_bases.ps1'
+$shellExe = Join-Path $PSHOME $(if ($PSVersionTable.PSVersion.Major -ge 7) { 'pwsh.exe' } else { 'powershell.exe' })
 $fail = [System.Collections.Generic.List[string]]::new()
 function Assert([bool]$Cond, [string]$Case) {
     if (-not $Cond) { $fail.Add($Case) } else { Write-Output "ok  $Case" }
 }
 function Invoke-Convert([string[]]$Arguments) {
-    $lines = @(& pwsh -NoProfile -File $script @Arguments 2>&1 | ForEach-Object { "$_" })
+    # Native stderr is an ErrorRecord in Windows PowerShell; retain it for failure assertions.
+    $ErrorActionPreference = 'Continue'
+    $lines = @(& $shellExe -NoProfile -File $script @Arguments 2>&1 | ForEach-Object { "$_" })
     return , $lines, $LASTEXITCODE
 }
 function Out-Text($Lines) { ($Lines | ForEach-Object { "$_" }) -join "`n" }
 
 function New-ModelFixture([string]$Root, [string]$Repo, [string]$Revision, [string]$WeightBytes) {
     $hub = Join-Path $Root 'hf\hub'
-    $snap = Join-Path $hub ("models--" + ($Repo -replace '/', '--')) "snapshots\$Revision"
+    $snap = Join-Path (Join-Path $hub ("models--" + ($Repo -replace '/', '--'))) "snapshots\$Revision"
     New-Item -ItemType Directory -Force -Path $snap | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $snap 'model.safetensors.index.json') | Out-Null
     $weight = Join-Path $snap 'model.safetensors'
@@ -37,7 +41,7 @@ function New-ModelFixture([string]$Root, [string]$Repo, [string]$Revision, [stri
 
 function New-XetBlobFixture([string]$Root, [string]$Repo, [string]$Revision, [string]$WeightBytes, [string]$XetHash) {
     $hub = Join-Path $Root 'hf\hub'
-    $snap = Join-Path $hub ("models--" + ($Repo -replace '/', '--')) "snapshots\$Revision"
+    $snap = Join-Path (Join-Path $hub ("models--" + ($Repo -replace '/', '--'))) "snapshots\$Revision"
     New-Item -ItemType Directory -Force -Path $snap | Out-Null
     $blob = Join-Path $hub "blobs\$($XetHash.Substring(0, 2))\$XetHash"
     New-Item -ItemType Directory -Force (Split-Path $blob) | Out-Null
@@ -131,7 +135,6 @@ foreach ($q in $quants) { Set-Content -LiteralPath (Join-Path $workHost "$label-
 exit 0
 '@
     Set-Content -LiteralPath (Join-Path $Dir 'docker.ps1') $shim -Encoding utf8
-    Set-Content -LiteralPath (Join-Path $Dir 'docker.cmd') '@pwsh -NoProfile -File "%~dp0docker.ps1" %*' -Encoding ascii
 }
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("convert-bases-test-" + [guid]::NewGuid().ToString('N'))
@@ -145,17 +148,56 @@ try {
     New-DockerShim $shimDir
     $dockerShim = Join-Path $shimDir 'docker.ps1'
 
+    # Inject faults only into a scratch copy; production has no fault switches.
+    $testHooks = @'
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    # Synthetic transport only: the unchanged shared helper needs .NET's ArgumentList/Kill(bool).
+    function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
+        if ($A[2] -ne $DockerPath) { throw 'test transport permits only the Docker fixture' }
+        $shimArgs = @($A | Select-Object -Skip 3)
+        & $DockerPath @shimArgs
+        "__EXIT__$LASTEXITCODE"
+    }
+}
+function Remove-Item {
+    [CmdletBinding()]param([string]$LiteralPath, [switch]$Force)
+    if ($LiteralPath -eq $env:HL_REMOVE_FAIL) { throw "synthetic removal failure: $LiteralPath" }
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force:$Force
+}
+function Copy-Item {
+    [CmdletBinding()]param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+    if ($env:HL_PLACE_FAIL -and $Destination.StartsWith((Join-Path $CHotRoot 'models\m1'))) {
+        throw "synthetic placement failure: $Destination"
+    }
+    Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+    if ($LiteralPath -eq $env:HL_CHANGE_SOURCE) { Set-Content -LiteralPath $LiteralPath -Value 'changed-after-copy' -NoNewline }
+}
+function Get-Item {
+    [CmdletBinding()]param([string]$LiteralPath, [switch]$Force)
+    if ($LiteralPath -eq $env:HL_MEASURE_FAIL) { throw "synthetic unreadable file: $LiteralPath" }
+    Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force
+}
+'@
+    $sourceText = Get-Content -LiteralPath $script -Raw
+    $helper = (Resolve-Path (Join-Path $PSScriptRoot '..\scripts\invoke-bounded.ps1')).Path.Replace("'", "''")
+    $script = Join-Path $work 'convert-under-test.ps1'
+    $sourceText.Replace(". (Join-Path `$PSScriptRoot '..\scripts\invoke-bounded.ps1')", ". '$helper'`r`n$testHooks") | Set-Content -LiteralPath $script -Encoding utf8
+
     # Exercise quotes, Unicode and CRLF through the same bounded native argv route.
     . (Join-Path $PSScriptRoot '..\scripts\invoke-bounded.ps1')
     $ast = [Management.Automation.Language.Parser]::ParseFile($script, [ref]$null, [ref]$null)
     $encoder = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-BashCommand' }, $true)
     . ([scriptblock]::Create($encoder.Extent.Text))
     $sample = "printf '%s|%s\\n' `"a'b`" 'caf$([char]0xe9)'`r`nprintf '%s\\n' '`$HOME'"
-    $env:HL_SCRIPT_ECHO = '1'
-    $roundtrip = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', $dockerShim, 'run', '-lc', (ConvertTo-BashCommand $sample)) 30)
-    Remove-Item Env:HL_SCRIPT_ECHO
-    Assert ($roundtrip[-1] -eq '__EXIT__0') 'encoded script crosses bounded native argv'
-    Assert (($roundtrip[0..($roundtrip.Count - 2)] -join "`n") -ceq $sample.Replace("`r`n", "`n")) 'decoded script preserves quotes and Unicode with LF newlines'
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        $env:HL_SCRIPT_ECHO = '1'
+        $roundtrip = @(Invoke-Bounded $shellExe @('-NoProfile', '-File', $dockerShim, 'run', '-lc', (ConvertTo-BashCommand $sample)) 30)
+        Remove-Item Env:HL_SCRIPT_ECHO
+        Assert ($roundtrip[-1] -eq '__EXIT__0') 'encoded script crosses bounded native argv'
+        Assert (($roundtrip[0..($roundtrip.Count - 2)] -join "`n") -ceq $sample.Replace("`r`n", "`n")) 'decoded script preserves quotes and Unicode with LF newlines'
+    } else {
+        Write-Output 'LIMITATION: PowerShell 5.1 uses a synthetic transport; unchanged Invoke-Bounded requires PowerShell 7 (.NET ArgumentList and Kill(bool)). Native transport check not run.'
+    }
 
     $cRoot = Join-Path $work 'c'
     $eRoot = Join-Path $work 'e\hf-bases-2026-09'
@@ -230,11 +272,95 @@ try {
     foreach ($field in @('model', 'repo', 'revision', 'gguf', 'archived', 'removed', 'storage', 'tools')) {
         Assert ($rc.PSObject.Properties.Name -contains $field) "receipt has $field"
     }
-    Assert ($rc.gguf.Count -ge 2) 'receipt lists final GGUF artifacts'
+    Assert ($rc.gguf.Count -eq 2) 'receipt lists exactly two final GGUF artifacts'
+    foreach ($g in $rc.gguf) {
+        Assert (-not [string]::IsNullOrWhiteSpace($g.path) -and $g.sha256 -match '^[a-f0-9]{64}$') 'GGUF entry has path and sha256'
+    }
     Assert ($rc.PSObject.Properties.Name -contains 'dangling_links_left') 'receipt notes dangling snapshot links'
     Assert (-not (Test-Path -LiteralPath $fx.blob)) 'verified archive removed shared blob from C:'
     Assert (Test-Path -LiteralPath $fx.path) 'snapshot link left on C: after blob removal'
     Assert (Test-Path -LiteralPath (Join-Path $cRoot 'models\m1\qwen3-8b\Qwen3-8B-Q4_K_M.gguf')) 'final GGUF on C: m1 path'
+
+    # --- fourth-round failures: exact progress survives exceptions ---
+    foreach ($case in @('partial-removal', 'placement', 'changed-source', 'unreadable')) {
+        $cCase = Join-Path $work "c-$case"
+        $eCase = Join-Path $work "e-$case"
+        $gCase = Join-Path $work "g-$case"
+        $fxCase = New-XetBlobFixture $cCase 'Qwen/Qwen3-8B' 'b968826d9c46dd6066d109eabc6255188de91218' 'first-weight' ('a' * 64)
+        $second = Join-Path $cCase ("hf\hub\blobs\bb\" + ('b' * 64))
+        New-Item -ItemType Directory -Force (Split-Path $second) | Out-Null
+        Set-Content -LiteralPath $second -Value 'second-weight' -NoNewline
+        $secondSha = (Get-FileHash -LiteralPath $second -Algorithm SHA256).Hash.ToLower()
+        $env:HL_BLOB_MAP_JSON = @{
+            'first.safetensors' = ('/hf/hub/blobs/aa/' + ('a' * 64))
+            'second.safetensors' = ('/hf/hub/blobs/bb/' + ('b' * 64))
+        } | ConvertTo-Json -Compress
+        $caseManifest = Join-Path $work "offline-$case.json"
+        @{
+            'Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218' = @{
+                files = @(
+                    @{ path = 'first.safetensors'; sha256 = $fxCase.sha256; size = $fxCase.size }
+                    @{ path = 'second.safetensors'; sha256 = $secondSha; size = (Get-Item -LiteralPath $second).Length }
+                )
+            }
+        } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $caseManifest -Encoding utf8
+        switch ($case) {
+            'partial-removal' { $env:HL_REMOVE_FAIL = $second }
+            'placement' { $env:HL_PLACE_FAIL = '1' }
+            'changed-source' { $env:HL_CHANGE_SOURCE = $fxCase.blob }
+            'unreadable' { $env:HL_MEASURE_FAIL = $second }
+        }
+        $out, $code = Invoke-Convert @(
+            '-Execute', '-Model', 'Qwen/Qwen3-8B',
+            '-CHotRoot', $cCase, '-EArchiveRoot', $eCase, '-GConvertRoot', $gCase,
+            '-GpuPoisonPath', $poison, '-OfflineExpected', $caseManifest,
+            '-ProbeCFreeBytes', ([long](200GB)), '-DockerPath', $dockerShim
+        )
+        foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL', 'HL_BLOB_MAP_JSON')) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+        $message = Out-Text $out
+        # Windows PowerShell wraps native error text at the console width, even inside paths.
+        $errorText = $message -replace '\s', ''
+        Assert ($code -ne 0) "$case exits nonzero"
+        if ($case -eq 'unreadable') {
+            Assert ($errorText.Contains('cannotmeasure') -and $errorText.Contains(($second -replace '\s', ''))) 'unreadable error names file'
+            Assert ((Test-Path -LiteralPath $fxCase.blob) -and (Test-Path -LiteralPath $second)) 'unreadable measurement preserves both blobs'
+            Assert (-not (Test-Path -LiteralPath $gCase)) 'unreadable measurement stops before conversion'
+            continue
+        }
+        $caseReceipts = @(Get-ChildItem -LiteralPath (Join-Path $cCase 'reports') -Filter '*.json')
+        Assert ($caseReceipts.Count -eq 1) "$case writes one partial receipt"
+        $partial = Get-Content -LiteralPath $caseReceipts[0].FullName -Raw | ConvertFrom-Json
+        Assert ($partial.status -eq 'partial') "$case receipt status partial"
+        Assert (@($partial.gguf).Count -eq 0) "$case reports no placed GGUFs"
+        Assert ($errorText.Contains('removedC:blobs') -and $errorText.Contains('remainingC:blobs')) "$case error reports removal state"
+        foreach ($arch in $partial.archived) {
+            Assert ((Get-FileHash -LiteralPath $arch.path -Algorithm SHA256).Hash.ToLower() -eq $arch.sha256) "$case archive remains verified"
+        }
+        Assert (@($partial.archived).Count -eq 2) "$case both weights verified on archive"
+        switch ($case) {
+            'partial-removal' {
+                Assert (@($partial.removed).Count -eq 1 -and $partial.removed[0].path -eq $fxCase.blob -and $partial.removed[0].sha256 -eq $fxCase.sha256) 'partial receipt records exactly first removal and hash'
+                Assert (@($partial.remaining).Count -eq 1 -and $partial.remaining[0] -eq $second) 'partial receipt records exactly second remaining blob'
+                Assert (-not (Test-Path -LiteralPath $fxCase.blob) -and (Test-Path -LiteralPath $second)) 'second removal failure preserves second blob only'
+                Assert ($message.Contains($fxCase.blob) -and $message.Contains($second)) 'partial removal error names both blobs'
+            }
+            'placement' {
+                Assert (@($partial.removed).Count -eq 2 -and @($partial.remaining).Count -eq 0) 'placement failure records both removed blobs and none remaining'
+                Assert ($partial.removed[0].path -eq $fxCase.blob -and $partial.removed[1].path -eq $second) 'placement receipt names exact removed blobs'
+                Assert (-not (Test-Path -LiteralPath $fxCase.blob) -and -not (Test-Path -LiteralPath $second)) 'placement failure follows actual removals'
+                Assert ($partial.failure -match 'placement failed' -and $message -match 'placement failed' -and $message.Contains($fxCase.blob) -and $message.Contains($second)) 'placement receipt and error explain failure and removals'
+                Assert (Test-Path -LiteralPath (Join-Path $gCase 'qwen3-8b\Qwen3-8B-Q4_K_M.gguf')) 'placement failure preserves temporary GGUF'
+            }
+            'changed-source' {
+                Assert (@($partial.removed).Count -eq 0 -and @($partial.remaining).Count -eq 2) 'changed source removes nothing'
+                Assert ((Test-Path -LiteralPath $fxCase.blob) -and (Test-Path -LiteralPath $second)) 'changed source preserves both blobs'
+                Assert ((Get-FileHash -LiteralPath $fxCase.blob -Algorithm SHA256).Hash.ToLower() -ne $fxCase.sha256) 'source changed after verified copy'
+                Assert ($partial.failure -match 'hash mismatch on mapped blob' -and $message -match 'hash mismatch on mapped blob') 'immediate pre-removal rehash refuses mismatch'
+            }
+        }
+    }
 
     # --- projected storage guard blocks GGUF copy onto C: ---
     $cProj = Join-Path $work 'c-proj'
@@ -360,11 +486,17 @@ try {
     $logged = Get-Content -LiteralPath $orderAll
     Assert (($logged -join ',') -eq ($expectedOrder -join ',')) 'execute processes models one-at-a-time in catalog order'
 } finally {
+    foreach ($name in @('HL_REMOVE_FAIL', 'HL_PLACE_FAIL', 'HL_CHANGE_SOURCE', 'HL_MEASURE_FAIL')) {
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    }
     Remove-Item Env:HL_SCRIPT_ECHO -ErrorAction SilentlyContinue
     Remove-Item Env:HL_DOCKER_FAIL -ErrorAction SilentlyContinue
     Remove-Item Env:CONVERT_ORDER_LOG -ErrorAction SilentlyContinue
     Remove-Item Env:HL_BLOB_MAP_JSON -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    $resolvedWork = [IO.Path]::GetFullPath($work)
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $resolvedWork.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path $resolvedWork -Leaf) -notlike 'convert-bases-test-*') { throw 'unsafe test cleanup path' }
+    Remove-Item -LiteralPath $resolvedWork -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($fail.Count) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
@@ -374,3 +506,4 @@ exit 0
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:25 UTC | END]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]

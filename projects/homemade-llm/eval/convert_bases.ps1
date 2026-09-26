@@ -1,3 +1,4 @@
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:27 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
@@ -71,7 +72,16 @@ function Get-StorageSnapshot {
         [double]$v.SizeRemaining
     }
     $llm = if ($null -ne $ProbeLlmBytes) { [double]$ProbeLlmBytes } elseif (Test-Path -LiteralPath $CHotRoot) {
-        [double](Get-ChildItem -LiteralPath $CHotRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        try {
+            [double](Get-ChildItem -LiteralPath $CHotRoot -Recurse -File -Force -ErrorAction Stop | ForEach-Object {
+                $file = $_
+                try {
+                    $length = (Get-Item -LiteralPath $file.FullName -Force -ErrorAction Stop).Length
+                    if ($null -eq $length) { throw 'file length unavailable' }
+                    $length
+                } catch { throw "cannot measure $($file.FullName): $($_.Exception.Message)" }
+            } | Measure-Object -Sum).Sum
+        } catch { throw "cannot measure $CHotRoot [$($_.TargetObject)]: $($_.Exception.Message)" }
     } else { 0.0 }
     [pscustomobject]@{
         cFreeGiB = [math]::Round($free / 1GB, 4)
@@ -179,7 +189,7 @@ function Get-ExpectedBlobMap([string]$Repo, [string]$Revision) {
 function Copy-FileVerified([string]$Source, [string]$Dest, [switch]$OntoCHot) {
     if ($OntoCHot) {
         $size = (Get-Item -LiteralPath $Source -Force).Length
-        Assert-StorageGuard "before copy onto C: $(Split-Path $Dest -Leaf)" $size
+        $null = Assert-StorageGuard "before copy onto C: $(Split-Path $Dest -Leaf)" $size
     }
     $parent = Split-Path $Dest -Parent
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
@@ -342,13 +352,15 @@ function Get-GgufArtifacts([string]$WorkHost, [hashtable]$Entry) {
     $list
 }
 
-function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snapshot) {
+function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snapshot, [hashtable]$Progress) {
     $expected = Get-ExpectedBlobMap $Repo $Entry.Revision
     $blobMap = Get-WeightBlobMapViaDocker $Repo $Entry $Snapshot
     $relWeights = @($blobMap.Keys | Sort-Object)
+    $Progress.remaining = @($blobMap.Values | Sort-Object -Unique)
+    $Progress.dangling = @($relWeights | ForEach-Object { Join-Path $Snapshot $_ })
     $archiveBase = Join-Path $EArchiveRoot (Get-HubFolderName $Repo)
     $copied = [System.Collections.Generic.List[object]]::new()
-    $blobPaths = [System.Collections.Generic.HashSet[string]]::new()
+    $blobHashes = @{}
 
     foreach ($rel in $relWeights) {
         if (-not $expected.ContainsKey($rel)) { Write-Error "no expected sha256 for weight $rel in manifest" }
@@ -357,32 +369,28 @@ function Archive-VerifiedWeights([string]$Repo, [hashtable]$Entry, [string]$Snap
         $dest = Join-Path (Join-Path $archiveBase (Join-Path 'snapshots' $Entry.Revision)) $rel
         Copy-FileVerified $srcBlob $dest
         $copied.Add([pscustomobject]@{ path = $dest; sha256 = $sha; role = 'weight' })
-        $blobPaths.Add($srcBlob) | Out-Null
+        $blobHashes[$srcBlob] = $expected[$rel]
     }
 
     foreach ($c in $copied) {
         $onDisk = Get-FileSha256 $c.path
         if ($onDisk -ne $c.sha256) { Write-Error "archive verification failed for $($c.path)" }
+        $Progress.archived.Add($c)
     }
 
-    $removed = [System.Collections.Generic.List[object]]::new()
-    foreach ($blobPath in $blobPaths) {
-        if (Test-Path -LiteralPath $blobPath) {
-            $sha = Get-FileSha256 $blobPath
-            Write-Host "remove C: blob $blobPath (sha256 $sha)"
-            Remove-Item -LiteralPath $blobPath -Force
-            $removed.Add([pscustomobject]@{ path = $blobPath; sha256 = $sha })
-        }
+    foreach ($blobPath in @($Progress.remaining)) {
+        $sha = Assert-MappedBlob $blobPath $blobHashes[$blobPath]
+        Write-Host "remove C: blob $blobPath (sha256 $sha)"
+        Remove-Item -LiteralPath $blobPath -Force
+        $Progress.removed.Add([pscustomobject]@{ path = $blobPath; sha256 = $sha })
+        $Progress.remaining = @($Progress.remaining | Where-Object { $_ -ne $blobPath })
     }
-
-    $dangling = @($relWeights | ForEach-Object { Join-Path $Snapshot $_ })
-    return , @($copied), @($removed), @($dangling)
 }
 
-function Place-FinalGgufs([hashtable]$Entry, [object[]]$Ggufs, [string]$WorkHost) {
+function Place-FinalGgufs([hashtable]$Entry, [object[]]$Ggufs, [string]$WorkHost, [hashtable]$Progress) {
     $destRoot = Join-Path $CHotRoot "models\m1\$($Entry.Key)"
     New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
-    $placed = [System.Collections.Generic.List[object]]::new()
+    $placed = $Progress.placed
     foreach ($g in $Ggufs | Where-Object { $_.quant -ne 'bf16' }) {
         $dest = Join-Path $destRoot "$(Split-Path $g.path -Leaf)"
         Copy-FileVerified $g.path $dest -OntoCHot
@@ -400,7 +408,7 @@ function Place-FinalGgufs([hashtable]$Entry, [object[]]$Ggufs, [string]$WorkHost
         $left = @(Get-ChildItem -LiteralPath $WorkHost -Force -ErrorAction SilentlyContinue)
         if (-not $left.Count) { Remove-Item -LiteralPath $WorkHost -Force -ErrorAction SilentlyContinue }
     }
-    return , @($placed)
+    $placed.ToArray()
 }
 
 function Write-ModelReceipt(
@@ -411,7 +419,10 @@ function Write-ModelReceipt(
     [object[]]$Removed,
     [object[]]$DanglingLinks,
     [object]$StorageBefore,
-    [object]$StorageAfter
+    [object]$StorageAfter,
+    [string]$Status = 'complete',
+    [string[]]$Remaining = @(),
+    [string]$Failure
 ) {
     $reports = Join-Path $CHotRoot 'reports'
     if ($Execute) { New-Item -ItemType Directory -Force -Path $reports | Out-Null }
@@ -422,6 +433,9 @@ function Write-ModelReceipt(
         repo = $Repo
         revision = $Entry.Revision
         utc = (Get-Date).ToUniversalTime().ToString('o')
+        status = $Status
+        remaining = @($Remaining)
+        failure = $Failure
         gguf = @($Ggufs | Where-Object { $_.quant -ne 'bf16' } | ForEach-Object {
                 [ordered]@{ path = $_.path; quant = $_.quant; bytes = $_.bytes; sha256 = $_.sha256 }
             })
@@ -493,18 +507,27 @@ foreach ($repo in $sequence) {
     Invoke-ConvertDocker $entry $repo $snapshot $workHost
     $ggufs = @(Get-GgufArtifacts $workHost $entry)
 
-    $archived = @()
-    $removed = @()
-    $dangling = @()
+    $progress = @{
+        archived = [System.Collections.Generic.List[object]]::new()
+        removed = [System.Collections.Generic.List[object]]::new()
+        placed = [System.Collections.Generic.List[object]]::new()
+        remaining = @()
+        dangling = @()
+    }
+    $phase = 'archive'
     try {
-        $archived, $removed, $dangling = Archive-VerifiedWeights $repo $entry $snapshot
+        Archive-VerifiedWeights $repo $entry $snapshot $progress
+        $phase = 'placement'
+        $placed = @(Place-FinalGgufs $entry $ggufs $workHost $progress)
+        $phase = 'final storage measurement'
+        $storageAfter = Get-StorageSnapshot
     } catch {
-        Write-Error "archive aborted; nothing removed from C: ($($_.Exception.Message))"
+        $failure = "${phase} failed: $($_.Exception.Message); removed C: blobs (verified on E:): [$($progress.removed.path -join '; ')]; remaining C: blobs: [$($progress.remaining -join '; ')]"
+        $null = Write-ModelReceipt $entry $repo $progress.placed.ToArray() $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $null -Status 'partial' -Remaining $progress.remaining -Failure $failure
+        throw $failure
     }
 
-    $placed = @(Place-FinalGgufs $entry $ggufs $workHost)
-    $storageAfter = Get-StorageSnapshot
-    $receipt = Write-ModelReceipt $entry $repo @($placed) $archived $removed $dangling $storageBefore $storageAfter
+    $receipt = Write-ModelReceipt $entry $repo $placed $progress.archived.ToArray() $progress.removed.ToArray() $progress.dangling $storageBefore $storageAfter
 
     $required = @('model', 'repo', 'revision', 'gguf', 'archived', 'removed', 'storage', 'tools')
     $parsed = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
@@ -518,3 +541,4 @@ exit 0
 # [[Cursor | Composer 2.5 | 2026-09-26 | 21:25 UTC | END]]
 # [[Cursor | composer-2.5 | 2026-09-26 | 21:20 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:37 UTC | END]]
+# [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:00 UTC | END]]
