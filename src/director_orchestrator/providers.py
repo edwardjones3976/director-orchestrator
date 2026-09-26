@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | BEGIN]]
@@ -892,8 +893,10 @@ class GeminiAdapter(ProviderAdapter):
         )
 
     async def usage_check(
-        self, prompt: str, *, max_attempts: int | None = None
+        self, prompt: str, *, max_attempts: int | None = None, before_attempt=None
     ) -> ProviderRun:
+        """``before_attempt(n)`` runs immediately before request n is sent (the usage monitor reserves that one
+        attempt in the spend ledger there); if it raises, request n is never sent."""
         body = {
             "model": self.settings.gemini_usage_model,
             "input": prompt,
@@ -906,6 +909,8 @@ class GeminiAdapter(ProviderAdapter):
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 for attempt in range(1, configured_attempts + 1):
+                    if before_attempt is not None:
+                        before_attempt(attempt)
                     response = await client.post(
                         f"{self.settings.gemini_api_base}/interactions",
                         headers=self.headers,
@@ -1647,3 +1652,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]

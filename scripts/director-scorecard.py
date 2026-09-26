@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -10,12 +11,35 @@
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Render the read-only twenty-check Director scorecard."""
-import argparse
-import json
-from pathlib import Path
+import os
+import sys
 
-from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
-                                                       untrusted_checkout)
+# Standard modules are imported with the checkout's own directories (scripts/, src/, a working directory inside it)
+# off sys.path, so no untracked file there can stand in for one of them; os and sys are loaded before this file runs.
+_ROOT = os.path.normcase(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SEARCH_PATH = list(sys.path)
+sys.path[:] = [entry for entry in _SEARCH_PATH
+               if not os.path.normcase(os.path.abspath(entry or os.getcwd())).startswith(_ROOT)]
+import argparse  # noqa: E402
+import json  # noqa: E402
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+sys.path[:] = _SEARCH_PATH
+
+# No evaluator module is imported at load time: the checkout is verified first (untracked_importables), because an
+# untracked or ignored file under src/ or scripts/ (a planted src/httpx.py, say) would be imported ahead of the
+# pinned evaluator's own code. Only the standard library runs before that check.
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def untracked_importables(root: Path = ROOT) -> list[str]:
+    """Untracked or ignored paths under src/ and scripts/ of the evaluator checkout (review 4111996182), except
+    __pycache__ entries Python writes for tracked modules. It runs before any evaluator import, so it cannot reuse
+    completion_scorecard.untracked_evaluator_files (the same rule, re-applied there once the import is safe)."""
+    listing = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all", "--ignored",
+                              "--", "src", "scripts"], capture_output=True, timeout=30, check=True, stdin=subprocess.DEVNULL)
+    return [line[3:] for line in listing.stdout.decode("utf-8", "replace").splitlines()
+            if line[:2] in ("??", "!!") and "__pycache__/" not in line[3:].replace("\\", "/")]
 
 _LIVE_ONLY = ("--deployment, --channel, --github, --ledger, --security-scan, --drill-thread, --approval-task, --trial, "
               "--rubric, --paid-thread, --paid-rubric, --ci-replica-receipt and --gateway require --live")
@@ -47,6 +71,16 @@ def main() -> int:
     parser.add_argument("--paid-rubric", type=Path, help="Paid answer rubric the --paid-thread input committed to")
     parser.add_argument("--ci-replica-receipt", type=Path, help="Owner-signed local-replica receipt for check 16; requires --github")
     args = parser.parse_args()
+    # Before any evaluator import: refuse a checkout that carries untracked or ignored files where Python imports.
+    try:
+        planted = untracked_importables()
+    except (OSError, subprocess.SubprocessError) as error:
+        parser.error(f"scorecard not run from the pinned evaluator checkout: its files could not be verified ({error})")
+    if planted:
+        parser.error("scorecard not run from the pinned evaluator checkout: untracked or ignored files under src/ or "
+                     "scripts/ would be importable: " + ", ".join(sorted(planted)[:10]))
+    from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
+                                                           untrusted_checkout)
     try:
         selected = (args.deployment, args.channel, args.github, args.ledger, args.security_scan, args.drill_thread,
                     args.approval_task, args.trial, args.rubric, args.paid_thread, args.paid_rubric,
@@ -100,3 +134,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]

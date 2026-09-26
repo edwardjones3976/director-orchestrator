@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]] -->
@@ -1056,7 +1057,12 @@ rubric requirements and every predicate come from the evaluator checkout.
 With no `evaluator_sha` pinned every check is UNKNOWN, "evaluator revision
 not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
-fails the rule.
+fails the rule. Before importing any evaluator module, the CLI refuses a
+checkout with untracked or ignored files under `src/` or `scripts/` (other
+than `__pycache__`), which Python would import ahead of the pinned code (a
+planted `src/httpx.py`); its own standard-library imports run with the
+checkout's directories off `sys.path` while it checks. The same rule runs
+again inside `untrusted_checkout`.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1087,8 +1093,9 @@ larger of its recorded actual charge (`record_charge`, never lowered; a probe
 the ledger did not reserve is recorded as its own row at a zero reservation)
 and its reservation, so a probe that cost more than its floor leaves no room
 for more work under the cap. Every usage-check probe attempt of a ledger
-provider (gemini, grok, perplexity) is reserved through `reserve()` before
-dispatch, each under its own effect key, so probes count against the caps
+provider (gemini, grok, perplexity) is reserved through `reserve()`
+immediately before its request is sent, never ahead (gemini reserves each
+retry inside its own retry loop), each under its own effect key, so probes count against the caps
 before they run; a refused reservation dispatches nothing, and a failed or
 zero-cost probe keeps its reservations (gemini and perplexity have no
 configured probe floor, so their probe reservations are zero-cost and count
@@ -1345,3 +1352,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]] -->

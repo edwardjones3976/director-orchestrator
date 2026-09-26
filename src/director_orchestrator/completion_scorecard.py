@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
@@ -3521,6 +3522,9 @@ def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | No
     try:
         if git("status", "--porcelain", "--untracked-files=no"):
             return "its checkout has uncommitted changes"
+        if untracked_evaluator_files(git("status", "--porcelain", "--untracked-files=all", "--ignored",
+                                         "--", "src", "scripts")):
+            return "its checkout carries untracked or ignored files under src/ or scripts/"
         head = git("rev-parse", "HEAD")
         if head != pinned:
             return "its HEAD is not the pinned evaluator revision"
@@ -3532,6 +3536,13 @@ def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | No
     except (OSError, ValueError, subprocess.SubprocessError):
         return "the pinned evaluator revision is not an ancestor of the candidate"
     return None
+
+
+def untracked_evaluator_files(porcelain: str) -> list[str]:
+    """Untracked (``??``) or ignored (``!!``) paths in ``git status --porcelain --untracked-files=all --ignored``
+    output, except byte-compiled caches (``__pycache__``), which Python writes for imported, tracked modules."""
+    return [line[3:] for line in porcelain.splitlines()
+            if line[:2] in ("??", "!!") and "__pycache__/" not in line[3:].replace("\\", "/")]
 
 
 def refuse_untrusted(report: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -3634,3 +3645,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]

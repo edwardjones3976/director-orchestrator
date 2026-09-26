@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
@@ -73,6 +74,7 @@ import dataclasses
 import json
 import hashlib
 import importlib.util
+import os
 import sqlite3
 import subprocess
 import sys
@@ -1658,6 +1660,40 @@ class CompletionScorecardTests(unittest.TestCase):
             sc.score("main")
         with self.assertRaises(ValueError):
             sc.score(SHA, now=NOW.replace(tzinfo=None))
+
+    def test_cli_refuses_a_checkout_with_planted_importable_files(self):
+        """4111996182: an untracked or ignored module under src/ or scripts/ (a planted src/httpx.py) would be
+        imported ahead of the pinned evaluator's code. The CLI refuses before importing any evaluator module, and
+        its own standard-library imports cannot be shadowed by the checkout while it checks."""
+        script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "checkout"
+            (root / "scripts").mkdir(parents=True)
+            (root / "src").mkdir()
+            (root / "scripts" / "director-scorecard.py").write_bytes(script.read_bytes())
+            git = ["git", "-C", str(root), "-c", "user.email=fixture@example.test", "-c", "user.name=fixture"]
+            for arguments in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "evaluator"]):
+                subprocess.run(git + arguments, check=True, capture_output=True, timeout=60)
+            (root / "src" / "__pycache__").mkdir()
+            (root / "src" / "__pycache__" / "tracked.cpython-312.pyc").write_bytes(b"")  # tolerated
+            loader = importlib.util.spec_from_file_location("director_scorecard_cli", root / "scripts/director-scorecard.py")
+            cli = importlib.util.module_from_spec(loader)
+            loader.loader.exec_module(cli)
+            self.assertEqual(cli.untracked_importables(root), [])
+            (root / "src" / "httpx.py").write_text("raise RuntimeError('hijacked httpx')\n")
+            (root / "scripts" / "json.py").write_text("raise RuntimeError('hijacked json')\n")
+            self.assertEqual(sorted(cli.untracked_importables(root)), ["scripts/json.py", "src/httpx.py"])
+            (root / ".gitignore").write_text("src/ignored_module.py\n")
+            (root / "src" / "ignored_module.py").write_text("")
+            self.assertIn("src/ignored_module.py", cli.untracked_importables(root))
+            result = subprocess.run([sys.executable, str(root / "scripts/director-scorecard.py"), "--candidate", SHA,
+                                     "--output-dir", str(Path(folder) / "out")], capture_output=True, text=True,
+                                    timeout=60, env={**os.environ, "PYTHONPATH": str(root / "src")})
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("untracked or ignored files under src/ or scripts/", result.stderr)
+            self.assertNotIn("hijacked", result.stderr)
+        self.assertEqual(sc.untracked_evaluator_files("?? src/httpx.py\n!! src/pkg/__pycache__/a.pyc\n M src/x.py\n"),
+                         ["src/httpx.py"])
 
     def test_cli_offline_creates_both_reports_and_does_not_read_live(self):
         script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
@@ -4688,3 +4724,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]

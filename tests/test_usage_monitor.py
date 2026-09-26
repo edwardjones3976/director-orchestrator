@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -476,10 +477,42 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             accounting = monitor.health()["daily_accounting"]["grok"]
             self.assertEqual((accounting["usage_check_count"], accounting["provider_request_count"]), (1, 1))
 
+    async def test_each_gemini_retry_is_reserved_immediately_before_it_is_sent(self):
+        """Review 4111996174: each retry is reserved through reserve() immediately before its request, never ahead.
+        A probe that succeeds first time holds one slot; one that is retried holds one per request actually sent."""
+        for statuses, expected in (([200], [1]), ([429, 429, 200], [1, 2, 3])):
+            with self.subTest(statuses=statuses), tempfile.TemporaryDirectory() as directory:
+                database = str(Path(directory) / "tasks.sqlite3")
+                ledger = ProviderDailySpendLedger(database)
+                settings = replace(
+                    Settings(), allow_paid_runs=True, usage_check_enabled=True,
+                    usage_check_provider_delay_seconds=0, usage_check_providers=("gemini",),
+                    gemini_api_key="test-gemini", gemini_usage_max_attempts=3, gemini_daily_request_limit=10,
+                    sqlite_path=database, slack_bot_token="")
+                replies, held = list(statuses), []
+
+                def handler(request: httpx.Request) -> httpx.Response:
+                    held.append(ledger.exposure(ProviderName.GEMINI)[0])  # reservations when this request is sent
+                    status = replies.pop(0)
+                    if status == 429:
+                        return httpx.Response(429, request=request, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+                    return httpx.Response(200, request=request, json={
+                        "id": "interaction-1", "status": "completed",
+                        "outputs": [{"type": "text", "text": "STATUS=OK"}]})
+
+                monitor = UsageMonitor(settings, TaskStore(database),
+                                       adapters={ProviderName.GEMINI: GeminiAdapter(settings)})
+                with patch("director_orchestrator.providers.httpx.AsyncClient",
+                           return_value=httpx.AsyncClient(transport=httpx.MockTransport(handler))), \
+                        patch("director_orchestrator.providers.asyncio.sleep", new=AsyncMock()):
+                    await monitor.run_once(force=True)
+                self.assertEqual(held, expected)
+                self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], len(statuses))
+
     async def test_every_probe_attempt_is_reserved_before_dispatch(self):
-        """Review 4111508051: every attempt a usage check may make is reserved in the spend ledger, each under its
-        own effect key, through reserve() BEFORE dispatch; a refused reservation dispatches nothing, and a failed
-        or zero-cost probe keeps its reservations."""
+        """Review 4111508051 (as refined by 4111996174): a usage check's attempt is reserved in the spend ledger,
+        under its own effect key, through reserve() immediately before it is sent; a refused reservation dispatches
+        nothing, and a failed or zero-cost probe keeps its reservation."""
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "tasks.sqlite3")
             store = TaskStore(database)
@@ -506,9 +539,9 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             )
             monitor = UsageMonitor(settings, store, adapters={ProviderName.GEMINI: adapter})
             records = await monitor.run_once(force=True)
-            self.assertEqual(seen, [3])  # all three attempts reserved before the first dispatch
+            self.assertEqual(seen, [1])  # its one request reserved immediately before it was sent, never ahead
             self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
-            self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 3)  # a failed probe keeps its reservations
+            self.assertEqual(ledger.exposure(ProviderName.GEMINI)[0], 1)  # a failed probe keeps its reservation
             self.assertEqual(monitor.health()["daily_accounting"]["gemini"]["provider_request_count"], 0)
         # A ledger already at its request cap refuses the probe's reservation: nothing is dispatched.
         with tempfile.TemporaryDirectory() as directory:
@@ -1244,3 +1277,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]

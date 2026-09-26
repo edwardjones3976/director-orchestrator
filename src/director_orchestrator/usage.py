@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -33,6 +34,7 @@ from .models import (
     UsageCheckStatus,
 )
 from .providers import (
+    ProviderDailyLimitExceeded,
     GeminiAdapter,
     ProviderAdapter,
     ProviderDailySpendLedger,
@@ -289,12 +291,12 @@ class UsageMonitor:
         _, exposure = self.provider_spend.exposure(name, now=now)
         return round(exposure + sum(cost for key, cost in actual.items() if key not in keys), 8)
 
-    def _reserve_probe_attempts(self, cycle_id: str, provider: str, now: datetime) -> int | None:
-        """Reserve every attempt this usage check may make, each under its own effect key, through the ledger's
-        atomic reserve() BEFORE any dispatch (review 4111508051): the probe counts against the request and cost caps
-        before it runs. A refused reservation raises, so nothing is dispatched; reservations already made are kept
-        (never released, like every reservation). Returns the attempt bound handed to the adapter, or None for a
-        provider the ledger does not account (no cap exists for it)."""
+    def _probe_reserver(self, cycle_id: str, provider: str, now: datetime):
+        """The usage check's attempt bound and a ``reserve(attempt)`` that reserves ONE attempt, under its own
+        effect key, through the ledger's atomic reserve(). It is called immediately before that attempt's request is
+        sent, never ahead (review 4111996174): a probe that succeeds first time holds one slot, and a refused
+        reservation raises before its request, so nothing unreserved is dispatched and no reservation outlives a
+        request that was not sent. Returns (None, None) for a provider the ledger does not account (it has no cap)."""
         limits = {
             "gemini": (self.settings.gemini_daily_request_limit, self.settings.gemini_daily_budget_usd, 0.0),
             "grok": (self.settings.grok_daily_request_limit, self.settings.grok_daily_budget_usd,
@@ -302,14 +304,17 @@ class UsageMonitor:
             "perplexity": (self.settings.perplexity_daily_request_limit, self.settings.perplexity_daily_budget_usd, 0.0),
         }
         if provider not in limits:
-            return None
+            return None, None
         request_limit, budget_usd, floor_usd = limits[provider]
         attempts = 1
         if provider == "gemini":
             remaining = self._supplemental_remaining_requests(provider, now)
             attempts = max(1, min(self.settings.gemini_usage_max_attempts, _PROBE_ATTEMPTS_MAX,
                                   remaining if isinstance(remaining, int) else _PROBE_ATTEMPTS_MAX))
-        for attempt in range(1, attempts + 1):
+
+        def reserve(attempt: int) -> None:
+            if not 1 <= attempt <= attempts:
+                raise ProviderDailyLimitExceeded(f"{provider} usage check attempt {attempt} exceeds its bound")
             self.provider_spend.reserve(
                 provider=ProviderName(provider),
                 effect_key=_probe_key(cycle_id, provider, attempt),
@@ -318,7 +323,8 @@ class UsageMonitor:
                 budget_usd=budget_usd,
                 now=now,
             )
-        return attempts
+
+        return attempts, reserve
 
     def _supplemental_limit_error(self, provider: str, now: datetime) -> str | None:
         if provider not in {"gemini", "grok", "perplexity"}:
@@ -511,17 +517,22 @@ class UsageMonitor:
         return current
 
     async def _prompt(
-        self, provider: str, *, remaining_requests: int | None = None
+        self, provider: str, *, remaining_requests: int | None = None, before_attempt=None
     ) -> ProviderRun:
         if provider == "openai":
             return await self._openai_usage_check()
         adapter = self.adapters[ProviderName(provider)]
         if provider == "gemini" and isinstance(adapter, GeminiAdapter):
+            # The adapter reserves each retry itself, immediately before sending it.
             run = await adapter.usage_check(
                 USAGE_CHECK_PROMPT,
                 max_attempts=remaining_requests,
+                before_attempt=before_attempt,
             )
         else:
+            # A single-request usage check: its one attempt is reserved immediately before it is sent.
+            if before_attempt is not None:
+                before_attempt(1)
             run = await adapter.usage_check(USAGE_CHECK_PROMPT)
         return await self._wait(adapter, run)
 
@@ -651,8 +662,9 @@ class UsageMonitor:
                         )
                     else:
                         try:
-                            attempts = self._reserve_probe_attempts(cycle_id, provider, now)
-                            run = await self._prompt(provider, remaining_requests=attempts)
+                            attempts, reserve = self._probe_reserver(cycle_id, provider, now)
+                            run = await self._prompt(provider, remaining_requests=attempts,
+                                                     before_attempt=reserve)
                             record = self._record_from_run(cycle_id, provider, run)
                         except Exception as exc:
                             record = UsageCheckRecord(
@@ -781,3 +793,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
