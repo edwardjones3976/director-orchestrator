@@ -92,20 +92,28 @@ try {
         '--entrypoint', 'python', $Image, '/code/smoke_train.py')
     # Every cleanup step is bounded, including the docker CLI calls themselves (a stalled daemon can hang them).
     # Stop-Smoke returns the container's final state.
+    # The container's actual state, from the daemon (bounded). Only 'stopped and removed' counts as gone; a docker
+    # that does not answer, or a container still listed, keeps the GPU lock.
+    function Get-SmokeState {
+        try {
+            $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
+            if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
+            elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
+            else { 'stopped and removed' }
+        } catch { "state UNKNOWN (check failed: $($_.Exception.Message)); check: docker ps -a" }
+    }
     function Stop-Smoke {
       try {
         if (@(Invoke-Bounded 'docker' @('stop', '--time', '20', $name) 40)[-1] -ne '__EXIT__0') { Invoke-Bounded 'docker' @('kill', $name) 20 | Out-Null }
         if (Wait-Job $job -Timeout 60) { Receive-Job $job | Where-Object { $_ -notmatch '^__EXIT__' } | Out-Host }
         Remove-Job $job -Force
-        $ps = @(Invoke-Bounded 'docker' @('ps', '-a', '--filter', "name=^$name$", '--format', '{{.Names}}') 20)
-        if ($ps[-1] -ne '__EXIT__0') { 'state UNKNOWN (docker did not answer); check: docker ps -a' }
-        elseif ($ps | Where-Object { $_ -eq $name }) { 'could NOT be removed; run: docker rm -f ' + $name }
-        else { 'stopped and removed' }
+        Get-SmokeState
       } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
-    # From here until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
-    $containerGone = $false
     $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
+    # Set only once a launch can have happened (a Start-Job failure above never started a container). From here
+    # until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
+    $containerGone = $false
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
@@ -115,7 +123,11 @@ try {
             Write-Error "training exceeded ${TimeoutMinutes} min; container $name $state"
         }
         $done = $true
-        $containerGone = $true   # docker run --rm returned: the container has exited and been removed
+        # The client job ending does not prove the daemon-side container is gone (a transport error can end the
+        # client while the container runs on), so confirm absence before the lock can be released.
+        $state = Get-SmokeState
+        $containerGone = $state -eq 'stopped and removed'
+        if (-not $containerGone) { Write-Warning "docker run returned but container $name is $state" }
     } finally {
         # Reached without $done only when the wait was interrupted (Ctrl+C or a stopped pipeline): disconnecting
         # the docker client does not stop the daemon-side container, so stop it here too.

@@ -107,6 +107,10 @@ $ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
 if ($ib -notmatch '(?s)finally \{.*\$gone = \$p\.HasExited -or \$p\.WaitForExit\(5000\).*if \(-not \$gone\) \{ throw') { $fail += 'invoke-bounded: an unkillable command must throw, not return a timeout' }
 $ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
 if ($ts -notmatch 'if \(\$containerGone -ne \$false\) \{ \$gpuLock\.ReleaseMutex\(\)') { $fail += 'train-smoke: the GPU lock must be kept unless the container is confirmed gone' }
+# #279 review: the normal path confirms absence too, and the flag is set only after Start-Job launched.
+if (-not $ts.Contains('$containerGone = $true')) { } else { $fail += 'train-smoke: containerGone must never be set true without a daemon check' }
+$iJob = $ts.IndexOf('$job = Start-Job'); $iFlag = $ts.IndexOf('$containerGone = $false')
+if (-not ($iJob -ge 0 -and $iFlag -gt $iJob)) { $fail += 'train-smoke: containerGone=false must come after Start-Job' }
 if (-not $ts.Contains('$containerGone = $state -eq ''stopped and removed''')) { $fail += 'train-smoke: containerGone must come from the Stop-Smoke result' }
 
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
