@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
@@ -2111,6 +2112,26 @@ def _activation_evidence_from_row(
         observed_at=observed_at.astimezone(timezone.utc),
         expires_at=expires_at.astimezone(timezone.utc),
     )
+
+
+def _trusted_binding(row: Mapping[str, Any] | None) -> Mapping[str, str] | None:
+    """Return a binding only when its execution claim preceded it.
+
+    A binding with no claim, or one recorded before its claim, is never
+    trusted.  It is refused rather than reported as absent, because ``None``
+    tells the executor no I/O happened and would invite a second mutation.
+    """
+
+    if row is None:
+        return None
+    if row["claim_precedes"] is not True:
+        raise PostgresControlPlaneError(
+            "remote readback refused; the binding predates its execution claim"
+        )
+    return {
+        "remote_system": str(row["remote_system"]),
+        "remote_identifier": str(row["remote_identifier"]),
+    }
 
 
 def _reservation_from_row(row: Mapping[str, Any]) -> EffectReservation:
@@ -5003,18 +5024,17 @@ class PostgresConditionalClaimStore:
                 row = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {self._schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {self._schema}.director_primary_remote_binding bound
+                    LEFT JOIN {self._schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
-        if row is None:
-            return None
-        return {
-            "remote_system": str(row["remote_system"]),
-            "remote_identifier": str(row["remote_identifier"]),
-        }
+        return _trusted_binding(row)
 
     def read_remote_binding_for_successor_reconciliation(
         self, *, reservation_key: str, successor_owner_token: str
@@ -5044,18 +5064,17 @@ class PostgresConditionalClaimStore:
                 row = self._optional_row(
                     connection,
                     f"""
-                    SELECT remote_system, remote_identifier
-                    FROM {schema}.director_primary_remote_binding
-                    WHERE reservation_key = %(reservation_key)s
+                    SELECT bound.remote_system, bound.remote_identifier,
+                           executed.started_at <= bound.bound_at
+                               AS claim_precedes
+                    FROM {schema}.director_primary_remote_binding bound
+                    LEFT JOIN {schema}.director_primary_effect_execution executed
+                      ON executed.reservation_key = bound.reservation_key
+                    WHERE bound.reservation_key = %(reservation_key)s
                     """,
                     {"reservation_key": reservation_key},
                 )
-        if row is None:
-            return None
-        return {
-            "remote_system": str(row["remote_system"]),
-            "remote_identifier": str(row["remote_identifier"]),
-        }
+        return _trusted_binding(row)
 
     # -- reconciliation and terminal evidence -----------------------------
 
@@ -6071,3 +6090,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]

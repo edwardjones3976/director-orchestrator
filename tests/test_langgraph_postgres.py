@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -1372,9 +1373,42 @@ class EffectControlPlaneTests(unittest.TestCase):
         ):
             self.bind(store)
 
+    def test_readback_never_trusts_a_binding_without_a_preceding_claim(self):
+        # None = no claim row (LEFT JOIN); False = claimed after binding.
+        for claim_precedes in (None, False):
+            untrusted = {
+                "remote_system": "provider",
+                "remote_identifier": "r",
+                "claim_precedes": claim_precedes,
+            }
+            with self.subTest(path="current writer", claim_precedes=claim_precedes):
+                store, _ = _store([_reservation_row(), untrusted])
+                with self.assertRaisesRegex(
+                    PostgresControlPlaneError, "predates its execution claim"
+                ):
+                    store.read_remote_binding(
+                        reservation_key=DIGEST_A, owner_token="owner-1"
+                    )
+            with self.subTest(path="successor", claim_precedes=claim_precedes):
+                store, _ = _store([_reservation_row(), untrusted])
+                with self.assertRaisesRegex(
+                    PostgresControlPlaneError, "predates its execution claim"
+                ):
+                    store.read_remote_binding_for_successor_reconciliation(
+                        reservation_key=DIGEST_A,
+                        successor_owner_token="owner-2",
+                    )
+
     def test_readback_is_authenticated_and_may_return_nothing(self):
         store, _ = _store(
-            [_reservation_row(), {"remote_system": "provider", "remote_identifier": "r"}]
+            [
+                _reservation_row(),
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "r",
+                    "claim_precedes": True,
+                },
+            ]
         )
         self.assertEqual(
             {"remote_system": "provider", "remote_identifier": "r"},
@@ -1401,7 +1435,14 @@ class EffectControlPlaneTests(unittest.TestCase):
             "fencing_generation": 4,
         }
         store, connection = _store(
-            [authority, {"remote_system": "provider", "remote_identifier": "r-2"}]
+            [
+                authority,
+                {
+                    "remote_system": "provider",
+                    "remote_identifier": "r-2",
+                    "claim_precedes": True,
+                },
+            ]
         )
         self.assertEqual(
             {"remote_system": "provider", "remote_identifier": "r-2"},
@@ -3620,6 +3661,14 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
                 remote_system="provider",
                 remote_identifier="remote-legacy",
             )
+        # The executor reads back before it claims or replays; that read must
+        # refuse the legacy row too, never report it trusted or absent.
+        with self.assertRaisesRegex(
+            PostgresControlPlaneError, "predates its execution claim"
+        ):
+            self.store.read_remote_binding(
+                reservation_key=reservation.reservation_key, owner_token="owner-a"
+            )
 
     def test_a_remote_identifier_cannot_be_reused_across_reservations(self):
         first_key = self.prepare_claim("1d")
@@ -4086,3 +4135,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:41 UTC | END]]
