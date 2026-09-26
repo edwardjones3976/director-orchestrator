@@ -1,3 +1,4 @@
+# [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-26 | 00:35 UTC | BEGIN]]
 """Unit tests for score_packets.py (inline fixtures only).
@@ -143,7 +144,7 @@ class ScorePacketsTests(unittest.TestCase):
 
     def test_ten_percent_threshold_boundary(self):
         ref = _minimal_ref(objective="a" * 100)
-        # Change exactly 10 characters in a 100-char objective -> 10% field change; packet weight dominates.
+        # Substituting 10 characters counts as 20 reference units of edit (delete + insert).
         changed = dict(ref)
         changed["objective"] = "b" * 10 + ("a" * 90)
         with tempfile.TemporaryDirectory() as tmp:
@@ -166,9 +167,9 @@ class ScorePacketsTests(unittest.TestCase):
             with (out_dir / "packets.csv").open(encoding="utf-8") as fh:
                 packet_rows = list(csv.DictReader(fh))
             frac = float(packet_rows[0]["text_changed_fraction"])
-        self.assertGreater(frac, 0.0)
-        self.assertLessEqual(frac, score_packets.CHANGE_BAR)
-        self.assertEqual(summary["pct_remaining_at_or_under_10pct_text_change"], 100.0)
+        self.assertAlmostEqual(frac, 0.2, places=6)
+        self.assertGreater(frac, score_packets.CHANGE_BAR)
+        self.assertEqual(summary["pct_remaining_at_or_under_10pct_text_change"], 0.0)
 
     def test_two_graders_each_skipped_one_field_not_accepted(self):
         ref = _minimal_ref()
@@ -227,9 +228,71 @@ class ScorePacketsTests(unittest.TestCase):
         self.assertEqual(summary["pct_accepted_as_is"], 100.0)
         self.assertEqual(summary["malformed_grade_rows"], 0)
 
+    def test_missing_candidate_two_accepting_graders_not_accepted(self):
+        ref = _minimal_ref()
+        fields = list(score_packets.DEFAULT_FIELDS)
+        grades = [
+            {"id": "p1", "grader": "g1", "field": f, "accepted": True} for f in fields
+        ] + [
+            {"id": "p1", "grader": "g2", "field": f, "accepted": True} for f in fields
+        ]
+        summary, _, packets = self._run_score({"p1": ref}, {}, grades)
+        self.assertEqual(packets[0]["accepted_as_is"], "false")
+        self.assertEqual(summary["pct_accepted_as_is"], 0.0)
+        self.assertEqual(summary["accepted_as_is_count"], 0)
+
+    def test_per_field_mean_similarity_counts_missing_as_zero(self):
+        ref = _minimal_ref()
+        cand = json.dumps(ref)
+        summary, _, _ = self._run_score({"p1": ref, "p2": ref}, {"p1": cand})
+        for field in score_packets.DEFAULT_FIELDS:
+            self.assertEqual(summary["per_field_mean_similarity"][field], 0.5)
+
+    def test_whitespace_reformatting_positive_changed_fraction(self):
+        ref = _minimal_ref(objective="one two three")
+        changed = dict(ref)
+        changed["objective"] = "one  two\nthree"
+        _, fields_rows, _ = self._run_score({"p1": ref}, {"p1": json.dumps(changed)})
+        by_field = {r["field"]: r for r in fields_rows}
+        self.assertGreater(float(by_field["objective"]["changed_fraction"]), 0.0)
+
+    def test_insert_ten_chars_gives_ten_percent_changed_fraction(self):
+        ref = _minimal_ref(objective="a" * 100)
+        changed = dict(ref)
+        changed["objective"] = ("a" * 100) + ("x" * 10)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            refs_dir = tmp_path / "refs"
+            cands_dir = tmp_path / "cands"
+            out_dir = tmp_path / "out"
+            refs_dir.mkdir()
+            cands_dir.mkdir()
+            (refs_dir / "p1.json").write_text(json.dumps(ref), encoding="utf-8")
+            (cands_dir / "p1.json").write_text(json.dumps(changed), encoding="utf-8")
+            summary = score_packets.score(
+                {"p1": ref},
+                cands_dir,
+                out_dir,
+                ("objective",),
+                None,
+                score_packets.DEFAULT_SCHEMA,
+            )
+            fields_rows = list(
+                csv.DictReader((out_dir / "fields.csv").read_text(encoding="utf-8").splitlines())
+            )
+            packet_rows = list(
+                csv.DictReader((out_dir / "packets.csv").read_text(encoding="utf-8").splitlines())
+            )
+        self.assertAlmostEqual(float(fields_rows[0]["changed_fraction"]), 0.10, places=6)
+        pkt_frac = float(packet_rows[0]["text_changed_fraction"])
+        self.assertAlmostEqual(pkt_frac, 0.10, places=6)
+        self.assertLessEqual(pkt_frac, score_packets.CHANGE_BAR)
+        self.assertEqual(summary["pct_remaining_at_or_under_10pct_text_change"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()
 
 # [[Cursor | cursor-agent | 2026-09-26 | 00:35 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | END]]
