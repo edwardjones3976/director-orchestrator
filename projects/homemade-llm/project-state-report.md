@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
@@ -54,6 +55,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
+- **M1 after the audit cutoff:** the set A v2 Grok review (USD 0.1881, `xai/20260926T193234Z.json`, 19:32 UTC) is M1 spend. M1 spend from here on is summed in the M1 workstream plan (`workstream-plan-m1.md`, #294).
 - **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
@@ -93,7 +95,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | 5 | Target and actual provider ledgers (assignment and rolling 20) | **Unavailable.** The engineering-workload ledger stops at 2026-09-12, so the rolling-20 mix is UNKNOWN. |
 | 6 | Moderator, Participant and Director actions, OpenAI vote | Director actions are recorded in the decision log (O-, D- rows). **Not applicable:** no committee vote was held in M0, and no OpenAI vote was cast. |
 | 7 | Dissent, counter-bias, alternatives | **Not applicable:** no committee debate was held. Reviewer disagreements and their resolutions are in the PR threads. |
-| 8 | Tests, CI, security scan, independent review | Per PR in the M0 table (for example #275: CI run 36120719806 and xAI ACCEPT receipt). **Security scan not applicable:** no Codex Security scan is configured for this project. |
+| 8 | Tests, CI, security scan, independent review | "Per-PR validation evidence" below: CI state for every M0 PR, and review receipts, with verdicts marked unverified where this reconciliation did not re-read them. **Security scan not applicable:** no Codex Security scan is configured for this project. |
 | 9 | Risks, limitations, blockers, confidence | "Not done, and what remains unverified" below |
 | 10 | Cost, tokens, elapsed time | Cost: M0 paid spend (a lower bound). Tokens are per receipt and not aggregated. Elapsed: 2026-09-24 06:05 (O-001) to 2026-09-26 03:15 (O-031), about 45 hours. |
 | 11 | Pre-stage packet, workload size, writer lease, reviewer reservation | **Unavailable:** M0 ran analysis-only (`rollout-packet.md`) without pre-stage packets or writer leases. Reviewers are named per PR. |
@@ -104,6 +106,23 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 | 16 | Next gate and responsible party | "Next bounded action" below |
 | 17 | Owner decisions and their scope | `decision-log.md` O-001 to O-034 |
 | 18 | Not done and unverified | "Not done, and what remains unverified" below |
+
+### Per-PR validation evidence (charter item 8)
+
+CI is the six required jobs at each PR's merged head, read with `gh pr view` on 2026-09-26 `[verified]`. Review receipts are located in the provider-dispatch receipt folders. Their verdict text was **not** re-read for this reconciliation, so it is marked unverified here, except where a verdict is cited elsewhere in this record.
+
+| PR | Merged head | CI at head | Independent review evidence |
+|---|---|---|---|
+| #266 | `0e2b72e` | 6/6 success | Grok CLI review, receipt `homemade-llm/grok-20260924T080222Z` (verdict unverified here) |
+| #267 | `e61dad0` | 6/6 success | Codex receipts in `hl-m0-preflight/` (verdict unverified here) |
+| #268 | `99fc1b1` | 6/6 success | Codex receipt in `hl-pr0-fixes/` (verdict unverified here) |
+| #269 | `e7e14f2` | 6/6 success | Codex receipts in `hl-m0-ops/` (verdict unverified here) |
+| #271 | `4879c1a` | 6/6 success | Codex receipts in `hl-m0-train/` (verdict unverified here) |
+| #272, #273 | `26de8d8`, `a3ef5e1` | 6/6 success each | Codex receipts in `hl-m0-webui/` (verdict unverified here) |
+| #275 | `ed317a81` | 6/6 success (run 36120719806) | xAI grok-4.6 ACCEPT, `xai/20260925T230929Z.json` |
+| #276 | `b0a4f59` | 6/6 success | Reviews in `hl-m0-close/`; merged by the owner under the one-time exception (D-015) |
+| #277 | `45a144f` | **3 success, 3 cancelled**: merged without a full green run | Eight xAI reviews of the report (receipts in the M0 paid spend table; final one `xai/20260926T000816Z.json`) |
+| #279 | `224b4f0` | 6/6 success | xAI reviews `xai/20260926T001634Z.json`, `…003909Z.json`, `…013141Z.json` |
 
 ### Not done, and what remains unverified
 
@@ -139,3 +158,4 @@ M1, base shootout on the held-out sets:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
