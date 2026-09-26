@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
@@ -141,6 +142,16 @@ among other roles."
 - **No identity at 52 %** means the pull request has no sole author: stop review,
   then split it, reassign it so one identity carries it past 52 %, or ask the
   owner.
+- **Who enforces the threshold today.** The runtime does not record shares:
+  `ReviewCandidateArtifact` carries only `material_authors`, and
+  `bind_review_handoff` can dispatch a review without any share evidence.
+  Until a reviewed runtime and schema change adds that check, the Director and
+  the reviewer enforce the threshold from the pull-request record. The Director
+  does not request review of a pull request whose record names no sole author
+  with its shares. A reviewer, including one dispatched by the runtime, checks
+  that record first and returns no verdict if it is missing or below 52 %. A
+  runtime-dispatched review is therefore never, by itself, evidence that the
+  threshold was met.
 - **Unchanged:** no agent merges its own pull request (AGENTS.md rule 3); one
   exact-SHA `ACCEPT` from an eligible reviewer; provider-family identity (OpenAI,
   ChatGPT, and Codex are one identity; the xAI API, Grok CLI, and Grok Bot are
@@ -166,3 +177,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | END]] -->
