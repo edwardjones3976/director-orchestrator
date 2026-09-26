@@ -1,6 +1,6 @@
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:58 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 23:18 UTC | BEGIN]]
-# Homemade LLM dataset secret scan (M0.9): gitleaks over a dataset folder.
+# Homemade LLM dataset secret scan (M0.9): gitleaks over every file in a dataset folder, content only.
 #   .\scan-dataset.ps1                          scan C:\llm\datasets (default)
 #   .\scan-dataset.ps1 -Path D:\data -HotRoot C:\llm
 # Exit 0 = clean; 1 = findings; 2 = missing tool/path or gitleaks error.
@@ -56,23 +56,36 @@ New-Item -ItemType Directory $noIgnore | Out-Null
 # (any name or extension its config library would try) is never read. The trusted config is the built-in rules only.
 $trustedConfig = Join-Path $noIgnore 'trusted.toml'
 Set-Content -LiteralPath $trustedConfig -Value "[extend]`nuseDefault = true" -Encoding utf8
+# Scan content, not paths: in `dir` mode gitleaks applies its default global path allowlist (useDefault brings it in),
+# so a folder whose name matches an allowlisted pattern (for example "gitleaks.toml-data") is skipped silently.
+# Feeding each file through `gitleaks stdin` gives it no path to match; the wrapper keeps the file attribution.
+# It runs from the empty scratch folder: stdin mode still reads .gitleaksignore from its working directory.
+$all = [System.Collections.Generic.List[object]]::new()
+$glCode = 0
 try {
-    $global:LASTEXITCODE = 0
-    & $Gitleaks dir $Path --no-banner --redact --report-format json --report-path $reportPath --exit-code 3 `
-        --gitleaks-ignore-path $noIgnore --ignore-gitleaks-allow --config $trustedConfig 2>&1 | Out-Host   # 3 = leaks; gitleaks itself exits 1 on errors
-    $glCode = $LASTEXITCODE
-} finally { [IO.Directory]::Delete($noIgnore, $true) }
-
-$count = 0
-if (Test-Path -LiteralPath $reportPath) {
-    $raw = (Get-Content -LiteralPath $reportPath -Raw -ErrorAction SilentlyContinue).Trim()
-    if ($raw) {
-        $parsed = $raw | ConvertFrom-Json
-        if ($null -eq $parsed) { $count = 0 }
-        elseif ($parsed -is [System.Array]) { $count = $parsed.Count }
-        else { $count = 1 }
+    foreach ($f in @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction Stop)) {
+        $one = Join-Path $noIgnore 'one.json'
+        if (Test-Path -LiteralPath $one) { Remove-Item -LiteralPath $one }
+        $gl = @('stdin', '--no-banner', '--redact', '--report-format', 'json', '--report-path', "`"$one`"", '--exit-code', '3',
+            '--gitleaks-ignore-path', "`"$noIgnore`"", '--ignore-gitleaks-allow', '--config', "`"$trustedConfig`"")
+        $proc = Start-Process -FilePath $Gitleaks -ArgumentList $gl -RedirectStandardInput $f.FullName -WorkingDirectory $noIgnore -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput (Join-Path $noIgnore 'out.txt') -RedirectStandardError (Join-Path $noIgnore 'err.txt')
+        if ($proc.ExitCode -eq 3) {
+            if ($glCode -eq 0) { $glCode = 3 }
+            $rel = $f.FullName.Substring($Path.TrimEnd('\').Length).TrimStart('\')
+            foreach ($finding in @(Get-Content -LiteralPath $one -Raw | ConvertFrom-Json)) {
+                $finding | Add-Member -NotePropertyName File -NotePropertyValue $rel -Force
+                $all.Add($finding)
+            }
+        } elseif ($proc.ExitCode -ne 0) {
+            $glCode = $proc.ExitCode   # a scanner error outranks findings: the scan is incomplete
+            Write-Output "scan-dataset: gitleaks exit $($proc.ExitCode) on $($f.FullName)"
+            break
+        }
     }
-}
+} finally { [IO.Directory]::Delete($noIgnore, $true) }
+ConvertTo-Json -InputObject @($all) -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
+$count = $all.Count
 
 $summary = "scan-dataset: scanned=$Path findings=$count report=$reportPath"
 if ($glCode -eq 0) { Exit-Scan 0 $summary }

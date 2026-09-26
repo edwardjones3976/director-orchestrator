@@ -61,6 +61,12 @@ try {
     Assert-Equal (Invoke-Scan $hot $scan).exit 1 'alternate-name dataset config cannot suppress findings'
     Remove-Item (Join-Path $scan '.gitleaks.toml'), (Join-Path $scan '.gitleaks.json') -Recurse -Force
 
+    # A folder name matching gitleaks' default global path allowlist must not hide a finding (content-only scan).
+    $allow = Join-Path $scan 'gitleaks.toml-data'; New-Item -ItemType Directory $allow | Out-Null
+    Move-Item (Join-Path $scan 'leak.jsonl') (Join-Path $allow 'train.jsonl')
+    Assert-Equal (Invoke-Scan $hot $scan).exit 1 'allowlisted-path folder cannot hide a finding'
+    Move-Item (Join-Path $allow 'train.jsonl') (Join-Path $scan 'leak.jsonl'); Remove-Item $allow
+
     # A link inside the dataset would be skipped by gitleaks, so it is refused (a junction needs no admin rights).
     $outside = Join-Path $work 'outside'; New-Item -ItemType Directory $outside | Out-Null
     $j = New-Item -ItemType Junction (Join-Path $scan 'linked') -Target $outside
