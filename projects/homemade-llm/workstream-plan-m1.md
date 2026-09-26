@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:02 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:40 UTC | BEGIN]] -->
@@ -42,7 +43,15 @@ Do not place secrets, credentials, tokens, or raw private source in this plan. W
   - `objective` is excluded from field scoring, because the model is given it.
   - The inputs are generated mechanically from the accepted references into a separate `inputs/` folder, and are hash-mapped and reviewed.
 - **D-M1-2, quantization.** Proposal: one common level for the primary ranking, Q4_K_M for all four bases, since it is the level that fits the 14B models in 12 GB. Qwen3-8B is also scored at Q8_0 as a quantization-sensitivity check, and that result is reported but not used for ranking.
+- **D-M1-0, pinned held-out data.** Both reference sets are frozen by manifest.
+  - **Method:** SHA-256 over lines of `<folder>/<file>\t<sha256 of file bytes>\n`, one line per top-level `*.json` packet, file names sorted lexicographically.
+  - **Set A** (`set-a-json-v2`, 19 files): `14fa95291e61c7e6335681078d3224fdace4768271ed4012a33c4e4ca256e7f5`.
+  - **Set B** (`pr-reconstructed-v2`, 50 files): `38a93d79ecd989b171b28a0bf98fb7eaf57dcec2b9ed2c32a66ff760338469bc`.
+  - Every generation and scoring run re-computes these digests, stops if they differ, and writes the reference manifest digest, the candidate manifest digest and any grade-file digest into its output.
+  - DVC tracking (O-007) of both sets is added before M2 training starts; the manifests above are the M1 pin.
 - **D-M1-3, decoding.** LM Studio `/v1/chat/completions` with `response_format` `json_schema` (the schema is `model-work-packet-v1`, with no `$defs` added), temperature 0 and one sample per item. Fixed seed, where the runtime allows one.
+  - **Qwen3 non-thinking:** Qwen3-8B and Qwen3-14B run with thinking disabled, `enable_thinking=False` in the chat template. `/no_think` still leaves an empty `<think></think>` block, so it is not enough (`research/base-models-20260925.md`); `train/smoke_train.py` already applies the same setting.
+  - Each run records the exact chat template and tokenizer revision used, and the harness (M1-G1) fails an item whose raw output contains a `<think>` block.
 - **D-M1-4, Nemo control.** Mistral-Nemo-Base-2407 is a base model with no chat template. It is scored as a control through the same endpoint, with a fixed three-shot prompt whose examples come from outside both held-out sets, and it is excluded from winner selection (O-034). If LM Studio cannot serve it usefully, that is recorded, and the control is dropped instead of improvised.
 
 ## Packets
@@ -56,9 +65,9 @@ Every provider packet has one sole author (O-032 once #284 merges; the one-autho
 | M1-W1 | Stage four pinned base weight sets | Director script (owner-approved, O-034) | receipt SHA-256 verification | `C:\llm\hf` | none (no paid call) | 6 h per model | In progress. Verified with receipts: Qwen3-8B (`C:\llm\reports\m1-download-Qwen3-8B-20260926T195311Z.json`), Qwen3-14B (`…Qwen3-14B-20260926T195536Z.json`) and Phi-4 (`…phi-4-20260926T201502Z.json`). Mistral Nemo Base is downloading. Done when all four receipts verify and the storage guards hold. |
 | M1-C1 | Convert to GGUF (Q4_K_M, plus Q8_0 for 8B) with the pinned Unsloth image's llama.cpp, **one model at a time in this order**: (1) convert, reading the bf16 from `C:\llm\hf` and writing intermediates and the final GGUF to `G:\llm-convert-tmp\`; (2) copy that model's bf16 to `E:\llm-archive\hf-bases-2026-09\`, hash-verify it, then remove it from C: (G3); (3) only then copy the GGUF to `C:\llm\models\m1\` and hash-verify it. `C:\llm` never holds both the bf16 and the GGUF of more than the model in progress. | Cursor (`composer-2.5` pinned) writes `projects/homemade-llm/eval/convert_bases.ps1` and its test | Grok | that script and test; outputs `C:\llm\models\m1\` | ≤ USD 3 | 60 min authoring, 2 revision rounds | Script review ACCEPT and CI. Every GGUF loads in LM Studio, and each output is hashed. Stops before any storage guard is crossed. |
 | M1-I1 | Build task inputs per D-M1-1 | Cursor (`composer-2.5`) writes `projects/homemade-llm/eval/build_inputs.py` and its test | Grok | that script and test; outputs `C:\llm\datasets\heldout\inputs\` | ≤ USD 2 | 45 min, 2 rounds | Review ACCEPT and CI. Inputs contain no scored-field text (a mechanical check). |
-| M1-G1 | Candidate generation harness (D-M1-3) | OpenAI Codex writes `projects/homemade-llm/eval/generate_candidates.py` and its test | Grok | that script and test; outputs `C:\llm\runs\m1\candidates\<base>\` | ≤ USD 3 | 60 min, 2 rounds | Review ACCEPT and CI. Output passes the scorer's schema check. It is bounded per item (timeout) and fails closed on any server error. |
+| M1-G1 | Candidate generation harness (D-M1-3) | OpenAI Codex writes `projects/homemade-llm/eval/generate_candidates.py` and its test | Grok | that script and test; outputs `C:\llm\runs\m1\candidates\<base>\` | ≤ USD 3 | 60 min, 2 rounds | Review ACCEPT and CI. Output passes the scorer's schema check. It is bounded per item (timeout) and fails closed on any server error. It verifies the D-M1-0 manifests before running and records them, the chat template and the tokenizer revision in its output. |
 | M1-R1 | Run generation for 4 bases × 2 sets, one base loaded at a time | Director runs the reviewed harness | output hashes | `C:\llm\runs\m1\` | none | per base ≤ 2 h | Every item produces a candidate or a recorded failure |
-| M1-S1 | Score with the scorer (after G1) | Director runs it | two non-author graders (L1 checklist) | `C:\llm\reports\m1-*` | ≤ USD 12 (grading) | per run ≤ 1 h | Field-level acceptance per base and set; reproducible from hashes |
+| M1-S1 | Score with the scorer (after G1) | Director runs it | two non-author graders (L1 checklist) | `C:\llm\reports\m1-*` | ≤ USD 12 (grading) | per run ≤ 1 h | Field-level acceptance per base and set. Every result records the D-M1-0 reference manifest, the candidate manifest and the grade-file digests, and is reproducible from them. |
 | M1-L1 | License check of the winner at its pinned revision | Director (web read) | persisted page hash | `C:\llm\reports\m1-license-*` | none | 15 min | The license text is stored with its hash |
 
 ## Hard stops (in addition to the owner gates)
@@ -79,3 +88,4 @@ Contribution tags record the author of the plan or artifact. They do not prove t
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:40 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:50 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:02 UTC | END]] -->
