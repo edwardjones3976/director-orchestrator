@@ -66,7 +66,7 @@ try {
     # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
     # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
     $poison = $GpuMarker
-    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
+    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned: a previous job, container or command was not confirmed stopped ($((Get-Content -LiteralPath $poison -Raw).Trim())). Verify the recorded item is gone (containers: docker ps -a; LM Studio: lms ps and Get-Process lms; others: Get-Process by the recorded pid), then delete $poison" }
     # Durable guard for the whole GPU job, written before any bounded or GPU-relevant command can launch. If this
     # process dies at any point (a crash, a forced kill, or an unhandled throw that abandons the mutex), the marker
     # survives and blocks later runs. It is cleared only when every command (and container) was confirmed stopped.
@@ -127,10 +127,10 @@ try {
     # either way). It is removed only once the daemon confirms the container is gone.
     try { Set-Content -LiteralPath $GpuMarker -Value "container $name launch in flight since $((Get-Date).ToUniversalTime().ToString('o'))" } catch { }
     # Unsafe from before the launch attempt: a cancel can land after Start-Job created its process but before it
-    # returns. Even a synchronous Start-Job failure does not prove no Docker client ran, so ask the daemon.
+    # returns, and a Start-Job that throws may still have left a worker that launches Docker later. A single daemon
+    # check cannot rule that out, so any Start-Job failure keeps the guard (fail closed) for the operator to check.
     $containerGone = $false
-    try { $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs) }
-    catch { $state = Get-SmokeState; $containerGone = $state -eq 'stopped and removed'; throw }
+    $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {

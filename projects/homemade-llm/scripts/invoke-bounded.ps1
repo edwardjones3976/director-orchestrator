@@ -12,7 +12,7 @@ $GpuMarker = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) '
 
 # All descendants of a process (one CIM snapshot, walked breadth-first), with their creation times.
 function Get-DescendantProcess([int]$Root) {
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction Stop)
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate -OperationTimeoutSec 30 -ErrorAction Stop)
     $found = [System.Collections.Generic.List[object]]::new()
     $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($Root)
     while ($queue.Count) {
@@ -26,7 +26,7 @@ function Get-DescendantProcess([int]$Root) {
 function Get-SurvivingProcess($Snapshot) {
     foreach ($s in @($Snapshot)) {
         # -ErrorAction Stop: a failed query must not look like "no survivors" (an absent PID returns nothing, not an error).
-        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -ErrorAction Stop
+        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -OperationTimeoutSec 30 -ErrorAction Stop
         if ($q -and $q.CreationDate -eq $s.CreationDate) { $s }
     }
 }
@@ -61,12 +61,13 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         # a root that dies first, or a partial Kill, must not leave a descendant running unnoticed.
         # On any path but normal completion (timeout, Ctrl+C, a stopped pipeline), snapshot the tree even if the root
         # already exited: Windows keeps a dead parent's PID as its children's ParentProcessId, so they are still found.
-        # A CIM failure must never skip the kill: discovery and the survivor check can fail, and then the result is
-        # "not confirmed", which throws (fail closed) after the kill has still been attempted.
+        # The kill comes first, so a stalled or failing CIM query can never delay or skip it; every CIM call is
+        # bounded (-OperationTimeoutSec) and a failed one means "not confirmed", which throws (fail closed).
+        # Children orphaned by the killed root keep its PID as ParentProcessId, so discovery still finds them.
         $tree = @(); $unverified = $false
         if (-not $completed) {
-            try { $tree = @(Get-DescendantProcess $p.Id) } catch { $unverified = $true }
             if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
+            try { $tree = @(Get-DescendantProcess $p.Id) } catch { $unverified = $true }
         }
         $gone = $p.HasExited -or $p.WaitForExit(5000)
         $id = $p.Id
@@ -74,7 +75,12 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         $survivors = @()
         try {
             $survivors = @(Get-SurvivingProcess $tree)
-            foreach ($s in $survivors) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
+            foreach ($s in $survivors) {
+                # Bind a handle first (SafeHandle opens and caches it), then check the start time and kill through that
+                # same handle: an open handle pins the process, so its PID cannot be reused in between.
+                $h = Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue
+                if ($h) { try { $null = $h.SafeHandle; if ([math]::Abs(($h.StartTime - $s.CreationDate).TotalMilliseconds) -lt 1) { $h.Kill() } } catch { } finally { $h.Dispose() } }
+            }
             if ($survivors) { Start-Sleep -Seconds 2; $survivors = @(Get-SurvivingProcess $survivors) }
         } catch { $unverified = $true }
         if (-not $gone -or $survivors -or $unverified) {
