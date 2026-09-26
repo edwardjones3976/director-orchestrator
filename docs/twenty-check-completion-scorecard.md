@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]] -->
@@ -1131,10 +1132,18 @@ Ordinary work settles through the same `record_charge` path as the probes
 (`ProviderDailySpendLedger.reserve`): the usage monitor's probes
 (`usage.py` `_probe_reserver`, settled in `run_once`), and the engine's
 `_reserve_provider_daily_spend`, reached from single packet dispatch
-(`_route_live_dispatch`, settled by `_settle_packet_spend` when the packet
-completes), parallel packet batches (`_dispatch_parallel_packet_batch`, the
-same), legacy dispatch and legacy revision (`_execute_assignment`, settled by
-`_settle_provider_spend` once the run is terminal). Settlement records the
+(`_route_live_dispatch`) and parallel packet batches
+(`_dispatch_parallel_packet_batch`), each settled by `_settle_packet_spend` in a
+`finally` around the packet run, and legacy dispatch and legacy revision
+(`_execute_assignment`), settled without a charge the moment the request
+exists and raised to its reported cost by `_settle_provider_spend` once the run
+is terminal. Every exit after dispatch (terminal, unavailable, timeout,
+cancellation, any exception) therefore leaves the request either charged or
+unreconciled, never invisible (review 4112697677); only a provable pre-submit
+refusal (`PreSubmitProviderError`, a packet runtime key closed pre-submit)
+settles at $0, and its reservation still counts. A reservation still unsettled
+after `PROVIDER_TIMEOUT_SECONDS` is unreconciled too, so a crash between
+dispatch and settlement cannot hide one. Settlement records the
 provider-reported cost (the result packet's `usage.cost_usd`, else the run's
 reported `usage.cost`) against the request's reservation; with no reported cost
 the request is settled without a charge, keeps counting at its reservation, and
@@ -1424,3 +1433,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->

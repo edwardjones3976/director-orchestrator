@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
@@ -288,7 +289,9 @@ class UsageMonitor:
             return None
         probes = {_probe_key(record.cycle_id, provider, attempt)
                   for record in records for attempt in range(1, _PROBE_ATTEMPTS_MAX + 1)}
-        return sum(key not in probes for key in self.provider_spend.unreconciled(name, now=now))
+        # A reservation still unsettled after the provider timeout counts too (review 4112697677).
+        stale_after = timedelta(seconds=max(1, int(self.settings.provider_timeout_seconds)))
+        return sum(key not in probes for key in self.provider_spend.unreconciled(name, stale_after=stale_after, now=now))
 
     def _exposure_usd(self, provider: str, attempted: list[UsageCheckRecord], now: datetime) -> float:
         """The day's monetary exposure, reconciled per reservation (review 4111174705): each ledger reservation counts
@@ -818,3 +821,4 @@ class UsageMonitor:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]

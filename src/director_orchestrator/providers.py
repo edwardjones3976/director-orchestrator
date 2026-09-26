@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
@@ -30,7 +31,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -204,18 +205,24 @@ class ProviderDailySpendLedger:
                      observed_at.isoformat(), float(actual_cost_usd), observed_at.isoformat()),
                 )
 
-    def unreconciled(self, provider: ProviderName, *, now: datetime | None = None) -> list[str]:
-        """Effect keys of the day's settled requests that carry no actual charge (no provider-reported cost)."""
+    def unreconciled(
+        self, provider: ProviderName, *, stale_after: timedelta, now: datetime | None = None
+    ) -> list[str]:
+        """Effect keys of the day's reservations with no actual charge that are either settled (no provider-reported
+        cost) or still unsettled after ``stale_after`` (review 4112697677: a crash between dispatch and settlement
+        cannot hide a request)."""
 
         if provider not in self._SUPPORTED:
             raise ValueError("daily spend reconciliation applies only to supplemental providers")
-        utc_day = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._connect() as connection:
-            return [str(row[0]) for row in connection.execute(
-                """SELECT effect_key FROM provider_daily_spend_reservations
-                WHERE provider = ? AND utc_day = ? AND settled_at IS NOT NULL AND actual_cost_usd IS NULL""",
-                (provider.value, utc_day),
-            )]
+            rows = connection.execute(
+                """SELECT effect_key, settled_at, recorded_at FROM provider_daily_spend_reservations
+                WHERE provider = ? AND utc_day = ? AND actual_cost_usd IS NULL""",
+                (provider.value, observed_at.date().isoformat()),
+            ).fetchall()
+        return [str(key) for key, settled_at, recorded_at in rows
+                if settled_at is not None or datetime.fromisoformat(recorded_at) <= observed_at - stale_after]
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1686,3 +1693,4 @@ def provider_registry(settings: Settings) -> dict[ProviderName, ProviderAdapter]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]

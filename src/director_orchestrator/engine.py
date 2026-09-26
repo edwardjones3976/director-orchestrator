@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]]
@@ -1093,10 +1094,15 @@ class OrchestrationEngine:
             )
         return stored, reserved_key, reserved_here
 
-    def _settle_packet_spend(self, record: TaskRecord, assignment: Assignment, effect_key: str, outcome) -> None:
-        """A completed packet settles its reservation: the provider-reported cost of the run it names, else none."""
+    def _settle_packet_spend(self, record: TaskRecord, assignment: Assignment, effect_key: str, outcome, *,
+                             unsent: bool = False) -> None:
+        """Every exit of a packet run settles its reservation: the provider-reported cost of the run its result
+        names, else none (unreconciled). ``unsent`` only where the runtime key was provably closed pre-submit."""
 
         if self.provider_spend is None or assignment.agent not in ProviderDailySpendLedger._SUPPORTED:
+            return
+        if unsent:
+            self._charge_spend(assignment.agent, effect_key, 0.0)
             return
         packet = getattr(outcome, "result_packet", None)
         run_id = str(packet["run_reference"]) if isinstance(packet, dict) and packet.get("run_reference") else None
@@ -1105,12 +1111,7 @@ class OrchestrationEngine:
         cost = usage.get("cost_usd") if isinstance(usage, dict) else None
         if not isinstance(cost, (int, float)) or isinstance(cost, bool) or not math.isfinite(cost) or cost < 0:
             cost = normalize_reported_cost(normalize_usage(run.raw)[0]) if run is not None else None
-        self.provider_spend.record_charge(
-            provider=assignment.agent,
-            effect_key=effect_key,
-            actual_cost_usd=cost,
-            now=datetime.now(timezone.utc),
-        )
+        self._charge_spend(assignment.agent, effect_key, cost)
 
     @staticmethod
     def _record_packet_effect_outcome(
@@ -1317,6 +1318,8 @@ class OrchestrationEngine:
                     runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
             return False
+        packet_outcome = None
+        provably_unsent = False
         try:
             outcome = await asyncio.to_thread(
                 runtime.run_packet,
@@ -1326,6 +1329,7 @@ class OrchestrationEngine:
                 adapter=adapter,
                 writer_token=writer_token,
             )
+            packet_outcome = outcome
         except Exception as exc:
             # An exception escaping `run_packet` can occur on either side of its
             # durable runtime claim. Close the exact runtime key before calling it
@@ -1348,6 +1352,7 @@ class OrchestrationEngine:
                     reserved_by_caller=task_effect_reserved_here,
                     runtime_idempotency_key=str(work_packet["idempotency_key"]),
                 )
+            provably_unsent = bool(closed_pre_submit)
             if not closed_pre_submit:
                 current = self.store.get(record.task_id) or record
                 self._record_packet_effect_outcome(
@@ -1367,6 +1372,10 @@ class OrchestrationEngine:
                 error=f"{type(exc).__name__}: {exc}",
             )
             return False
+        finally:
+            # Review 4112697677: every exit after the packet ran settles its reservation (a later readback that
+            # reconciles a result raises it to the actual charge).
+            self._settle_packet_spend(record, assignment, task_effect_key, packet_outcome, unsent=provably_unsent)
         if outcome.status == RuntimeExecutionStatus.OWNER_DECISION_REQUIRED:
             latest = self.store.get(record.task_id) or record
             current_correlation_id = str(
@@ -1451,7 +1460,6 @@ class OrchestrationEngine:
                     else None
                 ),
             )
-            self._settle_packet_spend(record, assignment, task_effect_key, outcome)
             try:
                 progression = consumer.consume(
                     record, assignment, dict(work_packet), outcome
@@ -2025,6 +2033,7 @@ class OrchestrationEngine:
                 _task_effect_key,
                 _workload_reservation,
             ) = item
+            outcome = None
             try:
                 outcome = await asyncio.to_thread(
                     activation.runtime.run_packet,
@@ -2037,6 +2046,9 @@ class OrchestrationEngine:
                 return item, outcome, None
             except Exception as exc:
                 return item, None, exc
+            finally:
+                # Review 4112697677: completed, failed, raised or cancelled, the member's reservation settles.
+                self._settle_packet_spend(record, assignment, _task_effect_key, outcome)
 
         observed = await asyncio.gather(
             *(dispatch_one(item) for item in dispatchable)
@@ -2159,7 +2171,6 @@ class OrchestrationEngine:
                     else None
                 ),
             )
-            self._settle_packet_spend(record, assignment, task_effect_key, outcome)
             try:
                 progression = activation.packet_result_consumer.consume(
                     record, assignment, work, outcome
@@ -5420,29 +5431,29 @@ class OrchestrationEngine:
             now=datetime.now(timezone.utc),
         )
 
-    def _settle_provider_spend(self, record: TaskRecord, run_id: str | None, provider: ProviderName) -> None:
-        """Settle every daily-spend reservation for this run through the ledger's one record_charge path (review
-        4112533824): the provider-reported cost when there is one, else settled with none, so its reservation keeps
-        counting at its bound and check 15 sees it as unreconciled. The reservation is found by the effect key the
-        run's own observation carries."""
+    def _charge_spend(self, provider: ProviderName, effect_key: str, cost: float | None) -> None:
+        """The ledger's one record_charge path for ordinary work (reviews 4112533824 and 4112697677): a cost records
+        the actual charge; None settles the request without one, so it keeps counting at its reservation and
+        check 15 sees it as unreconciled; 0.0 only where the request provably never left (a pre-submit refusal)."""
 
-        if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED or not run_id:
+        if self.provider_spend is None or provider not in ProviderDailySpendLedger._SUPPORTED:
             return
-        run_digest = canonical_opaque_identifier_digest(run_id)
+        self.provider_spend.record_charge(
+            provider=provider, effect_key=effect_key, actual_cost_usd=cost, now=datetime.now(timezone.utc)
+        )
+
+    def _settle_provider_spend(self, record: TaskRecord, run: ProviderRun, provider: ProviderName) -> None:
+        """A terminal run settles every reservation its own observation names, at its provider-reported cost."""
+
+        run_digest = canonical_opaque_identifier_digest(run.run_id)
         keys = {
             item.effect_key
             for item in record.task_effect_ledger
             if item.kind == "provider_observation" and item.run_id_digest == run_digest
         }
-        run = next((item for item in reversed(record.provider_runs) if item.run_id == run_id), None)
-        cost = normalize_reported_cost(normalize_usage(run.raw)[0]) if run is not None else None
+        cost = normalize_reported_cost(normalize_usage(run.raw)[0])
         for key in sorted(keys):
-            self.provider_spend.record_charge(
-                provider=provider,
-                effect_key=key,
-                actual_cost_usd=cost,
-                now=datetime.now(timezone.utc),
-            )
+            self._charge_spend(provider, key, cost)
 
     async def _stop_for_perplexity_refinement(
         self,
@@ -6286,6 +6297,7 @@ class OrchestrationEngine:
                     context=handoff_context,
                 )
             except PreSubmitProviderError as exc:
+                self._charge_spend(assignment.agent, effect_key, 0.0)  # provably never left
                 if workload_reservation is not None:
                     finalized = await self._finalize_workload_dispatch(
                         record,
@@ -6312,6 +6324,7 @@ class OrchestrationEngine:
                 self.store.save(record)
                 raise
             except Exception as exc:
+                self._charge_spend(assignment.agent, effect_key, None)  # may have been accepted: unreconciled
                 if workload_reservation is not None:
                     await self._finalize_workload_dispatch(
                         record,
@@ -6360,6 +6373,10 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
+            # Review 4112697677: from the moment the request exists it is settled without a charge, so every later
+            # exit (unavailable, timeout, cancellation, any exception) leaves it unreconciled, never invisible; the
+            # terminal run below raises it to its reported cost.
+            self._charge_spend(assignment.agent, effect_key, None)
             if workload_reservation is not None and not await self._finalize_workload_dispatch(
                 record,
                 workload_reservation,
@@ -6404,8 +6421,7 @@ class OrchestrationEngine:
             return False
         run_index = next(index for index in range(len(record.provider_runs) - 1, -1, -1) if record.provider_runs[index].run_id == run.run_id)
         record.provider_runs[run_index] = run
-        if run.status != "WAITING_CALLBACK":
-            self._settle_provider_spend(record, run.run_id, assignment.agent)
+        self._settle_provider_spend(record, run, assignment.agent)
         if not run.result:
             record.status = TaskStatus.OWNER_DECISION_REQUIRED
             record.message = f"{assignment.agent.value} requires manual completion verification"
@@ -6681,6 +6697,7 @@ class OrchestrationEngine:
                     context=revision_handoff_context,
                 )
             except PreSubmitProviderError as exc:
+                self._charge_spend(assignment.agent, revision_effect_key, 0.0)  # provably never left
                 if revision_workload_reservation is not None:
                     if not await self._finalize_workload_dispatch(
                         record,
@@ -6708,6 +6725,7 @@ class OrchestrationEngine:
             except Exception as exc:
                 # Ambiguous submission consumed one attempt: count it as
                 # invoked so the ledger never treats it as retryable.
+                self._charge_spend(assignment.agent, revision_effect_key, None)
                 if revision_workload_reservation is not None:
                     await self._finalize_workload_dispatch(
                         record,
@@ -6756,6 +6774,7 @@ class OrchestrationEngine:
                 self.store.save(record)
                 await self._status_post(record, record.message)
                 return False
+            self._charge_spend(assignment.agent, revision_effect_key, None)  # unreconciled until terminal
             if revision_workload_reservation is not None and not (
                 await self._finalize_workload_dispatch(
                     record,
@@ -6793,8 +6812,7 @@ class OrchestrationEngine:
             if not self._verified_plan_or_stop(record):
                 return False
             record.provider_runs[-1] = revised
-            if revised.status != "WAITING_CALLBACK":
-                self._settle_provider_spend(record, revised.run_id, assignment.agent)
+            self._settle_provider_spend(record, revised, assignment.agent)
             self.store.save(record)
             if not revised.result:
                 record.status = TaskStatus.OWNER_DECISION_REQUIRED
@@ -7075,3 +7093,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
