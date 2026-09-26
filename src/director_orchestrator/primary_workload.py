@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | BEGIN]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | BEGIN]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | BEGIN]]
@@ -70,6 +71,13 @@ class WorkloadAdmissionHold(RuntimeError):
     def __init__(self, reason_code: str):
         super().__init__(reason_code)
         self.reason_code = reason_code
+
+
+class ProvenNoRunHold(WorkloadAdmissionHold):
+    """A hold raised after an attempt was admitted but before any provider
+    request left this process, or refused by the host with authenticated
+    proof that nothing ran. Its admitted attempt is settled as refused
+    before I/O rather than left STARTED."""
 
 
 def admission_reason(provider: str, history: Sequence[str], *, allocation_profile: str = DEFAULT_ALLOCATION_PROFILE) -> str | None:
@@ -165,3 +173,4 @@ schema is trusted and validated by its owner, never supplied by a work packet.
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 20:49 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-21 | 21:07 UTC | END]]
 # [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 04:52 UTC | END]]

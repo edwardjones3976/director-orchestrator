@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | BEGIN]] -->
@@ -13,7 +14,9 @@ and legacy rows remain unknown. See [offline trial tooling](collect-offline-slac
 for approved-pause arithmetic and its evidence limits.
 
 Primary tasks now send an approval request and a terminal result to the original
-owner Slack thread. The FastAPI lifespan starts the delivery worker when primary
+owner Slack thread. A small read-only task that a live standing grant
+pre-authorizes (phase 4S in `human-out-of-the-loop-operation.md`) skips the
+execution approval request. The FastAPI lifespan starts the delivery worker when primary
 mode is constructed. It uses the existing bot token, owner, channel and primary
 PostgreSQL configuration; it does not start providers or enable paid execution.
 
@@ -132,3 +135,4 @@ deployment are part of those tests.
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 20:30 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:05 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-21 | 21:45 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 21:18 UTC | END]] -->

@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | BEGIN]] -->
@@ -764,7 +765,10 @@ requirement to dispatch every provider. Current authenticated app and adapter
 readiness must cover OpenAI orchestration and at least two other primary providers
 capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
 control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
-different reviewer before the existing exact-plan execution approval. Eligible
+different reviewer before the existing exact-plan execution approval. Every task
+stops there except a small read-only task that a live standing grant
+pre-authorizes (phase 4S in `docs/human-out-of-the-loop-operation.md`), which
+is audited and then dispatched without that button. Eligible
 providers exclude only zero-target lanes; the retired rolling-twenty hard cap no
 longer blocks admission, and the normal band guides preference, then
 operator-configured comparable cost ranks break ties. Pair selection projects
@@ -897,3 +901,4 @@ identity cannot authorize successful completion.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 03:50 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 04:42 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 05:23 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 16:27 UTC | END]] -->

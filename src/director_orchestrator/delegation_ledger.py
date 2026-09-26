@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | BEGIN]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | BEGIN]]
@@ -96,12 +97,19 @@ class RecordedOutcome(StrEnum):
     ``WOULD_DELEGATE`` and ``WOULD_STOP`` are the phase-3 shadow vocabulary from
     the implementation-phase table. They are listed here because they are record
     format, not behaviour; no code in phase 2 produces either one.
+
+    ``PRE_AUTHORIZED`` records that an owner's standing grant pre-authorized
+    executing one pre-execution tier-1 class, ``execute_small_read_only_task``.
+    No verdict exists yet when it is written, so it carries none; the task's own
+    independent review stays mandatory downstream. It is never ``DELEGATED``,
+    so the ACCEPT rule for delegated decisions is untouched.
     """
 
     DELEGATED = "DELEGATED"
     REFUSED = "REFUSED"
     WOULD_DELEGATE = "WOULD_DELEGATE"
     WOULD_STOP = "WOULD_STOP"
+    PRE_AUTHORIZED = "PRE_AUTHORIZED"
 
 
 class VerdictOutcome(StrEnum):
@@ -405,6 +413,18 @@ class DelegationAuditRecord:
         )
         if claims_delegation and self.grant_id is None:
             raise DelegationAuditError("delegation outcomes must name a grant")
+        pre_authorized = self.outcome is RecordedOutcome.PRE_AUTHORIZED
+        small_class = self.decision_class is Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK
+        # The pre-execution class never mints a merge-style record, and a
+        # pre-authorization exists for that class alone.
+        if claims_delegation and small_class:
+            raise DelegationAuditError(
+                "the small read-only class is pre-authorized, never delegated"
+            )
+        if pre_authorized and not small_class:
+            raise DelegationAuditError("only the small read-only class is pre-authorized")
+        if pre_authorized and self.grant_id is None:
+            raise DelegationAuditError("a pre-authorization must name a grant")
         if not isinstance(self.decision_class, Tier1Class):
             if claims_delegation:
                 raise DelegationAuditError("delegation decision_class is not a tier-1 class")
@@ -412,7 +432,7 @@ class DelegationAuditRecord:
             # evidence of a refusal. It adds nothing to the delegable enum.
             _require_identifier(self.decision_class, "refused decision_class")
         if self.candidate_sha is None:
-            if claims_delegation:
+            if claims_delegation or pre_authorized:
                 raise DelegationAuditError("delegation outcomes require a resolved candidate_sha")
         elif not isinstance(self.candidate_sha, str) or not _CANDIDATE_SHA.fullmatch(
             self.candidate_sha
@@ -461,6 +481,17 @@ class DelegationAuditRecord:
                 not item.status.is_pass for item in self.gate_results
             ):
                 raise DelegationAuditError("delegation requires nonempty passing gate evidence")
+        if pre_authorized:
+            # Written before execution: no verdict can exist yet, and every
+            # term evaluated at that point must have passed.
+            if self.verdicts:
+                raise DelegationAuditError("a pre-authorization precedes every verdict")
+            if not self.gate_results or any(
+                not item.status.is_pass for item in self.gate_results
+            ):
+                raise DelegationAuditError(
+                    "a pre-authorization requires nonempty passing gate evidence"
+                )
 
         if self.grant_id is None:
             if self.grant_snapshot is not None:
@@ -474,6 +505,8 @@ class DelegationAuditRecord:
                 raise DelegationAuditError("grant snapshot is malformed") from exc
             if grant is None or grant.grant_id != self.grant_id:
                 raise DelegationAuditError("grant snapshot does not match grant_id")
+            if pre_authorized and Tier1Class.EXECUTE_SMALL_READ_ONLY_TASK not in grant.classes:
+                raise DelegationAuditError("grant snapshot does not name the pre-authorized class")
             # Validate and freeze contents, without deciding whether the grant
             # is live, in scope, unexhausted, or authorizes any actual action.
             object.__setattr__(self, "grant_snapshot", json.dumps(
@@ -602,3 +635,4 @@ def parse_record(document: str) -> DelegationAuditRecord:
 # [[OpenAI Codex | GPT-6 | 2026-09-09 | 22:01 UTC | END]]
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 02:16 UTC | END]]
 # [[Z.ai | glm-5.3-flash via Claude Code | 2026-09-13 | 05:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:05 UTC | END]]

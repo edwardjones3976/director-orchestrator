@@ -1,3 +1,12 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | BEGIN]]
@@ -27,16 +36,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import json
 import math
 import os
 import re
+import socket
 import sqlite3
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import closing
+from contextlib import closing, contextmanager
+from functools import partial
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -86,8 +99,94 @@ class HostProviderBridgeAmbiguous(HostProviderBridgeError):
     """An external attempt may have happened and cannot be resent."""
 
 
+class HostProviderBridgeAttestationMismatch(HostProviderBridgeError):
+    """The argv about to run is not the one the request's attestation pinned.
+
+    Raised before any process is started, so nothing was executed.
+    """
+
+
+class HostBridgeAttestationStale(RuntimeError):
+    """The bridge authenticated that it refused to run an unattested argv."""
+
+
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _socket_of(stream: object) -> Any:
+    """The socket under an HTTP response, an HTTPError or a request file."""
+
+    for path in (("fp", "raw", "_sock"), ("fp", "fp", "raw", "_sock"), ("raw", "_sock"),
+                 ("_sock",)):
+        current = stream
+        for name in path:
+            current = getattr(current, name, None)
+            if current is None:
+                break
+        if current is not None and callable(getattr(current, "settimeout", None)):
+            return current
+    return None
+
+
+def _clamp(sock: Any, remaining: float) -> None:
+    """Clamp the next socket wait to what is left. A socket already closed
+    (a fully buffered response) has nothing left to wait for."""
+
+    if sock is None:
+        return
+    try:
+        sock.settimeout(remaining)
+    except OSError:
+        pass
+
+
+def read_until_deadline(stream: object, *, limit: int, deadline: float,
+                        exact: bool = False, sock: Any = None) -> bytes:
+    """Read at most ``limit + 1`` bytes (exactly ``limit`` when ``exact``),
+    never past the absolute ``deadline``.
+
+    Small chunks, each with its socket timeout clamped to what is left, and
+    the clock checked after every chunk: a peer trickling bytes cannot keep a
+    read open past the deadline the way a per-read inactivity timeout lets
+    it. Raises TimeoutError at the deadline.
+    """
+
+    sock = sock if sock is not None else _socket_of(stream)
+    target = limit if exact else limit + 1
+    reader = getattr(stream, "read1", None)
+    if not callable(reader):
+        # A stream without chunked reads gets one read, still bounded to
+        # what is left and checked against the clock after it.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded read reached its deadline")
+        _clamp(sock, remaining)
+        data = stream.read(target)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("bounded read reached its deadline")
+        if exact and len(data) != limit:
+            raise ValueError("request body ended before its declared length")
+        return data
+    chunks: list[bytes] = []
+    size = 0
+    while size < target:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded read reached its deadline")
+        _clamp(sock, remaining)
+        chunk = reader(min(8192, target - size))
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise TypeError("a bounded read returned something other than bytes")
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("bounded read reached its deadline")
+    if exact and size != limit:
+        raise ValueError("request body ended before its declared length")
+    return b"".join(chunks)
 
 
 def _require_token(value: str, name: str) -> str:
@@ -109,6 +208,9 @@ def _signature_payload(
     writer_owner_token_digest: str,
     work_packet_digest: str = "",
     host_deadline: str = "",
+    attested_argv_digest: str = "",
+    attempt_budget_usd: str = "",
+    total_token_limit: str = "",
 ) -> bytes:
     material = [
         BRIDGE_PROTOCOL,
@@ -130,6 +232,13 @@ def _signature_payload(
         material.append(work_packet_digest)
     if host_deadline:
         material.extend(("host-monotonic-deadline", host_deadline))
+    # A small read-only task's request carries the argv digest its lane was
+    # attested under; appended only when present, like the other bindings.
+    if attested_argv_digest:
+        material.extend(("attested-argv", attested_argv_digest))
+    # A small task's attempt limits, enforced by the host before launch.
+    if attempt_budget_usd or total_token_limit:
+        material.extend(("attempt-limits", attempt_budget_usd, total_token_limit))
     return "\n".join(material).encode("utf-8")
 
 
@@ -156,7 +265,7 @@ def bridge_response_signature(
 
 def bridge_challenge_signature(
     secret: str, *, timestamp: int, nonce: str, command_map_digest: str = "",
-    host_monotonic: str = "",
+    host_monotonic: str = "", lane_attestation_digest: str = "",
 ) -> str:
     if len(secret) < 32:
         raise HostProviderBridgeError("bridge secret must contain at least 32 characters")
@@ -165,6 +274,10 @@ def bridge_challenge_signature(
     )
     if host_monotonic:
         material += "\nhost-monotonic-deadline\n" + host_monotonic
+    # Appended only when present, so a bridge without attestations keeps a
+    # byte-identical proof and a stripped attestation fails authentication.
+    if lane_attestation_digest:
+        material += "\nlane-attestations\n" + lane_attestation_digest
     material = material.encode("utf-8")
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
@@ -178,13 +291,16 @@ class HostBridgeChallengeEvidence:
     observed_at: int
     host_monotonic: float | None = None
     clock_id: str = ""
+    # lane -> argv digest, for lanes whose reported argv this side re-checked
+    # and found carrying its whole read-only restriction set.
+    read_only_attested: Mapping[str, str] | None = None
 
 
 def challenge_host_provider_bridge(
     endpoint: str,
     secret: str,
     *,
-    timeout_seconds: int = 5,
+    timeout_seconds: float = 5,
     now: int | None = None,
     deadline: float | None = None,
 ) -> HostBridgeChallengeEvidence:
@@ -212,12 +328,19 @@ def challenge_host_provider_bridge(
         },
         method="GET",
     )
+    # One absolute bound for the whole challenge, never past the caller's.
+    read_deadline = time.monotonic() + timeout_seconds
+    if deadline is not None:
+        read_deadline = min(read_deadline, deadline)
     try:
-        with urllib.request.build_opener(_NoRedirectHandler()).open(
-            request, timeout=timeout_seconds
-        ) as response:
-            payload = response.read(65_537)
-    except (urllib.error.URLError, TimeoutError) as exc:
+        with _bridge_opener(read_deadline) as (opener, watch):
+            with opener.open(
+                request, timeout=max(0.001, read_deadline - time.monotonic())
+            ) as response:
+                payload = read_until_deadline(response, limit=65_536, deadline=read_deadline)
+            if watch.fired.is_set():
+                raise TimeoutError("host bridge challenge reached its deadline")
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
         raise HostProviderBridgeError("host bridge challenge is unavailable") from exc
     if not payload or len(payload) > 65_536:
         raise HostProviderBridgeError("host bridge challenge response is not bounded")
@@ -253,13 +376,36 @@ def challenge_host_provider_bridge(
         or not isinstance(proof, str)
     ):
         raise HostProviderBridgeError("host bridge challenge bindings are invalid")
+    attestations = decoded.get("lane_attestations")
+    attestation_digest = ""
+    attested: dict[str, str] = {}
+    if attestations is not None:
+        from .bridge_attestation import argv_digest, read_only_attested
+        if not isinstance(attestations, dict):
+            raise HostProviderBridgeError("host bridge lane attestations are malformed")
+        attestation_digest = "sha256:" + _digest(canonical_json_bytes(attestations))
+        if decoded.get("lane_attestation_digest") != attestation_digest:
+            raise HostProviderBridgeError("host bridge lane attestations are not bound")
+        for lane, item in attestations.items():
+            argv = item.get("argv") if isinstance(item, dict) else None
+            if (not isinstance(argv, list) or not all(isinstance(value, str) for value in argv)
+                    or item.get("argv_digest") != argv_digest(argv)):
+                raise HostProviderBridgeError("host bridge lane attestation is malformed")
+            # Re-checked here: the host's own verdict is required, never
+            # trusted, and the lane must also enforce the attempt limits.
+            # Whether the command also enforces the attempt limits before
+            # launch is reported but not required (owner ruling 2026-09-24,
+            # "Accept post-hoc cap"): the cap is checked on the result.
+            if item.get("read_only_attested") is True and read_only_attested(lane, argv):
+                attested[lane] = item["argv_digest"]
     expected = bridge_challenge_signature(
         secret, timestamp=timestamp, nonce=nonce, command_map_digest=digest,
-        host_monotonic=host_clock,
+        host_monotonic=host_clock, lane_attestation_digest=attestation_digest,
     )
     if not hmac.compare_digest(proof, expected):
         raise HostProviderBridgeError("host bridge challenge authentication failed")
-    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value, clock_id)
+    return HostBridgeChallengeEvidence(frozenset(providers), digest, timestamp, clock_value,
+                                       clock_id, attested)
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +426,9 @@ class BridgeRequest:
     # to reconstruct anything the host was deliberately not shown.
     work_packet_digest: str = ""
     host_deadline: str = ""
+    attested_argv_digest: str = ""
+    attempt_budget_usd: str = ""
+    total_token_limit: str = ""
 
     def validate(self, secret: str, *, now: int | None = None, max_age_seconds: int = 60) -> None:
         if self.provider not in SUPPORTED_HOST_LANES:
@@ -313,7 +462,18 @@ class BridgeRequest:
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=self.work_packet_digest,
             host_deadline=self.host_deadline,
+            attested_argv_digest=self.attested_argv_digest,
+            attempt_budget_usd=self.attempt_budget_usd,
+            total_token_limit=self.total_token_limit,
         )
+        if (self.attempt_budget_usd or self.total_token_limit) and not (
+                re.fullmatch(r"\d+(?:\.\d+)?", self.attempt_budget_usd)
+                and re.fullmatch(r"[1-9]\d{0,8}", self.total_token_limit)):
+            raise HostProviderBridgeError("attempt limits are malformed")
+        if self.attested_argv_digest and (
+                not self.attested_argv_digest.startswith("sha256:")
+                or _HEX_64.fullmatch(self.attested_argv_digest[7:]) is None):
+            raise HostProviderBridgeError("attested argv digest is invalid")
         if not hmac.compare_digest(expected, self.signature):
             raise HostProviderBridgeError("host bridge authentication failed")
         if self.host_deadline:
@@ -355,6 +515,12 @@ class BridgeClaimStore:
                     nonce_digest TEXT PRIMARY KEY,
                     observed_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS bridge_attempt_limits (
+                    idempotency_digest TEXT PRIMARY KEY,
+                    attested_argv_digest TEXT NOT NULL,
+                    attempt_budget_usd TEXT NOT NULL,
+                    total_token_limit TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS bridge_attempts (
                     idempotency_digest TEXT PRIMARY KEY,
                     provider TEXT NOT NULL,
@@ -363,12 +529,26 @@ class BridgeClaimStore:
                     writer_generation INTEGER NOT NULL,
                     packet_digest TEXT NOT NULL,
                     writer_owner_token_digest TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS')),
+                    state TEXT NOT NULL CHECK(state IN ('INFLIGHT','SUCCEEDED','AMBIGUOUS','REFUSED')),
                     response_json BLOB,
                     updated_at INTEGER NOT NULL
                 );
                 """
             )
+            # A store created before the REFUSED state existed: rebuild the
+            # table with the widened CHECK, keeping every row.
+            definition = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_attempts'"
+            ).fetchone()[0]
+            if "'REFUSED'" not in definition:
+                connection.executescript(
+                    "BEGIN IMMEDIATE;"
+                    "ALTER TABLE bridge_attempts RENAME TO bridge_attempts_before_refused;"
+                    + definition.replace("'AMBIGUOUS')", "'AMBIGUOUS','REFUSED')") + ";"
+                    "INSERT INTO bridge_attempts SELECT * FROM bridge_attempts_before_refused;"
+                    "DROP TABLE bridge_attempts_before_refused;"
+                    "COMMIT;"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
@@ -405,19 +585,57 @@ class BridgeClaimStore:
                 if tuple(row[:6]) != bindings:
                     connection.rollback()
                     raise HostProviderBridgeError("idempotency key binding conflict")
+                stored = connection.execute(
+                    "SELECT attested_argv_digest, attempt_budget_usd, total_token_limit "
+                    "FROM bridge_attempt_limits WHERE idempotency_digest = ?",
+                    (request.idempotency_digest,),
+                ).fetchone()
                 connection.commit()
+                if (None if stored is None else tuple(stored)) != _attempt_limits(request):
+                    # Signed under a different attestation or different
+                    # limits than the attempt this key claimed: never
+                    # replayed. An AMBIGUOUS attempt stays ambiguous; one
+                    # that ran (SUCCEEDED) is refused as a binding conflict,
+                    # never as a no-run, because its command did run; only a
+                    # REFUSED attempt, which ran nothing, is the signed
+                    # attestation refusal.
+                    if row[6] == "REFUSED":
+                        raise HostProviderBridgeAttestationMismatch(
+                            "replay attestation or limits differ from the claimed attempt")
+                    if row[6] == "SUCCEEDED":
+                        raise HostProviderBridgeError(
+                            "replay attestation or limits differ from the claimed attempt")
+                    raise HostProviderBridgeAmbiguous(
+                        "host provider attempt is not safely replayable")
                 if row[6] == "SUCCEEDED" and isinstance(row[7], bytes):
                     return row[7]
+                if row[6] == "REFUSED":
+                    # Replayed as the same clean refusal: nothing ever ran.
+                    raise HostProviderBridgeAttestationMismatch(
+                        "host provider attempt was refused before execution")
                 raise HostProviderBridgeAmbiguous("host provider attempt is not safely replayable")
             connection.execute(
                 "INSERT INTO bridge_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'INFLIGHT', NULL, ?)",
                 (request.idempotency_digest, *bindings, int(time.time())),
             )
+            limits = _attempt_limits(request)
+            if limits is not None:
+                # The attestation and limits this attempt was claimed under;
+                # a replay must carry exactly these.
+                connection.execute(
+                    "INSERT INTO bridge_attempt_limits VALUES (?, ?, ?, ?)",
+                    (request.idempotency_digest, *limits),
+                )
             connection.commit()
         return None
 
-    def settle(self, idempotency_digest: str, *, response: bytes | None) -> None:
-        state = "SUCCEEDED" if response is not None else "AMBIGUOUS"
+    def settle(self, idempotency_digest: str, *, response: bytes | None,
+               refused: bool = False) -> None:
+        """Settle an INFLIGHT claim: SUCCEEDED with its response, REFUSED when
+        the executor proved it started nothing, otherwise AMBIGUOUS."""
+
+        state = ("REFUSED" if refused else
+                 "SUCCEEDED" if response is not None else "AMBIGUOUS")
         with closing(self._connect()) as connection:
             cursor = connection.execute(
                 "UPDATE bridge_attempts SET state = ?, response_json = ?, updated_at = ? "
@@ -426,6 +644,15 @@ class BridgeClaimStore:
             )
             if cursor.rowcount != 1:
                 raise HostProviderBridgeError("bridge attempt settlement lost its claim")
+
+
+def _attempt_limits(request: object) -> tuple[str, str, str] | None:
+    """The signed attestation digest and attempt limits a request carries, or
+    None for a request that carries none of them."""
+
+    values = tuple(str(getattr(request, name, "") or "") for name in (
+        "attested_argv_digest", "attempt_budget_usd", "total_token_limit"))
+    return values if any(values) else None
 
 
 class WindowsHostProviderExecutor:
@@ -480,6 +707,25 @@ class WindowsHostProviderExecutor:
         verifier.verify(request)
         if time.monotonic() >= cutoff:
             raise HostProviderBridgeError("host bridge deadline expired before execution")
+        attested = getattr(request, "attested_argv_digest", "")
+        budget = getattr(request, "attempt_budget_usd", "")
+        tokens = getattr(request, "total_token_limit", "")
+        if attested:
+            # Immediately before execution: the argv about to run must be the
+            # one this request's lane was attested and pinned under.
+            from .bridge_attestation import argv_digest
+            if not hmac.compare_digest(argv_digest(command), attested):
+                raise HostProviderBridgeAttestationMismatch(
+                    "host argv differs from the attested argv")
+        if attested and not (budget and tokens):
+            # A small task's request always carries its attempt limits. They
+            # reach the command as its limit variables; a command that cannot
+            # honor them before launch (the Grok CLI has no such flag) is
+            # still run, by the owner's ruling of 2026-09-24 ("Accept post-hoc
+            # cap"): the Director checks reported usage against them after
+            # the call, and an overage fails the task and trips the grant.
+            raise HostProviderBridgeAttestationMismatch(
+                "a small task's request lacks its attempt limits")
         if request.provider == "openai":
             from types import SimpleNamespace
             from .packet_contracts import validate_packet
@@ -502,6 +748,10 @@ class WindowsHostProviderExecutor:
             for name, value in os.environ.items()
             if name.upper() in _SAFE_OS_ENV or name in _LANE_AUTH_ENV[request.provider]
         }
+        if getattr(request, "total_token_limit", ""):
+            # The same names NativeCommandPacketTransport sets for a command.
+            environment["DIRECTOR_PROVIDER_ATTEMPT_BUDGET_USD"] = request.attempt_budget_usd
+            environment["DIRECTOR_PROVIDER_TOTAL_TOKEN_LIMIT"] = request.total_token_limit
         try:
             if request.host_deadline:
                 # Reuse the existing process-tree owner; killing only the shim
@@ -574,6 +824,89 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 
+class _SocketWatch:
+    """The sockets one bridge request opened, and whether its deadline fired."""
+
+    def __init__(self) -> None:
+        self.fired = threading.Event()
+        self._sockets: list[socket.socket] = []
+        self._lock = threading.Lock()
+
+    def register(self, sock: socket.socket) -> socket.socket:
+        with self._lock:
+            self._sockets.append(sock)
+            fired = self.fired.is_set()
+        if fired:
+            self._shut(sock)
+        return sock
+
+    def fire(self) -> None:
+        with self._lock:
+            self.fired.set()
+            sockets = list(self._sockets)
+        for sock in sockets:
+            self._shut(sock)
+
+    @staticmethod
+    def _shut(sock: socket.socket) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _watched(connection_class: type, watch: _SocketWatch) -> Callable[..., Any]:
+    def build(*args: Any, **kwargs: Any) -> Any:
+        connection = connection_class(*args, **kwargs)
+        create = connection._create_connection
+        # The raw TCP socket, registered before any TLS handshake or header.
+        connection._create_connection = lambda *a, **k: watch.register(create(*a, **k))
+        return connection
+    return build
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, watch: _SocketWatch) -> None:
+        super().__init__()
+        self._watch = watch
+
+    def http_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_watched(http.client.HTTPConnection, self._watch), req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, watch: _SocketWatch) -> None:
+        super().__init__()
+        self._watch = watch
+
+    def https_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_watched(http.client.HTTPSConnection, self._watch), req,
+                            context=self._context)
+
+
+@contextmanager
+def _bridge_opener(deadline: float):
+    """An opener whose whole request - connect, TLS, status line, headers and
+    body - ends at the absolute ``deadline``.
+
+    A per-read socket timeout only bounds inactivity, so a peer that trickles
+    header bytes could hold ``open()`` past the deadline. A watchdog timer
+    shuts down every socket the request opened when the deadline arrives;
+    the blocked read then fails, and ``watch.fired`` tells the caller the
+    failure (or any short result) is the deadline, never a success.
+    """
+
+    watch = _SocketWatch()
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), watch.fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield urllib.request.build_opener(
+            _NoRedirectHandler(), _WatchedHTTPHandler(watch), _WatchedHTTPSHandler(watch)), watch
+    finally:
+        timer.cancel()
+
+
 def _enforce_native_result_attempt_limits(
     result: Mapping[str, Any], *, context: ProviderAdapterContext
 ) -> dict[str, Any]:
@@ -630,6 +963,7 @@ class HostBridgePacketTransport:
             [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
         ]
         | None = None,
+        read_only_argv_digest: str | None = None,
     ) -> None:
         if provider not in SUPPORTED_HOST_LANES:
             raise ValueError("provider is not supported by the Windows host bridge")
@@ -675,6 +1009,31 @@ class HostBridgePacketTransport:
         self.writer_owner_token_digest = writer_owner_token_digest
         self.outbound_payload_builder = outbound_payload_builder
         self.result_normalizer = result_normalizer
+        # Set only from a fresh authenticated attestation whose argv digest
+        # equals the Director's pinned binding for this lane.
+        self.read_only_argv_digest = read_only_argv_digest
+
+    def read_only_attestation_current(self, *, deadline: float | None = None) -> bool:
+        """Re-challenge the bridge: the lane is still attested with the same argv.
+
+        Any failure, a changed argv, or a lost attestation is False.
+        """
+
+        if self.read_only_argv_digest is None:
+            return False
+        # The HTTP timeout is what is left of the caller's shared deadline,
+        # never a fresh window; nothing left refuses without a request.
+        timeout = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+        if timeout <= 0:
+            return False
+        try:
+            evidence = challenge_host_provider_bridge(
+                self.endpoint, self.secret, timeout_seconds=timeout, deadline=deadline)
+        except HostProviderBridgeError:
+            return False
+        return (self.provider in evidence.configured_providers
+                and (evidence.read_only_attested or {}).get(self.provider)
+                == self.read_only_argv_digest)
 
     def preflight(self, work_packet_json: bytes, *, context) -> None:
         """Check deadline support through the authenticated, non-dispatch probe."""
@@ -712,6 +1071,12 @@ class HostBridgePacketTransport:
         idempotency_key = str(packet.get("idempotency_key", ""))
         if not idempotency_key:
             raise RuntimeError("host bridge packet lacks idempotency")
+        # The final authority recheck, after the host cutoff challenge and
+        # before the outbound bytes are chosen: nothing that could see
+        # different authority runs between choosing them and the request.
+        authority_recheck = getattr(context, "authority_recheck", None)
+        if callable(authority_recheck):
+            authority_recheck()
         work_packet_digest = ""
         outbound = work_packet_json
         if self.outbound_payload_builder is not None:
@@ -723,6 +1088,23 @@ class HostBridgePacketTransport:
             work_packet_digest = _digest(work_packet_json)
         # The transport signature binds the exact bytes that leave this process.
         packet_digest = _digest(outbound)
+        # A small read-only task's packet (read tool only, no effect) binds the
+        # argv this lane was attested under; the host refuses any other argv.
+        attested_argv_digest = (
+            self.read_only_argv_digest
+            if self.read_only_argv_digest is not None
+            and packet.get("allowed_tools") == ["READ_REPOSITORY"]
+            and packet.get("allowed_external_effects") == []
+            else "")
+        # With it, the attempt's own limits, enforced by the host before launch.
+        attempt_budget_usd = total_token_limit = ""
+        if attested_argv_digest:
+            budget = getattr(context, "budget_usd", None)
+            tokens = getattr(context, "total_token_limit", None)
+            if budget is None or type(tokens) is not int or tokens < 1:
+                raise HostBridgeAttestationStale("a small task's attempt limits are missing")
+            attempt_budget_usd = format(Decimal(str(budget)).normalize(), "f")
+            total_token_limit = str(tokens)
         idempotency_digest = _digest(idempotency_key.encode("utf-8"))
         timestamp = int(time.time())
         nonce = hashlib.sha256(f"{time.time_ns()}:{packet_digest}".encode()).hexdigest()
@@ -738,6 +1120,9 @@ class HostBridgePacketTransport:
             writer_owner_token_digest=self.writer_owner_token_digest,
             work_packet_digest=work_packet_digest,
             host_deadline=host_deadline,
+            attested_argv_digest=attested_argv_digest,
+            attempt_budget_usd=attempt_budget_usd,
+            total_token_limit=total_token_limit,
         )
         headers = {
             "Content-Type": "application/json",
@@ -757,25 +1142,50 @@ class HostBridgePacketTransport:
             headers["X-Director-Work-Packet-Digest"] = work_packet_digest
         if host_deadline:
             headers["X-Director-Host-Deadline"] = host_deadline
+        if attested_argv_digest:
+            headers["X-Director-Attested-Argv-Digest"] = attested_argv_digest
+            headers["X-Director-Attempt-Budget-Usd"] = attempt_budget_usd
+            headers["X-Director-Total-Token-Limit"] = total_token_limit
         request = urllib.request.Request(self.endpoint, data=outbound, headers=headers, method="POST")
         remaining = context.timeout_seconds if cutoff is None else cutoff - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("host bridge deadline expired before dispatch")
-        authority_recheck = getattr(context, "authority_recheck", None)
-        if callable(authority_recheck):
-            authority_recheck()
         if cutoff is not None:
             remaining = cutoff - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError("host bridge deadline expired before dispatch")
+        read_deadline = (cutoff if cutoff is not None
+                         else time.monotonic() + remaining)
         try:
-            with urllib.request.build_opener(_NoRedirectHandler()).open(
-                request, timeout=remaining
-            ) as response:
-                payload = response.read(_MAX_RESULT_BYTES + 1)
-                response_digest = response.headers.get("X-Director-Response-Digest", "")
-                response_proof = response.headers.get("X-Director-Response-Proof", "")
-        except (urllib.error.URLError, TimeoutError) as exc:
+            with _bridge_opener(read_deadline) as (opener, watch):
+                with opener.open(request, timeout=remaining) as response:
+                    payload = read_until_deadline(
+                        response, limit=_MAX_RESULT_BYTES, deadline=read_deadline)
+                    response_digest = response.headers.get("X-Director-Response-Digest", "")
+                    response_proof = response.headers.get("X-Director-Response-Proof", "")
+                if watch.fired.is_set():
+                    raise TimeoutError("host bridge response reached its deadline")
+        except urllib.error.HTTPError as exc:
+            # Only an authenticated refusal of the argv proves nothing ran.
+            if exc.code == 403 and attested_argv_digest:
+                try:
+                    body = read_until_deadline(exc, limit=4095, deadline=read_deadline)
+                except (TimeoutError, OSError):
+                    raise RuntimeError(
+                        "host provider bridge outcome is ambiguous") from exc
+                proof = bridge_response_signature(
+                    self.secret, nonce=nonce, idempotency_digest=idempotency_digest,
+                    response_digest=_digest(body))
+                if (exc.headers.get("X-Director-Response-Digest", "") == _digest(body)
+                        and hmac.compare_digest(
+                            exc.headers.get("X-Director-Response-Proof", ""), proof)
+                        and json.loads(body).get("reason") == "attestation_mismatch"):
+                    raise HostBridgeAttestationStale(
+                        "the bridge refused an argv other than the attested one") from exc
+            raise RuntimeError("host provider bridge outcome is ambiguous") from exc
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+            # The deadline watchdog, or any transport failure after the
+            # request may have been sent: never a success.
             raise RuntimeError("host provider bridge outcome is ambiguous") from exc
         if cutoff is not None and time.monotonic() >= cutoff:
             raise RuntimeError("host provider bridge outcome is ambiguous: deadline expired")
@@ -823,6 +1233,11 @@ def dispatch_bridge_request(
         return replay
     try:
         result = executor.execute(request)
+    except HostProviderBridgeAttestationMismatch:
+        # Raised before any process starts: a clean, replayable refusal, never
+        # an ambiguous attempt.
+        store.settle(request.idempotency_digest, response=None, refused=True)
+        raise
     except Exception:
         store.settle(request.idempotency_digest, response=None)
         raise
@@ -848,3 +1263,12 @@ def dispatch_bridge_request(
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-23 | 04:03 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 01:08 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 02:57 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 20:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 07:49 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:29 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]

@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/director-compact-work-view-v1.schema.json",
+  "title": "Director Compact Work View v1",
+  "description": "What a model on a compact-view lane is shown in place of the work packet. The Director keeps the full packet, bound here by work_packet_digest, and rebinds every result to it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "assignment_id",
+    "idempotency_key",
+    "project",
+    "repository",
+    "starting_ref",
+    "objective",
+    "non_goals",
+    "authority_snapshot_digest",
+    "dependencies",
+    "constraints",
+    "prohibited_actions",
+    "allowed_tools",
+    "allowed_external_effects",
+    "acceptance_checks",
+    "evidence_requirements",
+    "approval_requirements",
+    "limits",
+    "correlation",
+    "authority",
+    "work_packet_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "director-compact-work-view/v1"
+    },
+    "task_id": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/task_id"
+    },
+    "assignment_id": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/assignment_id"
+    },
+    "idempotency_key": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/idempotency_key"
+    },
+    "project": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/project"
+    },
+    "repository": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/repository"
+    },
+    "starting_ref": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/starting_ref"
+    },
+    "authority_base_ref": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/authority_base_ref"
+    },
+    "objective": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/objective"
+    },
+    "non_goals": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/non_goals"
+    },
+    "authority_snapshot_digest": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/authority_snapshot_digest"
+    },
+    "dependencies": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/dependencies"
+    },
+    "constraints": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/constraints"
+    },
+    "prohibited_actions": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/prohibited_actions"
+    },
+    "allowed_tools": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/allowed_tools"
+    },
+    "allowed_external_effects": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/allowed_external_effects"
+    },
+    "acceptance_checks": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/acceptance_checks"
+    },
+    "owned_paths": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/owned_paths"
+    },
+    "prohibited_paths": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/prohibited_paths"
+    },
+    "evidence_requirements": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/evidence_requirements"
+    },
+    "approval_requirements": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/approval_requirements"
+    },
+    "limits": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/limits"
+    },
+    "correlation": {
+      "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/correlation"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "digest",
+        "file_count",
+        "entries"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/starting_ref"
+        },
+        "digest": {
+          "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/authority_snapshot_digest"
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "https://github.com/edwardjones3976/director-orchestrator/docs/schemas/model-work-packet-v1.schema.json#/properties/authority_snapshot/items"
+          }
+        }
+      }
+    },
+    "contents": {
+      "description": "Small read-only tasks only: the text of every path the request names, read from the git blob at the packet's commit, bounded and screened.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "blob_sha",
+          "text"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blob_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      }
+    },
+    "work_packet_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
