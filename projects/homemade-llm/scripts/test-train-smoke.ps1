@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | BEGIN]]
@@ -89,6 +90,12 @@ try {
         $o = Run $plain
         if ($LASTEXITCODE -eq 0 -or $o -notmatch 'another GPU job') { $fail += "GPU lock held elsewhere: not refused (exit $LASTEXITCODE)" }
     } finally { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
+    # A poison marker left by an unconfirmed container blocks training (it is a file, not a re-entrant mutex).
+    New-Item -ItemType Directory (Join-Path $plain 'state') -Force | Out-Null
+    Set-Content (Join-Path $plain 'state\gpu-poisoned.txt') 'container hl-smoke-test not confirmed stopped'
+    $o = Run $plain
+    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'GPU is poisoned') { $fail += "poison marker: training not refused (exit $LASTEXITCODE)" }
+    Remove-Item (Join-Path $plain 'state\gpu-poisoned.txt')
 } finally {
     foreach ($l in $links) { if ($l) { $l.Delete() } }   # remove the links themselves before the recursive delete
     Get-ChildItem -LiteralPath $tmpRoot -Recurse -Force -File | ForEach-Object { $_.Attributes = 'Normal' }   # HF marks some files read-only
@@ -104,13 +111,15 @@ foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
 
 # Grok post-merge findings on #275 (structural: an unkillable process or unremovable container cannot be simulated here).
 $ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
-if ($ib -notmatch '(?s)finally \{.*\$gone = \$p\.HasExited -or \$p\.WaitForExit\(5000\).*if \(-not \$gone\) \{ throw') { $fail += 'invoke-bounded: an unkillable command must throw, not return a timeout' }
+if ($ib -notmatch '(?s)finally \{.*Get-DescendantProcess \$p\.Id.*Get-SurvivingProcess \$tree.*if \(-not \$gone -or \$survivors\) \{ throw') { $fail += 'invoke-bounded: the whole tree must be verified gone, or it throws' }
 $ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
-if ($ts -notmatch 'if \(\$containerGone -ne \$false\) \{ \$gpuLock\.ReleaseMutex\(\)') { $fail += 'train-smoke: the GPU lock must be kept unless the container is confirmed gone' }
-# #279 review: the normal path confirms absence too, and the flag is set only after Start-Job launched.
-if (-not $ts.Contains('$containerGone = $true')) { } else { $fail += 'train-smoke: containerGone must never be set true without a daemon check' }
+if ($ts -notmatch '(?s)if \(\$containerGone -eq \$false\) \{.*gpu-poisoned\.txt.*Set-Content') { $fail += 'train-smoke: an unconfirmed container must write the poison marker' }
+foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
+# The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
+# and the unsafe flag is set before the launch attempt (a cancel mid-Start-Job must not release the GPU).
+if (([regex]::Matches($ts, [regex]::Escape('$containerGone = $true'))).Count -ne 1 -or -not $ts.Contains('catch { $containerGone = $true; throw }')) { $fail += 'train-smoke: containerGone=true only in the Start-Job failure catch' }
 $iJob = $ts.IndexOf('$job = Start-Job'); $iFlag = $ts.IndexOf('$containerGone = $false')
-if (-not ($iJob -ge 0 -and $iFlag -gt $iJob)) { $fail += 'train-smoke: containerGone=false must come after Start-Job' }
+if (-not ($iFlag -ge 0 -and $iJob -gt $iFlag)) { $fail += 'train-smoke: containerGone=false must come before Start-Job' }
 if (-not $ts.Contains('$containerGone = $state -eq ''stopped and removed''')) { $fail += 'train-smoke: containerGone must come from the Stop-Smoke result' }
 
 if ($fail) { $fail | ForEach-Object { Write-Output "FAIL $_" }; exit 1 }
@@ -119,8 +128,9 @@ Write-Output 'ok  HotRoot off drive C refused'
 Write-Output 'ok  junction as HotRoot, as a mounted subfolder, and nested inside hf, refused'
 Write-Output 'ok  base or revision override without a merge pin, and a non-commit revision, refused'
 Write-Output 'ok  both scripts release the GPU mutex in a finally block'
-Write-Output 'ok  unkillable bounded command throws; GPU lock kept unless the container is confirmed gone'
+Write-Output 'ok  bounded command tree verified gone or it throws; poison marker unless the container is confirmed gone'
 Write-Output 'ok  GPU lock held by another process refused'
+Write-Output 'ok  poison marker from an unconfirmed container refuses training'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
@@ -128,3 +138,4 @@ exit 0
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:14 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | BEGIN]]
@@ -57,6 +58,11 @@ if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is r
 # Everything below holds the GPU lock; finally releases it on every exit (error, Ctrl+C, exit), which matters
 # when this script runs inside a longer-lived PowerShell session rather than its own process.
 try {
+    # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
+    # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
+    # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
+    $poison = Join-Path $HotRoot 'state\gpu-poisoned.txt'
+    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
 
     . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
     # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
@@ -184,3 +190,4 @@ try {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]

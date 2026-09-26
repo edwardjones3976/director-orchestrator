@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | BEGIN]]
@@ -5,6 +6,24 @@
 # A stalled Docker or LM Studio daemon must not hang a run that holds the GPU lock, and a timed-out command
 # must not keep running after we give up on it, so the whole process tree is killed on timeout.
 # Returns the command's stdout lines, then '__EXIT__<code>' (or '__EXIT__timeout') as the last element.
+# All descendants of a process (one CIM snapshot, walked breadth-first), with their creation times.
+function Get-DescendantProcess([int]$Root) {
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
+    $found = [System.Collections.Generic.List[object]]::new()
+    $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($Root)
+    while ($queue.Count) {
+        $parent = $queue.Dequeue()
+        foreach ($c in $all) { if ($c.ParentProcessId -eq $parent -and $c.ProcessId -ne $parent -and $c.ProcessId -ne $Root) { $found.Add($c); $queue.Enqueue([int]$c.ProcessId) } }
+    }
+    $found
+}
+# The snapshot members still running (same PID and same start time, so a reused PID is not mistaken for one).
+function Get-SurvivingProcess($Snapshot) {
+    foreach ($s in @($Snapshot)) {
+        $q = Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue
+        if ($q -and [math]::Abs(($q.StartTime - $s.CreationDate).TotalSeconds) -lt 2) { $s }
+    }
+}
 function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
     $path = (Get-Command $Exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $psi = [System.Diagnostics.ProcessStartInfo]::new($path)
@@ -30,13 +49,20 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         # Timeout, Ctrl+C or a stopped pipeline: never leave the command running after we stop waiting for it.
         # If it cannot be confirmed dead, fail loudly: a silent 'timeout' would let callers release the GPU lock
         # while the command (possibly a GPU container operation) is still running.
-        if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
+        # HasExited covers only the root, so snapshot the whole tree before killing and verify every member is gone:
+        # a root that dies first, or a partial Kill, must not leave a descendant running unnoticed.
+        $tree = @()
+        if (-not $p.HasExited) { $tree = @(Get-DescendantProcess $p.Id); try { $p.Kill($true) } catch { } }
         $gone = $p.HasExited -or $p.WaitForExit(5000)
         $id = $p.Id
         $p.Dispose()
-        if (-not $gone) { throw "Invoke-Bounded: $Exe (pid $id) could not be stopped and may still be running" }
+        $survivors = @(Get-SurvivingProcess $tree)
+        foreach ($s in $survivors) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
+        if ($survivors) { Start-Sleep -Seconds 2; $survivors = @(Get-SurvivingProcess $survivors) }
+        if (-not $gone -or $survivors) { throw "Invoke-Bounded: $Exe (pid $id) or a child process could not be stopped and may still be running" }
     }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]

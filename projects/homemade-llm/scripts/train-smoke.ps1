@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
@@ -61,6 +62,11 @@ if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is r
 # Everything below holds the GPU lock; finally releases it on every exit (error, Ctrl+C, exit), which matters
 # when this script runs inside a longer-lived PowerShell session rather than its own process.
 try {
+    # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
+    # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
+    # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
+    $poison = Join-Path $HotRoot 'state\gpu-poisoned.txt'
+    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
 
     # Bounded, because the GPU lock is already held: a stalled docker or lms probe inside preflight must not keep it.
     $pf = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
@@ -110,10 +116,11 @@ try {
         Get-SmokeState
       } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
-    $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs)
-    # Set only once a launch can have happened (a Start-Job failure above never started a container). From here
-    # until the container is confirmed gone, the GPU may be in use: the lock is kept unless it is.
+    # Unsafe from before the launch attempt: a cancel can land after Start-Job created its process but before it
+    # returns. Only a synchronous Start-Job failure proves nothing launched, and resets it.
     $containerGone = $false
+    try { $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs) }
+    catch { $containerGone = $true; throw }
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
@@ -138,13 +145,17 @@ try {
     $exitLine = $out | Where-Object { $_ -match '^__EXIT__' } | Select-Object -Last 1
     exit $(if ($exitLine) { [int]($exitLine -replace '^__EXIT__', '') } else { 1 })
 } finally {
-    if ($containerGone -ne $false) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
-    else {
-        # Keep the lock (and its handle: disposing the last handle would delete the mutex) while a container may
-        # still hold the GPU. It is released when this PowerShell process exits.
-        Write-Warning "GPU lock kept: container $name was not confirmed stopped; it is released when this PowerShell process exits"
+    if ($containerGone -eq $false) {
+        # A container may still hold the GPU. Record that in a persistent, non-re-entrant marker that both GPU
+        # scripts refuse on, instead of keeping the (re-entrant) mutex.
+        $poisonFile = Join-Path $HotRoot 'state\gpu-poisoned.txt'
+        New-Item -ItemType Directory -Force (Split-Path $poisonFile) | Out-Null
+        Set-Content -LiteralPath $poisonFile -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))"
+        Write-Warning "GPU poisoned: container $name was not confirmed stopped; wrote $poisonFile"
     }
+    $gpuLock.ReleaseMutex(); $gpuLock.Dispose()
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
