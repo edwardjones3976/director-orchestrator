@@ -1,8 +1,9 @@
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — Plan v1.3
 
-**Owner:** Ed · **Project Director:** Claude (decision-log O-001) · **State:** framing · **Base:** `1892b84`
+**Owner:** Ed · **Project Director:** Claude (decision-log O-001) · **State:** building (M0 gate report filed 2026-09-25) · **Base:** `1892b84` at PR-0; `f0a7752e` at the M0 gate
 
 Grades: **[verified]** read or measured by this project · **[relayed]** the owner's words or a document · **[research]** web research on 2026-09-24 with a source.
 
@@ -194,3 +195,4 @@ Base licenses:
 - Any merge
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
+<!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
