@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
@@ -120,8 +121,12 @@ among other roles."
 - **How the share is measured** (provisional metric, accepted by the Director on
   2026-09-26): lines added plus lines deleted in the final base-to-head diff.
   A line counts for an identity only when an authenticated record ties it to the
-  identity that produced it: a provider-dispatch receipt, an authenticated
-  provider run record, or immutable Git or GitHub provenance of a human commit.
+  identity that produced it: a provider-dispatch receipt or an authenticated
+  provider run record. A human's lines count only when that human, from their
+  authenticated GitHub account, states in the pull-request record which commits
+  or files they wrote themselves. Commit author fields are self-asserted, and
+  push or merge provenance shows who moved bytes, not who produced them, so
+  neither counts on its own.
   Contribution tags are display evidence only and never decide the share,
   because the tag checker validates their shape, not their identity. Relaying,
   committing, or coordinating another identity's bytes counts nothing. Tag-only,
@@ -160,3 +165,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
