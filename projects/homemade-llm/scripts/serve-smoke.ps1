@@ -52,6 +52,7 @@ if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$
 
 # One GPU job at a time, shared with train-smoke.ps1: overlapping serve runs could probe each other's GGUF
 # through the one 'smoke' identifier, and a training run needs the whole GPU. Released when this process exits.
+. (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill   # Invoke-Bounded and the machine-wide $GpuMarker
 $lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
@@ -61,10 +62,9 @@ try {
     # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
     # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
     # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
-    $poison = Join-Path $HotRoot 'state\gpu-poisoned.txt'
+    $poison = $GpuMarker
     if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
 
-    . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
     # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
     function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
         $r = @(Invoke-Bounded 'lms' $A $Seconds)
@@ -185,7 +185,10 @@ try {
     Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
     exit ([int](-not $pass))
 } finally {
-    $lock.ReleaseMutex(); $lock.Dispose()
+    # Invoke-Bounded writes the machine-wide marker when it cannot confirm a command stopped; only if that write
+    # also failed is the lock kept (held until this PowerShell process exits).
+    if ($BoundedGuardMissing) { Write-Warning "GPU NOT released: a bounded command could not be confirmed stopped and $GpuMarker could not be written; the lock is held until this PowerShell process exits" }
+    else { $lock.ReleaseMutex(); $lock.Dispose() }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

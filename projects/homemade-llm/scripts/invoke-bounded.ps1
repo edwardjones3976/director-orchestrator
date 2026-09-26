@@ -6,9 +6,13 @@
 # A stalled Docker or LM Studio daemon must not hang a run that holds the GPU lock, and a timed-out command
 # must not keep running after we give up on it, so the whole process tree is killed on timeout.
 # Returns the command's stdout lines, then '__EXIT__<code>' (or '__EXIT__timeout') as the last element.
+# One machine-wide GPU marker for the one machine-wide Global\homemade-llm-gpu mutex: a fixed path under ProgramData,
+# never derived from a caller's -HotRoot, so no choice of root can miss it.
+$GpuMarker = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'homemade-llm\gpu-poisoned.txt'
+
 # All descendants of a process (one CIM snapshot, walked breadth-first), with their creation times.
 function Get-DescendantProcess([int]$Root) {
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction Stop)
     $found = [System.Collections.Generic.List[object]]::new()
     $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($Root)
     while ($queue.Count) {
@@ -21,7 +25,8 @@ function Get-DescendantProcess([int]$Root) {
 # by an unrelated process is never mistaken for a survivor (and never force-stopped).
 function Get-SurvivingProcess($Snapshot) {
     foreach ($s in @($Snapshot)) {
-        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -ErrorAction SilentlyContinue
+        # -ErrorAction Stop: a failed query must not look like "no survivors" (an absent PID returns nothing, not an error).
+        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -ErrorAction Stop
         if ($q -and $q.CreationDate -eq $s.CreationDate) { $s }
     }
 }
@@ -56,18 +61,33 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         # a root that dies first, or a partial Kill, must not leave a descendant running unnoticed.
         # On any path but normal completion (timeout, Ctrl+C, a stopped pipeline), snapshot the tree even if the root
         # already exited: Windows keeps a dead parent's PID as its children's ParentProcessId, so they are still found.
-        $tree = @()
+        # A CIM failure must never skip the kill: discovery and the survivor check can fail, and then the result is
+        # "not confirmed", which throws (fail closed) after the kill has still been attempted.
+        $tree = @(); $unverified = $false
         if (-not $completed) {
-            $tree = @(Get-DescendantProcess $p.Id)
+            try { $tree = @(Get-DescendantProcess $p.Id) } catch { $unverified = $true }
             if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
         }
         $gone = $p.HasExited -or $p.WaitForExit(5000)
         $id = $p.Id
         $p.Dispose()
-        $survivors = @(Get-SurvivingProcess $tree)
-        foreach ($s in $survivors) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
-        if ($survivors) { Start-Sleep -Seconds 2; $survivors = @(Get-SurvivingProcess $survivors) }
-        if (-not $gone -or $survivors) { throw "Invoke-Bounded: $Exe (pid $id) or a child process could not be stopped and may still be running" }
+        $survivors = @()
+        try {
+            $survivors = @(Get-SurvivingProcess $tree)
+            foreach ($s in $survivors) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
+            if ($survivors) { Start-Sleep -Seconds 2; $survivors = @(Get-SurvivingProcess $survivors) }
+        } catch { $unverified = $true }
+        if (-not $gone -or $survivors -or $unverified) {
+            $msg = "Invoke-Bounded: $Exe (pid $id) or a child process could not be confirmed stopped and may still be running"
+            # Persist the machine-wide GPU guard before any caller can unwind and release the mutex: every caller is
+            # covered, not just the container path. If even that fails, flag it so callers keep the lock instead.
+            $script:BoundedUnconfirmed = $true
+            try {
+                New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+                Add-Content -LiteralPath $GpuMarker -Value "$msg ($((Get-Date).ToUniversalTime().ToString('o')))"
+            } catch { $script:BoundedGuardMissing = $true }
+            throw $msg
+        }
     }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:00 UTC | END]]

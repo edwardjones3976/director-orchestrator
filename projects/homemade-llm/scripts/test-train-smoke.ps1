@@ -36,6 +36,22 @@ try {
     $rs.Stop(); $rs.Dispose()
     Start-Sleep 1
     if ((Get-ShimPing).Count) { $fail += "cancelled wait: child process still running after PowerShell.Stop()" }
+    # A CIM failure during tree discovery must not skip the kill, and must fail closed (throw), never look clean.
+    $markerPreexisted = Test-Path -LiteralPath $GpuMarker
+    function Get-DescendantProcess([int]$Root) { throw 'simulated CIM failure' }
+    $threw = $false
+    try { $null = Invoke-Bounded 'docker' @('stop', 'z') 3 } catch { $threw = $true }
+    Start-Sleep 1
+    if (-not $threw) { $fail += 'CIM failure: Invoke-Bounded returned instead of failing closed' }
+    if ((Get-ShimPing).Count) { $fail += 'CIM failure: the command was left running (kill skipped)' }
+    # ...and it persists the machine-wide guard itself, so a caller unwinding through finally cannot release the lock
+    # unguarded. (The test runs only when no real marker exists, and removes only the one it provoked.)
+    if ($markerPreexisted) { $fail += "CIM failure: a real marker already exists at $GpuMarker; guard persistence not tested" }
+    elseif (-not ((Test-Path -LiteralPath $GpuMarker) -and ((Get-Content -LiteralPath $GpuMarker -Raw) -match 'could not be confirmed stopped'))) { $fail += 'CIM failure: no machine-wide marker was written before the throw' }
+    elseif (-not $BoundedUnconfirmed) { $fail += 'CIM failure: BoundedUnconfirmed was not set' }
+    if (-not $markerPreexisted -and (Test-Path -LiteralPath $GpuMarker)) { Remove-Item -LiteralPath $GpuMarker -Force }
+    $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # restore the real functions
     # Output shape: one line, several lines, and none must all end in a separate exit marker.
     $one = @(Invoke-Bounded 'cmd' @('/c', 'echo one-line') 10)
     if ($one.Count -ne 2 -or $one[0] -ne 'one-line' -or $one[1] -ne '__EXIT__0') { $fail += "one-line output: got $($one | ConvertTo-Json -Compress)" }
@@ -90,12 +106,17 @@ try {
         $o = Run $plain
         if ($LASTEXITCODE -eq 0 -or $o -notmatch 'another GPU job') { $fail += "GPU lock held elsewhere: not refused (exit $LASTEXITCODE)" }
     } finally { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
-    # A poison marker left by an unconfirmed container blocks training (it is a file, not a re-entrant mutex).
-    New-Item -ItemType Directory (Join-Path $plain 'state') -Force | Out-Null
-    Set-Content (Join-Path $plain 'state\gpu-poisoned.txt') 'container hl-smoke-test not confirmed stopped'
-    $o = Run $plain
-    if ($LASTEXITCODE -eq 0 -or $o -notmatch 'GPU is poisoned') { $fail += "poison marker: training not refused (exit $LASTEXITCODE)" }
-    Remove-Item (Join-Path $plain 'state\gpu-poisoned.txt')
+    # The machine-wide marker (not a per-root file, not a re-entrant mutex) blocks training from any -HotRoot.
+    # It uses the real path, so the test skips if a real marker exists and always removes only its own.
+    if (Test-Path -LiteralPath $GpuMarker) { $fail += "poison marker: a real marker exists at $GpuMarker; check docker ps -a before deleting it" }
+    else {
+        New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+        Set-Content -LiteralPath $GpuMarker 'container hl-smoke-test not confirmed stopped (test)'
+        try {
+            $o = Run $plain
+            if ($LASTEXITCODE -eq 0 -or $o -notmatch 'GPU is poisoned') { $fail += "poison marker: training not refused (exit $LASTEXITCODE)" }
+        } finally { Remove-Item -LiteralPath $GpuMarker -Force }
+    }
 } finally {
     foreach ($l in $links) { if ($l) { $l.Delete() } }   # remove the links themselves before the recursive delete
     Get-ChildItem -LiteralPath $tmpRoot -Recurse -Force -File | ForEach-Object { $_.Attributes = 'Normal' }   # HF marks some files read-only
@@ -111,12 +132,19 @@ foreach ($f in 'train-smoke.ps1', 'serve-smoke.ps1') {
 
 # Grok post-merge findings on #275 (structural: an unkillable process or unremovable container cannot be simulated here).
 $ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
-if ($ib -notmatch '(?s)finally \{.*Get-DescendantProcess \$p\.Id.*Get-SurvivingProcess \$tree.*if \(-not \$gone -or \$survivors\) \{ throw') { $fail += 'invoke-bounded: the whole tree must be verified gone, or it throws' }
+if ($ib -notmatch '(?s)finally \{.*Get-DescendantProcess \$p\.Id.*Get-SurvivingProcess \$tree.*if \(-not \$gone -or \$survivors -or \$unverified\) \{.*Add-Content -LiteralPath \$GpuMarker.*throw \$msg') { $fail += 'invoke-bounded: the whole tree must be verified gone, or it throws' }
 $ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
-if ($ts -notmatch '(?s)if \(\$containerGone -eq \$false\) \{.*gpu-poisoned\.txt.*Set-Content') { $fail += 'train-smoke: an unconfirmed container must write the poison marker' }
-if ($ib -notmatch '(?s)if \(-not \$completed\) \{\s*\$tree = @\(Get-DescendantProcess \$p\.Id\)') { $fail += 'invoke-bounded: the tree snapshot must not depend on the root still running' }
+foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
+    $gs = Get-Content -Raw (Join-Path $PSScriptRoot $g)
+    if (-not $gs.Contains('if ($BoundedGuardMissing)')) { $fail += "$g`: must keep the lock when Invoke-Bounded could not write its guard" }
+    if ($gs -match 'state.gpu-poisoned' -or -not $gs.Contains('$poison = $GpuMarker')) { $fail += "$g`: must use the one machine-wide marker, not a per-HotRoot file" }
+}
+$iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
+if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
+if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# The daemon confirmed the container gone.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
+if ($ib -notmatch '(?s)if \(-not \$completed\) \{\s*try \{ \$tree = @\(Get-DescendantProcess \$p\.Id\) \} catch \{ \$unverified = \$true \}') { $fail += 'invoke-bounded: the tree snapshot must not depend on the root still running' }
 if ($ib -notmatch '\$q\.CreationDate -eq \$s\.CreationDate') { $fail += 'invoke-bounded: survivors must match the exact creation time' }
-if ($ts -notmatch '(?s)catch \{.*\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a failed poison write must keep the lock' }
+if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
 # The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
 # and the unsafe flag is set before the launch attempt (a cancel mid-Start-Job must not release the GPU).
@@ -133,7 +161,9 @@ Write-Output 'ok  base or revision override without a merge pin, and a non-commi
 Write-Output 'ok  both scripts release the GPU mutex in a finally block'
 Write-Output 'ok  bounded command tree verified gone or it throws; poison marker unless the container is confirmed gone'
 Write-Output 'ok  GPU lock held by another process refused'
-Write-Output 'ok  poison marker from an unconfirmed container refuses training'
+Write-Output 'ok  machine-wide poison marker refuses training (from any -HotRoot)'
+Write-Output 'ok  in-flight marker before launch; cleared only when the container is confirmed gone'
+Write-Output 'ok  CIM failure during tree discovery still kills the command, fails closed, and persists the machine-wide marker'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"

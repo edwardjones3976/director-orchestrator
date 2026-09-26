@@ -65,7 +65,7 @@ try {
     # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
     # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
     # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
-    $poison = Join-Path $HotRoot 'state\gpu-poisoned.txt'
+    $poison = $GpuMarker
     if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
 
     # Bounded, because the GPU lock is already held: a stalled docker or lms probe inside preflight must not keep it.
@@ -116,6 +116,13 @@ try {
         Get-SmokeState
       } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
+    # In-flight marker, written before the launch attempt. If this host dies after Docker starts (a crash or a forced
+    # kill), finally never runs and Windows abandons the mutex, but this file still blocks every later GPU run until
+    # the container is checked. It is removed only once the daemon confirms the container is gone. If it cannot be
+    # written, nothing is launched.
+    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+    Set-Content -LiteralPath $GpuMarker -Value "container $name launch in flight since $((Get-Date).ToUniversalTime().ToString('o'))"
+    $markerWritten = $true
     # Unsafe from before the launch attempt: a cancel can land after Start-Job created its process but before it
     # returns. Only a synchronous Start-Job failure proves nothing launched, and resets it.
     $containerGone = $false
@@ -145,21 +152,24 @@ try {
     $exitLine = $out | Where-Object { $_ -match '^__EXIT__' } | Select-Object -Last 1
     exit $(if ($exitLine) { [int]($exitLine -replace '^__EXIT__', '') } else { 1 })
 } finally {
-    if ($containerGone -eq $false) {
-        # A container may still hold the GPU. Record that in a persistent, non-re-entrant marker that both GPU
-        # scripts refuse on, instead of keeping the (re-entrant) mutex.
-        $poisonFile = Join-Path $HotRoot 'state\gpu-poisoned.txt'
-        try {
-            New-Item -ItemType Directory -Force (Split-Path $poisonFile) | Out-Null
-            Set-Content -LiteralPath $poisonFile -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))"
-            Write-Warning "GPU poisoned: container $name was not confirmed stopped; wrote $poisonFile"
-        } catch {
-            # No marker could be written: the mutex is the only guard left, so keep it (and its handle) until this
-            # process exits, and say so loudly.
-            $keepLock = $true
-            Write-Warning "GPU NOT released: container $name unconfirmed and $poisonFile could not be written ($($_.Exception.Message)); the lock is held until this PowerShell process exits"
+    if ($markerWritten) {
+        if ($containerGone -eq $false) {
+            # A container may still hold the GPU: the in-flight marker stays, re-labelled; both GPU scripts refuse on it,
+            # instead of relying on the (re-entrant) mutex.
+            try { Set-Content -LiteralPath $GpuMarker -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))" } catch { }
+            if (Test-Path -LiteralPath $GpuMarker) { Write-Warning "GPU poisoned: container $name was not confirmed stopped; see $GpuMarker" }
+            else {
+                # The marker is somehow gone: the mutex is the only guard left, so keep it (and its handle) until exit.
+                $keepLock = $true
+                Write-Warning "GPU NOT released: container $name unconfirmed and $GpuMarker is missing; the lock is held until this PowerShell process exits"
+            }
+        } elseif (-not $BoundedUnconfirmed) {
+            # The daemon confirmed the container gone (or Start-Job failed before any launch), and no bounded command
+            # was left unconfirmed (Invoke-Bounded appends to the same marker): clear the in-flight marker.
+            try { Remove-Item -LiteralPath $GpuMarker -Force } catch { Write-Warning "container $name is gone but $GpuMarker could not be removed; later GPU runs refuse until it is deleted" }
         }
     }
+    if ($BoundedGuardMissing) { $keepLock = $true; Write-Warning "GPU NOT released: a bounded command could not be confirmed stopped and $GpuMarker could not be written; the lock is held until this PowerShell process exits" }
     if (-not $keepLock) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
