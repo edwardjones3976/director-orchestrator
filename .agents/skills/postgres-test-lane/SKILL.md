@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]] -->
 ---
 name: postgres-test-lane
 description: "Postgres tests: use scripts/windows-postgres-test-lane.ps1, never docker run postgres. On Windows with Docker Desktop it starts, exports, tests against, and removes the disposable postgres:17-alpine lane on 127.0.0.1:55433 and sets LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN for the Postgres-backed unit tests. Without Docker, report the gap instead of improvising a database."
@@ -18,7 +19,6 @@ argument-hint: "[Start | Stop | Status | Dsn | Test [-TestNames tests.module]]"
 
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-10 | 17:11 UTC | BEGIN]] -->
 
-<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:37 UTC | BEGIN]] -->
 
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 19:47 UTC | BEGIN]] -->
 
@@ -106,3 +106,9 @@ Do not improvise a database: no `docker run`, no PostgreSQL package install, no 
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-22 | 18:57 UTC | END]] -->
+
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:15 UTC | BEGIN]] -->
+## Concurrency cap (issue #299)
+
+windows-postgres-test-lane.ps1 -Action Start and -Action Test default to a concurrency cap of 2 for local callers and 4 when `$env:GITHUB_ACTIONS -eq 'true'`; `DIRECTOR_TEST_LANE_MAX_CONCURRENCY`, when set to a positive integer, overrides either default for that caller. Every caller compares total occupied slots across CI and local lanes with its own cap, using the shared admission lock and Docker inventory: a local caller waits when two or more slots are occupied, including CI slots, while a CI caller waits when four or more are occupied. This gives CI additional admission capacity without preempting existing lanes or guaranteeing queue order. Concurrent lanes require distinct container names and host ports. Admission waits up to 45 minutes by default, bounded by `-SlotWaitSeconds`, with progress every 15 seconds; ownership checks, fail-closed cleanup, and stale-slot reclamation remain unchanged. See docs/postgres-test-lane-cap.md.
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:15 UTC | END]] -->
