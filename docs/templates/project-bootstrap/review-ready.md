@@ -14,7 +14,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Assignment:** <producer assignment ID>
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
-- **PR sole author and shares:** <the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer; until the runtime alignment merges, every material author above stays ineligible to review>
+- **PR sole author and shares:** <the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer; until the runtime alignment merges, every contributor (the sole author and every co-author) stays ineligible to review>
 - **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>

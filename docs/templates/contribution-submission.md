@@ -11,7 +11,7 @@
 
 - Producer: <logical producer>
 - Material contributors: <names or none>
-- Sole author and shares: <the one identity at 52 % or more of added plus deleted lines, or "none (review stopped)"; each identity's share with its receipt references (docs/contribution-attribution-policy.md#sole-author-rule). Tags are display evidence only>
+- Sole author and shares: <the one identity at 52 % or more of added plus deleted lines; for a zero-count submission, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share with its receipt references (docs/contribution-attribution-policy.md#sole-author-rule). Tags are display evidence only>
 - Surface: <files, artifact, response, or exact candidate>
 - Verification: <exact checks and results>
 - Authority change: <none or exact owner-approved change>
