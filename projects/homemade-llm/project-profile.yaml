@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | BEGIN]]
 # Project profile (director-project-profile/v1) for homemade-llm.
@@ -11,10 +12,10 @@ project:
   name: "Homemade LLM"
   rollout_packet: "rollout-packet.md"
   proposition: "Fine-tune and serve two local models on the owner's PC (RTX 5070 12 GB): DIRECTOR, which writes model-work-packet-v1 packets for this orchestrator, and COMPANION, a friend/conversational persona with long-term memory."
-  state: "framing" # exploring | framing | building | validating | operating | paused | closed
+  state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-24T07:55:00Z"
+  updated_at: "2026-09-26T00:05:00Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -48,11 +49,11 @@ outcomes:
 surfaces:
   deployment:
     intent: "analysis_only" # analysis_only | planned | live
-    concurrently_active: "false"
-    profile: "not_created"
-    compose_namespace: "not_created"
-    state_namespace: "not_created" # planned: C:\llm (see rollout-packet.md)
-    status: "provisional"
+    concurrently_active: "true" # other Director stacks are live on this host (see rollout-packet.md)
+    profile: "C:/llm/secrets/open-webui.env (outside the repository; template compose/.env.homemade-llm.example)"
+    compose_namespace: "homemade-llm (Open WebUI + SearXNG only; no orchestrator instance)"
+    state_namespace: "C:/llm on the host plus the Docker volume homemade-llm_open-webui-data"
+    status: "confirmed"
   slack:
     workspace_id: "pending"
     owner_user_allowlist_reference: "pending"
@@ -205,12 +206,15 @@ controls:
 review_chain:
   producer: "claude"
   material_authors: ["claude"]
-  eligible_reviewer: "grok (fallback: openai codex)"
+  eligible_reviewer: "xai direct API (grok family); fallbacks: openai codex, cursor plan-mode for docs"
   candidate:
     repository: "edwardjones3976/director-orchestrator"
-    base_sha: "1892b841a78580b2664236b16dcc61094bdce9c8"
-    head_sha: "none"
+    # The active candidate is the PR that changes this file; a file cannot carry its own head SHA,
+    # so the exact head and the reviewer's verdict are bound on that PR's review-of-record comment.
+    base_sha: "f0a7752e7aa780389fb78d4e45da1125254d650e"
+    head_sha: "bound on PR #277 review-of-record comment"
     artifact_digest: "none"
+    last_merged_candidate: "PR #275 at ed317a813f85d2405738461f9f40924ff94ea28b, xAI ACCEPT, merged 2026-09-25T23:31:37Z"
   required_evidence:
     - "different-provider exact-candidate review"
     - "current security evidence when configured"
@@ -223,12 +227,12 @@ assumptions:
     - "RTX 5070 12 GB; Unsloth supports RTX 50 series (Unsloth docs)"
     - "LM Studio serves merged GGUFs only; /v1/chat/completions honours response_format json_schema"
     - "Only 16 real dispatched work packets exist locally (held out for eval)"
+    - "LM Studio on 127.0.0.1:1234 is reachable from containers through host.docker.internal (HTTP 200, 2026-09-25)"
+    - "Paid spend is metered from the provider-dispatch receipts (run scripts/spend_meter.py for the live figure); homemade-llm M0 was USD 0.55 at 2026-09-26 00:01 UTC"
   provisional:
     - "An 8-14B base can reach >60 % field-level acceptance after QLoRA on 12 GB"
     - "Open WebUI native memory is usable on an 8-14B model (docs cite ~27B as the floor)"
-  unknown:
-    - "LM Studio reachability from a container when bound to 127.0.0.1"
-    - "Current paid-API spend (no history recorded; metered from M0)"
+  unknown: []
   not_applicable: []
 
 fallbacks:
@@ -244,8 +248,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "Owner merges PR-0; then M0.1 scripts/preflight.ps1"
-  responsible_party: "owner"
-  expected_evidence: "main contains projects/homemade-llm/"
+  action: "Owner merges #277 (this report) when CI is green at its reviewed head; #276 after it is split into single-author candidates; then M1 held-out sets"
+  responsible_party: "owner, then Director"
+  expected_evidence: "main contains project-state-report.md, scan-dataset.ps1 and research/base-models-20260925.md; tailscale serve status shows the tailnet URL"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
+# [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
