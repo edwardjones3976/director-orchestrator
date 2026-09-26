@@ -490,11 +490,15 @@ class HostProviderBridgeTests(unittest.TestCase):
 
         addresses = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.0.2.1", 443))] * 4
         started = time_module.monotonic()
+        deadline = started + 0.4
         with self.assertRaises((TimeoutError, OSError)):
-            connect_until_deadline(("bridge", 443), 30, deadline=started + 0.4,
+            connect_until_deadline(("bridge", 443), 30, deadline=deadline,
                                    resolve=lambda *a, **k: addresses, socket_factory=Stalling)
         self.assertLess(time_module.monotonic() - started, 1.0)
-        self.assertLessEqual(timeouts[0], 0.4)
+        # started + 0.4 - started can round a ULP above 0.4, and a coarse
+        # clock (Windows) often returns started again: bound by the budget
+        # as the code computes it, not by the literal.
+        self.assertLessEqual(timeouts[0], deadline - started)
         self.assertLess(len(timeouts), 4)
 
     def test_every_bounded_read_spends_one_absolute_deadline(self) -> None:
