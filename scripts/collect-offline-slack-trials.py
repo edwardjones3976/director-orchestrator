@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -1049,7 +1050,10 @@ def evaluate_rubric(row, rubric, rubric_digest):
     checks = {
         "predeclared": declared_before and isinstance(row.get("input_rubric_sha256"), str)
             and hmac.compare_digest(row["input_rubric_sha256"].encode(), str(rubric_digest).encode()),
-        "task_bound": row.get("task_record_bound") is True,
+        # The task came from its trial's root post: an owner reply inside the thread that triggered a task is not a
+        # trial's source event (review 4110671087).
+        "task_bound": row.get("task_record_bound") is True and row.get("input_message_ts") is not None
+            and row.get("input_message_ts") == row.get("thread_ts"),
         "one_terminal": type(row.get("terminal_reply_count")) is int and row["terminal_reply_count"] == 1,
         "task_done": row.get("task_status") == "DONE",
         "offline_outcomes": row.get("all_recorded_outcomes_are_offline_doubles") is True,
@@ -1231,3 +1235,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

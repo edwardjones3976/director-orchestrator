@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
@@ -843,11 +844,25 @@ def ledger_fixture(path, first_bounds=None):
     return ledger
 
 
-def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None):
-    """Runs come newest first; every run is ci.yml unless ``paths`` names another workflow."""
+TRUSTED_CI = b"name: CI\njobs: {}\n"
+
+
+def workflow_contents(content):
+    """The GitHub contents API's answer for one file: base64 content under its git blob id."""
+    import base64
+    return {"type": "file", "encoding": "base64", "content": base64.b64encode(content).decode(),
+            "sha": hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()}
+
+
+def gh_runs(jobs_by_run, paths=None, compare=None, size=100, total=None, workflows=None):
+    """Runs come newest first; every run is ci.yml unless ``paths`` names another workflow. ``workflows`` maps a ref
+    to its ci.yml bytes (default: the candidate's ci.yml is main's)."""
     def query(args, timeout=15):
         if args[0] != "gh":
             raise ValueError("offline")
+        if "/contents/" in args[2]:
+            ref = args[2].split("?ref=")[1]
+            return workflow_contents((workflows or {}).get(ref, TRUSTED_CI))
         if "/compare/" in args[2]:
             return {"status": (compare or {}).get(args[2].split("/compare/")[1], "ahead")}
         if "/jobs?" in args[-1]:
@@ -1438,6 +1453,8 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
+            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+                return workflow_contents(TRUSTED_CI)
             if "/jobs?" in args[-1]:
                 return {"total_count": len(jobs), "jobs": jobs}
             self.assertIn("head_sha=" + SHA, args[-1])
@@ -1456,6 +1473,8 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
+            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+                return workflow_contents(TRUSTED_CI)
             if "/jobs?" in args[-1]:
                 return {"total_count": len(skipped), "jobs": skipped}
             return {"total_count": 1, "workflow_runs": [{"id": 123, "path": sc.CI_WORKFLOW}]}
@@ -1466,6 +1485,8 @@ class CompletionScorecardTests(unittest.TestCase):
         def external_query(args):
             if args[0] == "docker":
                 raise ValueError("offline")
+            if "/contents/" in args[-1]:  # ci.yml at the head and on main: unchanged by the candidate
+                return workflow_contents(TRUSTED_CI)
             return ({"total_count": 0, "jobs": []} if "/jobs?" in args[-1]
                     else {"total_count": 1, "workflow_runs": [{"id": 1, "path": sc.CI_WORKFLOW}]})
         with patch.object(sc, "_run_json", side_effect=external_query):
@@ -4059,9 +4080,32 @@ class ScorecardCollectorTests(unittest.TestCase):
         unavailable.consistency = None
         self.assertEqual(unavailable.state("15"), "UNKNOWN")
 
-    def ci_report(self, jobs_by_run, paths=None, size=100, total=None, **options):
-        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths, size=size, total=total)):
+    def ci_report(self, jobs_by_run, paths=None, size=100, total=None, workflows=None, **options):
+        with patch.object(sc, "_run_json", side_effect=gh_runs(jobs_by_run, paths, size=size, total=total,
+                                                               workflows=workflows)):
             return sc.score(SHA, sc.collect(SHA, now=NOW, github=True, **options), now=NOW)
+
+    def test_ci_runs_prove_nothing_under_a_workflow_the_candidate_rewrote_16(self):
+        """4110671092: six no-op jobs with the required names, from a ci.yml the candidate rewrote, are not CI.
+        The ci.yml at the head must be main's, or match the owner's pinned ci_workflow_sha256."""
+        rewritten = b"name: CI\njobs: {noop: {runs-on: ubuntu-latest, steps: [{run: 'true'}]}}\n"
+        report = self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten})
+        self.assertEqual(row(report, "16")["status"], "UNKNOWN")
+        self.assertIn("workflow changed by candidate; owner pin required", row(report, "16")["explanation"])
+        failed = self.ci_report({1: ci_jobs(failed=("Secret hygiene",))}, workflows={SHA: rewritten})
+        self.assertEqual(row(failed, "16")["status"], "UNKNOWN")  # an untrusted workflow's failure proves nothing either
+        pin = {"version": "director-cli-release-descriptor/v1", "releases": [],
+               "ci_workflow_sha256": hashlib.sha256(rewritten).hexdigest()}
+        with patch.object(sc, "cli_release_descriptor", return_value=pin):
+            self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten}), "16")["status"], "PASS")
+        with patch.object(sc, "cli_release_descriptor", return_value={**pin, "ci_workflow_sha256": "0" * 64}):
+            self.assertEqual(row(self.ci_report({1: ci_jobs()}, workflows={SHA: rewritten}), "16")["status"], "UNKNOWN")
+        self.assertEqual(row(self.ci_report({1: ci_jobs()}), "16")["status"], "PASS")  # unchanged: main's ci.yml
+        # The contents API's bytes must be the blob it names.
+        forged = workflow_contents(TRUSTED_CI)
+        forged["content"] = workflow_contents(rewritten)["content"]
+        with patch.object(sc, "_run_json", return_value=forged), self.assertRaises(ValueError):
+            sc._workflow_blob(SHA)
 
     def test_ci_self_hosted_16(self):
         # Newest run: hosted billing stubs. Older run: registered self-hosted runner that executed.
@@ -4357,3 +4401,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

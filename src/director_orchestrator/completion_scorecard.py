@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
@@ -96,7 +97,8 @@ from .process_isolation import ProcessContainmentError, launch_contained_process
 from .primary_scorecard_evidence import (
     ASSIGNMENT_FIELDS as _ASSIGNMENT_FIELDS, DELIVERY_FIELDS as _DELIVERY_FIELDS,
     EFFECT_FIELDS as _EFFECT_FIELDS, artifact_assignment_conflict, chain as _chain,
-    decision_follows_prompt, delivery_settled as _delivery_settled, lifecycle_error, missing_result_packets,
+    ci_workflow_pin, cli_release_descriptor, decision_follows_prompt, delivery_settled as _delivery_settled,
+    lifecycle_error, missing_result_packets,
     ordered as _ordered,
     required_moments as _required_moments, settlement_error, validate_attempt_history, work_packet_error)
 from .state_witness import StateWitnessLedger, WitnessStatus, gh_checks_green
@@ -2812,8 +2814,35 @@ _RUN_PAGES = 10  # 1000 runs at one head; more is UNKNOWN, never a partial listi
 _REPLICA_LANE_KEYS = {"lane", "head_tests_run", "base_tests_run", "head_failures", "base_failures", "command_sha256"}
 
 
+def _workflow_blob(ref: str) -> bytes:
+    """ci.yml's exact bytes at ``ref`` through the GitHub contents API, bound to the git blob id the API names."""
+    import base64
+    value = _run_json(["gh", "api", f"repos/{REPOSITORY}/contents/{CI_WORKFLOW}?ref={ref}"])
+    if not isinstance(value, dict) or value.get("type") != "file" or value.get("encoding") != "base64":
+        raise ValueError("ci.yml is not a readable file at that ref")
+    content = base64.b64decode(str(value.get("content", "")), validate=False)
+    if hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest() != value.get("sha"):
+        raise ValueError("ci.yml content does not match its git blob id")
+    return content
+
+
+def _ci_workflow_trust(candidate_sha: str) -> tuple[bool, dict[str, Any]]:
+    """Check 16's jobs prove anything only if the workflow that ran them is trusted: the ci.yml at the candidate
+    (runs are listed at that exact head_sha) must equal the ci.yml on current main, or match the owner's pin
+    (release descriptor ``ci_workflow_sha256``). A candidate that rewrote ci.yml into no-op jobs with the required
+    names would otherwise pass."""
+    ran = _workflow_blob(candidate_sha)
+    digest = hashlib.sha256(ran).hexdigest()
+    pin = ci_workflow_pin(cli_release_descriptor())
+    matches_main = ran == _workflow_blob("main")
+    pinned = pin is not None and hmac.compare_digest(pin, digest)
+    return matches_main or pinned, {"ci_workflow_sha256": digest, "matches_main": matches_main,
+                                    "owner_pin_matches": pinned}
+
+
 def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | None = None) -> Observation:
     paths: dict[Any, Any] = {}
+    source = f"https://github.com/{REPOSITORY}/commit/{candidate_sha}/checks"
 
     def executed(args: list[str]) -> Any:
         # Zero-step jobs are billing stubs and are dropped, so an older executed
@@ -2855,8 +2884,17 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
         ledger = StateWitnessLedger(Path(folder) / "witness.sqlite3")
         row = gh_checks_green(ledger, REPOSITORY, candidate_sha, agent="completion-scorecard",
                               required=CI_JOBS, gh_json=executed)
-    source = f"https://github.com/{REPOSITORY}/commit/{candidate_sha}/checks"
     jobs = row.observed.get("jobs") if isinstance(row.observed, dict) else None
+    if isinstance(jobs, dict) and not set(CI_JOBS) & set(jobs) and replica_receipt is not None             and all(job.get("conclusion") == "success" for job in jobs.values()):
+        # Owner amendment: the receipt stands in only when no required job executed. It names no workflow; its
+        # trust is the owner's signature over the lanes and their command digests.
+        return _ci_replica_observation(replica_receipt, candidate_sha, at)
+    # Every job-based verdict rests on the workflow that ran them (review 4110671092).
+    trusted, workflow = _ci_workflow_trust(candidate_sha)
+    if not trusted:
+        return _observation("16", None, "workflow changed by candidate; owner pin required: the ci.yml at this head "
+                            "is not main's and matches no owner-pinned ci_workflow_sha256.",
+                            source, {"workflow": workflow}, at, candidate_sha=candidate_sha)
     if row.status == WitnessStatus.MATCH:
         return _observation("16", True, "Existing Witness Ledger CI oracle: every required ci.yml job executed steps at this "
                             "exact head, on hosted or registered self-hosted runners, and concluded success.",
@@ -2867,9 +2905,6 @@ def _ci_observation(candidate_sha: str, at: datetime, replica_receipt: Path | No
     if any(job.get("conclusion") != "success" for job in jobs.values()):
         return _observation("16", False, "An executed job at this exact head did not conclude success.",
                             source, row.observed, at, candidate_sha=candidate_sha)
-    if not set(CI_JOBS) & set(jobs) and replica_receipt is not None:
-        # Owner amendment: the receipt stands in only when no required job executed.
-        return _ci_replica_observation(replica_receipt, candidate_sha, at)
     return _observation("16", False, "Required jobs did not execute at this exact head; billing stubs and missing jobs do not pass.",
                         source, row.observed, at, candidate_sha=candidate_sha)
 
@@ -3490,3 +3525,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

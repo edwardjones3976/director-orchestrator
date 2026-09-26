@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
@@ -1196,9 +1197,22 @@ def cli_release_descriptor():
 
         {"version": "director-cli-release-descriptor/v1",
          "releases": [{"provider": "claude", "product": "anthropic-claude",
-                       "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...]}
+                       "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...],
+         "ci_workflow_sha256": "<optional: 64 lowercase hex, the owner-pinned .github/workflows/ci.yml content>"}
+
+    ``ci_workflow_sha256`` (check 16, ci_workflow_pin) trusts a ci.yml a candidate changed; without it only the
+    current main's ci.yml is trusted.
     """
     return None  # ponytail: inert until A2/R1 pins a descriptor here and captures record the executable digest
+
+
+def ci_workflow_pin(descriptor):
+    """The owner-pinned ci.yml content digest from the release descriptor, or None (none pinned, or malformed)."""
+    value = descriptor.get("ci_workflow_sha256") if isinstance(descriptor, dict) else None
+    if (not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)):
+        return None
+    return value
 
 
 def cli_release_product(provider, executable_sha256, descriptor):
@@ -1372,3 +1386,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

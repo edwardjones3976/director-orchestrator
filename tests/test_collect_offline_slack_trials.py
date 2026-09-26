@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]]
@@ -1552,6 +1553,17 @@ class TaskLookupAndRubricTests(unittest.TestCase):
                                   for m in row["terminal_messages"]], [(False, False)])
                 self.assertFalse(collector_module.evaluate_rubric(row, rubric, sha)["passed"])
 
+    def test_a_trial_task_must_come_from_its_thread_root(self):
+        """4110671087: an owner reply inside the thread that triggered a task is not the trial's source event."""
+        rubric, sha = rubric_fixture()
+        row = structural_trial()
+        self.assertEqual(row["input_message_ts"], row["thread_ts"])
+        self.assertTrue(collector_module.evaluate_rubric(row, rubric, sha)["checks"]["task_bound"])
+        for ts in ("1789999999.000200", None):
+            with self.subTest(input_message_ts=ts):
+                self.assertFalse(collector_module.evaluate_rubric({**row, "input_message_ts": ts}, rubric, sha)
+                                 ["checks"]["task_bound"])
+
     def test_late_rubric_and_missing_original_digest_fail_predeclaration(self):
         rubric, sha = rubric_fixture()
         rubric["declared_at"] = "2099-01-01T00:00:00+00:00"
@@ -1669,3 +1681,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

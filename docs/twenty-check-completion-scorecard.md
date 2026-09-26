@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | BEGIN]] -->
@@ -1017,6 +1018,20 @@ the workload hold is a terminal aggregate state that
 `record_parallel_workload_hold` classifies OWNER_DECISION_REQUIRED without a
 pending approval (settled), and cancellation leaves held rows as they are.
 
+Trusted evidence producers. Check 16's jobs prove anything only under a
+trusted workflow: the `.github/workflows/ci.yml` blob at the candidate head
+(read through the GitHub contents API and bound to its git blob id) must equal
+current `main`'s, or its SHA-256 must equal the owner's `ci_workflow_sha256`
+in the release descriptor (the check-11 shape). Otherwise 16 is UNKNOWN,
+"workflow changed by candidate; owner pin required", whatever the jobs
+concluded. The local-replica receipt names no workflow; its trust is the
+owner's Ed25519 signature over its lanes and command digests. Check 10's
+structural rubric binds each trial's task to its thread root
+(`input_message_ts` equals the selected thread ts): an owner reply that
+triggered a task inside the thread is not a trial. The qualification readback
+fills `elapsed_seconds` (and every other served value) before its single size
+measurement; nothing served changes afterwards.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1214,3 +1229,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 06:15 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 07:31 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]] -->

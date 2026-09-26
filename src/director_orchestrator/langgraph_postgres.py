@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | BEGIN]]
@@ -3034,6 +3035,10 @@ class PostgresConditionalClaimStore:
             "complete": not truncated,
             **sections,
         }
+        # Every served value is final before the one measurement that bounds it: the deadline is checked and
+        # elapsed_seconds filled first, and nothing served changes after the size comparison (review 4110671084).
+        require_deadline_remaining(deadline, "qualification readback completion")
+        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
         encoded = json.dumps(document, default=str, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > byte_limit:
             document = {key: value for key, value in document.items() if key not in sections}
@@ -3048,8 +3053,7 @@ class PostgresConditionalClaimStore:
             if len(encoded.encode("utf-8")) > byte_limit:
                 raise PostgresControlPlaneError(
                     "qualification readback refused: its metadata alone exceeds the byte limit")
-        require_deadline_remaining(deadline, "qualification readback completion")
-        document["bounds"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        # The typed projection is internal to the caller (main.get_task pops it before serving), never served.
         document["projection"] = projection
         return document
 
@@ -6081,3 +6085,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 02:38 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 12:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]

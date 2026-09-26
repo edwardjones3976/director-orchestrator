@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
@@ -5438,6 +5439,16 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         if size - 64 >= 1024:  # a bound the metadata alone exceeds: refused, never served oversized
             with self.assertRaisesRegex(PostgresControlPlaneError, "metadata alone exceeds"):
                 store.read_primary_qualification_evidence(record.task_id, byte_limit=size - 64)
+        # Review 4110671084: the bound measures the served document with its final elapsed_seconds. A limit equal to
+        # the full document's size with elapsed 0.0 cannot be exceeded once the real elapsed time is filled in.
+        def served_size(document):
+            return len(json.dumps(document, default=str, sort_keys=True, separators=(",", ":")).encode())
+        exact = served_size({**full, "bounds": {**full["bounds"], "elapsed_seconds": 0.0}})
+        served = {key: value for key, value in
+                  store.read_primary_qualification_evidence(record.task_id, byte_limit=exact).items()
+                  if key != "projection"}
+        self.assertGreater(served["bounds"]["elapsed_seconds"], 0.0)
+        self.assertLessEqual(served_size(served), exact)
         # A projection whose content no longer matches its stored digest (the version guard allows it) is refused.
         with self.handle.pool.connection() as connection:
             connection.execute(
@@ -6245,3 +6256,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
