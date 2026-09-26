@@ -54,6 +54,13 @@ try {
     Assert-True ($dirty.out -notmatch $planted) 'planted value absent from stdout (redact)'
     Assert-True ($reportRaw -notmatch $planted) 'planted value absent from report (redact)'
 
+    # A .gitleaksignore in the caller's working directory, holding the real finding's fingerprint, must not hide it.
+    $cwd = Join-Path $work 'caller-cwd'; New-Item -ItemType Directory $cwd | Out-Null
+    @($findings) | ForEach-Object { $_.Fingerprint } | Set-Content (Join-Path $cwd '.gitleaksignore') -Encoding utf8
+    Push-Location $cwd
+    try { $fromCwd = Invoke-Scan $hot $scan } finally { Pop-Location }
+    Assert-Equal $fromCwd.exit 1 'caller working-directory .gitleaksignore cannot suppress findings'
+
     # The dataset cannot switch its own scan off: an allow-all config, an ignore file or an inline allow marker is refused.
     Set-Content (Join-Path $scan '.gitleaks.toml') "[allowlist]`npaths = ['''.*''']" -Encoding utf8
     Assert-Equal (Invoke-Scan $hot $scan).exit 2 'dataset .gitleaks.toml is refused (exit 2)'
