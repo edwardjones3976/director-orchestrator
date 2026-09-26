@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
@@ -106,7 +107,7 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 | [`project-profile.yaml`](project-profile.yaml) | Living project profile (`director-project-profile/v1`) |
 | [`provider-roles-contract.yaml`](provider-roles-contract.yaml) | Project-local provider boundaries (`director-provider-roles/v1`), with the Director deviation recorded |
 | [`rollout-packet.md`](rollout-packet.md) | Mandatory rollout packet; analysis-only, all Slack identities pending |
-| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); PR #294 contains the approved but unmerged M1 plan |
+| [`workstream-plan.md`](workstream-plan.md) | M0 phase plan (closed, O-031); PR #294 contains the approved but unmerged M1 plan (O-038) |
 | [`decision-log.md`](decision-log.md) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
@@ -127,3 +128,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:35 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 22:44 UTC | END]] -->
