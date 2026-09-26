@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -109,19 +110,16 @@ _TS = re.compile(r"\d{10,}\.\d{1,6}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 DRILL_KINDS = ("refusal-4xx", "reserved-5xx", "transport-failure", "duplicate-input", "ambiguous-post")
 # Owner decision 2026-09-23: every runtime lane actually used must be its real product.
-# The product transport IDs (primary_transports / primary_parallel) that run each OpenAI product.
-_OPENAI_TRANSPORTS = {"responses-api": "openai-responses", "native-cli": "openai-codex-unattested",
-                      "authenticated-windows-host-bridge": "openai-codex-unattested"}
-# The Codex CLI's stream carries no product or model identity and no release descriptor pins its executable, so a
-# Codex capture is only ever unattested: never credited as a real product, never counted as a substitution.
-_UNATTESTED_PRODUCTS = {"openai-codex-unattested": "openai-codex-unattested",
-                        # A Responses envelope from a route whose bound endpoint is not the official OpenAI API host.
-                        "openai-responses-unattested": "openai-responses",
-                        # A grok Responses envelope: its capture's configuration pin binds no endpoint.
-                        "xai-grok-responses-unattested": "xai-grok-responses"}
-REAL_PRODUCTS = {"openai": {"openai-responses"},
-                 "grok": {"xai-grok-responses", "xai-grok-cli"},
-                 "claude": {"anthropic-claude"}}
+# The product each lane's transport IDs (primary_transports / primary_parallel transport_kind) run. A capture must be
+# the product its attempts' transport ran; "<product>-unattested" (primary_scorecard_evidence: an unofficial
+# Responses endpoint, or a CLI capture no pinned release descriptor attests) is UNKNOWN on that product's transport and
+# a substitution on another's.
+_CLI_TRANSPORTS = ("native-cli", "authenticated-windows-host-bridge")
+_TRANSPORT_PRODUCTS = {"openai": {"responses-api": "openai-responses", **dict.fromkeys(_CLI_TRANSPORTS, "openai-codex")},
+                       "grok": dict.fromkeys(_CLI_TRANSPORTS, "xai-grok-cli"),
+                       "claude": dict.fromkeys(_CLI_TRANSPORTS, "anthropic-claude")}
+_UNATTESTED = "-unattested"
+REAL_PRODUCTS = {lane: set(by_transport.values()) for lane, by_transport in _TRANSPORT_PRODUCTS.items()}
 # Fixed, owner-installed verification key with no CLI override, the same
 # stance as _native_security_index: a caller cannot nominate its own signer.
 CI_REPLICA_KEY = Path.home() / ".director-scorecard" / "ci-replica-signer.ed25519.pub"
@@ -1276,25 +1274,29 @@ def _product_observation(at: datetime, runtime: _Runtime, captures: dict, paid: 
                             "its generation and provider bindings; they cannot attest that run.",
                             _CAPTURES_SOURCE, facts, at, **binding)
 
-    # The OpenAI lane has two real products; each attempt's transport must be a known one of them.
-    # A capture that is not a real OpenAI product is a substitution whatever the transport.
-    if ("openai" in used and "openai" not in unbound and products.get("openai") in REAL_PRODUCTS["openai"]
-            and not set(transports.get("openai", [])) <= set(_OPENAI_TRANSPORTS)):
-        unbound.append("openai")  # an unknown transport is unattested, never assumed to be Codex
+    # Each attempt's transport must be one a product of the lane is known to run: an unknown transport is unknown,
+    # never assumed to be any product. An unattested capture is unknown on its own product's transport; on another
+    # product's it is a substitution. A capture naming no product of the lane is a substitution whatever the transport.
+    known = {transport for by_transport in _TRANSPORT_PRODUCTS.values() for transport in by_transport}
 
-    # A lane whose capture names only an unattested dialect cannot be credited: unknown when its attempts ran that
-    # dialect's transport (or one no product is known for); another known product's transport is a substitution.
+    def ran(lane: str, transport: str) -> str | None:
+        # The lane's product on that transport; a transport only another lane's product runs is that other product.
+        return _TRANSPORT_PRODUCTS.get(lane, {}).get(transport) or ("another product" if transport in known else None)
+
+    mapped = {lane: {ran(lane, transport) for transport in transports[lane]} for lane in used}
     for lane in used:
-        if lane not in unbound and products.get(lane) in _UNATTESTED_PRODUCTS:
-            mapped = {_OPENAI_TRANSPORTS.get(transport) for transport in transports[lane]}
-            if None in mapped or mapped == {_UNATTESTED_PRODUCTS[products[lane]]}:
-                unbound.append(lane)
+        product, real = products.get(lane), REAL_PRODUCTS.get(lane, set())
+        if lane in unbound or not isinstance(product, str):
+            continue
+        base = product[:-len(_UNATTESTED)] if product.endswith(_UNATTESTED) else None
+        if base in real and (None in mapped[lane] or mapped[lane] == {base}):
+            unbound.append(lane)
+        elif product in real and None in mapped[lane]:
+            unbound.append(lane)
 
     def attested(lane: str) -> bool:
-        if lane not in REAL_PRODUCTS or products[lane] not in REAL_PRODUCTS[lane]:
-            return False
-        # The capture must be the product the attempts' transport used.
-        return lane != "openai" or {_OPENAI_TRANSPORTS[transport] for transport in transports[lane]} == {products[lane]}
+        # The capture must be a real product of the lane, and the product the attempts' transport ran.
+        return products[lane] in REAL_PRODUCTS.get(lane, set()) and mapped[lane] == {products[lane]}
 
     substituted = [lane for lane in used if lane not in REAL_PRODUCTS or (lane not in unbound and not attested(lane))]
     if substituted:
@@ -3474,3 +3476,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]

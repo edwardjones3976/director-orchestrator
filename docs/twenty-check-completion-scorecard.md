@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]] -->
@@ -394,11 +395,14 @@ runtime and write nothing.
   Codex capture needs a native Codex JSONL turn (and check 11 maps each OpenAI
   attempt's transport by allowlist: `responses-api` to the Responses product,
   `native-cli` and `authenticated-windows-host-bridge` to Codex; any other
-  transport is unattested), a Grok Responses envelope a
-  `grok` model, a Grok CLI envelope `stopReason` with an integer `num_turns`
-  and a Grok model, and a Claude result envelope a non-empty `modelUsage`
-  whose keys are all `claude` models. An envelope that names no model has no
-  product: the lane name alone attests nothing. Anything else has no product. These are not part of
+  transport is unattested), a Grok capture a Responses envelope with a `grok`
+  model or a CLI envelope with `stopReason`, an integer `num_turns` and a Grok
+  model, and a Claude result envelope a non-empty `modelUsage` whose keys are
+  all `claude` models. An envelope that names another vendor's model, or none,
+  has no product: the lane name alone attests nothing. A matching dialect and
+  model are necessary, never sufficient: a CLI capture is labelled
+  `<product>-unattested` unless a pinned release attests it (see "CLI release
+  attestation" below). Anything else has no product. These are not part of
   `/health`, which stays readiness booleans only.
 
 Against an image built before these commands existed, `docker exec` exits
@@ -675,7 +679,7 @@ rows in any read every count is unknown. The global counts' terminal-evidence
 joins match on task as well as claim. `/health` is read through the same
 `bounded_get` as every other HTTP source. A Codex CLI capture names no product
 or model, so it is labelled `openai-codex-unattested` and check 11 is UNKNOWN
-for that lane; it is never credited as Codex.
+for that lane; it is credited as Codex only through a pinned release.
 
 Every row the shared validation reads settles, is in flight, conflicts, or is
 an error; none is ignored. Slack deliveries follow PrimarySlackDelivery:
@@ -747,9 +751,10 @@ verifier's Responses route, whose signed configuration digest pins its endpoint
 and must equal the capture's, targets exactly
 `https://api.openai.com/v1/responses`; otherwise it is
 `openai-responses-unattested` and check 11 is UNKNOWN for a Responses-transport
-lane. A grok Responses envelope is `xai-grok-responses-unattested`: a grok
-validation capture is a native command's output whose configuration pin (argv,
-files, auth environment) names no endpoint. A work packet must be recorded no earlier than its assignment's
+lane. A grok Responses-shaped envelope is grok CLI output like any other: a
+grok validation capture is its pinned native command's output, whose
+configuration pin names no endpoint, so `xai-grok-responses` is no longer a
+product. A work packet must be recorded no earlier than its assignment's
 `reserved_at` and no later than its first attempt.
 Judged safe: spend, usage and budget rows carry no timestamp but `budget_day`
 (bounded above, and by check 15's accounting day); the n8n status query reads the
@@ -950,14 +955,40 @@ enforced on every paid attempt by `PrimaryProviderBudgetAuthority.reserve`),
 which check 15 already grades. Team-journal admissions have no signed budget
 row and no join key to one.
 
+CLI release attestation (A2 prerequisite for check 11). Owner ruling
+2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
+to one standard. The model a CLI reports about itself is never enough; a CLI
+capture counts as its lane's real product (`openai-codex`, `xai-grok-cli`,
+`anthropic-claude`) only through `primary_scorecard_evidence.cli_release_product`,
+the one path for all three: the capture must carry the digest of the executable
+that ran, recorded at execution, and exactly one entry of the owner-pinned
+release descriptor must map that digest to this provider and product. The
+descriptor's exact shape:
+
+```json
+{"version": "director-cli-release-descriptor/v1",
+ "releases": [{"provider": "claude", "product": "anthropic-claude",
+               "executable_sha256": "<64 lowercase hex>"}]}
+```
+
+Each entry has exactly those three keys; a digest pinned twice, pinned to
+another provider or product, a malformed entry, another version, or a capture
+without the digest attests nothing. The descriptor and the executable digest
+on the capture are A2/R1 work and do not exist yet: `cli_release_descriptor()`
+returns None and no capture records the digest, so every CLI capture is
+`<product>-unattested` and check 11 cannot PASS on a CLI lane until A2 wires
+both.
+
 Checks 11 and 20 read the paid run's own evidence. 11 takes the lanes from the
 paid task's collected attempts and fails when any lane is not one of the real
 products above or its verified capture names another product; a verified,
-bound capture with no product counts as a substitution. On the OpenAI lane the product must also match the
-attempts' transport: `responses-api` needs `openai-responses`; the Codex
-transports (`native-cli`, `authenticated-windows-host-bridge`) can only carry an
-`openai-codex-unattested` capture, which leaves the lane UNKNOWN because the
-Codex stream names no product or model. 11 is UNKNOWN when the running container was created
+bound capture with no product counts as a substitution. On every lane the product must also match the
+attempts' transport: `responses-api` runs `openai-responses`; the CLI
+transports (`native-cli`, `authenticated-windows-host-bridge`) run the lane's
+CLI product (`openai-codex`, `xai-grok-cli`, `anthropic-claude`). A
+`<product>-unattested` capture leaves the lane UNKNOWN on that product's
+transport and is a substitution on another product's; a transport no product
+is known to run is UNKNOWN. 11 is UNKNOWN when the running container was created
 after the paid task, the captures are not bound to the running generation pin
 and provider bindings, or a lane's runtime-adapter capture does not verify now,
 was observed after its first paid attempt or expired before its last one. 20 builds its run record from task-level evidence:
@@ -1117,3 +1148,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]] -->

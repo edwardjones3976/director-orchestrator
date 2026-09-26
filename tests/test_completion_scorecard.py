@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
@@ -318,7 +319,7 @@ def captures_fixture():
             "lanes": {lane: {"binding_digest": "b" * 64, "product": product,
                              "surfaces": {"app": dict(surface), "runtime_adapter": dict(surface)}}
                       for lane, product in (("openai", "openai-responses"), ("claude", "anthropic-claude"),
-                                            ("grok", "xai-grok-responses"))}}
+                                            ("grok", "xai-grok-cli"))}}
 
 
 def fixture_render(application, projection, digest, created_at):
@@ -3609,25 +3610,40 @@ class ScorecardCollectorTests(unittest.TestCase):
                 case.captures["lanes"][lane]["product"] = product
             with self.subTest(lane=lane):
                 self.assertEqual(case.state("11"), "FAIL")
-        # 4109777108 sweep: a grok Responses envelope bound to no endpoint is unattested, so the lane is UNKNOWN.
-        case = self.world()
-        case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
-            json.dumps(case.tasks[PAID_TASK]["qualification_evidence"]).replace('"claude"', '"grok"')))
-        case.captures["lanes"]["grok"]["product"] = "xai-grok-responses-unattested"
-        self.assertEqual(case.state("11"), "UNKNOWN")
+        # Owner ruling 2026-09-26 ("Bind to pinned release"): grok and Claude CLI captures are held to Codex's
+        # standard. Unattested: UNKNOWN on their own CLI transport, a substitution on another product's.
+        def cli_lane(lane, product, transport):
+            case = self.world()
+            case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
+                json.dumps(case.tasks[PAID_TASK]["qualification_evidence"]).replace('"claude"', f'"{lane}"')
+                .replace('"native-cli"', f'"{transport}"')))
+            case.captures["lanes"][lane]["product"] = product
+            return case.state("11")
+        for lane, product in (("grok", "xai-grok-cli"), ("claude", "anthropic-claude")):
+            with self.subTest(lane=lane):
+                for transport in ("native-cli", "authenticated-windows-host-bridge", "some-proxy"):
+                    self.assertEqual(cli_lane(lane, product + "-unattested", transport), "UNKNOWN")
+                self.assertEqual(cli_lane(lane, product + "-unattested", "responses-api"), "FAIL")
+                # A release-attested CLI product passes on its own transport only.
+                self.assertEqual(cli_lane(lane, product, "native-cli"), "PASS")
+                self.assertEqual(cli_lane(lane, product, "responses-api"), "FAIL")
+                self.assertEqual(cli_lane(lane, product, "some-proxy"), "UNKNOWN")
+        self.assertEqual(cli_lane("grok", "xai-grok-responses", "native-cli"), "FAIL")  # no longer a product
         def openai_lane(product, transport):
             case = self.world()
             readback = json.dumps(case.tasks[PAID_TASK]["qualification_evidence"])
             case.tasks[PAID_TASK]["qualification_evidence"] = tf.seal(json.loads(
-                readback.replace('"claude"', '"openai"').replace('"native-command"', f'"{transport}"')))
+                readback.replace('"claude"', '"openai"').replace('"native-cli"', f'"{transport}"')))
             case.captures["lanes"]["openai"]["product"] = product
             return case.state("11")
         # The OpenAI capture must be the product the attempts' transport actually used. Review 4102705154: a Codex
         # stream names no product or model, so a Codex lane is unattested (UNKNOWN), never credited as Codex.
-        for transport in ("native-cli", "authenticated-windows-host-bridge", "native-command", "some-proxy"):
+        for transport in ("native-cli", "authenticated-windows-host-bridge", "some-proxy"):
             with self.subTest(transport=transport):
                 self.assertEqual(openai_lane("openai-codex-unattested", transport), "UNKNOWN")
-        self.assertEqual(openai_lane("openai-codex", "native-cli"), "FAIL")  # no longer a product anything names
+        # Codex is creditable only as a release-attested CLI product (cli_release_product), on a CLI transport.
+        self.assertEqual(openai_lane("openai-codex", "native-cli"), "PASS")
+        self.assertEqual(openai_lane("openai-codex", "responses-api"), "FAIL")
         self.assertEqual(openai_lane("openai-responses", "native-cli"), "FAIL")
         self.assertEqual(openai_lane("openai-codex-unattested", "responses-api"), "FAIL")
         # 4109777108: a Responses envelope from a route not bound to the official OpenAI endpoint is unattested:
@@ -4130,3 +4146,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]

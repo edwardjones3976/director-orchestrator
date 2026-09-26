@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -189,13 +190,13 @@ def readback_fixture():
                          "reserved_at": "2026-09-12T10:00:05+00:00", "completed_at": "2026-09-12T10:00:25+00:00"}],
         "provider_attempts": [
             {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 1,
-             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-cli",
              "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
              "provider_run_id_digest": None, "status": "STARTED", "result_digest": None,
              "outcome_evidence_digest": None, "reason_code": "attempt_started",
              "budget_evidence_digest": "sha256:" + "9" * 64, "recorded_at": "2026-09-12T10:00:06+00:00"},
             {"assignment_id": assignment, "assignment_sequence": 1, "attempt_ordinal": 1, "event_sequence": 2,
-             "provider_id": "claude", "format_id": "v1", "transport_id": "native-command",
+             "provider_id": "claude", "format_id": "v1", "transport_id": "native-cli",
              "idempotency_key_digest": "sha256:" + "0" * 64, "attempt_digest": "sha256:" + "1" * 64,
              "provider_run_id_digest": None, "status": "SUCCEEDED",  # event 2 never carries a run id
              "result_digest": "sha256:" + "2" * 64, "outcome_evidence_digest": "sha256:" + "7" * 64,
@@ -565,7 +566,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(evidence["provider_effect_state"], "PROVIDER_RESULT_RECORDED")
         self.assertEqual(evidence["external_effect_state"], "EXTERNAL_EFFECT_TERMINAL:COMPLETED")
         self.assertEqual(evidence["lineage"]["provider_routes"], ["claude"])
-        self.assertEqual(evidence["lineage"]["transport"], "native-command")
+        self.assertEqual(evidence["lineage"]["transport"], "native-cli")
         self.assertEqual(evidence["lineage"]["recorded_attempt_count"], 1)
         self.assertIsNone(evidence["lineage"]["fallback_observed"])  # no producer records fallback linkage
         self.assertEqual(evidence["timestamps"]["completion_at"], "2026-09-12T10:00:25+00:00")
@@ -1652,3 +1653,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | BEGIN]]
@@ -99,11 +100,11 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("openai", b'{"type":"message"}', None),
                  ("openai", b'{"type":"result","result":"ok"}', None),
                  # 4109777108 sweep: nothing binds a grok Responses envelope to xAI's endpoint.
-                 ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-responses-unattested"),
+                 ("grok", b'{"object":"response","model":"grok-4"}', "xai-grok-cli-unattested"),
                  ("grok", b'{"object":"response","model":"gpt-5"}', None),
                  ("grok", b'{"object":"response"}', None),
                  ("grok", b'{"stopReason":"end_turn","num_turns":1,"sessionId":"s-1"}', None),
-                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"xai/grok-4"}', "xai-grok-cli"),
+                 ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"xai/grok-4"}', "xai-grok-cli-unattested"),
                  ("grok", b'{"stopReason":"end_turn","num_turns":1,"model":"gpt-5"}', None),
                  ("grok", b'{"stopReason":"end_turn","num_turns":"1"}', None),
                  ("grok", b'{"result":"done"}', None),
@@ -112,7 +113,7 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
                  ("grok", b'not json', None),
                  ("claude", b'{"type":"result","result":"ok"}', None),
                  ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{},"gpt-5":{}}}', None),
-                 ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}', "anthropic-claude"),
+                 ("claude", b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}', "anthropic-claude-unattested"),
                  ("claude", b'{"type":"result","modelUsage":{"gpt-5":{}}}', None),
                  ("claude", b'{"type":"result","modelUsage":{}}', None),
                  ("claude", b'{"type":"assistant"}', None),
@@ -125,6 +126,43 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         # OpenAI endpoint a Responses capture is unattested (check 11 UNKNOWN), and a foreign model stays a substitution.
         self.assertEqual(evidence._capture_product("openai", cases[0][1]), "openai-responses-unattested")
         self.assertIsNone(evidence._capture_product("openai", cases[2][1]))
+
+    def test_cli_captures_name_their_product_only_through_a_pinned_release(self):
+        """Owner ruling 2026-09-26 ("Bind to pinned release"): one attestation path for the Codex, grok and Claude
+        CLIs. A self-reported model never suffices; the executable digest recorded at execution must match exactly one
+        owner-pinned descriptor entry for this provider and product. No descriptor is pinned yet: fail closed."""
+        self.assertIsNone(evidence.cli_release_descriptor())
+        digest = "e" * 64
+        outputs = {"openai": b'{"type":"thread.started"}\n{"type":"turn.completed"}',
+                   "grok": b'{"stopReason":"end_turn","num_turns":1,"model":"xai/grok-4"}',
+                   "claude": b'{"type":"result","modelUsage":{"claude-opus-5-5":{}}}'}
+        for provider, product in evidence.CLI_PRODUCTS.items():
+            entry = {"provider": provider, "product": product, "executable_sha256": digest}
+            descriptor = {"version": evidence.CLI_RELEASE_DESCRIPTOR_VERSION, "releases": [entry]}
+            with self.subTest(provider=provider):
+                self.assertEqual(evidence.cli_release_product(provider, digest, descriptor), product)
+                self.assertEqual(evidence._capture_product(provider, outputs[provider], executable_sha256=digest,
+                                                           descriptor=descriptor), product)
+                for label, args in (
+                        ("no descriptor", (digest, None)),
+                        ("no executable digest", (None, descriptor)),
+                        ("another executable", ("f" * 64, descriptor)),
+                        ("uppercase digest", (digest.upper(), descriptor)),
+                        ("another version", (digest, {**descriptor, "version": "v0"}))
+                        , ("pinned twice", (digest, {**descriptor, "releases": [entry, dict(entry)]})),
+                        ("another provider's entry", (digest, {**descriptor, "releases": [
+                            {**entry, "provider": "cursor"}]})),
+                        ("another product", (digest, {**descriptor, "releases": [{**entry, "product": "x"}]})),
+                        ("an extra key", (digest, {**descriptor, "releases": [{**entry, "note": "x"}]})),
+                        ("releases not a list", (digest, {**descriptor, "releases": entry}))):
+                    self.assertIsNone(evidence.cli_release_product(provider, *args), label)
+                    self.assertEqual(evidence._capture_product(provider, outputs[provider], executable_sha256=args[0],
+                                                               descriptor=args[1]), product + "-unattested", label)
+        # The attested product never rescues a capture whose dialect or model is another vendor's.
+        entry = {"provider": "grok", "product": "xai-grok-cli", "executable_sha256": digest}
+        self.assertIsNone(evidence._capture_product(
+            "grok", b'{"stopReason":"end_turn","num_turns":1,"model":"gpt-5"}', executable_sha256=digest,
+            descriptor={"version": evidence.CLI_RELEASE_DESCRIPTOR_VERSION, "releases": [entry]}))
 
     def test_capture_attestations_report_digests_and_expiry_but_health_is_unchanged(self):
         store = MemoryStore()
@@ -256,7 +294,8 @@ class ScorecardEvidenceUnitTests(unittest.TestCase):
         self.assertEqual(report["generation_manifest_sha256"], PIN)
         self.assertEqual(report["provider_bindings_sha256"], "d" * 64)
         self.assertEqual(report["required_providers"], ["claude"])
-        self.assertEqual(report["lanes"]["claude"]["product"], "anthropic-claude")
+        # Owner ruling 2026-09-26: no release descriptor is pinned yet, so a Claude CLI capture is unattested.
+        self.assertEqual(report["lanes"]["claude"]["product"], "anthropic-claude-unattested")
         self.assertTrue(report["lanes"]["claude"]["surfaces"]["runtime_adapter"]["capture_verified"])
         with self.capture_sources(store, output=b'{"type":"assistant"}'), \
                 patch.object(evidence, "_activation_recorded_at", return_value=None):
@@ -1048,3 +1087,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:32 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]

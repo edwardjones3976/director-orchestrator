@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | BEGIN]]
@@ -980,18 +981,52 @@ def _codex_stream(output: bytes) -> bool:
 OFFICIAL_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
-def _capture_product(provider, output: bytes, *, official_openai: bool = False):
-    """Name the real product that produced a verified native capture, or None.
+# Owner ruling 2026-09-26 ("Bind to pinned release"): the Codex, grok and Claude CLIs are held to one standard. The
+# model a CLI reports about itself never names its product; the executable that ran does, through an owner-pinned
+# release descriptor (A2/R1 work, not yet provisioned). Each CLI lane's one real product:
+CLI_PRODUCTS = {"openai": "openai-codex", "grok": "xai-grok-cli", "claude": "anthropic-claude"}
+CLI_RELEASE_DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
+UNATTESTED = "-unattested"
 
-    The product comes from the capture's own dialect and model, never from the
-    lane name: a Responses envelope naming another vendor's model is a
-    substitution, and None is what check 11 counts as one. Every named product
-    rests on an identity the output itself carries: the Responses and grok CLI
-    model, Claude's modelUsage keys. A dialect that carries none is labelled
-    ``-unattested``, which check 11 reads as unknown, not as the product. So is a Responses envelope unless
-    ``official_openai``: the verified capture's route is bound (its signed configuration digest, which pins the
-    endpoint, equals the route's current one) to exactly the official OpenAI API endpoint. The envelope's shape
-    alone says nothing about which service produced it.
+
+def cli_release_descriptor():
+    """The owner-pinned CLI release descriptor, or None while none is provisioned (every CLI capture is then
+    unattested). Its exact shape, which cli_release_product enforces:
+
+        {"version": "director-cli-release-descriptor/v1",
+         "releases": [{"provider": "claude", "product": "anthropic-claude",
+                       "executable_sha256": "<64 lowercase hex: the digest of the executable that ran>"}, ...]}
+    """
+    return None  # ponytail: inert until A2/R1 pins a descriptor here and captures record the executable digest
+
+
+def cli_release_product(provider, executable_sha256, descriptor):
+    """The one attestation path for all three CLIs: the lane's real product (CLI_PRODUCTS) when the capture carries
+    the executable digest recorded at execution and exactly one descriptor entry maps that digest to this provider
+    and its product, with no other keys; None otherwise (no descriptor, no digest, a malformed descriptor or entry,
+    a digest pinned twice, or pinned to another provider or product)."""
+    product = CLI_PRODUCTS.get(provider)
+    if (product is None or not isinstance(executable_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", executable_sha256)
+            or not isinstance(descriptor, dict) or descriptor.get("version") != CLI_RELEASE_DESCRIPTOR_VERSION
+            or not isinstance(descriptor.get("releases"), list)):
+        return None
+    matches = [entry for entry in descriptor["releases"]
+               if isinstance(entry, dict) and entry.get("executable_sha256") == executable_sha256]
+    expected = {"provider": provider, "product": product, "executable_sha256": executable_sha256}
+    return product if len(matches) == 1 and matches[0] == expected else None
+
+
+def _capture_product(provider, output: bytes, *, official_openai: bool = False, executable_sha256=None,
+                     descriptor=None):
+    """Name the product that produced a verified native capture, or None (a substitution for check 11).
+
+    The capture's dialect must be the lane's, and where it names a model that model must be the vendor's: another
+    vendor's model is a substitution. Neither the dialect nor a self-reported model ever names the product, though:
+    a Responses envelope is ``openai-responses`` only when ``official_openai`` (the verified capture's route, whose
+    signed configuration digest pins its endpoint, targets exactly the official OpenAI endpoint), and a CLI capture
+    (the Codex JSONL stream, grok's CLI or Responses-shaped output, Claude's result envelope) is its lane's CLI
+    product only through cli_release_product. Anything else is labelled ``-unattested``, which check 11 reads as
+    UNKNOWN on its own transport and a substitution on another product's.
     """
     try:
         native = json.loads(output)
@@ -999,31 +1034,32 @@ def _capture_product(provider, output: bytes, *, official_openai: bool = False):
         native = None  # Codex CLI output is JSONL, not one document.
     envelope = native if isinstance(native, dict) else {}
     model = envelope.get("model")
+
+    def cli() -> str:
+        return cli_release_product(provider, executable_sha256, descriptor) or CLI_PRODUCTS[provider] + UNATTESTED
+
     if provider == "openai":
         if envelope.get("object") == "response":
             if not (isinstance(model, str) and _OPENAI_MODEL.match(model)):
                 return None
-            return "openai-responses" if official_openai else "openai-responses-unattested"
+            return "openai-responses" if official_openai else "openai-responses" + UNATTESTED
         # The Codex CLI's JSONL names no product and no model (native_codex_transport records "actual model and cost
-        # are not reported by this event stream"), and no release descriptor pins the Codex executable's digest, so
-        # a well-formed stream attests only its dialect: labelled unattested (check 11 UNKNOWN), never openai-codex.
-        return "openai-codex-unattested" if _codex_stream(output) else None
+        # are not reported by this event stream").
+        return cli() if _codex_stream(output) else None
     if provider == "grok":
-        if envelope.get("object") == "response":
-            # A grok validation capture is a native command's output, and its configuration pin (argv, files, auth
-            # environment) names no endpoint: nothing binds a Responses envelope to xAI's API, so it is unattested.
-            return "xai-grok-responses-unattested" if isinstance(model, str) and model.startswith("grok") else None
-        # The grok CLI dialect grok_terminal_success accepts: stopReason and an integer num_turns,
-        # and it must name a Grok model: the lane name alone attests nothing.
-        cli = "stopReason" in envelope and type(envelope.get("num_turns")) is int
-        return "xai-grok-cli" if cli and isinstance(model, str) and "grok" in model.lower() else None
+        # A grok validation capture is its pinned native command's output, whether Responses-shaped or the CLI's own
+        # dialect (stopReason and an integer num_turns); either must name a Grok model.
+        responses = envelope.get("object") == "response" and isinstance(model, str) and model.startswith("grok")
+        dialect = ("stopReason" in envelope and type(envelope.get("num_turns")) is int
+                   and isinstance(model, str) and "grok" in model.lower())
+        return cli() if responses or dialect else None
     if provider == "claude":
         # A result envelope must name its models: a non-empty modelUsage whose keys are all Claude models.
         usage = envelope.get("modelUsage")
         if (envelope.get("type") != "result" or not isinstance(usage, dict) or not usage
                 or any(not str(key).startswith("claude") for key in usage)):
             return None
-        return "anthropic-claude"
+        return cli()
     return None
 
 
@@ -1082,7 +1118,10 @@ def activation_capture_report(settings, identity, manifest) -> dict:
         route = getattr(verifier, "openai_responses_route", None)
         official = getattr(getattr(route, "transport", None), "api_url", None) == OFFICIAL_OPENAI_RESPONSES_URL
         lanes = service.capture_attestations(
-            classify=lambda provider, output: _capture_product(provider, output, official_openai=official))
+            classify=lambda provider, output: _capture_product(
+                provider, output, official_openai=official,
+                # No capture records its executable's digest yet (A2): every CLI capture is unattested until it does.
+                executable_sha256=None, descriptor=cli_release_descriptor()))
     bindings = settings.primary_provider_activation_bindings()
     for provider, lane in lanes.items():
         surface = lane["surfaces"].get("runtime_adapter")
@@ -1128,3 +1167,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 18:59 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:56 UTC | END]]
