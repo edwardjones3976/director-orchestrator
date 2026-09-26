@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | BEGIN]] -->
@@ -52,7 +53,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
 
-- **M1 before the gate:** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
+- **M1 before the gate (a hard-stop crossing, D-018):** #280 (field-level scorer) merged 2026-09-26 02:38 UTC as `c3cc8fa`, before O-031 closed M0. It awaits Ed's explicit disposition. Its reviews and the first #281 review cost USD 0.280142 over 5 receipts `[verified]`.
 - **M0 hardening after the gate, charged to the M0 envelope:**
   - #283 (fix-forward for connector findings on #279) merged 2026-09-26 16:40 UTC as `052553f`, at head `d6a6d55`.
   - #291 carries the job-object supervision fix that landed on #283's branch after its merge. It is open.
@@ -111,6 +112,8 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 ### Owner gates
 
+- Pre-gate M1 work (D-018): ratify #280, which merged before M0 closed, or have it reverted and redone under M1.
+- M1 plan: approve the M1 workstream plan and its pre-stage packets once written. No new M1 provider dispatch happens before that.
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
 - Held-out set B: approve the independent review of `pr-reconstructed-v2` once it is ready. That review sends the private PR bodies to xAI.
 - Merges: this reconciliation PR once reviewed and green; #281 has its own ready and merge decision (O-031).
@@ -118,6 +121,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 ### Next bounded action
 
 M1, base shootout on the held-out sets:
+0. The Director writes the M1 workstream plan with immutable pre-stage packets: per-packet budget, timeout, retry limit, owned paths, tests, reviewer reservation and stop conditions. No new M1 provider dispatch happens until it exists. Work already in flight under its own recorded bounds continues: the owner-approved downloads (O-034) and the set A and set B data preparation the owner delegated to Codex.
 1. Set B's replacement passes an independent review (set A's references are already accepted).
 2. The scorer's fail-closed fix (#281) lands through its own review.
 3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo 12B (the control) are then scored with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated.
@@ -127,3 +131,4 @@ M1, base shootout on the held-out sets:
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]] -->
