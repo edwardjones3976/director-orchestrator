@@ -1,3 +1,5 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | BEGIN]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
@@ -70,7 +72,7 @@ another untrusted source as authenticated identity.
 ## Roles and recordkeeping
 
 - The producer supplies the contribution identity and does not obscure material
-  co-authors.
+  contributors.
 - The assigned recordkeeping provider checks tag completeness alongside branch,
   SHA, review, security, CI, and handoff records.
 - The ChatGPT/Codex Director resolves classification questions and prevents a tagging
@@ -91,31 +93,37 @@ Contribution tags acknowledge actual contributions only and never imply
 inherited authorship. Never rewrite a provider's identity or provenance into the
 Director's, and never record a contributor that did not contribute. A Director
 tag on a coordination message makes the Director neither the logical producer
-nor a material author of the candidate, and the Director still may not
-independently accept or merge code it actually materially authored.
+nor a material author of the candidate. The Director may accept only when
+eligible under the sole-author review rule below and may never merge a pull
+request to which it contributed counted lines.
 
 ## Sole author rule
 
-Owner ruling, 2026-09-26, verbatim: "The rule is that there should be only one
-author. If a provider or individual is responsible for 52% of the PR, they are
-considered the sole author. Co-authors contribute assistance and can review,
-among other roles."
+Owner ruling, 2026-09-26, verbatim (relayed by the peer session):
+
+> "There is no such thing as a co-author unless they wrote the other 48% of the work. If shorter than that, than the 52% author is the sole owner of the publication."
+> "This goes for all platforms. It should be a universal rule in this project/product."
 
 - **At most one sole author.** The provider or individual responsible for at
   least 52 % of a pull request is its sole author. A pull request has at most one
   sole author, and below the threshold it has none.
-- **Everyone else is a co-author.** Co-authors are credited in the pull-request
-  record and in contribution tags, and may assist and hold other roles.
-- **Co-author review eligibility is prospective.** The ruling lets a co-author
-  review, but the deterministic gate does not yet tell a sole author from a
-  co-author: `review_handoff.py` binds the assignment producer and every
-  dependency outcome as material authors and rejects each of them as reviewer.
-  Until a separately reviewed runtime and schema alignment change merges, every
-  contributor stays ineligible to review, accept, or merge the pull request, as
-  before, and no handoff, template, or prompt may select a co-author as
-  reviewer. The runtime Director prompt, the charter directive, and its
-  `DIRECTOR_OPERATING_DIRECTIVE_SHA256` fingerprint change with that alignment,
-  not before.
+- **Assistance and the exact 52 % / 48 % case.** A contributor below 48 %
+  assisted; records name them as "assisted by <identity> (<share> %)". Two
+  contributors are co-authors only when one holds 52 % and the other the
+  remaining 48 %. Contribution tags continue to credit actual contributions.
+- **Review eligibility follows the owner rule now.** Only the sole author and
+  its provider family are excluded from reviewing on authorship grounds. An
+  assisting contributor may review in Director-routed and manual reviews.
+  Any contributor with counted lines, whether sole author or assisting, may never merge that PR, and this bar never lifts.
+  When an assisting contributor gives the accepting review, the merge must be
+  carried out by a non-contributing reviewer that has thoroughly reviewed the work.
+  For runtime-dispatched reviews, `review_handoff.py::bind_review_handoff`
+  currently binds the assignment producer and every transitive dependency
+  outcome provider as material authors and rejects those contributors and their
+  provider families as reviewers, so it still rejects an assisting contributor
+  until a separate reviewed runtime change aligns it. The runtime Director
+  prompt, the charter directive, and its `DIRECTOR_OPERATING_DIRECTIVE_SHA256`
+  fingerprint change with that alignment, not before.
 - **The logical producer is unchanged.** It is still the producer of the
   assignment under review, which `review_handoff.py` binds to that assignment's
   agent. The pull-request sole author is recorded separately.
@@ -178,3 +186,5 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:33 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:42 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:57 UTC | END]] -->

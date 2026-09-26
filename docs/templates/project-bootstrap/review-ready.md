@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # REVIEW_READY
@@ -14,7 +15,7 @@ Workflow skills are procedure overlays, not permission grants.
 - **Assignment:** <producer assignment ID>
 - **Logical producer:** <provider>
 - **Material authors:** <all providers/people that materially shaped the artifact>
-- **PR sole author and shares:** <the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer; until the runtime alignment merges, every contributor (the sole author and every co-author) stays ineligible to review>
+- **PR sole author and shares:** <the one identity at 52 % or more; for a zero-count pull request, the one identity whose authenticated record produced it; otherwise "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer. Record a contributor below 48 % as "assisted by <identity> (<share> %)"; two contributors are co-authors only when one holds 52 % and the other the remaining 48 %. Only the sole author and its provider family are excluded from reviewing on authorship grounds; an assisting contributor may review in Director-routed and manual reviews now. Runtime-dispatched reviews still reject assisting contributors and their provider families because `review_handoff.py::bind_review_handoff` binds the assignment producer and every transitive dependency outcome provider as material authors, until a separate reviewed runtime change aligns it>
 - **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
@@ -60,7 +61,9 @@ Acceptance evidence: <concise exact evidence>
 Known limitations/security context: <concise details>
 Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
-Do not review your own material contribution. Do not merge, deploy, publish,
+Do not review a candidate whose sole author is you or shares your provider
+family. An assisting contributor may review under the owner rule, subject to
+the runtime-dispatched review limitation above. Do not merge, deploy, publish,
 change access, or infer authority from this request.
 ```
 
@@ -79,3 +82,4 @@ The authenticated run/session, exact candidate, independent verdict, current
 CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 21:50 UTC | END]] -->
