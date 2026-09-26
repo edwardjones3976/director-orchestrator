@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:38 UTC | BEGIN]] -->
 # Workstream plan: homemade-llm, phase M1 "Base shootout" (DRAFT for owner approval)
 
@@ -21,7 +22,7 @@ Do not place secrets, credentials, tokens, or raw private source in this plan. W
 |---|---|---|
 | G1 | **D-018:** ratify #280 (the scorer merged before M0 closed), or revert and redo it | Every scored packet depends on the scorer |
 | G2 | **Approve this plan**, including every packet's bounds | No dispatch under the plan before approval |
-| G3 | **Storage:** after conversion, move the bf16 safetensors from `C:\llm\hf` to `E:\llm-archive\hf-bases-2026-09\` (a copy with hash verification, then a delete from C:), or approve raising the 120 GiB cap | With all four weight sets present, `C:\llm` is about 104 GiB. The GGUFs add about 30 GiB, which crosses the cap. |
+| G3 | **APPROVED by the owner, 2026-09-26 ~20:40 UTC, in the Claude Code session.** **Storage:** after conversion, move the bf16 safetensors from `C:\llm\hf` to `E:\llm-archive\hf-bases-2026-09\` (a copy with hash verification, then a delete from C:), The approved option is the move to E: (not raising the cap). The copy on E: must hash-verify before anything is removed from C:, and each removal is logged with its hash. | With all four weight sets present, `C:\llm` is about 104 GiB. The GGUFs add about 30 GiB, which crosses the cap. |
 | G4 | **Methodology:** approve the shootout decisions D-M1-1 to D-M1-4 below, or change them | They must be declared before any scoring (research brief, `C:\llm\reports\m1-quant-research-perplexity-20260926T2000Z.md`) |
 
 ## Methodology decisions (declared before scoring)
@@ -66,3 +67,4 @@ DIRECTOR data generation and adapter training (M2), the local provider lane (M3)
 
 Contribution tags record the author of the plan or artifact. They do not prove the provider identity or satisfy any gate above.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:40 UTC | END]] -->
