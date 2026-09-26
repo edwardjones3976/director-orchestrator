@@ -70,7 +70,7 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 - **Turnaround:** one 20-step smoke run including GGUF export is under 5 minutes wall clock, and GGUF export dominates (150–190 s) `[verified from the run reports]`.
 - **Held-out sets (local only, never committed):**
   - Set A: 22 real-history packets at `C:\llm\datasets\heldout\set-a`, unchanged.
-    - The owner chose the 19 concise items for M1 (`set-a\M1-SELECTION.md`), excluding EW-20260912-0014, 0015 and 0016 for size.
+    - The owner chose the 19 concise items for M1 (`set-a\M1-SELECTION.md`), excluding EW-20260912-0014, 0015 and 0016 for size `[relayed, owner decision 2026-09-26 18:45 UTC]`.
     - Their JSON references are in `set-a-json-v2\`: authored by OpenAI Codex, with a Grok ACCEPT on all 19 (receipt `xai/20260926T193234Z.json`) `[verified 2026-09-26 19:32 UTC, receipt]`.
     - An earlier Cursor conversion (`set-a-json\`) failed three independent reviews and is kept only as evidence `[verified, receipts heldout/codex-20260926T190120Z, …190641Z, …191448Z]`.
   - Set B: the 50 Cursor-reconstructed packets in `pr-reconstructed\` were **rejected** by an independent Codex review (50 substantive findings) and are kept only as evidence `[verified 2026-09-26 19:36 UTC, receipt heldout/codex-20260926T193640Z.setb-review]`.
