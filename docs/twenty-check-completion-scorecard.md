@@ -1,3 +1,4 @@
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | BEGIN]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
@@ -43,7 +44,7 @@ whether any operation is permitted. The report always says
 | 13 | Rolling twenty admissions | Authoritative assignment history and recomputed reported resource-bound compliance |
 | 14 | Bounded execution | Attempts, cancellation deadline and token/output limits on all selected routes |
 | 15 | Monetary control and usage | Enrolled daily cap, reservations and correlated actual charges |
-| 16 | Executed exact-head CI | All six required jobs completed successfully with actual steps |
+| 16 | Executed exact-head CI | All six required jobs completed successfully with actual steps. A focused PR base-merge rerun also requires the CI scope job to verify a green full run on the previous head and run the mapped tests; the unchanged container and recovery areas are recorded as carried forward. Push runs use the full suite. |
 | 17 | Independent ACCEPT | One materially non-author identity, original evidence, exact candidate |
 | 18 | Complete Security scan | Sealed complete coverage and disposition bound to exact candidate |
 | 19 | Paid primary active | Paid enabled, primary runtime, effect executor and reconciliation worker active |
@@ -246,3 +247,4 @@ Postgres lane is needed.
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | END]] -->
 <!-- [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-26 | 17:22 UTC | END]] -->
