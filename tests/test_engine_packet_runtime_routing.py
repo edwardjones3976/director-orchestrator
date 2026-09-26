@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | BEGIN]]
@@ -221,10 +222,11 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         *,
         estimated_cost_usd: float = 0,
         workload_policy_version: str | None = None,
+        agent: ProviderName = ProviderName.CLAUDE,
     ) -> tuple[TaskRecord, Assignment]:
         assignment = Assignment(
             sequence=1,
-            agent=ProviderName.CLAUDE,
+            agent=agent,
             task="Route one assignment through the packet coordinator",
             acceptance=["The coordinator owns dispatch"],
             repository="example/demo",
@@ -811,6 +813,61 @@ class PacketRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, consumer.calls)
         self.assertEqual(self.work["starting_ref"], transport.readback_packet["starting_ref"])
 
+    async def test_reconciled_readback_settles_its_higher_cost(self) -> None:
+        """Review 4112821088: run_packet returns OWNER_DECISION_REQUIRED (its finally settles that outcome, which has
+        no packet), then the authenticated readback's reconciled result carries the real $0.60 charge. It settles
+        again before it is consumed, so with $0.50 of other spend the next reservation under the $1 cap is refused."""
+        result = copy.deepcopy(self.result)
+        result["provider"] = "gemini"
+        result["usage"] = {**result["usage"], "cost_usd": 0.60}
+        transport = LateReadbackTransport(result)
+        router = StubPacketTaskRouter(self.work, PacketBoundaryAdapter("gemini", transport))
+        consumer = RecordingResultConsumer()
+        settings = self._settings(
+            langgraph_runtime_enabled=True,
+            langgraph_runtime_live_dispatch_enabled=True,
+            langgraph_runtime_task_writer_enabled=True,
+            gemini_api_key="configured-for-readiness-only",
+            gemini_daily_budget_usd=1.0,
+            gemini_usage_probe_cost_ceiling_usd=0.01,
+        )
+        activation = RuntimeActivation(settings, packet_task_router=router, packet_result_consumer=consumer)
+        self.addCleanup(activation.close)
+        engine, store = self._engine(settings, activation)
+        record, assignment = self._record(agent=ProviderName.GEMINI)
+        store.create(record)
+        other = hashlib.sha256(b"other-spend").hexdigest()
+        engine.provider_spend.reserve(provider=ProviderName.GEMINI, effect_key=other, estimated_cost_usd=0.5,
+                                      request_limit=50, budget_usd=1.0)
+
+        self.assertFalse(await engine._execute_assignment(record, assignment))
+        self.assertEqual("RECONCILIATION_REQUIRED", self._ledger_status())
+        self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.51)
+
+        late = store.get(record.task_id)
+        late.status = TaskStatus.RUNNING
+        late.provider_runs.append(
+            ProviderRun(
+                provider=ProviderName.GEMINI,
+                assignment_sequence=assignment.sequence,
+                interaction_id=result["correlation"]["correlation_id"],
+                run_id=result["run_reference"],
+                status="completed",
+                result=result["outcome"],
+                evidence_source="provider_authenticated",
+            )
+        )
+        store.save(late)
+        self.assertIsNone(await engine._route_live_dispatch(store.get(record.task_id), assignment))
+        self.assertEqual("COMPLETED", self._ledger_status())
+        self.assertEqual(1, consumer.calls)
+        self.assertEqual(1, transport.sends)
+        self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 1.10)
+        with self.assertRaises(ProviderDailyLimitExceeded):
+            engine.provider_spend.reserve(provider=ProviderName.GEMINI,
+                                          effect_key=hashlib.sha256(b"next").hexdigest(),
+                                          estimated_cost_usd=0.01, request_limit=50, budget_usd=1.0)
+
     async def test_blocking_sync_readback_times_out_without_freezing_or_redispatch(
         self,
     ) -> None:
@@ -1256,3 +1313,4 @@ if __name__ == "__main__":
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 15:26 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 21:01 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-26 | 06:31 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]

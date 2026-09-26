@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 """Review 4112533824: ordinary provider work settles its daily-spend reservation through record_charge."""
@@ -206,6 +207,24 @@ class ProviderSpendSettlementTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(engine.provider_spend.unreconciled(
                 ProviderName.GEMINI, stale_after=timedelta(minutes=10), now=now), [_key("crashed")])
 
+    def test_an_owner_reconciled_run_settles_its_ambiguous_dispatch(self) -> None:
+        """Review 4112821088: a run the owner reconciled as created carries no observation of its own; its terminal
+        settlement charges the ambiguous dispatch's reservation."""
+        from director_orchestrator.approvals import record_provider_effect_observation, reserve_provider_effect
+        with tempfile.TemporaryDirectory() as directory:
+            settings, store, record, assignment = self._world(directory)
+            engine = OrchestrationEngine(settings, store)
+            key = reserve_provider_effect(record, assignment, phase="dispatch", max_task_budget_usd=10)
+            record_provider_effect_observation(record, assignment, effect_key=key, phase="dispatch",
+                                               outcome="ambiguous")
+            engine._reserve_provider_daily_spend(assignment, effect_key=key)
+            run = ProviderRun(provider=ProviderName.GEMINI, assignment_sequence=assignment.sequence,
+                              run_id="owner-reconciled", status="completed", result="done",
+                              raw={"usage": {"cost": 0.3}})
+            engine._settle_provider_spend(record, run, ProviderName.GEMINI)
+            self.assertAlmostEqual(engine.provider_spend.exposure(ProviderName.GEMINI)[1], 0.3)
+            self.assertEqual(engine.provider_spend.unreconciled(ProviderName.GEMINI, stale_after=HOUR), [])
+
     def test_a_completed_packet_settles_its_reported_cost(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings, store, record, assignment = self._world(directory)
@@ -225,3 +244,4 @@ if __name__ == "__main__":
     unittest.main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]

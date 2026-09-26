@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | BEGIN]]
@@ -1408,6 +1409,9 @@ class OrchestrationEngine:
                         provider=assignment.agent.value,
                         writer_token=writer_token,
                     )
+                    # Review 4112821088: the reconciled result replaces the outcome the finally above settled; it
+                    # settles again, before anything consumes it (record_charge only raises a charge).
+                    self._settle_packet_spend(record, assignment, task_effect_key, outcome)
                 except Exception as exc:
                     await self._stop_for_owner(
                         latest,
@@ -5451,6 +5455,16 @@ class OrchestrationEngine:
             for item in record.task_effect_ledger
             if item.kind == "provider_observation" and item.run_id_digest == run_digest
         }
+        if not keys:
+            # An owner-reconciled "created" run (approvals.apply_ambiguous_dispatch_resolution) carries no
+            # observation of its own: it is the ambiguous dispatch of this assignment, whose reservation settles.
+            keys = {
+                item.effect_key
+                for item in record.task_effect_ledger
+                if item.kind == "provider_observation" and item.outcome == "ambiguous"
+                and item.provider == run.provider and item.assignment_sequence == run.assignment_sequence
+                and item.run_id_digest is None
+            }
         cost = normalize_reported_cost(normalize_usage(run.raw)[0])
         for key in sorted(keys):
             self._charge_spend(provider, key, cost)
@@ -7094,3 +7108,4 @@ class OrchestrationEngine:
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 04:13 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]]

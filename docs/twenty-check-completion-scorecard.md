@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
@@ -1143,7 +1144,15 @@ unreconciled, never invisible (review 4112697677); only a provable pre-submit
 refusal (`PreSubmitProviderError`, a packet runtime key closed pre-submit)
 settles at $0, and its reservation still counts. A reservation still unsettled
 after `PROVIDER_TIMEOUT_SECONDS` is unreconciled too, so a crash between
-dispatch and settlement cannot hide one. Settlement records the
+dispatch and settlement cannot hide one. Wherever an outcome is replaced after its first
+settlement it settles again from the final one before it is consumed
+(`record_charge` only raises a charge; review 4112821088): the single packet's
+authenticated readback (`reconcile_result`), parallel members and resumed
+packets (each `run_packet` call, a replay included, settles in its own
+`finally`), legacy dispatch and revision runs polled to a terminal state
+(including a resumed run), and an owner-reconciled "created" run, which settles
+the reservation of the ambiguous dispatch it resolves. Callback-delivered
+results come only from Claude, which the daily ledger does not account. Settlement records the
 provider-reported cost (the result packet's `usage.cost_usd`, else the run's
 reported `usage.cost`) against the request's reservation; with no reported cost
 the request is settled without a charge, keeps counting at its reservation, and
@@ -1434,3 +1443,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:58 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:43 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:21 UTC | END]] -->
