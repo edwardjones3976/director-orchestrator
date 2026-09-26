@@ -1,3 +1,5 @@
+# [[Cursor | Composer 2.5 | 2026-09-26 | 14:50 UTC | BEGIN]]
+# [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-26 | 00:35 UTC | BEGIN]]
@@ -103,9 +105,12 @@ def try_load_candidate(path: Path) -> tuple[dict[str, Any] | None, bool]:
     if not path.is_file():
         return None, False
     try:
-        return json.loads(path.read_text(encoding="utf-8")), True
+        parsed = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None, True
+    if not isinstance(parsed, dict):
+        return None, True
+    return parsed, True
 
 
 def schema_validator(schema_path: Path) -> Any | None:
@@ -140,9 +145,26 @@ def load_grades(path: Path | None) -> list[dict[str, Any]]:
     return rows
 
 
+def _grade_row_missing_or_invalid_grader(row: dict[str, Any]) -> bool:
+    if row.get("accepted") is not True:
+        return False
+    grader = row.get("grader")
+    if not isinstance(grader, str):
+        return True
+    if not grader.strip():
+        return True
+    return False
+
+
 def count_malformed_grade_rows(grades: list[dict[str, Any]]) -> int:
-    """Count grade rows whose ``accepted`` value is not a JSON boolean."""
-    return sum(1 for row in grades if "accepted" in row and not isinstance(row["accepted"], bool))
+    """Count grade rows with non-boolean ``accepted`` or missing grader on accept rows."""
+    count = 0
+    for row in grades:
+        if "accepted" in row and not isinstance(row["accepted"], bool):
+            count += 1
+        elif _grade_row_missing_or_invalid_grader(row):
+            count += 1
+    return count
 
 
 def packet_accepted_as_is(
@@ -164,7 +186,9 @@ def packet_accepted_as_is(
             continue
         if row.get("accepted") is not True:
             return False
-        grader = str(row["grader"])
+        if _grade_row_missing_or_invalid_grader(row):
+            return False
+        grader = row["grader"]
         graded_by_grader.setdefault(grader, {})[field] = True
     complete_graders = sum(
         1 for field_map in graded_by_grader.values() if field_set <= field_map.keys()
@@ -345,3 +369,5 @@ if __name__ == "__main__":
 # [[Cursor | cursor-agent | 2026-09-26 | 00:35 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-26 | 14:50 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | END]]
