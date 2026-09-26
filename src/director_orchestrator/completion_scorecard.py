@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -613,10 +614,16 @@ _RENDERER_FILES = ("src/director_orchestrator/primary_slack_delivery.py", "src/d
                    "src/director_orchestrator/models.py")
 
 
+def _git_root() -> Path:
+    """Where git reads commits: the repository the launcher named (the evaluator runs from an archived tree that is
+    not a git checkout), else this checkout."""
+    return Path(os.environ.get("DIRECTOR_SCORECARD_REPO") or _REPO_ROOT)
+
+
 def _candidate_blob(sha: str, path: str) -> bytes | None:
     """A file exactly as the candidate commit holds it (read-only git show), or None when unavailable."""
     try:
-        return _run_bytes(["git", "-C", str(_REPO_ROOT), "show", f"{_sha(sha)}:{path}"])
+        return _run_bytes(["git", "-C", str(_git_root()), "show", f"{_sha(sha)}:{path}"])
     except _SOURCE_ERRORS:
         return None
 
@@ -3509,40 +3516,29 @@ TRUSTED_CHECKOUT_REFUSAL = "scorecard not run from the pinned evaluator checkout
 def untrusted_checkout(candidate_sha: str, root: Path | None = None) -> str | None:
     """The operating rule (added by the author of this change, not an owner ruling) that makes the scorecard a
     trusted evaluator: it grades only from the OWNER-PINNED evaluator revision (the release descriptor's
-    ``evaluator_sha``), never from code the candidate controls. Its checkout has no tracked changes and its HEAD is
-    that revision, which is a commit on github/main and an ancestor of (or equal to) the candidate graded as data.
-    None when it holds, else why not."""
+    ``evaluator_sha``), never from code the candidate controls. The owner-installed launcher
+    (scripts/scorecard-launcher.py) extracts exactly that commit's tree with git archive and runs it; this code must
+    be running from that tree (DIRECTOR_SCORECARD_TREE), the pin must be on github/main and an ancestor of (or equal
+    to) the candidate graded as data. None when it holds, else why not."""
     pinned = evaluator_pin(cli_release_descriptor())
     if pinned is None:
         return "evaluator revision not pinned"
-    root = root or Path(__file__).resolve().parents[2]
+    root = root or _REPO_ROOT
+    tree, repo = os.environ.get("DIRECTOR_SCORECARD_TREE"), os.environ.get("DIRECTOR_SCORECARD_REPO")
+    if not tree or not repo or os.path.normcase(str(Path(tree).resolve())) != os.path.normcase(str(root.resolve())):
+        return "not started by the owner-installed launcher from the archived evaluator tree"
 
     def git(*arguments: str) -> str:
-        return _run_bytes(["git", "-C", str(root), *arguments]).decode().strip()
+        return _run_bytes(["git", "-C", repo, *arguments]).decode().strip()
     try:
-        if git("status", "--porcelain", "--untracked-files=no"):
-            return "its checkout has uncommitted changes"
-        if untracked_evaluator_files(git("status", "--porcelain", "--untracked-files=all", "--ignored",
-                                         "--", "src", "scripts")):
-            return "its checkout carries untracked or ignored files under src/ or scripts/"
-        head = git("rev-parse", "HEAD")
-        if head != pinned:
-            return "its HEAD is not the pinned evaluator revision"
         git("merge-base", "--is-ancestor", pinned, "github/main")  # a nonzero exit raises: not on main
     except (OSError, ValueError, subprocess.SubprocessError):
-        return "its checkout could not be verified as the pinned evaluator revision on github/main"
+        return "the pinned evaluator revision could not be verified on github/main"
     try:
         git("merge-base", "--is-ancestor", pinned, candidate_sha)  # an ancestor of, or equal to, the candidate
     except (OSError, ValueError, subprocess.SubprocessError):
         return "the pinned evaluator revision is not an ancestor of the candidate"
     return None
-
-
-def untracked_evaluator_files(porcelain: str) -> list[str]:
-    """Untracked (``??``) or ignored (``!!``) paths in ``git status --porcelain --untracked-files=all --ignored``
-    output, except byte-compiled caches (``__pycache__``), which Python writes for imported, tracked modules."""
-    return [line[3:] for line in porcelain.splitlines()
-            if line[:2] in ("??", "!!") and "__pycache__/" not in line[3:].replace("\\", "/")]
 
 
 def refuse_untrusted(report: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -3646,3 +3642,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]

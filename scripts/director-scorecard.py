@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
@@ -12,28 +13,21 @@
 # [[Claude Code | Claude Opus 5 (1M context) | 2026-09-12 | 12:22 UTC | BEGIN]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-12 | 08:38 UTC | BEGIN]]
 """Render the read-only twenty-check Director scorecard."""
+import argparse
+import json
 import os
-import sys
+import subprocess
+from pathlib import Path
 
-# Standard modules are imported with the checkout's own directories (scripts/, src/, a working directory inside it)
-# off sys.path, so no untracked file there can stand in for one of them; os and sys are loaded before this file runs.
-_ROOT = os.path.normcase(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_SEARCH_PATH = list(sys.path)
-sys.path[:] = [entry for entry in _SEARCH_PATH
-               if not os.path.normcase(os.path.abspath(entry or os.getcwd())).startswith(_ROOT)]
-import argparse  # noqa: E402
-import json  # noqa: E402
-import subprocess  # noqa: E402
-from pathlib import Path  # noqa: E402
-sys.path[:] = _SEARCH_PATH
-
-# No repository Python runs before the whole trust check below passes: it uses the standard library alone, with the
-# checkout's own directories off sys.path (above), because any module the checkout carries - modified, staged,
-# untracked or ignored - could otherwise redefine the very check that is meant to reject it.
+# This file runs only from the evaluator tree that the owner-installed launcher (scripts/scorecard-launcher.py,
+# installed at ~/.director-scorecard/launcher.py) extracted from the pinned evaluator_sha with git archive; a working
+# checkout's copy of this file is never trusted to check itself (review 4112412081). The check below is a second
+# line against a direct run, standard library only, before any repository module is imported.
 ROOT = Path(__file__).resolve().parents[1]
 # The owner-installed release descriptor (primary_scorecard_evidence.RELEASE_DESCRIPTOR), read here with json alone.
 RELEASE_DESCRIPTOR = Path.home() / ".director-scorecard" / "release-descriptor.json"
 DESCRIPTOR_VERSION = "director-cli-release-descriptor/v1"
+TREE_ENV, REPO_ENV = "DIRECTOR_SCORECARD_TREE", "DIRECTOR_SCORECARD_REPO"  # set by the launcher
 
 
 def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
@@ -49,30 +43,17 @@ def pinned_evaluator(descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
     return pin if isinstance(pin, str) and len(pin) == 40 and all(c in "0123456789abcdef" for c in pin) else None
 
 
-def checkout_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
-    """The stdlib-only trust bootstrap (review 4112206675): None when the checkout may be imported, else why not.
-    Any entry under src/ or scripts/ in ``git status --porcelain --untracked-files=all --ignored`` (modified,
-    staged, untracked or ignored; only __pycache__ is tolerated) refuses; HEAD must be the release descriptor's
-    evaluator_sha, and that commit must be on github/main."""
-    def git(*arguments: str) -> str:
-        return subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, timeout=30, check=True,
-                              stdin=subprocess.DEVNULL).stdout.decode("utf-8", "replace")
+def launch_refusal(root: Path = ROOT, descriptor: Path = RELEASE_DESCRIPTOR) -> str | None:
+    """None when this file runs from the launcher's archived evaluator tree and the pin is on github/main."""
     pinned = pinned_evaluator(descriptor)
     if pinned is None:
         return "evaluator revision not pinned"
+    tree, repo = os.environ.get(TREE_ENV), os.environ.get(REPO_ENV)
+    if not tree or not repo or os.path.normcase(str(Path(tree).resolve())) != os.path.normcase(str(root)):
+        return "not started by the owner-installed launcher from the archived evaluator tree"
     try:
-        listing = git("status", "--porcelain", "--untracked-files=all", "--ignored", "--", "src", "scripts")
-        dirty = [line[3:] for line in listing.splitlines()
-                 if line.strip() and "__pycache__/" not in line[3:].replace("\\", "/")]
-        if dirty:
-            return ("modified, staged, untracked or ignored files under src/ or scripts/ would be importable: "
-                    + ", ".join(sorted(dirty)[:10]))
-        if git("rev-parse", "HEAD").strip() != pinned:
-            return "its HEAD is not the pinned evaluator revision"
-    except (OSError, subprocess.SubprocessError):
-        return "its checkout could not be verified"
-    try:
-        git("merge-base", "--is-ancestor", pinned, "github/main")
+        subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", pinned, "github/main"],
+                       capture_output=True, timeout=30, check=True, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
         return "the pinned evaluator revision is not on github/main"
     return None
@@ -122,7 +103,7 @@ def main() -> int:
             parser.error("--drill-thread takes one KIND=THREAD_TS value per drill kind")
         drills[kind] = thread
     # The whole trust check, standard library only, before any repository module is imported.
-    refusal = checkout_refusal()
+    refusal = launch_refusal()
     if refusal is not None:
         parser.error("scorecard not run from the pinned evaluator checkout: " + refusal)
     from director_orchestrator.completion_scorecard import (collect, refuse_untrusted, render_markdown, score,
@@ -169,3 +150,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]

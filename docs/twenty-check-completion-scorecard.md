@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]] -->
@@ -111,12 +112,31 @@ whether any operation is permitted. The report always says
 
 ## Run it
 
-From the repository, with its Python environment and `PYTHONPATH=src`:
+Through the owner-installed launcher, from a working directory outside the
+checkout (see "Install the launcher" below). The launcher takes the repository
+path first; every other argument goes to the scorecard unchanged:
 
 ```powershell
-$env:PYTHONPATH = 'src'
-python scripts/director-scorecard.py --candidate-sha <full-40-character-sha> --evidence-dir <explicit-evidence-folder> --output-dir <report-folder>
+python -I $HOME\.director-scorecard\launcher.py <repository> --candidate-sha <full-40-character-sha> --evidence-dir <explicit-evidence-folder> --output-dir <report-folder>
 ```
+
+Running `scripts/director-scorecard.py` directly refuses: "not started by the
+owner-installed launcher from the archived evaluator tree".
+
+### Install the launcher
+
+One-time, and again whenever the owner moves the pin. Take the launcher from the
+reviewed evaluator commit, never from a working tree, and pin that commit:
+
+```powershell
+New-Item -ItemType Directory -Force $HOME\.director-scorecard
+git -C <repository> show <evaluator_sha>:scripts/scorecard-launcher.py > $HOME\.director-scorecard\launcher.py
+# then set "evaluator_sha": "<evaluator_sha>" in $HOME\.director-scorecard\release-descriptor.json
+```
+
+The installed copy is what runs; `scripts/scorecard-launcher.py` in the
+repository is only its reviewed source. Check the installed file's bytes against
+that commit (`git hash-object`) before trusting it.
 
 The default is offline. It produces `completion-scorecard.json` and
 `completion-scorecard.md`, with UNKNOWN for facts it has not observed (0/20).
@@ -124,7 +144,7 @@ The default is offline. It produces `completion-scorecard.json` and
 A full live collection names every source explicitly:
 
 ```powershell
-python scripts/director-scorecard.py --candidate-sha <sha> --output-dir <report-folder> `
+python -I $HOME\.director-scorecard\launcher.py <repository> --candidate-sha <sha> --output-dir <report-folder> `
   --live --deployment edge-engine-director --channel <C…> --gateway <gateway-container-name> `
   --github --ledger <journal-path> --security-scan <scan-uuid> `
   --drill-thread refusal-4xx=<thread-ts> --drill-thread reserved-5xx=<thread-ts> `
@@ -1049,9 +1069,9 @@ Operating rule: the pinned evaluator revision (added by the author of this
 change). The evaluator must never be code the candidate controls. The owner's
 release descriptor (the check-11 shape, `director-cli-release-descriptor/v1`)
 carries `evaluator_sha`, `ci_workflow_sha256`, `security_base_sha` and the
-CLI releases. `scripts/director-scorecard.py` grades only when its own
-checkout is clean and its HEAD is `evaluator_sha`, which is a commit on
-`github/main` and an ancestor of (or equal to) the candidate
+CLI releases. The scorecard grades only from the tree of `evaluator_sha`
+that the owner-installed launcher extracted, where `evaluator_sha` is a commit
+on `github/main` and an ancestor of (or equal to) the candidate
 (`completion_scorecard.untrusted_checkout`). The candidate is graded as data
 through `--candidate`; the scorecard, the offline collector it loads, the
 rubric requirements and every predicate come from the evaluator checkout.
@@ -1060,17 +1080,25 @@ not pinned"; any other failure is UNKNOWN, "scorecard not run from the
 pinned evaluator checkout". The live collection is skipped when the checkout
 fails the rule. The descriptor is the owner-installed file
 `~/.director-scorecard/release-descriptor.json` (no override; absent, a link,
-over 1 MB, malformed or another version means none). The whole rule first runs
-as a standard-library-only bootstrap in `scripts/director-scorecard.py`,
-before any repository module is imported and with the checkout's directories
-off `sys.path`: it reads `evaluator_sha` from the descriptor with `json`
-(missing: refused), refuses any entry under `src/` or `scripts/` in
-`git status --porcelain --untracked-files=all --ignored` (modified, staged,
-untracked or ignored; only `__pycache__` is tolerated), requires HEAD to be
-`evaluator_sha` and `evaluator_sha` to be an ancestor of `github/main`
-(`git merge-base --is-ancestor`). A modified tracked module or a planted
-`src/httpx.py` therefore never runs. Only then does it import the evaluator,
-and `untrusted_checkout` repeats the rule as a second line.
+over 1 MB, malformed or another version means none). No file of a working checkout ever executes,
+because a checkout cannot be trusted to check itself (review 4112412081). The
+owner-installed launcher (`~/.director-scorecard/launcher.py`, reviewed source
+`scripts/scorecard-launcher.py`, standard library only, run with `python -I`)
+reads `evaluator_sha` from the descriptor (missing: refused), requires it to be
+an ancestor of `github/main` in the named repository (`git merge-base
+--is-ancestor`; an unknown or unreachable commit is refused), refuses a working
+directory inside the checkout, extracts exactly that commit's tree with
+`git archive` into a fresh temporary directory, and runs the archived
+`scripts/director-scorecard.py` with `PYTHONPATH` set to the archived `src`,
+every other `PYTHON*` variable removed, and `DIRECTOR_SCORECARD_TREE` /
+`DIRECTOR_SCORECARD_REPO` naming the tree and the repository. git itself is
+trusted and reads every commit from the repository. A modified tracked
+`scripts/director-scorecard.py` or module in the checkout, committed or not,
+therefore never runs. As a second line, the archived CLI refuses (standard
+library only, before importing the evaluator) unless it is running from the
+tree the launcher named with the pin on `github/main`, and
+`untrusted_checkout` repeats that and requires the pin to be an ancestor of the
+candidate.
 
 Durable plan and effect bindings. The registered plan digest is recomputed
 in-image from the batch's assignment rows (assignment_id, sequence,
@@ -1367,3 +1395,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->

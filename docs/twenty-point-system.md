@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | BEGIN]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
@@ -75,8 +76,12 @@ environment and `PYTHONPATH=src`:
 ```powershell
 $env:PYTHONPATH = 'src'
 python scripts/engineering-workload.py --db <existing-journal.sqlite3> --human status
-python scripts/director-scorecard.py --candidate-sha <full-commit-sha> --live --deployment <compose-project> --channel <slack-channel-id> --gateway <exact-running-container-name> --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
+python -I $HOME\.director-scorecard\launcher.py <repository> --candidate-sha <full-commit-sha> --live --deployment <compose-project> --channel <slack-channel-id> --gateway <exact-running-container-name> --github --ledger <existing-journal.sqlite3> --output-dir <report-directory>
 ```
+
+The scorecard line runs through the owner-installed launcher from a working
+directory outside the checkout; it executes the pinned evaluator tree, never the
+worktree (see `docs/twenty-check-completion-scorecard.md`, "Install the launcher").
 
 Reading an absent journal reports unknown history; it does not create or reset a
 database. Follow the ledger document for enrollment and bounded admission, and the
@@ -89,3 +94,4 @@ existing policy, security, exact-candidate and spending gates.
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | END]] -->
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-23 | 07:13 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]] -->

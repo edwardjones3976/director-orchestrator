@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
@@ -1383,8 +1384,9 @@ def cli_release_descriptor():
     current main's ci.yml is trusted.
 
     It is the owner-installed file RELEASE_DESCRIPTOR (fixed, no override, the stance of the replica signer key);
-    absent, a link, oversized, malformed or of another version, there is none. scripts/director-scorecard.py reads
-    the same file with the standard library alone before any repository module is imported.
+    absent, a link, oversized, malformed or of another version, there is none. The owner-installed launcher
+    (scripts/scorecard-launcher.py) and scripts/director-scorecard.py read the same file with the standard library
+    alone before any repository module is imported.
     """
     try:
         if RELEASE_DESCRIPTOR.is_symlink() or not RELEASE_DESCRIPTOR.is_file() \
@@ -1605,3 +1607,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]

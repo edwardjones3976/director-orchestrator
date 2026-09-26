@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
@@ -1662,75 +1663,84 @@ class CompletionScorecardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sc.score(SHA, now=NOW.replace(tzinfo=None))
 
-    def test_cli_trust_bootstrap_runs_before_any_repository_module(self):
-        """4112206675 (and 4111996182): the whole trust check runs with the standard library alone before any
-        repository module is imported. A missing pin, a HEAD other than the pinned evaluator_sha, a pin not on
-        github/main, or ANY modified, staged, untracked or ignored file under src/ or scripts/ refuses, and no
-        planted or modified module ever runs."""
-        script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
+    def test_launcher_runs_only_the_archived_pinned_tree(self):
+        """4112412081: the owner-installed launcher extracts exactly the pinned evaluator_sha with git archive and
+        runs that tree; a malicious change to the checkout's tracked scripts/director-scorecard.py (or any module)
+        never runs. A missing pin, a pin not on github/main, a non-isolated interpreter and a working directory
+        inside the checkout all refuse before anything runs."""
+        source = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as folder:
-            root, home = Path(folder) / "checkout", Path(folder) / "home"
-            (root / "scripts").mkdir(parents=True)
-            (root / "src").mkdir()
-            (home / ".director-scorecard").mkdir(parents=True)
-            (root / "scripts" / "director-scorecard.py").write_bytes(script.read_bytes())
-            (root / "src" / "tracked.py").write_text("VALUE = 1\n")
+            root, home, outside = Path(folder) / "checkout", Path(folder) / "home", Path(folder) / "outside"
+            package = root / "src" / "director_orchestrator"
+            for path in (root / "scripts", package, home / ".director-scorecard", outside):
+                path.mkdir(parents=True)
+            (root / "scripts" / "director-scorecard.py").write_bytes((source / "scripts/director-scorecard.py").read_bytes())
+            (package / "__init__.py").write_text("")
+            # A stand-in evaluator: reaching it proves the real CLI's second line passed inside the archived tree.
+            (package / "completion_scorecard.py").write_text(
+                "import os, sys\nprint('evaluator reached from ' + os.path.dirname(__file__), file=sys.stderr)\n"
+                "raise SystemExit(7)\n")
+            launcher = home / ".director-scorecard" / "launcher.py"
+            launcher.write_bytes((source / "scripts/scorecard-launcher.py").read_bytes())
             git = ["git", "-C", str(root), "-c", "user.email=fixture@example.test", "-c", "user.name=fixture"]
             for arguments in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "evaluator"]):
                 subprocess.run(git + arguments, check=True, capture_output=True, timeout=60)
             head = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
             subprocess.run(git + ["update-ref", "refs/remotes/github/main", head], check=True, capture_output=True)
             descriptor = home / ".director-scorecard" / "release-descriptor.json"
-            loader = importlib.util.spec_from_file_location("director_scorecard_cli", root / "scripts/director-scorecard.py")
-            cli = importlib.util.module_from_spec(loader)
-            loader.loader.exec_module(cli)
 
             def pin(value):
                 descriptor.write_text(json.dumps({"version": "director-cli-release-descriptor/v1", "releases": [],
                                                   "evaluator_sha": value}))
 
-            def run():
-                return subprocess.run([sys.executable, str(root / "scripts/director-scorecard.py"), "--candidate", SHA,
-                                       "--output-dir", str(Path(folder) / "out")], capture_output=True, text=True,
-                                      timeout=60, env={**os.environ, "PYTHONPATH": str(root / "src"),
-                                                       "HOME": str(home), "USERPROFILE": str(home)})
+            def run(*flags, cwd=outside):
+                env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "PYTHONPATH": str(root / "src")}
+                return subprocess.run([sys.executable, *flags, str(launcher), str(root), "--candidate", SHA,
+                                       "--output-dir", str(outside / "out")], capture_output=True, text=True,
+                                      timeout=120, env=env, cwd=cwd)
 
-            self.assertEqual(cli.checkout_refusal(root, descriptor), "evaluator revision not pinned")
-            pin("0" * 40)
-            self.assertIn("not the pinned evaluator revision", cli.checkout_refusal(root, descriptor))
+            refused = run("-I")
+            self.assertEqual(refused.returncode, 2, refused.stderr)
+            self.assertIn("evaluator revision not pinned", refused.stderr)
+            pin("0" * 40)  # not a commit of this repository
+            self.assertIn("not on github/main", run("-I").stderr)
             pin(head)
-            (root / "src" / "__pycache__").mkdir()
-            (root / "src" / "__pycache__" / "tracked.cpython-312.pyc").write_bytes(b"")  # tolerated
-            self.assertIsNone(cli.checkout_refusal(root, descriptor))
-            reached = run()  # the bootstrap passes and only then imports the (absent) evaluator package
-            self.assertNotIn("pinned evaluator checkout", reached.stderr)
-            self.assertIn("director_orchestrator", reached.stderr)
-            subprocess.run(git + ["update-ref", "-d", "refs/remotes/github/main"], check=True, capture_output=True)
-            self.assertIn("not on github/main", cli.checkout_refusal(root, descriptor))
-            subprocess.run(git + ["update-ref", "refs/remotes/github/main", head], check=True, capture_output=True)
-            # A modified TRACKED module (review 4112206675), then planted untracked and ignored ones.
-            (root / "src" / "tracked.py").write_text("raise RuntimeError('hijacked tracked')\n")
-            self.assertIn("src/tracked.py", cli.checkout_refusal(root, descriptor))
-            refused = run()
+            self.assertIn("python -I", run().stderr)  # PYTHONPATH names the checkout's src: not isolated, refused
+            self.assertIn("outside the checkout", run("-I", cwd=root).stderr)
+            reached = run("-I")
+            self.assertEqual(reached.returncode, 7, reached.stderr)
+            self.assertIn("evaluator reached from", reached.stderr)
+            self.assertNotIn(str(root), reached.stderr)  # the archived tree, never the checkout
+            # Malicious changes to the TRACKED CLI and evaluator in the checkout, committed or not, never run.
+            (root / "scripts" / "director-scorecard.py").write_text("raise SystemExit('hijacked cli')\n")
+            (package / "completion_scorecard.py").write_text("raise SystemExit('hijacked evaluator')\n")
+            reached = run("-I")
+            self.assertEqual(reached.returncode, 7, reached.stderr)
+            self.assertNotIn("hijacked", reached.stderr)
+            subprocess.run(git + ["commit", "-q", "-am", "candidate"], check=True, capture_output=True, timeout=60)
+            reached = run("-I")
+            self.assertEqual(reached.returncode, 7, reached.stderr)
+            self.assertNotIn("hijacked", reached.stderr)
+            # The pin must be on github/main: a commit that is not refuses.
+            candidate = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            pin(candidate)
+            refused = run("-I")
             self.assertEqual(refused.returncode, 2, refused.stderr)
-            self.assertIn("scorecard not run from the pinned evaluator checkout", refused.stderr)
+            self.assertIn("not on github/main", refused.stderr)
             self.assertNotIn("hijacked", refused.stderr)
-            subprocess.run(git + ["checkout", "--", "src/tracked.py"], check=True, capture_output=True)
-            (root / "src" / "httpx.py").write_text("raise RuntimeError('hijacked httpx')\n")
-            (root / "scripts" / "json.py").write_text("raise RuntimeError('hijacked json')\n")
-            reason = cli.checkout_refusal(root, descriptor)
-            self.assertIn("src/httpx.py", reason)
-            self.assertIn("scripts/json.py", reason)
-            refused = run()
-            self.assertEqual(refused.returncode, 2, refused.stderr)
-            self.assertNotIn("hijacked", refused.stderr)
-            (root / "src" / "httpx.py").unlink()
-            (root / "scripts" / "json.py").unlink()
-            (root / ".gitignore").write_text("src/ignored_module.py\n")
-            (root / "src" / "ignored_module.py").write_text("")
-            self.assertIn("src/ignored_module.py", cli.checkout_refusal(root, descriptor))
-        self.assertEqual(sc.untracked_evaluator_files("?? src/httpx.py\n!! src/pkg/__pycache__/a.pyc\n M src/x.py\n"),
-                         ["src/httpx.py"])
+
+    def test_cli_refuses_a_direct_run_outside_the_launcher(self):
+        script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / ".director-scorecard").mkdir()
+            (Path(folder) / ".director-scorecard" / "release-descriptor.json").write_text(json.dumps(EVALUATED))
+            env = {key: value for key, value in os.environ.items() if not key.startswith("DIRECTOR_SCORECARD_")}
+            result = subprocess.run([sys.executable, str(script), "--candidate-sha", SHA, "--output-dir", folder],
+                                    capture_output=True, timeout=30, text=True,
+                                    env={**env, "HOME": folder, "USERPROFILE": folder})
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("not started by the owner-installed launcher", result.stderr)
+            self.assertFalse((Path(folder) / "completion-scorecard.json").exists())
 
     def test_cli_offline_refuses_without_a_pinned_evaluator(self):
         script = Path(__file__).resolve().parents[1] / "scripts/director-scorecard.py"
@@ -3924,26 +3934,29 @@ class ScorecardCollectorTests(unittest.TestCase):
                     raise value
                 return value
             return run
-        clean = {"status": b"", "rev-parse": EVALUATOR.encode() + b"\n", "merge-base": b""}
+        clean = {"merge-base": b""}
+        tree = Path(sc.__file__).resolve().parents[2]
+        launched = {"DIRECTOR_SCORECARD_TREE": str(tree), "DIRECTOR_SCORECARD_REPO": str(tree)}
         with patch.object(sc, "cli_release_descriptor", return_value=None):
             self.assertEqual(sc.untrusted_checkout(SHA), "evaluator revision not pinned")
         with patch.object(sc, "cli_release_descriptor", return_value=EVALUATED):
-            calls = []
-            with patch.object(sc, "_run_bytes", side_effect=git(clean, calls)):
-                self.assertIsNone(sc.untrusted_checkout(SHA))
-            # Both ancestry proofs ran: the evaluator on github/main, and the evaluator before the candidate.
-            self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, "github/main"), [tuple(c) for c in calls])
-            self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, SHA), [tuple(c) for c in calls])
-            with patch.object(sc, "_run_bytes", side_effect=git({**clean, "rev-parse": SHA.encode()}, [])):
-                self.assertIn("pinned evaluator revision", sc.untrusted_checkout(SHA))  # the candidate's own code
-            with patch.object(sc, "_run_bytes", side_effect=git({**clean, "status": b" M src/x.py\n"}, [])):
-                self.assertIn("uncommitted", sc.untrusted_checkout(SHA))
-            with patch.object(sc, "_run_bytes", side_effect=git(
-                    {**clean, ("merge-base", "github/main"): ValueError("not an ancestor")}, [])):
-                self.assertIn("github/main", sc.untrusted_checkout(SHA))
-            with patch.object(sc, "_run_bytes", side_effect=git(
-                    {**clean, ("merge-base", SHA): ValueError("not an ancestor")}, [])):
-                self.assertIn("not an ancestor of the candidate", sc.untrusted_checkout(SHA))
+            with patch.dict(os.environ, {"DIRECTOR_SCORECARD_TREE": "", "DIRECTOR_SCORECARD_REPO": ""}):
+                self.assertIn("owner-installed launcher", sc.untrusted_checkout(SHA))  # a direct run
+            with patch.dict(os.environ, {**launched, "DIRECTOR_SCORECARD_TREE": str(tree.parent)}):
+                self.assertIn("owner-installed launcher", sc.untrusted_checkout(SHA))  # another tree
+            with patch.dict(os.environ, launched):
+                calls = []
+                with patch.object(sc, "_run_bytes", side_effect=git(clean, calls)):
+                    self.assertIsNone(sc.untrusted_checkout(SHA))
+                # Both ancestry proofs ran: the evaluator on github/main, and the evaluator before the candidate.
+                self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, "github/main"), [tuple(c) for c in calls])
+                self.assertIn(("merge-base", "--is-ancestor", EVALUATOR, SHA), [tuple(c) for c in calls])
+                with patch.object(sc, "_run_bytes", side_effect=git(
+                        {**clean, ("merge-base", "github/main"): ValueError("not an ancestor")}, [])):
+                    self.assertIn("github/main", sc.untrusted_checkout(SHA))
+                with patch.object(sc, "_run_bytes", side_effect=git(
+                        {**clean, ("merge-base", SHA): ValueError("not an ancestor")}, [])):
+                    self.assertIn("not an ancestor of the candidate", sc.untrusted_checkout(SHA))
         report = sc.refuse_untrusted(sc.score(SHA, [], now=NOW), "evaluator revision not pinned")
         self.assertEqual(report["passed"], 0)
         self.assertTrue(all(item["status"] == "UNKNOWN" and item["explanation"].startswith(sc.TRUSTED_CHECKOUT_REFUSAL)
@@ -4760,3 +4773,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:00 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:06 UTC | END]]
