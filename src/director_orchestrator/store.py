@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | BEGIN]]
@@ -4226,12 +4227,18 @@ class TaskStore:
             )
         records: list[DelegationAuditRecord] = []
         for row in rows:
+            # Parsing and re-hashing each row spends the same deadline as the
+            # scan that retained it.
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit page parse reached its deadline")
             try:
                 record = parse_record(row["record_json"])
             except DelegationAuditError as exc:
                 raise DelegationAuditLedgerCorrupt(str(row["record_digest"])) from exc
             if not hmac.compare_digest(record.digest, str(row["record_digest"])):
                 raise DelegationAuditLedgerCorrupt(str(row["record_digest"]))
+            if deadline is not None and monotonic() > deadline:
+                raise DelegationAuditDeadlineExceeded("audit page parse reached its deadline")
             records.append(record)
         return records
 
@@ -4338,3 +4345,4 @@ class TaskStore:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 19:44 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 21:07 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
