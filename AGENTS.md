@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | BEGIN]] -->
@@ -99,6 +100,7 @@ authority.
 - Delegation changes who supplies a verdict. It never changes whether a gate runs. No deterministic gate in `src/director_orchestrator/policy.py` is removed, relaxed, or made advisory by any grant, and rule 4 still forbids model output from removing an approval requirement.
 - Deployment, publication, deletion, history rewrite, purchases, billing, credential or access changes, merges into a protected branch, and edits to the framework itself are never delegable under any configuration. A decision that is not plainly an enumerated delegable class is treated as non-delegable.
 - Rule 3 is unaffected: no agent merges its own pull request. A delegated merge requires one author and one reviewer who are distinct identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer, who then performs the merge. Owner ruling, 2026-09-12, verbatim: "it's a one-non-author-reviewer project-wide".
+- Sole author (owner ruling, 2026-09-26): a pull request has one author, the provider or individual responsible for at least 52 % of it. Everyone else is a co-author, who may assist and review. "Author" and "material author" in these rules mean that sole author. Definition and measurement: `docs/contribution-attribution-policy.md#sole-author-rule`.
 - Absence of evidence is never consent. A provider that is out of quota, unauthenticated, silent, or absent has not approved anything, and its silence may not be counted, inferred, or waited out.
 
 ## Approver carries the merge
@@ -248,3 +250,4 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[Codex | GPT-6 Astra | 2026-09-22 | 21:21 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 00:02 UTC | END]] -->
 <!-- [[Codex | GPT-6 Astra | 2026-09-23 | 01:32 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
