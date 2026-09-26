@@ -149,11 +149,18 @@ try {
         # A container may still hold the GPU. Record that in a persistent, non-re-entrant marker that both GPU
         # scripts refuse on, instead of keeping the (re-entrant) mutex.
         $poisonFile = Join-Path $HotRoot 'state\gpu-poisoned.txt'
-        New-Item -ItemType Directory -Force (Split-Path $poisonFile) | Out-Null
-        Set-Content -LiteralPath $poisonFile -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))"
-        Write-Warning "GPU poisoned: container $name was not confirmed stopped; wrote $poisonFile"
+        try {
+            New-Item -ItemType Directory -Force (Split-Path $poisonFile) | Out-Null
+            Set-Content -LiteralPath $poisonFile -Value "container $name not confirmed stopped at $((Get-Date).ToUniversalTime().ToString('o'))"
+            Write-Warning "GPU poisoned: container $name was not confirmed stopped; wrote $poisonFile"
+        } catch {
+            # No marker could be written: the mutex is the only guard left, so keep it (and its handle) until this
+            # process exits, and say so loudly.
+            $keepLock = $true
+            Write-Warning "GPU NOT released: container $name unconfirmed and $poisonFile could not be written ($($_.Exception.Message)); the lock is held until this PowerShell process exits"
+        }
     }
-    $gpuLock.ReleaseMutex(); $gpuLock.Dispose()
+    if (-not $keepLock) { $gpuLock.ReleaseMutex(); $gpuLock.Dispose() }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]

@@ -17,11 +17,12 @@ function Get-DescendantProcess([int]$Root) {
     }
     $found
 }
-# The snapshot members still running (same PID and same start time, so a reused PID is not mistaken for one).
+# The snapshot members still running: same PID and exactly the same CIM creation time, so a PID that was reused
+# by an unrelated process is never mistaken for a survivor (and never force-stopped).
 function Get-SurvivingProcess($Snapshot) {
     foreach ($s in @($Snapshot)) {
-        $q = Get-Process -Id $s.ProcessId -ErrorAction SilentlyContinue
-        if ($q -and [math]::Abs(($q.StartTime - $s.CreationDate).TotalSeconds) -lt 2) { $s }
+        $q = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$s.ProcessId)" -Property ProcessId, CreationDate -ErrorAction SilentlyContinue
+        if ($q -and $q.CreationDate -eq $s.CreationDate) { $s }
     }
 }
 function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
@@ -32,6 +33,7 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $p = [System.Diagnostics.Process]::Start($psi)
+    $completed = $false
     try {
         $stdout = $p.StandardOutput.ReadToEndAsync()
         $null = $p.StandardError.ReadToEndAsync()   # drained so a chatty stderr cannot block the child
@@ -42,6 +44,7 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
             if ([DateTime]::UtcNow -ge $deadline) { return @('__EXIT__timeout') }   # finally kills the tree
         }
         $p.WaitForExit()   # also waits for the redirected streams to finish
+        $completed = $true
         $text = $stdout.Result.TrimEnd("`r", "`n")
         # @() matters: a single output line would otherwise be a string, and string + string concatenates.
         @(if ($text) { $text -split "`r?`n" }) + "__EXIT__$($p.ExitCode)"
@@ -51,8 +54,13 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         # while the command (possibly a GPU container operation) is still running.
         # HasExited covers only the root, so snapshot the whole tree before killing and verify every member is gone:
         # a root that dies first, or a partial Kill, must not leave a descendant running unnoticed.
+        # On any path but normal completion (timeout, Ctrl+C, a stopped pipeline), snapshot the tree even if the root
+        # already exited: Windows keeps a dead parent's PID as its children's ParentProcessId, so they are still found.
         $tree = @()
-        if (-not $p.HasExited) { $tree = @(Get-DescendantProcess $p.Id); try { $p.Kill($true) } catch { } }
+        if (-not $completed) {
+            $tree = @(Get-DescendantProcess $p.Id)
+            if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
+        }
         $gone = $p.HasExited -or $p.WaitForExit(5000)
         $id = $p.Id
         $p.Dispose()

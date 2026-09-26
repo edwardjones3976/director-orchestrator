@@ -114,6 +114,9 @@ $ib = Get-Content -Raw (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
 if ($ib -notmatch '(?s)finally \{.*Get-DescendantProcess \$p\.Id.*Get-SurvivingProcess \$tree.*if \(-not \$gone -or \$survivors\) \{ throw') { $fail += 'invoke-bounded: the whole tree must be verified gone, or it throws' }
 $ts = Get-Content -Raw (Join-Path $PSScriptRoot 'train-smoke.ps1')
 if ($ts -notmatch '(?s)if \(\$containerGone -eq \$false\) \{.*gpu-poisoned\.txt.*Set-Content') { $fail += 'train-smoke: an unconfirmed container must write the poison marker' }
+if ($ib -notmatch '(?s)if \(-not \$completed\) \{\s*\$tree = @\(Get-DescendantProcess \$p\.Id\)') { $fail += 'invoke-bounded: the tree snapshot must not depend on the root still running' }
+if ($ib -notmatch '\$q\.CreationDate -eq \$s\.CreationDate') { $fail += 'invoke-bounded: survivors must match the exact creation time' }
+if ($ts -notmatch '(?s)catch \{.*\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a failed poison write must keep the lock' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
 # The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
 # and the unsafe flag is set before the launch attempt (a cancel mid-Start-Job must not release the GPU).
