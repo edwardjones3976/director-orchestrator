@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | BEGIN]]
@@ -439,8 +440,9 @@ def _counter_consistency_error(readback):
     return None
 
 
-def _readback(task_id, task):
-    """Accept the typed opt-in readback only when it is bound and internally consistent."""
+def _readback(task_id, task, owner=None):
+    """Accept the typed opt-in readback only when it is bound and internally consistent. Status receipts are bound
+    to the task's own intake thread and to ``owner``, the owner the evaluator is configured with."""
     readback = task.get("qualification_evidence")
     if readback is None:
         return None, None, "absent", "opt-in readback not present in the task response"
@@ -451,7 +453,10 @@ def _readback(task_id, task):
     # histories, usage, effects, deliveries and receipts, lifecycle order and settlement.
     # In-flight rows (a delivery still posting, usage not yet recorded) are not errors; the checks that read them
     # grade what has settled.
-    latest, errors, _ = task_evidence_errors(readback)
+    intake = task.get("intake") if isinstance(task.get("intake"), dict) else {}
+    latest, errors, _ = task_evidence_errors({**readback, "source_channel_id": intake.get("channel_id") or "",
+                                              "source_thread_ts": intake.get("thread_ts") or "",
+                                              "source_owner_user_id": owner or ""})
     error = next((value for value in errors.values() if value is not None), None)
     if error is None:
         error = _counter_consistency_error(readback)
@@ -535,7 +540,8 @@ def _external_effect_state(effects):
 
 
 def qualification_evidence(task_id, task, rows, rows_bound, input_message, final, *, baseline=None, receipt_id=None,
-                           baseline_authority="caller-supplied-file", before_binding=None, after_binding=None):
+                           baseline_authority="caller-supplied-file", before_binding=None, after_binding=None,
+                           owner=None):
     """Section 4 correlation chain derived from the typed opt-in readback.
 
     Identities come from real persisted keys: assignment_id/sequence, attempt
@@ -548,7 +554,7 @@ def qualification_evidence(task_id, task, rows, rows_bound, input_message, final
     outcomes = _typed_list(task, "assignment_outcomes") or []
     history = _typed_list(task, "provider_run_history")
     contacts = _typed_list(task, "provider_contact_attempts")
-    readback, latest, state, reason = _readback(task_id, task)
+    readback, latest, state, reason = _readback(task_id, task, owner)
     collected = state == "collected"
     # Only a complete, validated readback yields derived identities, states or
     # amounts: the chain below never falls back to the ordinary TaskRecord
@@ -963,7 +969,7 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
     zero_recorded = (bound and all(task.get(key) == [] for key in empty_fields)
         if all(isinstance(task.get(key), list) for key in empty_fields) else None)
     approval_rows = [r for r in rows if str(r.get("notification_key", "")).startswith("approval:")]
-    claim_readback, _, claim_state, _ = _readback(task_id, task)
+    claim_readback, _, claim_state, _ = _readback(task_id, task, owner)
     claim_attested = (claim_state == "collected" and input_message is not None
                       and intake_claim_matches(task, claim_readback, input_message.get("ts")))
     pause, machine = owner_pause(rows, wall, input_message["ts"], final["ts"]) if (
@@ -1010,7 +1016,8 @@ def summarize(thread, task_id, task, deliveries, messages, complete, owner, bot,
         "qualification_evidence": qualification_evidence(task_id, task, rows, rows_bound, input_message, final,
                                                          baseline=baseline, receipt_id=receipt_id,
                                                          baseline_authority=baseline_authority,
-                                                         before_binding=before_binding, after_binding=after_binding)}
+                                                         before_binding=before_binding, after_binding=after_binding,
+                                                         owner=owner)}
 
 
 RUBRIC_REQUIREMENTS = {
@@ -1236,3 +1243,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:36 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:53 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

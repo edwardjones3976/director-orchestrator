@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -67,7 +68,6 @@ OWNER_CLIENT_MSG_ID = "4f1d6a2e-8b3c-4e5f-9a0b-1c2d3e4f5a6b"
 FINAL_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "director_primary_v1:" + TASK_ID + ":terminal"))
 # projection_digest is a sha256: digest; status receipt ids are "status-" + a sha256: digest (primary_default).
 PROJECTION = "sha256:" + hashlib.sha256(b"fixture-projection").hexdigest()
-RECEIPT_ID = "status-sha256:" + hashlib.sha256(b"fixture-receipt").hexdigest()
 EMPTY_ATTEMPT_FIELDS = (
     "provider_runs", "provider_run_history", "provider_contact_attempts",
     "provider_contact_attempt_history", "provider_interaction_ledger",
@@ -81,6 +81,17 @@ ENV = {
 # The gateway's own source_event_id for the owner's message (slack_bot._forward via
 # models.canonical_slack_source_event_id): `<channel>:<ts>`, never the raw client_msg_id.
 SOURCE_EVENT = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": THREAD})
+
+
+def receipt_id(source_event_id, task_id):
+    """The status receipt id DefaultPrimaryApplication.create_status_receipt derives, from its own digest."""
+    from director_orchestrator.primary_default import _digest
+    return "status-" + _digest({"source_event_id": source_event_id, "task_id": task_id}).removeprefix("sha256:")[:24]
+
+
+# A status reply in the task's thread (its source_event_id is the gateway's canonical `<channel>:<ts>` as well).
+RECEIPT_SOURCE = canonical_slack_source_event_id({"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"})
+RECEIPT_ID = receipt_id(RECEIPT_SOURCE, TASK_ID)
 
 
 def intake_claim(intake, created_at="2026-09-12T10:00:00+00:00"):
@@ -218,6 +229,8 @@ def readback_fixture():
                      # the reservation's task, owner and fence are its claim's (compared in SQL, booleans only)
                      "reservation_task_matches": True, "reservation_owner_matches": True,
                      "reservation_fencing_matches": True,
+                     # the binding carries its claim's owner; the terminal row its claim's authority
+                     "binding_owner_matches": True, "terminal_authority_matches": True,
                      "remote_system": "slack", "remote_identifier": FINAL_TS, "bound_at": "2026-09-12T10:00:28+00:00",
                      "terminal_disposition": "COMPLETED", "terminal_evidence_digest": "sha256:" + "c" * 64,
                      "terminal_recorded_at": "2026-09-12T10:00:29+00:00"}],
@@ -230,9 +243,11 @@ def readback_fixture():
                               "last_error": None, "owner_decision": None, "owner_decision_at": None,
                               "owner_command_id": None}],
         # A status reply's source_event_id is the gateway's canonical `<channel>:<ts>` as well.
-        "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": canonical_slack_source_event_id(
-                                 {"channel": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "ts": "1789210040.100000"}),
-                             "created_at": "2026-09-12T10:00:40+00:00"}],
+        "status_receipts": [{"receipt_id": RECEIPT_ID, "source_event_id": RECEIPT_SOURCE,
+                             "created_at": "2026-09-12T10:00:40+00:00",
+                             # the task's own thread and the owner, digest-only text (record_primary_slack_status_receipt)
+                             "channel_id": ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": THREAD, "user_id": OWNER,
+                             "text_digest": "sha256:" + hashlib.sha256(b"status?").hexdigest()}],
         "intake_auth_claims": [intake_claim(sample()[0]["intake"], "2026-09-12T09:59:59.750000+00:00")],
         "provider_usage": [{"attempt_digest": "sha256:" + "1" * 64, "provider_id": "claude",
                             "reserved_microusd": 50000, "token_limit": 4000, "actual_microusd": 12500,
@@ -1691,3 +1706,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

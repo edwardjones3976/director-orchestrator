@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
@@ -5767,8 +5768,13 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
                          (produced[0]["state"], produced[0]["owner_decision"], produced[0]["owner_command_id"]))
         self.assertIsNotNone(produced[0]["owner_decision_at"])
         approval_identity = produced[0]["client_msg_id"]
+        from director_orchestrator import primary_default as primary_default_module
         receipt_id, created, _ = store.record_primary_slack_status_receipt(
-            source_event_id="status-event-" + record.task_id, receipt_id="receipt-" + record.task_id,
+            source_event_id="status-event-" + record.task_id,
+            # create_status_receipt's own derivation, which the scorecard recomputes (review 4111725051)
+            receipt_id="status-" + primary_default_module._digest(
+                {"source_event_id": "status-event-" + record.task_id,
+                 "task_id": record.task_id}).removeprefix("sha256:")[:24],
             task_id=record.task_id, channel_id=record.intake.channel_id, thread_ts=record.intake.thread_ts,
             user_id=record.intake.user_id, text_digest=digest("status text"))
         self.assertTrue(created)  # the store reports creation; the API maps it to deduplicated=False
@@ -6290,3 +6296,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

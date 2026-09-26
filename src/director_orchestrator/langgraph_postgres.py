@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -1952,6 +1953,13 @@ _QUALIFICATION_SECTIONS = {
                     ELSE e.owner_token = c.owner_token AND e.owner_token = r.owner_token END AS execution_owner_matches,
                CASE WHEN e.reservation_key IS NULL THEN NULL
                     ELSE e.fencing_generation = c.fencing_generation END AS execution_fencing_matches,
+               CASE WHEN b.reservation_key IS NULL THEN NULL
+                    ELSE b.owner_token = c.owner_token END AS binding_owner_matches,
+               CASE WHEN t.claim_key IS NULL THEN NULL
+                    ELSE (t.owner_token = c.owner_token AND t.fencing_generation = c.fencing_generation)
+                      OR (t.fencing_generation > c.fencing_generation AND w.task_id IS NOT NULL
+                          AND t.fencing_generation <= w.fencing_generation AND t.owner_token = w.owner_token)
+                    END AS terminal_authority_matches,
                r.task_id = c.task_id AS reservation_task_matches,
                r.owner_token = c.owner_token AS reservation_owner_matches,
                r.fencing_generation = c.fencing_generation AS reservation_fencing_matches""",
@@ -1965,7 +1973,9 @@ _QUALIFICATION_SECTIONS = {
         LEFT JOIN {schema}.director_primary_terminal_evidence t
           ON t.claim_key = r.claim_key
         LEFT JOIN {schema}.director_primary_claim c
-          ON c.claim_key = r.claim_key""",
+          ON c.claim_key = r.claim_key
+        LEFT JOIN {schema}.director_primary_task_writer w
+          ON w.task_id = r.task_id""",
         "r.task_id", "r.reserved_at, r.reservation_key"),
     "slack_deliveries": (
         """notification_key, projection_digest, client_msg_id, state,
@@ -1973,8 +1983,22 @@ _QUALIFICATION_SECTIONS = {
                readback_attempts, last_error, owner_decision, owner_decision_at,
                owner_command_id""",
         "{schema}.director_primary_slack_delivery", "task_id", "created_at, notification_key"),
+    # Reconciliation events with their authority compared in SQL (booleans only, never the token): the claim's own
+    # owner and fence (record_reconciliation_event), or an authorized successor's, a strictly newer generation of the
+    # same task's writer (record_successor_reconciliation_event, _SUCCESSOR_RECONCILIATION_JOIN). A successor is
+    # verified against the task's current writer row: its token and a generation no newer than the writer's.
+    "reconciliation_events": (
+        """e.event_id, e.claim_key, e.state, e.evidence_digest, e.recorded_at,
+               (e.task_id = c.task_id AND (
+                   (e.owner_token = c.owner_token AND e.fencing_generation = c.fencing_generation)
+                   OR (e.fencing_generation > c.fencing_generation AND e.fencing_generation <= w.fencing_generation
+                       AND e.owner_token = w.owner_token))) IS TRUE AS authority_matches""",
+        """{schema}.director_primary_reconciliation_event e
+        LEFT JOIN {schema}.director_primary_claim c ON c.claim_key = e.claim_key
+        LEFT JOIN {schema}.director_primary_task_writer w ON w.task_id = e.task_id""",
+        "e.task_id", "e.event_id"),
     "status_receipts": (
-        "receipt_id, source_event_id, created_at",
+        "receipt_id, source_event_id, created_at, channel_id, thread_ts, user_id, text_digest",
         "{schema}.director_primary_slack_status_receipt", "task_id", "created_at, receipt_id"),
     # Every spend reservation of the task, outer-joined to its usage: a reservation whose usage is not recorded yet
     # stays visible (actual_microusd and observed_tokens null) instead of vanishing from an inner join, and an
@@ -2950,12 +2974,8 @@ class PostgresConditionalClaimStore:
                     rows(cursor, "assignments", qualification_section_sql(schema, "assignments"))
                     rows(cursor, "provider_attempts", qualification_section_sql(schema, "provider_attempts"))
                     rows(cursor, "effects", qualification_section_sql(schema, "effects"))
-                    rows(cursor, "reconciliation_events", f"""
-                        SELECT event_id, claim_key, state, evidence_digest, recorded_at
-                        FROM {schema}.director_primary_reconciliation_event
-                        WHERE task_id = %(task_id)s
-                        ORDER BY event_id LIMIT %(limit)s
-                        """)
+                    rows(cursor, "reconciliation_events",
+                         qualification_section_sql(schema, "reconciliation_events"))
                     rows(cursor, "slack_deliveries", qualification_section_sql(schema, "slack_deliveries"))
                     rows(cursor, "status_receipts", qualification_section_sql(schema, "status_receipts"))
                     # The append-only claim claim_authenticated_primary_intake wrote before
@@ -6114,3 +6134,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

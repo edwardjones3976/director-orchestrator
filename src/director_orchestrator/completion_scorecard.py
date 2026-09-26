@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -990,9 +991,13 @@ class _SlackThreads:
     and stay in memory; the expected channel comes only from --channel.
     """
 
-    def __init__(self, runtime: _Runtime, channel: str | None, *, client: httpx.Client | None = None):
+    def __init__(self, runtime: _Runtime, channel: str | None, owner: str | None = None, *,
+                 client: httpx.Client | None = None):
         if channel is None or runtime.env.get("SLACK_DIRECTOR_CHANNEL_ID") != channel:
             raise ValueError("channel differs from deployment")
+        # The owner is the evaluator's configuration (--owner), never taken from the candidate's own settings.
+        if owner is None or runtime.env.get("SLACK_OWNER_USER_ID") != owner:
+            raise ValueError("owner differs from deployment")
         self.m = _trial_module()
         self.m.API = runtime.api_base
         self.env = {"SLACK_DIRECTOR_CHANNEL_ID": channel,
@@ -1100,7 +1105,7 @@ def _task_facts(t: _SlackThreads, thread: str, task_id: str, replies=None) -> di
     task, headers = t.task(task_id)
     deliveries = t.deliveries(task_id)
     row = t.m.summarize(thread, task_id, task, deliveries, messages, complete, t.owner, t.bot, headers, t.channel)
-    readback, latest, state, _ = t.m._readback(task_id, task)
+    readback, latest, state, _ = t.m._readback(task_id, task, t.owner)
     # One read-time rule for every snapshot (consistency, captures, qualification readbacks): its own captured_at
     # lies inside this collection, or it grades nothing here.
     collected = state == "collected" and t.runtime.read_in_window((readback or {}).get("captured_at"))
@@ -1114,7 +1119,7 @@ _FAIL_COUNTS = ("unresolved_reconciliation", "ambiguous_assignments", "tasks_req
                 "result_artifacts_invalid", "provider_attempts_invalid", "provider_usage_invalid", "effects_invalid",
                 "slack_deliveries_invalid", "lifecycle_invalid", "settlement_invalid", "work_packets_invalid",
                 "projection_digest_mismatches", "batches_without_assignments", "effect_children_cross_task",
-                "registered_plan_mismatches", "terminal_evidence_without_reservation",
+                "registered_plan_mismatches", "terminal_evidence_without_reservation", "batch_authority_mismatches",
                 "projections_missing_batch",
                 "batches_without_projection",
                 "terminal_tasks_open_assignments", "terminal_tasks_open_effects", "terminal_batches_unbound",
@@ -2567,6 +2572,7 @@ def _monetary_observation(at: datetime, runtime: _Runtime, paid: dict[str, Any] 
 
 
 def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, channel: str | None,
+                             owner: str | None = None,
                              gateway: str | None, topology: bool, drills: dict[str, str], approval_task: str | None,
                              trials: list[str] | None, rubric_path: Path | None, paid_thread: str | None,
                              paid_rubric_path: Path | None,
@@ -2604,7 +2610,7 @@ def _deployment_observations(at: datetime, candidate_sha: str, project: str, *, 
     t = None
     if channel is not None:
         try:
-            t = _SlackThreads(runtime, channel)
+            t = _SlackThreads(runtime, channel, owner)
         except _SOURCE_ERRORS:
             t = None
     paid = None
@@ -3148,6 +3154,7 @@ def collect(candidate_sha: str, **options: Any) -> list[Observation]:
 
 
 def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str | None = None,
+            owner: str | None = None,
             now: datetime | None = None, github: bool = False, ledger_path: Path | None = None,
             gateway: str | None = None, topology: bool = True, security_scan_id: str | None = None,
             security_base: str | None = None,
@@ -3210,7 +3217,8 @@ def _collect(candidate_sha: str, *, deployment: str | None = None, channel: str 
     else:
         started = datetime.now(timezone.utc)
         deployed, state = _deployment_observations(
-            at, candidate_sha, deployment, channel=channel, gateway=gateway, topology=topology, drills=drills,
+            at, candidate_sha, deployment, channel=channel, owner=owner, gateway=gateway, topology=topology,
+            drills=drills,
             approval_task=approval_task, trials=trial_list, rubric_path=rubric_path, paid_thread=paid_thread,
             paid_rubric_path=paid_rubric_path, collection_end=collection_end)
         deployed = since(started, deployed)
@@ -3625,3 +3633,4 @@ def render_markdown(report: dict[str, Any]) -> str:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

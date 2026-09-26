@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
@@ -659,6 +660,14 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
         # Review 4111174699: terminal evidence for a claim no effect reservation holds (reconcile-1 and reconcile-2),
         # counted globally and in the task's entry, never dropped by the effects join.
         self.assertEqual(self.report()["counts"]["terminal_evidence_without_reservation"], 2)
+        # A batch whose registering authority is not its task writer's (another token) is counted.
+        before = self.report()["counts"]["batch_authority_mismatches"]
+        third = self.intake_another()
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {s}.director_primary_parallel_batch(task_id, plan_digest, owner_token, fencing_generation,"
+                " max_concurrency) VALUES (%s, %s, 'another-owner', 1, 1)", (third, "sha256:" + "6" * 64))
+        self.assertEqual(self.report()["counts"]["batch_authority_mismatches"], before + 1)
         self.assertEqual(self.report(tasks=[task_id])["tasks"][task_id]["terminal_evidence_without_reservation"], 2)
 
     def test_snapshot_connection_refuses_writes(self):
@@ -878,6 +887,17 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
                                " WHERE task_id=x.task_id AND assignment_id=x.assignment_id) - interval '1 second'"
                                " WHERE task_id=%s AND assignment_id='A2'", (task_id,))
         self.assertEqual(self.report()["counts"]["work_packets_invalid"], 0)
+        # A packet written under a writer generation the task never held (newer than its writer's) is not verified.
+        other = self.intake_another()
+        document = {**work, "task_id": other, "assignment_id": "Z1", "authority_snapshot_digest": rows[0][2]}
+        with self.handle.pool.connection() as connection:
+            connection.execute(
+                f"INSERT INTO {self.schema}.director_primary_work_packet_artifact(task_id, assignment_id,"
+                " authority_snapshot_digest, document_digest, canonical_document, writer_fencing_generation)"
+                " VALUES (%s, 'Z1', %s, %s, %s, 99)",
+                (other, rows[0][2], document_digest(document), canonical_json_bytes(document).decode("utf-8")))
+            self.assertEqual([item["verified"] for item in evidence.packet_rows(connection, self.schema, "work",
+                                                                                 tasks=[other])], [False])
 
     def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
         """Review 4102375074: provider_attempts_invalid applies validate_attempt_history (the collector's own rule)
@@ -1162,3 +1182,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

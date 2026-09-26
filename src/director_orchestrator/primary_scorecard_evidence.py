@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | BEGIN]]
@@ -65,7 +66,8 @@ _COUNT_KEYS = ("graph_task_count", "unresolved_reconciliation", "ambiguous_assig
                "terminal_batches_unbound", "projection_batch_digest_conflicts", "projections_ahead_of_fence",
                "open_effect_reservations", "active_assignments", "live_writer_claims",
                "batches_pending_projection_binding", "pending_owner_decisions", "nonterminal_projections",
-               "batches_without_assignments", "effect_children_cross_task", "terminal_evidence_without_reservation")
+               "batches_without_assignments", "effect_children_cross_task", "terminal_evidence_without_reservation",
+               "batch_authority_mismatches")
 
 # A task is settled when terminal, unless it is an OWNER_DECISION_REQUIRED hold
 # with a pending approval (the predicate Slack delivery enqueues approvals by):
@@ -146,7 +148,12 @@ SELECT now() AS captured_at, (SELECT fencing_generation FROM a) AS intake_fencin
  -- Terminal evidence for a claim no effect reservation holds (the effects section's join would drop it).
  (SELECT count(*) FROM {s}.director_primary_terminal_evidence t WHERE NOT EXISTS
     (SELECT 1 FROM {s}.director_primary_effect_reservation r WHERE r.claim_key=t.claim_key))
-    AS terminal_evidence_without_reservation"""
+    AS terminal_evidence_without_reservation,
+ -- register_plan writes the registering writer's token and generation: the task's writer keeps that token and a
+ -- generation no older than the batch's.
+ (SELECT count(*) FROM {s}.director_primary_parallel_batch b LEFT JOIN {s}.director_primary_task_writer w
+    USING (task_id) WHERE w.task_id IS NULL OR b.owner_token <> w.owner_token
+    OR b.fencing_generation > w.fencing_generation) AS batch_authority_mismatches"""
 
 _SPEND = """SELECT s.task_id,s.attempt_digest,s.grant_digest,s.provider_id,s.project_id,s.budget_day::text AS budget_day,
  s.reserved_microusd,u.actual_microusd,u.observed_tokens,u.document AS usage_document,
@@ -373,6 +380,12 @@ def validate_effects(effects, task_id=None):
         if task_id is not None and any(row.get(key) not in (None, task_id)
                                        for key in ("execution_task_id", "binding_task_id", "terminal_task_id")):
             return "an effect's execution, binding or terminal row belongs to another task"
+        # Review 4111725044: a remote binding carries its claim's owner; a terminal row its claim's (or an authorized
+        # successor's) owner and fence, compared in SQL.
+        if row.get("remote_identifier") is not None and row.get("binding_owner_matches") is not True:
+            return "an effect's remote binding does not carry its claim's owner"
+        if row.get("terminal_disposition") is not None and row.get("terminal_authority_matches") is not True:
+            return "an effect's terminal evidence carries neither its claim's nor an authorized successor's authority"
         # Review 4111508067: a reservation carries its claim's task, owner and fence (compared in SQL).
         if any(row.get(key) is not True for key in ("reservation_task_matches", "reservation_owner_matches",
                                                      "reservation_fencing_matches")):
@@ -432,7 +445,7 @@ def notification_key_family(value):
     return None
 
 
-def validate_deliveries_and_receipts(deliveries, receipts, *, schema=None, task_id=None):
+def validate_deliveries_and_receipts(deliveries, receipts, *, schema=None, task_id=None, source=None):
     if len({r.get("client_msg_id") for r in deliveries}) != len(deliveries):
         return "duplicate Slack delivery identity"
     if len({r.get("notification_key") for r in deliveries}) != len(deliveries):
@@ -477,6 +490,31 @@ def validate_deliveries_and_receipts(deliveries, receipts, *, schema=None, task_
         if not _is_id(row.get("receipt_id")) or not isinstance(row.get("source_event_id"), str) \
                 or not row["source_event_id"] or _when(row.get("created_at")) is None:
             return "malformed status receipt row"
+        error = status_receipt_error(row, task_id, source)
+        if error is not None:
+            return error
+    return None
+
+
+def status_receipt_error(row, task_id, source):
+    """A status receipt against its producer (DefaultPrimaryApplication.create_status_receipt) and its task's source
+    (review 4111725051): receipt_id recomputed as "status-" + the first 24 hex of the digest of
+    {source_event_id, task_id}; the channel and thread the task's own intake; the user the owner the EVALUATOR is
+    configured with (never the candidate's own setting); a sha256 text digest. ``source``: channel_id, thread_ts and
+    owner_user_id, each None where the caller cannot know it (the in-image global count has no evaluator owner)."""
+    from .primary_default import _digest as producer_digest
+    if task_id is None:
+        return "a status receipt cannot be bound without its task"
+    expected = "status-" + producer_digest({"source_event_id": row.get("source_event_id"),
+                                           "task_id": task_id}).removeprefix("sha256:")[:24]
+    if row.get("receipt_id") != expected:
+        return "a status receipt's id is not its producer's derivation"
+    if not _DIGEST.fullmatch(str(row.get("text_digest", ""))) or not _is_id(row.get("user_id")) \
+            or not _is_id(row.get("channel_id")) or not _is_id(row.get("thread_ts")):
+        return "a status receipt lacks its source binding"
+    for key, field in (("channel_id", "channel_id"), ("thread_ts", "thread_ts"), ("owner_user_id", "user_id")):
+        if (source or {}).get(key) is not None and row.get(field) != source[key]:
+            return "a status receipt is not bound to its task's thread or the configured owner"
     return None
 
 
@@ -748,6 +786,8 @@ def reconciliation_error(sections):
             return "a reconciliation event precedes its effect's reservation"
         if not _DIGEST.fullmatch(str(event.get("evidence_digest", ""))) or event.get("state") not in ("AMBIGUOUS", "RECONCILIATION_REQUIRED"):
             return "a reconciliation event is malformed"  # RECONCILIATION_STATES
+        if event.get("authority_matches") is not True:  # review 4111725048
+            return "a reconciliation event carries neither its claim's nor an authorized successor's authority"
         if terminal is not None and terminal < recorded:
             return "a reconciliation event was recorded after its claim's terminal evidence"
     return None
@@ -888,7 +928,9 @@ def task_evidence_errors(sections):
               "deliveries": validate_deliveries_and_receipts(sections.get("slack_deliveries") or [],
                                                              sections.get("status_receipts") or [],
                                                              schema=sections.get("schema"),
-                                                             task_id=sections.get("task_id")),
+                                                             task_id=sections.get("task_id"),
+                                                             source={key: sections.get("source_" + key) for key in
+                                                                     ("channel_id", "thread_ts", "owner_user_id")}),
               "lifecycle": lifecycle_error(sections),
               "settlement": attempts or settlement_error(sections, latest),
               "work_packets": work_packet_error(sections)}
@@ -995,8 +1037,14 @@ def artifact_assignment_conflict(artifact, assignment):
     return None
 
 
-_PACKET_SQL = """SELECT task_id, assignment_id, authority_snapshot_digest, document_digest, canonical_document,
- writer_fencing_generation, recorded_at FROM {s}.{table} {where} ORDER BY task_id, assignment_id LIMIT %(limit)s"""
+# The writer generation a packet was written under can only be bounded after the fact: the task's writer row keeps
+# its current lease, so a packet's generation must be positive and no newer than the writer's.
+_PACKET_SQL = """SELECT p.task_id, p.assignment_id, p.authority_snapshot_digest, p.document_digest,
+ p.canonical_document, p.writer_fencing_generation, p.recorded_at,
+ (p.writer_fencing_generation >= 1 AND p.writer_fencing_generation <= w.fencing_generation) IS TRUE
+   AS writer_generation_bounded
+ FROM {s}.{table} p LEFT JOIN {s}.director_primary_task_writer w ON w.task_id = p.task_id {where}
+ ORDER BY p.task_id, p.assignment_id LIMIT %(limit)s"""
 
 
 # Each batch with the columns register_plan hashed: its assignments' DAG identity and the task record's plan.
@@ -1057,13 +1105,14 @@ def packet_rows(connection, schema, kind, *, tasks=None, limit=None):
                                      _work_packet_artifact_from_row)
     table, load = {"result": ("director_primary_result_packet_artifact", _result_packet_artifact_from_row),
                    "work": ("director_primary_work_packet_artifact", _work_packet_artifact_from_row)}[kind]
-    where = "WHERE task_id = ANY(%(tasks)s)" if tasks is not None else ""
+    where = "WHERE p.task_id = ANY(%(tasks)s)" if tasks is not None else ""
     rows = connection.execute(_PACKET_SQL.format(s=schema, table=table, where=where),
                               {"tasks": list(tasks or []), "limit": limit or EVIDENCE_ROW_CAP + 1}).fetchall()
     out = []
     for row in rows:
         try:
-            packet, verified = load(row).packet, True
+            # Revalidated as the Director reloads it, and written under a writer generation the task has held.
+            packet, verified = load(row).packet, row["writer_generation_bounded"] is True
         except (PostgresControlPlaneError, KeyError, TypeError, ValueError):
             packet, verified = {}, False
         item = {"task_id": row["task_id"], "assignment_id": row["assignment_id"],
@@ -1085,10 +1134,10 @@ EVIDENCE_COUNT_KEYS = {"attempts": "provider_attempts_invalid", "usage": "provid
 EVIDENCE_COUNT_KEYS["work_packets"] = "work_packets_invalid"
 EVIDENCE_IN_FLIGHT_KEYS = {"usage": "provider_usage_in_flight", "deliveries": "slack_deliveries_in_flight"}
 _TASK_MODES = """SELECT task_id, projection->'application'->>'execution_mode' AS execution_mode, projection,
- projection_digest, created_at FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
-# Every task's reconciliation events, the columns the per-task readback serves.
-_RECONCILIATION_EVENTS = """SELECT task_id, event_id, claim_key, state, evidence_digest, recorded_at
- FROM {s}.director_primary_reconciliation_event ORDER BY task_id, event_id LIMIT %(limit)s"""
+ projection_digest, created_at,
+ projection->'application'->'task_record'->'intake'->>'channel_id' AS source_channel_id,
+ projection->'application'->'task_record'->'intake'->>'thread_ts' AS source_thread_ts
+ FROM {s}.director_primary_task_projection ORDER BY task_id LIMIT %(limit)s"""
 
 
 def _global_task_evidence(connection, schema, usage_tables):
@@ -1106,7 +1155,8 @@ def _global_task_evidence(connection, schema, usage_tables):
     keys = [*EVIDENCE_COUNT_KEYS.values(), *EVIDENCE_IN_FLIGHT_KEYS.values(), "result_artifacts_invalid",
             "result_artifacts_in_flight", "projection_digest_mismatches", "registered_plan_mismatches"]
     limit = {"limit": EVIDENCE_ROW_CAP + 1}
-    names = ["assignments", "provider_attempts", "effects", "slack_deliveries", "status_receipts"]
+    names = ["assignments", "provider_attempts", "effects", "reconciliation_events", "slack_deliveries",
+             "status_receipts"]
     names += ["provider_usage"] if usage_tables else []
     tasks = {}
 
@@ -1118,8 +1168,7 @@ def _global_task_evidence(connection, schema, usage_tables):
                                           "absent": [] if usage_tables else ["provider_usage"]})
 
     reads = [(name, qualification_section_sql(schema, name, all_tasks=True)) for name in names]
-    reads += [("reconciliation_events", _RECONCILIATION_EVENTS.format(s=schema)),
-              ("execution_mode", _TASK_MODES.format(s=schema))]
+    reads += [("execution_mode", _TASK_MODES.format(s=schema))]
     projections = []
     for name, query in reads:
         rows = connection.execute(query, limit).fetchall()
@@ -1130,6 +1179,10 @@ def _global_task_evidence(connection, schema, usage_tables):
                 task(row["task_id"])["execution_mode"] = row["execution_mode"]
                 task(row["task_id"])["task_created_at"] = _plain(row["created_at"])
                 task(row["task_id"])["projection_digest"] = row["projection_digest"]
+                # The task's own source; the evaluator's owner is not known in-image, so the user is checked on the
+                # scorecard's per-task path only.
+                task(row["task_id"]).update(source_channel_id=row["source_channel_id"] or "",
+                                            source_thread_ts=row["source_thread_ts"] or "")
                 projections.append(row)
             else:
                 task(row["task_id"])[name].append({key: _plain(value) for key, value in row.items() if key != "task_id"})
@@ -1534,3 +1587,4 @@ def activation_capture_report(settings, identity, manifest) -> dict:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 10:29 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -28,6 +29,8 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--live", action="store_true", help="Inspect the selected --deployment once; there is no default stack")
     parser.add_argument("--deployment", help="Exact Compose project name of the deployment to inspect; required by --live")
+    parser.add_argument("--owner", help="Exact Slack owner user ID (evaluator configuration, never the candidate's); "
+                        "the deployment must use it; needed by Slack-derived checks")
     parser.add_argument("--channel", help="Exact Slack channel ID the deployment must use; never committed; needed by Slack-derived checks")
     parser.add_argument("--gateway", help="Exact running container name of the expected Slack gateway; requires --live and is needed for checks 01 and 02")
     parser.add_argument("--github", action="store_true", help="Also verify CI through authenticated gh; no provider calls")
@@ -60,7 +63,8 @@ def main() -> int:
             drills[kind] = thread
         # Operating rule: grade only from the pinned evaluator checkout (completion_scorecard.untrusted_checkout).
         refused = untrusted_checkout(args.candidate_sha)
-        observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel, github=args.github,
+        observations = [] if refused else collect(args.candidate_sha, deployment=args.deployment, channel=args.channel,
+                                                  owner=args.owner, github=args.github,
                                ledger_path=args.ledger, gateway=args.gateway, security_scan_id=args.security_scan,
                                security_base=args.security_base,
                                drill_threads=drills, approval_task=args.approval_task, trials=args.trial or None,
@@ -95,3 +99,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

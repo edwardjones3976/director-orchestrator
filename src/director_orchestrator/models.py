@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
@@ -1201,6 +1202,10 @@ class QualificationEffectRow(BaseModel):
     # The execution marker's owner and fence against its claim, compared in SQL; the token is never served.
     execution_owner_matches: bool | None = None
     execution_fencing_matches: bool | None = None
+    # The remote binding's owner against the claim, and the terminal row's authority against the claim or an
+    # authorized successor, compared in SQL.
+    binding_owner_matches: bool | None = None
+    terminal_authority_matches: bool | None = None
     # The reservation's task, owner and fence against its claim, compared in SQL (NULL: no claim row).
     reservation_task_matches: bool | None = None
     reservation_owner_matches: bool | None = None
@@ -1215,6 +1220,8 @@ class QualificationReconciliationRow(BaseModel):
     state: str
     evidence_digest: str
     recorded_at: datetime
+    # The event's owner and fence against its claim or an authorized successor, compared in SQL.
+    authority_matches: bool | None = None
 
 
 class QualificationDeliveryRow(BaseModel):
@@ -1242,6 +1249,11 @@ class QualificationStatusReceiptRow(BaseModel):
     receipt_id: str
     source_event_id: str
     created_at: datetime
+    # The source binding the producer stored (review 4111725051): digest-only text, never the message.
+    channel_id: str | None = None
+    thread_ts: str | None = None
+    user_id: str | None = None
+    text_digest: str | None = None
 
 
 class QualificationIntakeAuthClaimRow(BaseModel):
@@ -1538,3 +1550,4 @@ class ManualRunCompletion(BaseModel):
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]

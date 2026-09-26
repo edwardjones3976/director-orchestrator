@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]] -->
@@ -1126,6 +1127,20 @@ or `slack_rate_limited:retry_after=<seconds>`; AMBIGUOUS always
 `readback_unverified` or the rate-limit value; ACKNOWLEDGED none until a
 readback attempt fails with one of those.
 
+Authority and source bindings. Every child or evidence row's authority is
+compared in SQL and served only as booleans (never a token): an effect's
+reservation, execution marker and remote binding against its claim (task,
+owner and fence); its terminal row and every reconciliation event against the
+claim or an authorized successor (a strictly newer generation carrying the
+task writer's token, no newer than the writer's current generation, as
+`_SUCCESSOR_RECONCILIATION_JOIN` admits it); a parallel batch against its
+task writer (`batch_authority_mismatches`); a result or work packet's writer
+generation bounded by the task writer's. A status receipt's id is recomputed
+with `create_status_receipt`'s derivation, its channel and thread must be its
+task's own intake, and its user the owner the evaluator is configured with
+(`--owner`, which the deployment must use); the in-image global count checks
+the id, channel and thread only, because it has no evaluator configuration.
+
 CLI release attestation (A2 prerequisite for check 11). Owner ruling
 2026-09-26, "Bind to pinned release": the Codex, grok and Claude CLIs are held
 to one standard. The model a CLI reports about itself is never enough; a CLI
@@ -1329,3 +1344,4 @@ touched.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]] -->

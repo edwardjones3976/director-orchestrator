@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | BEGIN]]
@@ -411,6 +412,9 @@ def task_entry(task_id, offset, *, offline=True, text="DIRECTOR audit trial", an
         return value
 
     entry["task"], entry["deliveries"] = rebase(entry["task"]), rebase(entry["deliveries"])
+    # Re-keyed onto this task, each status receipt keeps its producer's id derivation.
+    for receipt in entry["task"]["qualification_evidence"]["status_receipts"]:
+        receipt["receipt_id"] = tf.receipt_id(receipt["source_event_id"], task_id)
     # A later final reply was claimed, posted, acknowledged and read back later too.
     late = timedelta(seconds=final_offset - 30)
     for row in entry["deliveries"] + entry["task"]["qualification_evidence"]["slack_deliveries"]:
@@ -663,14 +667,14 @@ class World:
             return httpx.Response(200, json=self.deliveries[parts[4]])
         return httpx.Response(404, json={"detail": "fixture"})
 
-    def slack(self, runtime, channel):
-        return REAL_SLACK_THREADS(runtime, channel, client=httpx.Client(
+    def slack(self, runtime, channel, owner=None):
+        return REAL_SLACK_THREADS(runtime, channel, owner, client=httpx.Client(
             transport=httpx.MockTransport(self.handle), follow_redirects=False, trust_env=False))
 
     def observe(self, only_deployment=False, **options):
         selected = dict(deployment=DEPLOYMENT)
         if not only_deployment:
-            selected.update(channel=CHANNEL_FIXTURE, approval_task=APPROVAL_TASK, trials=list(self.trials),
+            selected.update(channel=CHANNEL_FIXTURE, owner=OWNER, approval_task=APPROVAL_TASK, trials=list(self.trials),
                             gateway=GATEWAY, topology=False,
                             rubric_path=self.rubric_path, paid_thread=ts(20000), paid_rubric_path=self.paid_rubric_path,
                             drill_threads={"refusal-4xx": ts(100), "reserved-5xx": ts(200), "transport-failure": ts(150),
@@ -3614,7 +3618,8 @@ class ScorecardCollectorTests(unittest.TestCase):
                                  ("2026-09-12T10:00:01+00:00", True)):  # at, after the terminal row; before reservation
             readback = copy.deepcopy(base)
             readback["reconciliation_events"] = [{"event_id": 1, "claim_key": effect["claim_key"], "state": "AMBIGUOUS",
-                                                  "evidence_digest": "sha256:" + "9" * 64, "recorded_at": recorded}]
+                                                  "evidence_digest": "sha256:" + "9" * 64, "recorded_at": recorded,
+                                                  "authority_matches": True}]
             with self.subTest(recorded=recorded):
                 self.assertEqual("effects" in errors(readback), broken)
 
@@ -3788,6 +3793,53 @@ class ScorecardCollectorTests(unittest.TestCase):
                 broken["effects"][0][key] = value
                 with self.subTest(key=key, value=value):
                     self.assertIsNotNone(task_evidence_errors(broken)[1]["effects"])
+
+    def test_authority_and_source_bindings_are_checked_on_every_evidence_row(self):
+        """4111725044/48/51: remote bindings carry their claim's owner; terminal rows and reconciliation events the
+        claim's (or an authorized successor's) authority, all compared in SQL and served as booleans; status receipts
+        carry their producer-derived id, their task's thread and the evaluator's owner."""
+        import copy
+        from director_orchestrator.primary_scorecard_evidence import task_evidence_errors
+
+        def errors(readback, **source):
+            sections = {**readback, **{"source_" + key: value for key, value in source.items()}}
+            return {key: value for key, value in task_evidence_errors(sections)[1].items() if value}
+
+        base = tf.readback_fixture()
+        bound = dict(channel_id=tf.ENV["SLACK_DIRECTOR_CHANNEL_ID"], thread_ts=tf.THREAD, owner_user_id=tf.OWNER)
+        self.assertEqual(errors(base, **bound), {})
+        for key in ("binding_owner_matches", "terminal_authority_matches"):
+            for value in (False, None):
+                broken = copy.deepcopy(base)
+                broken["effects"][0][key] = value
+                with self.subTest(key=key, value=value):
+                    self.assertIn("effects", errors(broken, **bound))
+        effect = base["effects"][0]
+        for value in (False, None):
+            broken = copy.deepcopy(base)
+            broken["reconciliation_events"] = [{"event_id": 1, "claim_key": effect["claim_key"], "state": "AMBIGUOUS",
+                                                "evidence_digest": "sha256:" + "9" * 64,
+                                                "recorded_at": effect["terminal_recorded_at"], "authority_matches": value}]
+            with self.subTest(reconciliation=value):
+                self.assertIn("effects", errors(broken, **bound))
+        receipt = base["status_receipts"][0]
+        for label, change, source in (
+                ("another receipt id", {"receipt_id": "status-" + "0" * 24}, bound),
+                ("another thread", {"thread_ts": "1789999999.000100"}, bound),
+                ("another channel", {"channel_id": "COTHER"}, bound),
+                ("another user", {"user_id": "UOTHER"}, bound),
+                ("no text digest", {"text_digest": None}, bound),
+                ("the evaluator's owner differs", {}, {**bound, "owner_user_id": "UOTHER"})):
+            broken = copy.deepcopy(base)
+            broken["status_receipts"][0] = {**receipt, **change}
+            with self.subTest(label):
+                self.assertIn("deliveries", errors(broken, **source))
+        # The collector binds receipts to the task's own intake and the owner it is given (the evaluator's).
+        task = {"intake": {"channel_id": tf.ENV["SLACK_DIRECTOR_CHANNEL_ID"], "thread_ts": tf.THREAD},
+                "qualification_evidence": base}
+        self.assertEqual(tf.collector_module._readback(tf.TASK_ID, task, tf.OWNER)[2], "collected")
+        self.assertEqual(tf.collector_module._readback(tf.TASK_ID, task, "UOTHER")[2], "rejected")
+        self.assertEqual(tf.collector_module._readback(tf.TASK_ID, task)[2], "rejected")  # no configured owner
 
     def test_scorecard_grades_only_from_the_pinned_evaluator_checkout(self):
         """Operating rule added by the author (reviews 4111508075 and 4111508073): the scorecard grades only from the
@@ -4635,3 +4687,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 11:20 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 12:34 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
