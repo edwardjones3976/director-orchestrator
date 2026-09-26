@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | BEGIN]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | BEGIN]]
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5 | 2026-09-21 | 14:50 UTC | BEGIN]]
@@ -4863,6 +4864,8 @@ class PostgresConditionalClaimStore:
     ) -> None:
         """Bind one reservation to the remote object it created, exactly once.
 
+        Refused unless :meth:`claim_effect_execution` already recorded the
+        execution claim, so a bound effect always has ``started_at <= bound_at``.
         A same-payload replay still re-verifies the current writer and fence
         before reporting success.  A remote identifier already bound to a
         *different* reservation is a cross-reservation collision and fails
@@ -4893,6 +4896,21 @@ class PostgresConditionalClaimStore:
                     raise PostgresControlPlaneError(
                         "remote binding refused; the reservation is not backed "
                         "by the current unexpired writer at its fencing generation"
+                    )
+                # bound_at defaults to now(), so this pins started_at <= bound_at.
+                claimed = self._optional_row(
+                    connection,
+                    f"""
+                    SELECT reservation_key
+                    FROM {schema}.director_primary_effect_execution
+                    WHERE reservation_key = %(reservation_key)s
+                      AND started_at <= now()
+                    """,
+                    {"reservation_key": reservation_key},
+                )
+                if claimed is None:
+                    raise PostgresControlPlaneError(
+                        "remote binding refused; no execution claim precedes it"
                     )
                 collision = self._optional_row(
                     connection,
@@ -6040,3 +6058,4 @@ open_postgres_checkpointer = open_postgres_control_plane
 
 # [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:29 UTC | END]]
 # [[Codex Director integration | GPT-6 Astra | 2026-09-22 | 01:54 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:00 UTC | END]]
