@@ -1,3 +1,5 @@
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | BEGIN]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | BEGIN]]
 """M0.3 smoke fine-tune: prove the Unsloth container trains on the RTX 5070 and exports a GGUF.
 
@@ -90,7 +92,8 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
 def pinned_ref(repo: str, revision: str):
     """While active, the cache's refs/main for repo points at revision, which must already be a cached snapshot;
     offline (HF_HUB_OFFLINE=1), a lookup of repo with no revision then resolves to exactly that snapshot. The
-    shared cache's previous ref is restored on exit (or removed if there was none), even on failure."""
+    shared cache's previous ref is restored on exit (or removed if there was none), even on failure, but only if
+    the ref still holds our pin: a newer value written meanwhile by another cache user is left alone."""
     d = Path(os.environ["HF_HOME"]) / "hub" / ("models--" + repo.replace("/", "--"))
     if not (d / "snapshots" / revision).is_dir():
         raise SystemExit(f"{repo}@{revision} is not in the cache; cannot pin it for the offline export")
@@ -101,10 +104,11 @@ def pinned_ref(repo: str, revision: str):
     try:
         yield
     finally:
-        if previous is None:
-            ref.unlink(missing_ok=True)
-        else:
-            ref.write_text(previous)
+        if ref.exists() and ref.read_text() == revision:
+            if previous is None:
+                ref.unlink()
+            else:
+                ref.write_text(previous)
 
 
 def write_report(path: Path, report: dict) -> None:
@@ -119,11 +123,34 @@ def write_report(path: Path, report: dict) -> None:
 def publish(src: Path, dest: Path) -> None:
     """Copy under a .part name and rename only after the size matches, so no truncated .gguf is ever visible."""
     part = dest.with_name(dest.name + ".part")
-    shutil.copy2(src, part)
-    if part.stat().st_size != src.stat().st_size:
-        part.unlink()
-        raise SystemExit(f"short copy of {src.name}")
-    os.replace(part, dest)
+    try:
+        shutil.copy2(src, part)
+        if part.stat().st_size != src.stat().st_size:
+            raise SystemExit(f"short copy of {src.name}")
+        os.replace(part, dest)
+    except BaseException:  # includes a full volume, an I/O error and cancellation: never leave a large .part behind
+        part.unlink(missing_ok=True)
+        raise
+
+
+def publish_all(src_dir: Path, model_dir: Path, report: dict, report_path: Path) -> None:
+    """Publish every exported GGUF, then write the final report. If anything fails before the report is written,
+    remove the GGUFs published so far: a GGUF without its final report (provenance, merge source) must not be
+    left for serve-smoke, which picks the newest *.gguf, to validate."""
+    model_dir.mkdir(parents=True, exist_ok=True)
+    report["gguf"] = []
+    published = []
+    try:
+        for f in sorted(src_dir.rglob("*.gguf")):
+            dest = model_dir / f"{RUN}-{f.name}"
+            publish(f, dest)
+            published.append(dest)
+            report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
+        write_report(report_path, report)
+    except BaseException:
+        for dest in published:
+            dest.unlink(missing_ok=True)
+        raise
 
 
 def main() -> None:
@@ -207,15 +234,9 @@ def main() -> None:
     report["gguf_export_seconds"] = round(time.time() - t_gguf, 1)
     report["merge_source"], report["merge_revision"] = MERGE_SOURCE, MERGE_REVISION  # bound: offline, local snapshot
     export_dir = Path("/tmp") / RUN / "gguf"
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    report["gguf"] = []
-    for f in export_dir.parent.rglob("*.gguf"):
-        dest = MODEL_DIR / f"{RUN}-{f.name}"
-        publish(f, dest)
-        report["gguf"].append({"path": str(dest), "bytes": dest.stat().st_size})
     report["hf_cache_refs"] = hf_cache_refs()  # context only; provenance is base_resolved_commit + merge_revision
     report["wall_seconds"] = round(time.time() - t0, 1)
-    write_report(REPORT, report)
+    publish_all(export_dir.parent, MODEL_DIR, report, REPORT)
     print(json.dumps(report, indent=2))
     if not report["gguf"]:
         raise SystemExit("no GGUF produced")
@@ -236,3 +257,5 @@ def export() -> None:
 if __name__ == "__main__":
     export() if sys.argv[1:] == ["export"] else main()
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:47 UTC | END]]
+# [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
+# [[Codex | GPT-6 | 2026-09-25 | 09:23 UTC | END]]
