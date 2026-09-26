@@ -45,12 +45,11 @@ class CiScopeTests(unittest.TestCase):
                     b"AGENTS.md\0docs/contribution-attribution-policy.md\0",
                 ],
             ),
-            patch.object(ci_scope, "previous_full_run_succeeded", return_value=True),
+            patch.object(ci_scope, "previous_full_run_succeeded", return_value=123),
         ):
-            self.assertEqual(
-                ci_scope.classify(EVENT, "token", "owner/repo")[:2],
-                ("focused", "policy"),
-            )
+            mode, suite, reason = ci_scope.classify(EVENT, "token", "owner/repo")
+            self.assertEqual((mode, suite), ("focused", "policy"))
+            self.assertIn(f"full run 123 at {BEFORE}", reason)
 
     def test_no_previous_full_success_falls_back(self):
         with (
@@ -62,7 +61,7 @@ class CiScopeTests(unittest.TestCase):
                     b"projects/homemade-llm/eval/score_packets.py\0",
                 ],
             ),
-            patch.object(ci_scope, "previous_full_run_succeeded", return_value=False),
+            patch.object(ci_scope, "previous_full_run_succeeded", return_value=None),
         ):
             self.assertEqual(
                 ci_scope.classify(EVENT, "token", "owner/repo")[0], "full"

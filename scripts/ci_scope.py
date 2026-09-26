@@ -42,6 +42,9 @@ POLICY_TESTS = (
     "test_team_operating_policy.py",
     "test_hotl_execution.py",
     "test_completion_gate_contracts.py",
+    "test_provider_profiles.py",
+    "test_windows_primary_activation_tools.py",
+    "test_packet_task_routing.py",
 )
 REQUIRED_JOBS = frozenset(
     {
@@ -77,7 +80,7 @@ def api_json(repo: str, path: str, token: str) -> dict[str, Any]:
 
 def previous_full_run_succeeded(
     repo: str, number: int, before: str, token: str
-) -> bool:
+) -> int | None:
     query = urllib.parse.urlencode(
         {"event": "pull_request", "head_sha": before, "per_page": 30}
     )
@@ -112,8 +115,8 @@ def previous_full_run_succeeded(
                 "Python 3.12 (windows-latest)",
             )
         ):
-            return True
-    return False
+            return int(run["id"])
+    return None
 
 
 def git_output(*args: str) -> bytes:
@@ -148,9 +151,10 @@ def classify(event: dict[str, Any], token: str, repo: str) -> tuple[str, str, st
         suite = "scorer"
     else:
         return "full", "none", "changed paths lack a focused test map"
-    if not previous_full_run_succeeded(repo, pull["number"], before, token):
+    baseline_run = previous_full_run_succeeded(repo, pull["number"], before, token)
+    if baseline_run is None:
         return "full", "none", "previous head lacks a green full CI run"
-    return "focused", suite, f"{suite} paths after a green full run"
+    return "focused", suite, f"{suite} paths; full run {baseline_run} at {before}"
 
 
 def plan() -> int:
@@ -159,7 +163,8 @@ def plan() -> int:
         mode, suite, reason = classify(
             event, os.environ.get("GH_TOKEN", ""), os.environ["GITHUB_REPOSITORY"]
         )
-    except (KeyError, OSError, ValueError, subprocess.CalledProcessError, urllib.error.URLError) as exc:
+    except Exception as exc:
+        # A selector bug or unavailable API must spend time, never reduce coverage.
         mode, suite, reason = "full", "none", f"scope proof unavailable: {type(exc).__name__}"
     print(f"CI scope: {mode}; {reason}")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
