@@ -1,4 +1,4 @@
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
@@ -38,7 +38,7 @@ So for `homemade-llm`: **Ed → Claude (project Director) → providers by
 capability.** The deviation from the template default is recorded in
 [`provider-roles-contract.yaml`](provider-roles-contract.yaml) under
 `project_local_bindings.deviations`. Every repository rule still binds: one
-author (the provider or individual with at least 52 % of the PR; see the
+author (at most one sole author, at least 52 % of the PR; see the
 [sole author rule](../../docs/contribution-attribution-policy.md#sole-author-rule)) and one non-author reviewer per PR, no self-merge, merge is an owner gate
 while the human-out-of-the-loop framework is `ATTENDED`, contribution tags on
 every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 10.
@@ -83,8 +83,8 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
    one identity; the xAI API, Grok CLI, and Grok Bot are one family.
 
 5. **Review and merge.** The Director assigns a non-author reviewer of record
-   (Grok CLI first, Codex fallback). The reviewer may be a co-author but never the
-   sole author or the sole author's provider family. The reviewer's exact-SHA `ACCEPT` is relayed
+   (Grok CLI first, Codex fallback). Until the runtime alignment for the sole author
+   rule merges, the reviewer must not have contributed to the PR at all. The reviewer's exact-SHA `ACCEPT` is relayed
    to the PR; the owner runs the merge. Every candidate change invalidates prior
    review evidence.
 
@@ -126,4 +126,4 @@ every submission, and `OWNER_DECISION_REQUIRED` for anything in AGENTS.md rule 1
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-25 | 23:56 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->

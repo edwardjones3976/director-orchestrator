@@ -1,5 +1,4 @@
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | BEGIN]] -->
 # REVIEW_READY
 
@@ -13,9 +12,9 @@ Workflow skills are procedure overlays, not permission grants.
 
 - **Project/task:** <project ID and Director task ID>
 - **Assignment:** <producer assignment ID>
-- **Logical producer:** <provider; under the sole author rule this is the sole author below>
-- **Material author (sole author, at least 52 %):** <the one provider or person responsible for at least 52 % of the PR, with the measured share>
-- **Co-authors:** <every other contributor and share; co-authors may review>
+- **Logical producer:** <provider>
+- **Material authors:** <all providers/people that materially shaped the artifact>
+- **PR sole author and shares:** <the one identity at 52 % or more, or "none (review stopped)"; each identity's share of added plus deleted lines with its receipt references. Tags are display evidence only. Recorded separately from the logical producer; until the runtime alignment merges, every material author above stays ineligible to review>
 - **Contribution tags/envelope:** <matching contributor and system labels, or external envelope for a syntax-sensitive artifact>
 - **Repository:** <exact owner/name or not applicable>
 - **Base branch/ref:** <exact durable ref>
@@ -55,7 +54,7 @@ Task/assignment: <task ID> / <review assignment ID>
 Review exact candidate: <repository>
 Base SHA: <exact 40-hex SHA>
 Head SHA: <exact 40-hex SHA or artifact digest>
-Producer/sole author: <name, share> (co-authors: <names, shares>)
+Producer/material authors: <names>
 Scope: <changed files or artifact scope>
 Acceptance evidence: <concise exact evidence>
 Known limitations/security context: <concise details>
@@ -79,5 +78,4 @@ Contribution tags are provenance labels, not authenticated review evidence.
 The authenticated run/session, exact candidate, independent verdict, current
 CI/security evidence, and deterministic policy gates remain authoritative.
 <!-- [[Codex | GPT-5.6 | 2026-08-22 | 00:01 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->

@@ -1,5 +1,4 @@
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | BEGIN]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | BEGIN]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | BEGIN]] -->
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | BEGIN]] -->
@@ -100,33 +99,48 @@ author. If a provider or individual is responsible for 52% of the PR, they are
 considered the sole author. Co-authors contribute assistance and can review,
 among other roles."
 
-- **One author per pull request.** The provider or individual responsible for
-  at least 52 % of a pull request is its sole author. The pull request's logical
-  producer and its material author are that same identity, so wherever this
-  repository excludes the "author", "logical producer", or "material author"
-  from review, acceptance, or merge, it excludes the sole author only.
-- **Everyone else is a co-author.** Co-authors are credited in contribution tags
-  and the pull-request record, and may assist, review, and hold other roles.
-  Being a co-author alone does not bar an identity from being the reviewer of
-  record.
-- **How the share is measured** (default until the owner refines it): lines
-  added plus lines deleted in the final base-to-head diff, attributed to the
-  identity that actually produced them (provider receipts and contribution
-  tags), never to whoever relayed, committed, or coordinated them. Tag-only,
-  merge, and whitespace-only changes do not count. Record the measured shares in
-  the pull-request description.
-- **No identity at 52 %** means the pull request has no sole author and cannot
-  enter review. Split it, let one author carry it past 52 %, or ask the owner.
+- **At most one sole author.** The provider or individual responsible for at
+  least 52 % of a pull request is its sole author. A pull request has at most one
+  sole author, and below the threshold it has none.
+- **Everyone else is a co-author.** Co-authors are credited in the pull-request
+  record and in contribution tags, and may assist and hold other roles.
+- **Co-author review eligibility is prospective.** The ruling lets a co-author
+  review, but the deterministic gate does not yet tell a sole author from a
+  co-author: `review_handoff.py` binds the assignment producer and every
+  dependency outcome as material authors and rejects each of them as reviewer.
+  Until a separately reviewed runtime and schema alignment change merges, every
+  contributor stays ineligible to review, accept, or merge the pull request, as
+  before, and no handoff, template, or prompt may select a co-author as
+  reviewer. The runtime Director prompt, the charter directive, and its
+  `DIRECTOR_OPERATING_DIRECTIVE_SHA256` fingerprint change with that alignment,
+  not before.
+- **The logical producer is unchanged.** It is still the producer of the
+  assignment under review, which `review_handoff.py` binds to that assignment's
+  agent. The pull-request sole author is recorded separately.
+- **How the share is measured** (provisional metric, accepted by the Director on
+  2026-09-26): lines added plus lines deleted in the final base-to-head diff.
+  A line counts for an identity only when an authenticated record ties it to the
+  identity that produced it: a provider-dispatch receipt, an authenticated
+  provider run record, or immutable Git or GitHub provenance of a human commit.
+  Contribution tags are display evidence only and never decide the share,
+  because the tag checker validates their shape, not their identity. Relaying,
+  committing, or coordinating another identity's bytes counts nothing. Tag-only,
+  merge, and whitespace-only changes are excluded. A counted line with no
+  authenticated producer counts for no one but stays in the denominator. Record
+  each identity's share and its receipt references in the pull-request
+  description.
+- **Nothing to count.** When the denominator is zero (for example a pull request
+  that only restores contribution envelopes), the sole author is the one identity
+  whose authenticated record produced the change. If there is no such record, or
+  more than one identity, stop and ask the owner.
+- **No identity at 52 %** means the pull request has no sole author: stop review,
+  then split it, reassign it so one identity carries it past 52 %, or ask the
+  owner.
 - **Unchanged:** no agent merges its own pull request (AGENTS.md rule 3); one
-  exact-SHA `ACCEPT` from a reviewer who is not the sole author; provider-family
-  identity (OpenAI, ChatGPT, and Codex are one identity; the xAI API, Grok CLI,
-  and Grok Bot are one family), so the reviewer may not share the sole author's
-  family; project reviewer rosters; and the Antigravity review ban.
-- **Runtime enforcement is not changed by this document.** Code that takes a
-  "material authors" list (for example `review_handoff.py`, `completion_gates.py`,
-  and the provider-acceptance issuers) should receive only the sole author. Where
-  recorded provenance lists more identities, the stricter runtime check still
-  applies until a separately reviewed code change aligns it.
+  exact-SHA `ACCEPT` from an eligible reviewer; provider-family identity (OpenAI,
+  ChatGPT, and Codex are one identity; the xAI API, Grok CLI, and Grok Bot are
+  one family), so the reviewer may not share the sole author's family; project
+  reviewer rosters; and the Antigravity review ban.
 
 ## Local validation
 
@@ -145,5 +159,4 @@ or the repository pull-request template instead of inventing another format.
 <!-- [[Claude | Claude Opus 5 | 2026-09-04 | 11:56 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:08 UTC | END]] -->
-<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:38 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:18 UTC | END]] -->
