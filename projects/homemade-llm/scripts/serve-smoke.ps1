@@ -64,6 +64,13 @@ try {
     # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
     $poison = $GpuMarker
     if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
+    # Durable guard for the whole GPU job, written before any bounded or GPU-relevant command can launch. If this
+    # process dies at any point (a crash, a forced kill, or an unhandled throw that abandons the mutex), the marker
+    # survives and blocks later runs. It is cleared only when every command (and container) was confirmed stopped.
+    # If it cannot be written, nothing is launched.
+    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+    Set-Content -LiteralPath $GpuMarker -Value "serve-smoke (pid $PID) GPU job in progress since $((Get-Date).ToUniversalTime().ToString('o'))"
+    $markerWritten = $true
 
     # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
     function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
@@ -185,8 +192,13 @@ try {
     Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
     exit ([int](-not $pass))
 } finally {
-    # Invoke-Bounded writes the machine-wide marker when it cannot confirm a command stopped; only if that write
-    # also failed is the lock kept (held until this PowerShell process exits).
+    # Clear the job guard only if every bounded command was confirmed stopped; otherwise it stays (Invoke-Bounded
+    # appended the reason) and blocks later GPU runs until checked.
+    if ($markerWritten) {
+        if ($BoundedUnconfirmed) { Write-Warning "GPU poisoned: a bounded command could not be confirmed stopped; see $GpuMarker" }
+        else { try { Remove-Item -LiteralPath $GpuMarker -Force } catch { Write-Warning "$GpuMarker could not be removed; later GPU runs refuse until it is deleted" } }
+    }
+    # Only if the guard is missing altogether is the lock kept (held until this PowerShell process exits).
     if ($BoundedGuardMissing) { Write-Warning "GPU NOT released: a bounded command could not be confirmed stopped and $GpuMarker could not be written; the lock is held until this PowerShell process exits" }
     else { $lock.ReleaseMutex(); $lock.Dispose() }
 }

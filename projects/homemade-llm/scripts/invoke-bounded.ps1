@@ -85,7 +85,11 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
             try {
                 New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
                 Add-Content -LiteralPath $GpuMarker -Value "$msg ($((Get-Date).ToUniversalTime().ToString('o')))"
-            } catch { $script:BoundedGuardMissing = $true }
+            } catch {
+                # A guard that already exists (the scripts write it before any bounded command) still guards; only a
+                # missing marker leaves the callers without one.
+                if (-not (Test-Path -LiteralPath $GpuMarker)) { $script:BoundedGuardMissing = $true }
+            }
             throw $msg
         }
     }

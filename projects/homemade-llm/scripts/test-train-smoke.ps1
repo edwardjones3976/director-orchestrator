@@ -51,6 +51,18 @@ try {
     elseif (-not $BoundedUnconfirmed) { $fail += 'CIM failure: BoundedUnconfirmed was not set' }
     if (-not $markerPreexisted -and (Test-Path -LiteralPath $GpuMarker)) { Remove-Item -LiteralPath $GpuMarker -Force }
     $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    # Marker-write failure: with no guard at all (an uncreatable marker path) the callers are told to keep the lock;
+    # with a guard already present (written by the scripts before any bounded command) a failed append is harmless.
+    $realMarker = $GpuMarker
+    $GpuMarker = Join-Path $shim 'no|such*dir\gpu-poisoned.txt'   # invalid path: the write must fail
+    try { $null = Invoke-Bounded 'docker' @('stop', 'w') 3 } catch { }
+    if (-not $BoundedGuardMissing) { $fail += 'marker-write failure with no guard: BoundedGuardMissing not set' }
+    $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    $GpuMarker = Join-Path $shim 'present-guard.txt'; Set-Content $GpuMarker 'job guard'; (Get-Item $GpuMarker).IsReadOnly = $true
+    try { $null = Invoke-Bounded 'docker' @('stop', 'v') 3 } catch { }
+    if ($BoundedGuardMissing) { $fail += 'failed append with the guard present: wrongly reported the guard missing' }
+    (Get-Item $GpuMarker).IsReadOnly = $false; Remove-Item $GpuMarker
+    $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
     . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # restore the real functions
     # Output shape: one line, several lines, and none must all end in a separate exit marker.
     $one = @(Invoke-Bounded 'cmd' @('/c', 'echo one-line') 10)
@@ -141,14 +153,19 @@ foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
 }
 $iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
 if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
-if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# The daemon confirmed the container gone.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
+if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# No container was left unconfirmed.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
 if ($ib -notmatch '(?s)if \(-not \$completed\) \{\s*try \{ \$tree = @\(Get-DescendantProcess \$p\.Id\) \} catch \{ \$unverified = \$true \}') { $fail += 'invoke-bounded: the tree snapshot must not depend on the root still running' }
 if ($ib -notmatch '\$q\.CreationDate -eq \$s\.CreationDate') { $fail += 'invoke-bounded: survivors must match the exact creation time' }
 if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
 # The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
 # and the unsafe flag is set before the launch attempt (a cancel mid-Start-Job must not release the GPU).
-if (([regex]::Matches($ts, [regex]::Escape('$containerGone = $true'))).Count -ne 1 -or -not $ts.Contains('catch { $containerGone = $true; throw }')) { $fail += 'train-smoke: containerGone=true only in the Start-Job failure catch' }
+if ($ts.Contains('$containerGone = $true')) { $fail += 'train-smoke: containerGone may never be set true without a daemon check' }
+if (-not $ts.Contains("catch { `$state = Get-SmokeState; `$containerGone = `$state -eq 'stopped and removed'; throw }")) { $fail += 'train-smoke: a Start-Job failure must ask the daemon before the marker can clear' }
+foreach ($pair in @(@('train-smoke.ps1', "Invoke-Bounded 'pwsh'"), @('serve-smoke.ps1', "Invoke-Lms @('server', 'start')"))) {
+    $gs = Get-Content -Raw (Join-Path $PSScriptRoot $pair[0]); $iG = $gs.IndexOf('GPU job in progress since'); $iFirst = $gs.IndexOf($pair[1])
+    if (-not ($iG -ge 0 -and $iFirst -gt $iG)) { $fail += "$($pair[0])`: the durable job guard must be written before the first bounded command" }
+}
 $iJob = $ts.IndexOf('$job = Start-Job'); $iFlag = $ts.IndexOf('$containerGone = $false')
 if (-not ($iFlag -ge 0 -and $iJob -gt $iFlag)) { $fail += 'train-smoke: containerGone=false must come before Start-Job' }
 if (-not $ts.Contains('$containerGone = $state -eq ''stopped and removed''')) { $fail += 'train-smoke: containerGone must come from the Stop-Smoke result' }
@@ -164,6 +181,8 @@ Write-Output 'ok  GPU lock held by another process refused'
 Write-Output 'ok  machine-wide poison marker refuses training (from any -HotRoot)'
 Write-Output 'ok  in-flight marker before launch; cleared only when the container is confirmed gone'
 Write-Output 'ok  CIM failure during tree discovery still kills the command, fails closed, and persists the machine-wide marker'
+Write-Output 'ok  marker-write failure: guard missing keeps the lock; failed append with a guard present is harmless'
+Write-Output 'ok  durable job guard written before the first bounded command; Start-Job failure asks the daemon'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"

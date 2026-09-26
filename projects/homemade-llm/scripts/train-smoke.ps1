@@ -67,6 +67,13 @@ try {
     # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
     $poison = $GpuMarker
     if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned by an unconfirmed container ($((Get-Content -LiteralPath $poison -Raw).Trim())); check docker ps -a, then delete $poison" }
+    # Durable guard for the whole GPU job, written before any bounded or GPU-relevant command can launch. If this
+    # process dies at any point (a crash, a forced kill, or an unhandled throw that abandons the mutex), the marker
+    # survives and blocks later runs. It is cleared only when every command (and container) was confirmed stopped.
+    # If it cannot be written, nothing is launched.
+    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+    Set-Content -LiteralPath $GpuMarker -Value "train-smoke (pid $PID) GPU job in progress since $((Get-Date).ToUniversalTime().ToString('o'))"
+    $markerWritten = $true
 
     # Bounded, because the GPU lock is already held: a stalled docker or lms probe inside preflight must not keep it.
     $pf = @(Invoke-Bounded 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'preflight.ps1'), '-HotRoot', $HotRoot) 180)
@@ -116,18 +123,14 @@ try {
         Get-SmokeState
       } catch { "state UNKNOWN (cleanup failed: $($_.Exception.Message)); check: docker ps -a" }
     }
-    # In-flight marker, written before the launch attempt. If this host dies after Docker starts (a crash or a forced
-    # kill), finally never runs and Windows abandons the mutex, but this file still blocks every later GPU run until
-    # the container is checked. It is removed only once the daemon confirms the container is gone. If it cannot be
-    # written, nothing is launched.
-    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
-    Set-Content -LiteralPath $GpuMarker -Value "container $name launch in flight since $((Get-Date).ToUniversalTime().ToString('o'))"
-    $markerWritten = $true
+    # The job guard already exists; name the container in it before the launch attempt (best effort: the guard stays
+    # either way). It is removed only once the daemon confirms the container is gone.
+    try { Set-Content -LiteralPath $GpuMarker -Value "container $name launch in flight since $((Get-Date).ToUniversalTime().ToString('o'))" } catch { }
     # Unsafe from before the launch attempt: a cancel can land after Start-Job created its process but before it
-    # returns. Only a synchronous Start-Job failure proves nothing launched, and resets it.
+    # returns. Even a synchronous Start-Job failure does not prove no Docker client ran, so ask the daemon.
     $containerGone = $false
     try { $job = Start-Job -ScriptBlock { param($a) & docker @a 2>&1; "__EXIT__$LASTEXITCODE" } -ArgumentList (, $dockerArgs) }
-    catch { $containerGone = $true; throw }
+    catch { $state = Get-SmokeState; $containerGone = $state -eq 'stopped and removed'; throw }
     $done = $false
     try {
         if (-not (Wait-Job $job -Timeout ([int]($TimeoutMinutes * 60)))) {
@@ -164,8 +167,8 @@ try {
                 Write-Warning "GPU NOT released: container $name unconfirmed and $GpuMarker is missing; the lock is held until this PowerShell process exits"
             }
         } elseif (-not $BoundedUnconfirmed) {
-            # The daemon confirmed the container gone (or Start-Job failed before any launch), and no bounded command
-            # was left unconfirmed (Invoke-Bounded appends to the same marker): clear the in-flight marker.
+            # No container was left unconfirmed (the daemon confirmed it gone, or none was launched) and no bounded
+            # command was left unconfirmed (Invoke-Bounded appends to the same marker): clear the job guard.
             try { Remove-Item -LiteralPath $GpuMarker -Force } catch { Write-Warning "container $name is gone but $GpuMarker could not be removed; later GPU runs refuse until it is deleted" }
         }
     }
