@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]] -->
@@ -507,7 +508,9 @@ Director re-checks that argv against the lane's read-only restriction set in
 the challenge, the dispatch response, its signed refusal and the host's
 request body, is read in small chunks against one absolute deadline, each
 chunk's socket wait clamped to what is left, so a peer that trickles bytes
-cannot keep a read open past it. The client's connect, TLS handshake, status
+cannot keep a read open past it. Name resolution runs in a thread given only
+the time remaining, and each resolved address is connected with its timeout
+clamped to what is left. The client's connect, TLS handshake, status
 line and headers are bounded by the same deadline: a watchdog shuts the
 request's socket down when it arrives, and the resulting failure is the
 deadline, never a success. A small task's dispatch
@@ -535,14 +538,24 @@ that fails when its reviewer view is prepared fails as
 "keep tripping": both are class-condition refusals and trip the grant, the
 second after a provider ran; a false positive on a producer's wording
 therefore trips and returns the task to the owner, which is the safe
-direction, where forwarding it would not be. UUIDs and lower-case hex digests
-are set aside before the unlabeled passport-shape and checksum checks, so a
-record identifier is never read as a personal one. A no-run the Director cannot record (the write fails twice
+direction, where forwarding it would not be. Every identifier detector reads
+the original text; an exempt token (a valid ISO date and time, a UUID, a
+full 40- or 64-character digest, lower-case hex with three or more letters,
+or a dotted version with fewer than 9 digits) only discards a hit it wholly
+contains, and any overlap resolves toward the protected format. A value in
+the passport shape (one or two letters and 6 to 8 digits) is a hit even when
+it is a short SHA; a group inside a UUID is not. Usage for every token and
+dollar cap comes from the provider's native envelope only, never from a
+"usage" the model writes into its own output; without native usage a result
+fails as `small_task_usage_unmeasured`. Paths are validated as written before
+they are canonicalized: surrounding whitespace, or a component that starts
+with a space or ends with a dot or a space, has no path key. A no-run the Director cannot record (the write fails twice
 within the dispatch deadline) is logged and leaves the attempt `STARTED`, so
 the task trips the grant: by the owner's ruling, missing evidence that
-nothing ran is not proof of it. Every transport runs its final authority
-recheck before it chooses the bytes it sends, and those bytes are the view
-prepared for that packet digest. A replay of any claimed attempt must carry the attested argv
+nothing ran is not proof of it. Every transport builds the bytes it sends
+first (the view prepared for that packet digest, or a rebuild on a cache miss
+that may read files), then runs its final authority recheck, then sends, so
+nothing slow runs between the recheck and the request. A replay of any claimed attempt must carry the attested argv
 digest and attempt limits it was claimed under: otherwise a `SUCCEEDED`
 attempt's cached result is never returned (the replay is rejected as a binding
 conflict, which the Director treats as ambiguous, since that command did run),
@@ -870,3 +883,4 @@ These are stated plainly because a framework that hides them is worse than none.
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 23:17 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]] -->

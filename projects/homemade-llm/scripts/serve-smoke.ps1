@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | BEGIN]]
@@ -51,14 +52,26 @@ if (-not (Test-Path -LiteralPath $reports -PathType Container)) { Write-Error "$
 
 # One GPU job at a time, shared with train-smoke.ps1: overlapping serve runs could probe each other's GGUF
 # through the one 'smoke' identifier, and a training run needs the whole GPU. Released when this process exits.
+. (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill   # Invoke-Bounded and the machine-wide $GpuMarker
 $lock = [System.Threading.Mutex]::new($false, 'Global\homemade-llm-gpu')
 try { $held = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $held = $true }
 if (-not $held) { Write-Error 'another GPU job (train-smoke or serve-smoke) is running; not starting' }
 # Everything below holds the GPU lock; finally releases it on every exit (error, Ctrl+C, exit), which matters
 # when this script runs inside a longer-lived PowerShell session rather than its own process.
 try {
+    # A previous run could not confirm its container was gone and left this marker (see train-smoke.ps1). It is a
+    # file, not a held mutex, because .NET mutexes are re-entrant: a mutex kept by that run would let the next run
+    # on the same thread straight back in. Delete the marker only after checking `docker ps -a`.
+    $poison = $GpuMarker
+    if (Test-Path -LiteralPath $poison) { Write-Error "GPU is poisoned: a previous job, container or command was not confirmed stopped ($((Get-Content -LiteralPath $poison -Raw).Trim())). Verify the recorded item is gone (containers: docker ps -a; LM Studio: lms ps and Get-Process lms; others: Get-Process by the recorded pid), then delete $poison" }
+    # Durable guard for the whole GPU job, written before any bounded or GPU-relevant command can launch. If this
+    # process dies at any point (a crash, a forced kill, or an unhandled throw that abandons the mutex), the marker
+    # survives and blocks later runs. It is cleared only when every command (and container) was confirmed stopped.
+    # If it cannot be written, nothing is launched.
+    New-Item -ItemType Directory -Force (Split-Path $GpuMarker) | Out-Null
+    Set-Content -LiteralPath $GpuMarker -Value "serve-smoke (pid $PID) GPU job in progress since $((Get-Date).ToUniversalTime().ToString('o'))"
+    $markerWritten = $true
 
-    . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # Invoke-Bounded: deadline + process-tree kill
     # lms through Invoke-Bounded: returns its stdout lines and sets $lmsExit (124 when it timed out).
     function Invoke-Lms([string[]]$A, [int]$Seconds = 60) {
         $r = @(Invoke-Bounded 'lms' $A $Seconds)
@@ -179,8 +192,17 @@ try {
     Write-Output "serve-smoke: $(if ($pass) { 'PASS' } else { 'FAIL' }) (model $($known.modelKey), ttl ${TtlSeconds}s)"
     exit ([int](-not $pass))
 } finally {
-    $lock.ReleaseMutex(); $lock.Dispose()
+    # Clear the job guard only if every bounded command was confirmed stopped; otherwise it stays (Invoke-Bounded
+    # appended the reason) and blocks later GPU runs until checked.
+    if ($markerWritten) {
+        if ($BoundedUnconfirmed) { Write-Warning "GPU poisoned: a bounded command could not be confirmed stopped; see $GpuMarker" }
+        else { try { Remove-Item -LiteralPath $GpuMarker -Force } catch { Write-Warning "$GpuMarker could not be removed; later GPU runs refuse until it is deleted" } }
+    }
+    # Only if the guard is missing altogether is the lock kept (held until this PowerShell process exits).
+    if ($BoundedGuardMissing) { Write-Warning "GPU NOT released: a bounded command could not be confirmed stopped and $GpuMarker could not be written; the lock is held until this PowerShell process exits" }
+    else { $lock.ReleaseMutex(); $lock.Dispose() }
 }
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 16:55 UTC | END]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]

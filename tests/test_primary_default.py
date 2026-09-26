@@ -1,9 +1,4 @@
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | BEGIN]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | BEGIN]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | BEGIN]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | BEGIN]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | BEGIN]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | BEGIN]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | BEGIN]]
@@ -1224,6 +1219,24 @@ class StandingGrantExerciseTests(unittest.TestCase):
         record = self.record()
         self.assertFalse(self.exercise(self.application(
             allowed_starting_refs=("main", "release/x")), record))
+
+    def test_a_page_is_parsed_within_the_readers_deadline(self):
+        import time as time_module
+        import director_orchestrator.store as store_module
+        from director_orchestrator.store import DelegationAuditDeadlineExceeded
+
+        record = self.record()
+        self.assertTrue(self.exercise(self.application(), record))
+        real = store_module.parse_record
+
+        def slow(value):
+            time_module.sleep(0.3)
+            return real(value)
+
+        with patch.object(store_module, "parse_record", side_effect=slow), \
+                self.assertRaises(DelegationAuditDeadlineExceeded):
+            self.ledger.delegation_audit_records(
+                limit=10, deadline=time_module.monotonic() + 0.1)
 
     def test_a_history_at_exactly_the_ceiling_is_read_whole(self):
         """Ten full pages and an empty eleventh are the whole history; one
@@ -6291,9 +6304,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:21 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:55 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 04:47 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 05:32 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 08:24 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 09:18 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 13:51 UTC | END]]
-# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 15:16 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

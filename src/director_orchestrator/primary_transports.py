@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | BEGIN]]
@@ -646,12 +647,13 @@ class OpenAIResponsesPacketTransport:
 
                 # The token count is a provider request too: the same
                 # authority and grant recheck runs immediately before it.
-                if authority_recheck is not None:
-                    authority_recheck()
-                # Chosen only after that recheck, and nothing else is read
-                # between here and the request.
+                # The input is built first (a cache miss may read files),
+                # then authority is rechecked, then the request is sent:
+                # nothing slow runs between the recheck and the I/O.
                 body["input"] = view_input()
                 count_body = {key: value for key, value in body.items() if key != "store"}
+                if authority_recheck is not None:
+                    authority_recheck()
                 count, _ = await post_json(self.api_url.rstrip("/") + "/input_tokens", count_body, 4096)
                 if (not isinstance(count, dict)
                         or count.get("object") != "response.input_tokens"
@@ -673,10 +675,8 @@ class OpenAIResponsesPacketTransport:
                 # and may have outlived any of them, and it is this request -
                 # not that one - being sent.
                 remaining_seconds()
-                if authority_recheck is not None:
-                    authority_recheck()
                 # The generation sends the same prepared bytes the count
-                # measured, re-derived after this recheck; any change refuses.
+                # measured, re-derived before the recheck; any change refuses.
                 # The count request already went out, so this is never a
                 # no-run refusal.
                 try:
@@ -685,6 +685,8 @@ class OpenAIResponsesPacketTransport:
                     raise RuntimeError("OpenAI input is unavailable after its token count") from exc
                 if regenerated != body["input"]:
                     raise RuntimeError("OpenAI input changed after its token count")
+                if authority_recheck is not None:
+                    authority_recheck()
                 if meter is not None:
                     meter.verify_current()
                     sent_at = meter.clock()
@@ -1263,9 +1265,10 @@ def normalize_native_provider_envelope(
         return _project_onto_result_contract(
             name, list(value) if isinstance(value, list) else []
         )
-    usage = _projected_native_usage(
-        native.get("usage", structured.get("usage")), native, provider_id=provider_id
-    )
+    # Usage, and so every token and dollar cap, comes from the native
+    # envelope only: a model can write any "usage" into its own structured
+    # output. Missing native usage stays missing (small_task_usage_unmeasured).
+    usage = _projected_native_usage(native.get("usage"), native, provider_id=provider_id)
     return {
         "schema_version": "1.0",
         "task_id": work["task_id"],
@@ -1942,3 +1945,4 @@ def provider_lane_detail(
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 17:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 19:14 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]

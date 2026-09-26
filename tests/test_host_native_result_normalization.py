@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | BEGIN]]
@@ -421,6 +422,32 @@ class HostNativeResultNormalizationTests(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertFalse(result_acceptance_passes(result, expected))
 
+    def test_usage_is_taken_from_the_native_envelope_never_the_model(self):
+        """A model can write any "usage" into its structured output; the
+        caps read only the native envelope's."""
+
+        from director_orchestrator.primary_default import small_task_usage_refusal
+        from director_orchestrator.primary_transports import _normalize_host_native_result
+
+        work = work_packet()
+        claimed = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "cost_usd": 0.0}
+        native = {
+            "type": "result", "subtype": "success", "is_error": False, "session_id": "session",
+            "result": json.dumps({
+                "status": "SUCCEEDED", "outcome": "Checked.", "usage": claimed,
+                "acceptance": [{"check": check, "status": "PASS"}
+                               for check in work["acceptance_checks"]]}),
+        }
+        result = _normalize_host_native_result("claude", work, native)
+        self.assertIsNone(result["usage"])
+        self.assertEqual("small_task_usage_unmeasured",
+                         small_task_usage_refusal(result, "claude", small_class=True))
+        # The native envelope's own usage is used when present.
+        native["usage"] = {"input_tokens": 100, "output_tokens": 40}
+        native["total_cost_usd"] = 0.01
+        result = _normalize_host_native_result("claude", work, native)
+        self.assertEqual(140, result["usage"]["total_tokens"])
+
     def test_the_grok_reviewer_cap_is_enforced_on_the_result(self):
         """Owner ruling 2026-09-24, "Accept post-hoc cap": over-cap reported
         usage fails the attempt; within the cap it is accepted; missing
@@ -706,3 +733,4 @@ if __name__ == "__main__":
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 22:31 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 03:23 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-25 | 17:48 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:17 UTC | END]]
