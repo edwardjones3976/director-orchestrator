@@ -11,6 +11,8 @@ param(
     [string]$HotRoot = 'C:\llm'
 )
 $ErrorActionPreference = 'Stop'
+# Any unhandled error (an unreadable folder, an unwritable report) is an error, never "findings": exit 2.
+trap { Write-Output "scan-dataset: error: $($_.Exception.Message)"; exit 2 }
 
 function Exit-Scan([int]$Code, [string]$Message) {
     if ($Message) { Write-Output $Message }

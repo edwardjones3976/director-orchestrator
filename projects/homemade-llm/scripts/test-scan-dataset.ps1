@@ -101,6 +101,11 @@ try {
     $bad = & pwsh -NoProfile -File $script -Path $scan -HotRoot $hot -Gitleaks $bogus 2>&1 | Out-String
     Assert-Equal $LASTEXITCODE 2 'scanner launch failure maps to 2, not findings'
 
+    # An unwritable report destination (a file where the reports folder should be) is an error (2), not findings.
+    $badHot = Join-Path $work 'bad-hot'; New-Item -ItemType Directory $badHot | Out-Null; Set-Content (Join-Path $badHot 'reports') 'not a folder'
+    $bh = & pwsh -NoProfile -File $script -Path $scan -HotRoot $badHot -Gitleaks $gitleaks 2>&1 | Out-String
+    Assert-Equal $LASTEXITCODE 2 'unwritable report destination maps to 2, not findings'
+
     $missing = Join-Path $work 'no-such-datasets'
     $miss = & pwsh -NoProfile -File $script -Path $missing -HotRoot $hot -Gitleaks $gitleaks 2>&1 | Out-Null
     Assert-Equal $LASTEXITCODE 2 'missing scan path exits 2'
