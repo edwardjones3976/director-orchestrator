@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | BEGIN]]
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | BEGIN]]
@@ -78,6 +79,18 @@ try {
     $orphanLeft = @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" | Where-Object CommandLine -match '-n 600 127\.0\.0\.2')
     if ($r[-1] -ne '__EXIT__timeout') { $fail += "orphaned grandchild: expected __EXIT__timeout, got '$($r[-1])'" }
     if ($orphanLeft.Count) { $fail += 'orphaned grandchild: still running after the timeout'; $orphanLeft | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+    # A failed join leaves the suspended root outside the job: it must still be killed and confirmed gone, and the
+    # call must throw (no command ran, so no marker is needed).
+    $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'join-marker.txt'
+    function Add-BoundedJobMember([IntPtr]$Job, [IntPtr]$Process) { throw 'simulated join failure' }
+    $threw = $false
+    try { $null = Invoke-Bounded 'docker' @('stop', 'k') 3 } catch { $threw = $true }
+    Start-Sleep 1
+    if (-not $threw) { $fail += 'join failure: Invoke-Bounded returned instead of throwing' }
+    if ((Get-ShimPing).Count) { $fail += 'join failure: the command ran outside its job' }
+    if (Test-Path -LiteralPath $GpuMarker) { $fail += 'join failure: a marker was written although the root was confirmed gone' }
+    $GpuMarker = $realMarker; $BoundedUnconfirmed = $false; $BoundedGuardMissing = $false
+    . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')   # restore the real functions
     # No job, no launch: a job object that cannot be created throws before anything runs, so there is nothing to
     # kill and nothing to mark.
     $realMarker = $GpuMarker; $GpuMarker = Join-Path $shim 'job-marker.txt'
@@ -190,7 +203,9 @@ foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') {
 $iMark = $ts.IndexOf('launch in flight since'); $iStart = $ts.IndexOf('$job = Start-Job')
 if (-not ($iMark -ge 0 -and $iStart -gt $iMark)) { $fail += 'train-smoke: the in-flight marker must be written before Start-Job' }
 if ($ts -notmatch '(?s)\} elseif \(-not \$BoundedUnconfirmed\) \{\s*# No container was left unconfirmed.*Remove-Item -LiteralPath \$GpuMarker') { $fail += 'train-smoke: the marker may be cleared only when the container is confirmed gone' }
-if ($ib -notmatch '(?s)CREATE_SUSPENDED \| CREATE_NO_WINDOW.*AssignProcessToJobObject\(job, pi\.hProcess\).*ResumeThread\(pi\.hThread\)') { $fail += 'invoke-bounded: the command must be created suspended and join its job before it resumes' }
+if ($ib -notmatch '(?s)CREATE_SUSPENDED \| CREATE_NO_WINDOW.*\$h = \[HomemadeLlm\.JobTree\]::CreateSuspended\(.*Add-BoundedJobMember \$job \$h; \[HomemadeLlm\.JobTree\]::Resume\(\$t\)') { $fail += 'invoke-bounded: the command must be created suspended and join its job before it resumes' }
+if ($ib -notmatch '(?s)if \(-not \$completed -and \$h -ne \[IntPtr\]::Zero\) \{.*\[HomemadeLlm\.JobTree\]::Kill\(\$h\).*\$gone = ') { $fail += 'invoke-bounded: the root must be killed directly too (it may be outside the job) before the wait confirms it' }
+if (-not $ib.Contains('(pid $rootPid)')) { $fail += 'invoke-bounded: the marker must record the root pid' }
 if ($ts -notmatch '(?s)\$keepLock = \$true.*if \(-not \$keepLock\) \{ \$gpuLock\.ReleaseMutex') { $fail += 'train-smoke: a missing marker for an unconfirmed container must keep the lock' }
 foreach ($g in 'train-smoke.ps1', 'serve-smoke.ps1') { if (-not (Get-Content -Raw (Join-Path $PSScriptRoot $g)).Contains('GPU is poisoned')) { $fail += "$g`: must refuse to start while the GPU is poisoned" } }
 # The normal path confirms absence with a daemon check. The only direct true is a synchronous Start-Job failure,
@@ -222,7 +237,7 @@ Write-Output 'ok  in-flight marker before launch; cleared only when the containe
 Write-Output 'ok  a tree the job still counts after the kill fails closed and persists the machine-wide marker'
 Write-Output 'ok  marker-write failure: guard missing keeps the lock; failed append with a guard present is harmless'
 Write-Output 'ok  durable job guard written before the first bounded command; a Start-Job failure keeps it'
-Write-Output 'ok  suspended start joins the job first; an orphaned grandchild is killed on timeout; no job means no launch; recovery text covers LM Studio'
+Write-Output 'ok  suspended start joins the job first; a failed join still kills the root; an orphaned grandchild is killed on timeout; no job means no launch; marker keeps the root pid'
 Write-Output 'ok  Invoke-Bounded kills the child when its pipeline is stopped'
 Write-Output 'ok  Invoke-Bounded output shape: one line, two lines, and no output with an exit code; arguments reach argv exactly'
 Write-Output "ok  hung docker CLI: returned after $([math]::Round($t.Elapsed.TotalSeconds, 1)) s with a timeout marker, no child process left"
@@ -231,3 +246,4 @@ exit 0
 # [[Cursor | cursor-agent | 2026-09-25 | 09:14 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 00:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]

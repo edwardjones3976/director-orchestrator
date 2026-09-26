@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | BEGIN]]
@@ -42,6 +43,7 @@ public static class JobTree {
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint ms);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern int GetProcessId(IntPtr process);
     public static IntPtr Create() { IntPtr h = CreateJobObjectW(IntPtr.Zero, null); if (h == IntPtr.Zero) throw new Win32Exception(); return h; }
     public static void Terminate(IntPtr job) { if (!TerminateJobObject(job, 1)) throw new Win32Exception(); }
     public static uint Active(IntPtr job) { BasicAccounting i; if (!QueryInformationJobObject(job, 1, out i, Marshal.SizeOf(typeof(BasicAccounting)), IntPtr.Zero)) throw new Win32Exception(); return i.ActiveProcesses; }
@@ -60,32 +62,34 @@ public static class JobTree {
         }
         return sb.Append('"').ToString();
     }
-    // Start suspended, join the job, then resume: no instruction of the command runs outside the job. Returns the
-    // process handle (the caller closes it); on any failure the suspended process is terminated first.
-    public static IntPtr StartInJob(IntPtr job, string commandLine, IntPtr stdIn, IntPtr stdOut, IntPtr stdErr) {
+    // Create suspended and hand both handles back at once: the caller owns the process from its first instant, so
+    // a failure to join or resume below is cleaned up (and verified) by the caller, never hidden here.
+    public static IntPtr CreateSuspended(string commandLine, IntPtr stdIn, IntPtr stdOut, IntPtr stdErr, out IntPtr thread) {
         var si = new StartupInfo(); si.cb = Marshal.SizeOf(typeof(StartupInfo)); si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdInput = stdIn; si.hStdOutput = stdOut; si.hStdError = stdErr;
         ProcessInformation pi;
         if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, CREATE_SUSPENDED | CREATE_NO_WINDOW, IntPtr.Zero, null, ref si, out pi)) throw new Win32Exception();
-        try {
-            if (!AssignProcessToJobObject(job, pi.hProcess)) { var e = new Win32Exception(); TerminateProcess(pi.hProcess, 1); CloseHandle(pi.hProcess); throw e; }
-            if (ResumeThread(pi.hThread) == 0xFFFFFFFF) { var e = new Win32Exception(); TerminateProcess(pi.hProcess, 1); CloseHandle(pi.hProcess); throw e; }
-        } finally { CloseHandle(pi.hThread); }
+        thread = pi.hThread;
         return pi.hProcess;
     }
+    public static void Join(IntPtr job, IntPtr process) { if (!AssignProcessToJobObject(job, process)) throw new Win32Exception(); }
+    public static void Resume(IntPtr thread) { if (ResumeThread(thread) == 0xFFFFFFFF) throw new Win32Exception(); }
+    public static void Kill(IntPtr process) { TerminateProcess(process, 1); }   // verified by the caller's wait
+    public static int ProcessId(IntPtr process) { return GetProcessId(process); }
 }}
 '@
 }
 # Separate functions so the tests can simulate a job failure or a survivor the job still counts.
 function New-BoundedJob { [HomemadeLlm.JobTree]::Create() }
 function Get-BoundedJobActive([IntPtr]$Job) { [HomemadeLlm.JobTree]::Active($Job) }
+function Add-BoundedJobMember([IntPtr]$Job, [IntPtr]$Process) { [HomemadeLlm.JobTree]::Join($Job, $Process) }
 function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
     $path = (Get-Command $Exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $commandLine = (@($path) + @($A) | ForEach-Object { [HomemadeLlm.JobTree]::Quote([string]$_) }) -join ' '
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     # No job, no launch: a job that cannot be created throws here, before anything runs.
     $job = New-BoundedJob
-    $h = [IntPtr]::Zero; $completed = $false; $pipes = @()
+    $h = [IntPtr]::Zero; $rootPid = 0; $completed = $false; $pipes = @()
     try {
         # Inheritable anonymous pipes: stdin is closed at once (EOF), stdout is returned, stderr is drained so a
         # chatty child cannot block on it.
@@ -93,7 +97,12 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
         $out = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
         $err = [IO.Pipes.AnonymousPipeServerStream]::new([IO.Pipes.PipeDirection]::In, [IO.HandleInheritability]::Inheritable)
         $pipes = @($in, $out, $err)
-        $h = [HomemadeLlm.JobTree]::StartInJob($job, $commandLine, $in.ClientSafePipeHandle.DangerousGetHandle(), $out.ClientSafePipeHandle.DangerousGetHandle(), $err.ClientSafePipeHandle.DangerousGetHandle())
+        # Created suspended, joined to the job, and only then resumed: no instruction runs outside the job. $h is
+        # held from creation on, so if the join or resume fails, finally still kills and verifies the process.
+        $t = [IntPtr]::Zero
+        $h = [HomemadeLlm.JobTree]::CreateSuspended($commandLine, $in.ClientSafePipeHandle.DangerousGetHandle(), $out.ClientSafePipeHandle.DangerousGetHandle(), $err.ClientSafePipeHandle.DangerousGetHandle(), [ref]$t)
+        $rootPid = [HomemadeLlm.JobTree]::ProcessId($h)
+        try { Add-BoundedJobMember $job $h; [HomemadeLlm.JobTree]::Resume($t) } finally { [HomemadeLlm.JobTree]::Close($t) }
         foreach ($pipe in $pipes) { $pipe.DisposeLocalCopyOfClientHandle() }
         $in.Dispose()
         $stdout = [IO.StreamReader]::new($out, [Console]::OutputEncoding).ReadToEndAsync()
@@ -124,13 +133,16 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
                 while ((Get-BoundedJobActive $job) -gt 0 -and [DateTime]::UtcNow -lt $until) { [Threading.Thread]::Sleep(100) }
                 if ((Get-BoundedJobActive $job) -gt 0) { $unverified = $true }
             } catch { $unverified = $true }
+            # The root itself may be outside the job (a failed join leaves it suspended there): kill it directly too.
+            # The wait below confirms it is gone.
+            [HomemadeLlm.JobTree]::Kill($h)
         }
         $gone = ($h -eq [IntPtr]::Zero) -or [HomemadeLlm.JobTree]::Wait($h, 5000)
         # No kill-on-close: after a normal exit, a process the command deliberately left running keeps running.
         [HomemadeLlm.JobTree]::Close($h); [HomemadeLlm.JobTree]::Close($job)
         foreach ($pipe in $pipes) { $pipe.Dispose() }
         if (-not $gone -or $unverified) {
-            $msg = "Invoke-Bounded: $Exe or a child process could not be confirmed stopped and may still be running"
+            $msg = "Invoke-Bounded: $Exe (pid $rootPid) or a child process could not be confirmed stopped and may still be running"
             # Persist the machine-wide GPU guard before any caller can unwind and release the mutex: every caller is
             # covered, not just the container path. If even that fails, flag it so callers keep the lock instead.
             $script:BoundedUnconfirmed = $true
@@ -152,3 +164,4 @@ function Invoke-Bounded([string]$Exe, [string[]]$A, [int]$Seconds) {
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 03:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 16:40 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 17:05 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:01 UTC | END]]
