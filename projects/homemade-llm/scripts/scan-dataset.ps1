@@ -83,6 +83,10 @@ try {
             break
         }
     }
+} catch {
+    # A launch or input failure (a file gone between listing and reading, an unrunnable scanner) is an error, not findings.
+    Write-Output "scan-dataset: scan failed: $($_.Exception.Message)"
+    $glCode = -1
 } finally { [IO.Directory]::Delete($noIgnore, $true) }
 ConvertTo-Json -InputObject @($all) -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
 $count = $all.Count
