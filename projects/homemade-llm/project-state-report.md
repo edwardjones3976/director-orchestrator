@@ -1,3 +1,4 @@
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]] -->
@@ -51,7 +52,8 @@ Read-only audit of the provider-dispatch receipts at 2026-09-26 18:16 UTC. xAI c
 
 - The first 13 M0 receipts reproduce the independent audit's USD 1.22778956 exactly ([#277 comment 5842706191](https://github.com/edwardjones3976/director-orchestrator/pull/277#issuecomment-5842706191)). The three #279 reviews add USD 0.20493.
 - This supersedes the USD 0.55 stamped at 2026-09-26 00:01 UTC, which missed the PR #266 review, the post-merge #275 review and the #279 reviews.
-- The M0 lower bound is well inside the USD 25 envelope. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), and the shared #279/#280 check (USD 0.020078), charged conservatively to M0, gives an **M0 charged total of USD 2.33488356**. That is still a lower bound (D-017).
+- The M0 lower bound is USD 1.43271956 before the gate charges below. Adding the post-gate #283 and #291 hardening, which is M0 work (USD 0.882086, below), and the shared #279/#280 check (USD 0.020078), charged conservatively to M0, gives an **M0 charged total of USD 2.33488356**. That is still a lower bound (D-017).
+- **Conservative upper bound for M0: USD 3.55593956.** That is the charged USD 2.33488356, plus all 13 untagged receipts (USD 0.221056, counted against M0 as if they were M0), plus USD 1.00 reserved for the 3 uncosted HTTP-0 attempts (about three times the largest single M0 call, USD 0.33195356). A timed-out request may still have been billed. **This upper bound, not the lower bound, is what establishes that M0 stayed within USD 25.**
 - Codex, Cursor and Claude subscription usage carries no per-call USD cost and is not in this ledger.
 
 ### After the gate (M1 spend, and post-gate M0 hardening charged to M0)
@@ -122,7 +124,7 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 | #272, #273 | `26de8d8`, `a3ef5e1` | 6/6 success each | Codex receipts in `hl-m0-webui/` (verdict unverified here) |
 | #275 | `ed317a81` | 6/6 success (run 36120719806) | xAI grok-4.6 ACCEPT, `xai/20260925T230929Z.json` |
 | #276 | `b0a4f59` | 6/6 success | Reviews in `hl-m0-close/`; merged by the owner under the one-time exception (D-015) |
-| #277 | `45a144f` | **3 success, 3 cancelled**: merged without a full green run | Eight xAI reviews of the report (receipts in the M0 paid spend table; final one `xai/20260926T000816Z.json`) |
+| #277 | `45a144f` | **3 success, 3 cancelled**: merged without a full green run. Disposition: the reconciled tree, which contains #277's content, is validated by this reconciliation PR's own six required CI jobs at its reviewed head. Until those are green, M0's CI evidence is incomplete (owner gate below). | Eight xAI reviews of the report (receipts in the M0 paid spend table; final one `xai/20260926T000816Z.json`) |
 | #279 | `224b4f0` | 6/6 success | xAI reviews `xai/20260926T001634Z.json`, `…003909Z.json`, `…013141Z.json` |
 
 ### Not done, and what remains unverified
@@ -133,6 +135,7 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 
 ### Owner gates
 
+- M0 CI evidence: #277 merged with 3 of 6 required jobs cancelled. This PR's six jobs at its reviewed head must be green before M0's closure evidence is complete, and the owner merges only then.
 - Pre-gate M1 work (D-018): ratify #280, which merged before M0 closed, or have it reverted and redone under M1.
 - M1 plan: approve the M1 workstream plan and its pre-stage packets once written. No new M1 provider dispatch happens before that.
 - `WEBUI_URL`: set `WEBUI_URL=https://blackbox.taile9e808.ts.net` in `C:\llm\secrets\open-webui.env` and recreate the container (`compose/RUNBOOK.md` §2 step 3), or decide to keep `http://127.0.0.1:3000`.
@@ -141,19 +144,18 @@ CI is the six required jobs at each PR's merged head, read with `gh pr view` on 
 
 ### Next bounded action
 
-M1, base shootout on the held-out sets:
-0. Ed disposes of D-018 (#280, merged before M0 closed): ratify, or revert and redo. Work that depends on the scorer (#281's merge, candidate generation, scoring) waits for that decision.
-0a. The Director writes the M1 workstream plan with immutable pre-stage packets: per-packet budget, timeout, retry limit, owned paths, tests, reviewer reservation and stop conditions. No new M1 provider dispatch happens until it exists **and Ed approves it**. Work already in flight under its own recorded bounds continues: the owner-approved downloads (O-034) and the set A and set B data preparation the owner delegated to Codex.
-1. Set B's replacement passes an independent review (set A's references are already accepted).
-2. The scorer's fail-closed fix (#281) lands through its own review.
-3. The four pinned base weight sets are downloaded one at a time under the owner's approval (O-034) and its storage guards. Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo Base 12B are then scored. Nemo Base is the control and excluded from winner selection (O-034); swapping in Nemo Instruct needs a new owner approval. with schema-constrained decoding. The winner is picked by field-level acceptance plus license, and all four bases are ungated per the download audit (`C:\llm\reports\m1-base-download-audit-20260926-1850UTC.md`) `[relayed]`.
+M1 runs only under an owner-approved M1 workstream plan with pre-stage packets. The draft is proposed separately, and this record does not rely on it.
+0. Ed disposes of D-018 (#280, merged before M0 closed): ratify, or revert and redo. Work that depends on the scorer waits for it.
+1. Ed approves the M1 plan (packet bounds, methodology, dataset pinning). **No M1 provider dispatch happens before that.**
 
-- **Responsible:** Ed for step 0 (the D-018 disposition) and for approving the M1 plan and the set B review route; then the Director, with providers authoring data, code and runs per O-003.
-- **Expected evidence:**
-  - per-base scorer output on both held-out sets;
-  - a persisted license check of the winner at its pinned revision;
-  - Ed's recorded sign-off on the M1 gate;
-  - a decision-log row naming the winner.
+**Nothing is in flight.** The pre-plan work has finished and stopped:
+- held-out set A (`set-a-json-v2`, Grok ACCEPT 19/19) and set B (`pr-reconstructed-v2`, owner-approved Grok ACCEPT 25/25 on both batches) are done;
+- the four O-034 downloads are done and hash-verified (`C:\llm\reports\m1-download-*.json`).
+
+No further work under those items runs before the plan is approved.
+
+- **Responsible:** Ed for the D-018 disposition and the M1 plan approval; then the Director under that plan.
+- **Expected evidence:** Ed's recorded D-018 disposition and M1 plan approval, and this PR's six required CI jobs green at its reviewed head.
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:07 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 18:16 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:07 UTC | END]] -->
@@ -161,3 +163,4 @@ M1, base shootout on the held-out sets:
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:45 UTC | END]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:48 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]] -->

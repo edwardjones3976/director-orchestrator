@@ -1,3 +1,4 @@
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | BEGIN]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | BEGIN]]
@@ -19,7 +20,7 @@ project:
   state: "building" # exploring | framing | building | validating | operating | paused | closed
   owner: "Ed (repository owner)"
   created_at: "2026-09-24T06:05:00Z"
-  updated_at: "2026-09-26T20:25:00Z"
+  updated_at: "2026-09-26T21:00:00Z"
 
 source_context:
   thread: "Claude Code session 2026-09-24 (owner chat; plan v1.1.0 pasted by the owner)"
@@ -98,8 +99,11 @@ surfaces:
   browser_conversations:
     - "none"
   external_effects:
-    mode: "analysis_only" # analysis_only | explicitly_scoped
-    allowed: []
+    mode: "explicitly_scoped" # analysis_only | explicitly_scoped
+    allowed:
+      - "Download of the four pinned M1 base weight sets from Hugging Face, one at a time, with storage guards (O-034; done)"
+      - "Independent reviews through the owner-approved provider routes, including the owner-approved xAI review of the set B v2 packets with private values redacted (done)"
+      - "Any further external effect only after its own owner approval, recorded in decision-log.md"
     prohibited:
       - "Any public exposure of Open WebUI or LM Studio (Tailscale serve only, never Funnel)"
 
@@ -253,9 +257,9 @@ fallbacks:
   changed_scope: "reshape_profile_before_dependent_work"
 
 next:
-  action: "First, Ed disposes of D-018 (#280 merged before M0 closed: ratify, or revert and redo); scorer-dependent work waits for it. Then the Director writes the M1 workstream plan with immutable pre-stage packets (budget, timeout, retry, owned paths, tests, reviewer reservation, stop conditions); no new M1 provider dispatch until it exists and Ed approves it, while already-bounded in-flight work continues (O-034 downloads; delegated set A/B data prep). Then the M1 base shootout: set B's replacement (pr-reconstructed-v2) passes an independent review (set A's set-a-json-v2 is accepted); the scorer fail-closed fix (#281) lands through its own review; the four pinned base weight sets are downloaded one at a time under the owner's download approval (O-034) and its storage guards; then Qwen3-8B, Qwen3-14B, Phi-4 14B and Mistral Nemo Base 12B are scored (Nemo Base as the control, excluded from winner selection) on both held-out sets with schema-constrained decoding. Any further download needs its own owner approval. Owner gate still open: the WEBUI_URL runbook step (D-016)"
-  responsible_party: "owner (D-018 disposition; approve the M1 plan before any dispatch under it; approve the set B review, which sends private PR bodies to xAI; WEBUI_URL), then Director with providers per O-003"
-  expected_evidence: "per-base scorer output on both held-out sets, a persisted license check of the winner at its pinned revision, the owner's recorded M1 gate sign-off, and a decision-log row naming the winner"
+  action: "Ed disposes of D-018 (#280 merged before M0 closed) and approves the M1 workstream plan (proposed separately); no M1 provider dispatch before both. Nothing is in flight: held-out sets A and B are accepted and the O-034 downloads are done and verified."
+  responsible_party: "owner (D-018 disposition; M1 plan approval; WEBUI_URL), then Director under the approved M1 plan"
+  expected_evidence: "the recorded D-018 disposition and M1 plan approval; this PR's six required CI jobs green at its reviewed head"
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 07:55 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-24 | 08:16 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-26 | 00:05 UTC | END]]
@@ -263,3 +267,4 @@ next:
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 19:47 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:15 UTC | END]]
 # [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 20:25 UTC | END]]
+# [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:00 UTC | END]]
