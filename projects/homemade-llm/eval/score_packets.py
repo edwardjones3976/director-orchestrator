@@ -1,3 +1,4 @@
+# [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | BEGIN]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | BEGIN]]
@@ -180,12 +181,12 @@ def packet_accepted_as_is(
     for row in grades:
         if row.get("id") != packet_id:
             continue
+        if _grade_row_missing_or_invalid_grader(row):
+            return False
         field = row.get("field")
         if field not in field_set:
             continue
         if row.get("accepted") is not True:
-            return False
-        if _grade_row_missing_or_invalid_grader(row):
             return False
         grader = row["grader"]
         graded_by_grader.setdefault(grader, {})[field] = True
@@ -369,3 +370,4 @@ if __name__ == "__main__":
 # [[Cursor | Composer 2.5 | 2026-09-26 | 00:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 01:40 UTC | END]]
 # [[Cursor | Composer 2.5 | 2026-09-26 | 02:52 UTC | END]]
+# [[Cursor | Composer 2.5 | 2026-09-26 | 16:40 UTC | END]]
